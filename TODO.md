@@ -13,7 +13,7 @@
 | P3    | Pattern Engine + Risk Classifier  | ⬜ blocked     |
 | P4    | Snapshot Engine + TUI             | ⬜ blocked     |
 | P5    | Config System + Shell Integration | ⬜ blocked     |
-| P6    | Polish and Public Release         | ⬜ blocked     |
+| P6    | Polish and Public Release         | 🔄 in progress |
 
 ---
 
@@ -307,11 +307,11 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T5.5 — Agent compatibility tests
 
-- [ ] Test: Claude Code executes a command through Aegis — interception works end-to-end
-- [ ] Test: Codex CLI executes a command through Aegis — interception works end-to-end
-- [ ] Test: Gemini CLI executes a command through Aegis — interception works end-to-end
-- [ ] Verify interception latency for safe commands < 5ms (does not slow normal workflow)
-- [ ] Run 1,000 safe commands sequentially — verify no performance degradation
+- [x] Test: Claude Code executes a command through Aegis — interception works end-to-end
+- [x] Test: Codex CLI executes a command through Aegis — interception works end-to-end
+- [x] Test: Gemini CLI executes a command through Aegis — interception works end-to-end
+- [x] Verify interception latency for safe commands < 5ms (does not slow normal workflow)
+- [x] Run 1,000 safe commands sequentially — verify no performance degradation
 
 ---
 
@@ -327,27 +327,27 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T6.1 — README and documentation
 
-- [ ] Write README opening with 2–3 real incidents: DataTalks.Club, Replit, Prisma (with dates and impact numbers)
-- [ ] Add one-liner install command prominently at the top of the README
+- [x] Write README opening with 2–3 real incidents: DataTalks.Club, Replit, Prisma (with dates and impact numbers)
+- [x] Add one-liner install command prominently at the top of the README
 - [ ] Record and embed a demo GIF or asciinema: agent attempts `terraform destroy` → Aegis intercepts → user sees dialog → denies
-- [ ] Write Quick Start section: 5 steps from zero to first interception
-- [ ] Write `aegis.toml` reference with all config options and their defaults
-- [ ] Write full pattern list: all 50+ patterns with descriptions and safe alternatives
-- [ ] Write Plugin architecture section: how to implement a custom snapshot backend
-- [ ] Add badges: CI status, crates.io version, license, platform support
+- [x] Write Quick Start section: 5 steps from zero to first interception
+- [x] Write `aegis.toml` reference with all config options and their defaults
+- [x] Write full pattern list: all 50+ patterns with descriptions and safe alternatives
+- [x] Write Plugin architecture section: how to implement a custom snapshot backend
+- [x] Add badges: CI status, crates.io version, license, platform support
 
 ### T6.2 — GitHub Release pipeline
 
-- [ ] Create `.github/workflows/release.yml` triggered on push of tag `v*`
-- [ ] Build cross-compiled targets: `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`
-- [ ] Generate `SHA256` checksums for each binary artifact
-- [ ] Automatically create a GitHub Release with all binaries and checksums attached
-- [ ] Update `install.sh` to download from GitHub Releases based on detected platform
+- [x] Create `.github/workflows/release.yml` triggered on push of tag `v*`
+- [x] Build cross-compiled targets: `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`
+- [x] Generate `SHA256` checksums for each binary artifact
+- [x] Automatically create a GitHub Release with all binaries and checksums attached
+- [x] Update `install.sh` to download from GitHub Releases based on detected platform
 - [ ] Test by creating tag `v1.0.0-rc1` — verify pipeline produces all four artifacts
 
 ### T6.3 — crates.io publication
 
-- [ ] Fill in `Cargo.toml` metadata: `description`, `repository`, `homepage`, `keywords`, `categories`
+- [x] Fill in `Cargo.toml` metadata: `description`, `repository`, `homepage`, `keywords`, `categories`
 - [ ] Run `cargo publish --dry-run` — verify all required files are included in the package
 - [ ] Run `cargo publish` — publish `v1.0.0` to crates.io
 - [ ] Verify `cargo install aegis` installs successfully and runs correctly
@@ -358,7 +358,7 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 - [ ] Open a thread in the Anthropic Discord `#claude-code-lounge`
 - [ ] Post on X/Twitter with the demo GIF and install one-liner
 - [ ] Create a GitHub Discussion: `v2 Roadmap — what snapshot backends do you need?`
-- [ ] Add `ROADMAP.md` to the repo: planned v2 features (Cloud plugin, Slack notify, Policy DSL, rollback command)
+- [x] Add `ROADMAP.md` to the repo: planned v2 features (Cloud plugin, Slack notify, Policy DSL, rollback command)
 
 ---
 
