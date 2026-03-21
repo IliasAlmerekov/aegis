@@ -15,6 +15,12 @@ Never run bare `cargo`, `git`, `rustc`, or other CLI tools — always `rtk <comm
 
 ---
 
+## Commit Style
+
+Use short conventional commits. **Never** add `Co-Authored-By` trailers.
+
+---
+
 ## Project Overview
 
 Aegis is a lightweight Rust CLI that acts as a `$SHELL` proxy, intercepting AI agent commands and requiring human confirmation before destructive operations. It must be fast (< 2ms for safe paths), correct, and minimal.
