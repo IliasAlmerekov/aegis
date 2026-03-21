@@ -298,11 +298,11 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T5.4 — `install.sh` and setup documentation
 
-- [ ] Write `scripts/install.sh`: detect platform, download correct binary, place in `/usr/local/bin/aegis`
-- [ ] Print post-install instructions for bash: `export SHELL=$(which aegis)` → `~/.bashrc`
-- [ ] Print post-install instructions for zsh: same for `~/.zshrc`
-- [ ] Add a note for Claude Code users: configure the shell path in claude settings
-- [ ] Test full install on clean Ubuntu 22.04 in a Docker container
+- [x] Write `scripts/install.sh`: detect platform, download correct binary, place in `/usr/local/bin/aegis`
+- [x] Print post-install instructions for bash: `export SHELL=$(which aegis)` → `~/.bashrc`
+- [x] Print post-install instructions for zsh: same for `~/.zshrc`
+- [x] Add a note for Claude Code users: configure the shell path in claude settings
+- [x] Test full install on clean Ubuntu 22.04 in a Docker container
 - [ ] Test full install on macOS 14 (both arm64 and x86_64)
 
 ### T5.5 — Agent compatibility tests
