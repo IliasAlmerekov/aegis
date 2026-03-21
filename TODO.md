@@ -222,17 +222,17 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 - [ ] Graceful skip if Docker is not installed or not running (log warning, continue)
 - [ ] Test using a mock Docker CLI binary in a temp directory
 
-### T4.4 — TUI confirmation dialog
+### T4.4 — TUI confirmation dialog ✅
 
-- [ ] Implement `show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool`
-- [ ] Display: the full command with the dangerous fragment highlighted
-- [ ] Display: list of matched patterns with human-readable descriptions
-- [ ] Display: list of created snapshots (plugin name + snapshot id)
-- [ ] Display: `safe_alt` suggestion when available
-- [ ] `Danger` behavior: default = No, requires typing `yes` in full to proceed
-- [ ] `Warn` behavior: default = Yes, Enter continues, typing `n` denies
-- [ ] `Block` behavior: print reason and exit immediately, no prompt shown
-- [ ] Test: simulate user input via a channel or stdin mock
+- [x] Implement `show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool`
+- [x] Display: the full command with the dangerous fragment highlighted
+- [x] Display: list of matched patterns with human-readable descriptions
+- [x] Display: list of created snapshots (plugin name + snapshot id)
+- [x] Display: `safe_alt` suggestion when available
+- [x] `Danger` behavior: default = No, requires typing `yes` in full to proceed
+- [x] `Warn` behavior: default = Yes, Enter continues, typing `n` denies
+- [x] `Block` behavior: print reason and exit immediately, no prompt shown
+- [x] Test: simulate user input via a channel or stdin mock
 
 ### T4.5 — Audit logger
 
