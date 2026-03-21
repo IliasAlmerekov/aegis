@@ -8,7 +8,11 @@ mod ui;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "aegis", version, about = "A terminal proxy that intercepts AI agent commands")]
+#[command(
+    name = "aegis",
+    version,
+    about = "A terminal proxy that intercepts AI agent commands"
+)]
 struct Cli {
     /// Command to intercept (shell wrapper mode)
     #[arg(short = 'c', long = "command")]

@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 #[derive(thiserror::Error, Debug)]
 pub enum AegisError {
     #[error("parse error: {0}")]
