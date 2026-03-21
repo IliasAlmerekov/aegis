@@ -160,21 +160,21 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 - [x] Implement `PatternSet::load() -> Result<PatternSet>`
 - [x] Test: load `patterns.toml`, verify all fields parsed without errors
 
-### T3.3 — Aho-Corasick first pass (fast path)
+### T3.3 — Aho-Corasick first pass (fast path) ✅
 
-- [ ] Build `AhoCorasick` automaton from keywords of all patterns at startup
-- [ ] Implement `quick_scan(cmd: &str) -> bool` — check if any keyword matches at all
-- [ ] If `quick_scan` returns `false` → return `Safe` immediately (zero-cost path, no regex)
-- [ ] Benchmark: 10,000 safe commands through `quick_scan` in under 10ms total
+- [x] Build `AhoCorasick` automaton from keywords of all patterns at startup
+- [x] Implement `quick_scan(cmd: &str) -> bool` — check if any keyword matches at all
+- [x] If `quick_scan` returns `false` → return `Safe` immediately (zero-cost path, no regex)
+- [x] Benchmark: 10,000 safe commands through `quick_scan` in under 10ms total
 
-### T3.4 — Regex full scan (slow path)
+### T3.4 — Regex full scan (slow path) ✅
 
-- [ ] Use `std::sync::LazyLock<Regex>` for each compiled pattern — **not** `once_cell` (deprecated since Rust 1.80)
-- [ ] Implement `Scanner::full_scan(cmd: &str) -> Vec<&Pattern>`
-- [ ] Return the maximum `RiskLevel` from all matched patterns
-- [ ] Define `struct Assessment { risk, matched: Vec<&Pattern>, command: ParsedCommand }`
-- [ ] Implement `Scanner::assess(cmd: &str) -> Assessment` (quick → full pipeline)
-- [ ] Write 70 test cases, each asserting the expected `RiskLevel`
+- [x] Use `std::sync::LazyLock<Regex>` for each compiled pattern — **not** `once_cell` (deprecated since Rust 1.80)
+- [x] Implement `Scanner::full_scan(cmd: &str) -> Vec<Arc<Pattern>>`
+- [x] Return the maximum `RiskLevel` from all matched patterns
+- [x] Define `struct Assessment { risk, matched: Vec<Arc<Pattern>>, command: ParsedCommand }`
+- [x] Implement `Scanner::assess(cmd: &str) -> Assessment` (quick → full pipeline)
+- [x] Write 70 test cases, each asserting the expected `RiskLevel`
 
 ### T3.5 — Criterion benchmarks
 

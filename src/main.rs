@@ -37,9 +37,13 @@ enum Commands {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let Cli {
+        command,
+        verbose,
+        subcommand,
+    } = Cli::parse();
 
-    match cli.subcommand {
+    match subcommand {
         Some(Commands::Watch) => {
             println!("watch: not yet implemented");
         }
@@ -50,7 +54,33 @@ fn main() {
             println!("config: not yet implemented");
         }
         None => {
-            if let Some(cmd) = cli.command {
+            if let Some(cmd) = command {
+                match interceptor::assess(&cmd) {
+                    Ok(assessment) if verbose => {
+                        eprintln!(
+                            "scan: risk={:?}, executable={}, matched={}",
+                            assessment.risk,
+                            assessment.command.executable.as_deref().unwrap_or("<none>"),
+                            assessment.matched.len()
+                        );
+
+                        for pattern in &assessment.matched {
+                            eprintln!(
+                                "match: id={}, category={:?}, risk={:?}, description={}",
+                                pattern.id, pattern.category, pattern.risk, pattern.description
+                            );
+
+                            if let Some(safe_alt) = &pattern.safe_alt {
+                                eprintln!("safe alternative: {safe_alt}");
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        eprintln!("warning: interceptor scan initialization failed: {err}");
+                    }
+                }
+
                 println!("intercepting: {cmd}");
             }
         }

@@ -3,3 +3,23 @@ set -eu
 
 echo "pre-commit: running cargo fmt --check"
 cargo fmt --check
+
+echo "pre-commit: running cargo clippy -- -D warnings"
+cargo clippy -- -D warnings
+
+echo "pre-commit: running cargo test"
+cargo test
+
+if cargo audit --help >/dev/null 2>&1; then
+    echo "pre-commit: running cargo audit"
+    cargo audit
+else
+    echo "pre-commit: skipping cargo audit (cargo-audit is not installed)"
+fi
+
+if cargo deny --help >/dev/null 2>&1; then
+    echo "pre-commit: running cargo deny check"
+    cargo deny check
+else
+    echo "pre-commit: skipping cargo deny check (cargo-deny is not installed)"
+fi
