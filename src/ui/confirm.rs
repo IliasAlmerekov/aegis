@@ -9,9 +9,9 @@ use crossterm::{
 };
 use regex::Regex;
 
+use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::Pattern;
 use crate::interceptor::scanner::Assessment;
-use crate::interceptor::RiskLevel;
 use crate::snapshot::SnapshotRecord;
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -313,16 +313,18 @@ mod tests {
 
     #[test]
     fn block_always_returns_false() {
-        let p = make_pattern("PS-006", RiskLevel::Block, "rm", "Deletes root filesystem", None);
+        let p = make_pattern(
+            "PS-006",
+            RiskLevel::Block,
+            "rm",
+            "Deletes root filesystem",
+            None,
+        );
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         // Even if the user somehow types "yes", Block must return false.
-        let result = show_confirmation_with_input(
-            &assessment,
-            &[],
-            &mut b"yes\n".as_ref(),
-            &mut Vec::new(),
-        );
+        let result =
+            show_confirmation_with_input(&assessment, &[], &mut b"yes\n".as_ref(), &mut Vec::new());
         assert!(!result, "Block must always return false");
     }
 
@@ -382,7 +384,13 @@ mod tests {
 
     #[test]
     fn danger_y_does_not_approve() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let p = make_pattern(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let denied =
@@ -392,7 +400,13 @@ mod tests {
 
     #[test]
     fn danger_empty_does_not_approve() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let p = make_pattern(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let denied =
@@ -402,11 +416,18 @@ mod tests {
 
     #[test]
     fn danger_anything_else_denies() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let p = make_pattern(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         for input in [b"no\n".as_ref(), b"nope\n".as_ref(), b"YES\n".as_ref()] {
-            let denied = show_confirmation_with_input(&assessment, &[], &mut { input }, &mut Vec::new());
+            let denied =
+                show_confirmation_with_input(&assessment, &[], &mut { input }, &mut Vec::new());
             assert!(!denied, "only 'yes' approves; other inputs must deny");
         }
     }
@@ -457,7 +478,13 @@ mod tests {
 
     #[test]
     fn danger_output_contains_command() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let p = make_pattern(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
@@ -497,7 +524,13 @@ mod tests {
 
     #[test]
     fn dialog_shows_snapshot_records() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let p = make_pattern(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
         let snap = SnapshotRecord {
             plugin: "git",
@@ -548,6 +581,9 @@ mod tests {
         let result = build_highlighted_command("rm -rf /home", &[p1, p2]);
         // Should not have double ANSI codes inside the overlap.
         let opens = result.matches("\x1b[1;31m").count();
-        assert_eq!(opens, 1, "overlapping ranges must be merged into one highlight span");
+        assert_eq!(
+            opens, 1,
+            "overlapping ranges must be merged into one highlight span"
+        );
     }
 }
