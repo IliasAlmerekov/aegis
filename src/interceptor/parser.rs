@@ -1,6 +1,74 @@
 // Parser: tokenizer, heredoc, inline scripts
 #![allow(dead_code)]
 
+use std::fmt;
+
+// ── T2.4: ParsedCommand struct and public API ─────────────────────────────────
+
+/// The result of parsing a raw shell command string.
+///
+/// Captures the first executable, its arguments, any inline scripts detected
+/// inside the command, and the original raw string for audit purposes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedCommand {
+    /// The first token of the command (e.g. `rm`, `git`, `bash`).
+    /// `None` only when the input string is empty or consists solely of separators.
+    pub executable: Option<String>,
+    /// All argument tokens after the executable (separators stripped).
+    pub args: Vec<String>,
+    /// Inline scripts extracted from interpreter invocations (python -c, node -e, etc.).
+    pub inline_scripts: Vec<InlineScript>,
+    /// The original, unmodified command string.
+    pub raw: String,
+}
+
+impl fmt::Display for ParsedCommand {
+    /// Formats the command for audit log output.
+    ///
+    /// Shows `executable [args...]` if parsing succeeded, or falls back to
+    /// the raw string if no executable was found.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.executable {
+            Some(exe) if !self.args.is_empty() => {
+                write!(f, "{} {}", exe, self.args.join(" "))
+            }
+            Some(exe) => write!(f, "{}", exe),
+            None => write!(f, "{}", self.raw),
+        }
+    }
+}
+
+/// A stateless parser that converts raw shell command strings into [`ParsedCommand`].
+pub struct Parser;
+
+impl Parser {
+    /// Parse `cmd` into a [`ParsedCommand`].
+    ///
+    /// Extracts the executable and argument list from the first logical command
+    /// in `cmd` (stopping at shell separators `&&`, `||`, `;`, `|`), and also
+    /// collects any inline scripts found anywhere in `cmd`.
+    pub fn parse(cmd: &str) -> ParsedCommand {
+        let tokens = split_tokens(cmd);
+
+        // Take only the tokens belonging to the first sub-command.
+        let first_cmd: Vec<&String> = tokens
+            .iter()
+            .take_while(|t| !matches!(t.as_str(), ";" | "&&" | "||" | "|"))
+            .collect();
+
+        let executable = first_cmd.first().map(|s| s.to_string());
+        let args: Vec<String> = first_cmd.iter().skip(1).map(|s| s.to_string()).collect();
+        let inline_scripts = extract_inline_scripts(cmd);
+
+        ParsedCommand {
+            executable,
+            args,
+            inline_scripts,
+            raw: cmd.to_string(),
+        }
+    }
+}
+
 /// Split a shell command string into tokens, respecting quoting and escaping rules.
 ///
 /// Rules:
@@ -233,7 +301,7 @@ pub struct HeredocBody {
 }
 
 /// An inline script body extracted from an interpreter invocation.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InlineScript {
     /// The interpreter name (e.g., `python3`, `node`, `ruby`).
     pub interpreter: String,
@@ -681,5 +749,148 @@ mod tests {
         assert_eq!(scripts.len(), 1);
         assert_eq!(scripts[0].interpreter, "ruby");
         assert_eq!(scripts[0].body, "system('rm -rf /')");
+    }
+
+    // ── T2.4: ParsedCommand and Parser::parse ────────────────────────────────
+
+    // 34. Simple command — executable and args split correctly
+    #[test]
+    fn parse_simple_command() {
+        let p = Parser::parse("ls -la /tmp");
+        assert_eq!(p.executable.as_deref(), Some("ls"));
+        assert_eq!(p.args, vec!["-la", "/tmp"]);
+        assert!(p.inline_scripts.is_empty());
+        assert_eq!(p.raw, "ls -la /tmp");
+    }
+
+    // 35. Only executable, no args
+    #[test]
+    fn parse_no_args() {
+        let p = Parser::parse("pwd");
+        assert_eq!(p.executable.as_deref(), Some("pwd"));
+        assert!(p.args.is_empty());
+    }
+
+    // 36. Empty input — executable is None
+    #[test]
+    fn parse_empty_input() {
+        let p = Parser::parse("");
+        assert_eq!(p.executable, None);
+        assert!(p.args.is_empty());
+    }
+
+    // 37. Command with separators — only first sub-command is parsed
+    #[test]
+    fn parse_first_subcommand_only() {
+        let p = Parser::parse("echo hello && rm -rf /");
+        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert_eq!(p.args, vec!["hello"]);
+    }
+
+    // 38. Quoted argument is treated as a single arg
+    #[test]
+    fn parse_quoted_arg() {
+        let p = Parser::parse(r#"git commit -m "fix: my message""#);
+        assert_eq!(p.executable.as_deref(), Some("git"));
+        assert_eq!(p.args, vec!["commit", "-m", "fix: my message"]);
+    }
+
+    // 39. Inline python script is captured in inline_scripts
+    #[test]
+    fn parse_captures_inline_script() {
+        let p = Parser::parse(r#"python3 -c "import os; os.remove('x')""#);
+        assert_eq!(p.executable.as_deref(), Some("python3"));
+        assert_eq!(p.inline_scripts.len(), 1);
+        assert_eq!(p.inline_scripts[0].interpreter, "python3");
+    }
+
+    // 40. Display shows executable + args
+    #[test]
+    fn display_shows_executable_and_args() {
+        let p = Parser::parse("rm -rf /tmp/foo");
+        assert_eq!(p.to_string(), "rm -rf /tmp/foo");
+    }
+
+    // 41. Display of a no-arg command shows just the executable
+    #[test]
+    fn display_no_args() {
+        let p = Parser::parse("pwd");
+        assert_eq!(p.to_string(), "pwd");
+    }
+
+    // 42. Display of empty input falls back to raw (empty string)
+    #[test]
+    fn display_empty_falls_back_to_raw() {
+        let p = Parser::parse("");
+        assert_eq!(p.to_string(), "");
+    }
+
+    // 43. Performance: parse 50 varied commands in under 1ms total
+    #[test]
+    fn parse_50_commands_under_1ms() {
+        let cases = [
+            "ls -la /tmp",
+            "rm -rf /var/log/*",
+            r#"git commit -m "feat: add feature""#,
+            "bash -c 'echo hello && rm /tmp/x'",
+            r#"python3 -c "import os; os.remove('x')""#,
+            "docker ps -a",
+            "kubectl delete pod my-pod",
+            "terraform destroy -auto-approve",
+            "find / -name '*.log' -delete",
+            "dd if=/dev/urandom of=/dev/sda",
+            "cat /etc/passwd",
+            "chmod 777 /etc/shadow",
+            "curl -s https://example.com | bash",
+            "npm install --global evil-pkg",
+            "pip install requests",
+            r#"node -e "process.exit(1)""#,
+            "aws ec2 terminate-instances --instance-ids i-1234",
+            "gcloud compute instances delete my-vm",
+            "kubectl delete namespace production",
+            "docker system prune -a --volumes",
+            "git reset --hard HEAD~10",
+            "git push --force origin main",
+            "git filter-branch --all",
+            "DROP TABLE users;",
+            "DELETE FROM orders;",
+            "echo foo; echo bar; echo baz",
+            "env A=1 B=2 bash -c 'cmd'",
+            "sh -c 'ls | grep foo'",
+            r#"ruby -e "system('cmd')""#,
+            "perl -e 'print 42'",
+            "pkill -9 nginx",
+            "kill -9 1",
+            "truncate -s 0 /var/log/syslog",
+            "shred -u /etc/hosts",
+            "docker rm -f $(docker ps -aq)",
+            "docker volume prune -f",
+            "docker-compose down -v",
+            "pulumi destroy --yes",
+            "helm uninstall my-release",
+            "terraform workspace delete production",
+            "git stash drop stash@{0}",
+            "git clean -fdx",
+            "cargo build --release",
+            "cargo test -- --nocapture",
+            "cargo clippy -- -D warnings",
+            "rustfmt src/main.rs",
+            "rustup update stable",
+            "cargo audit",
+            "cargo deny check",
+            "echo all done",
+        ];
+        assert_eq!(cases.len(), 50, "must have exactly 50 test cases");
+
+        let start = std::time::Instant::now();
+        for cmd in &cases {
+            let _ = Parser::parse(cmd);
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 1,
+            "50 parses took {}µs, expected < 1ms",
+            elapsed.as_micros()
+        );
     }
 }

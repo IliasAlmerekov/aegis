@@ -122,13 +122,13 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 - [x] Detect and extract inline Ruby: `ruby -e "..."`
 - [x] Write 8 test cases for heredoc and inline scripts
 
-### T2.4 — `ParsedCommand` struct and public API
+### T2.4 — `ParsedCommand` struct and public API ✅
 
-- [ ] Define `struct ParsedCommand { executable, args, inline_scripts, raw }`
-- [ ] Implement `Parser::parse(cmd: &str) -> ParsedCommand`
-- [ ] Implement `Display` for `ParsedCommand` (used in audit log output)
-- [ ] Final performance test: parse all 50 cases in under 1ms total
-- [ ] Run `cargo test` — all tests green
+- [x] Define `struct ParsedCommand { executable, args, inline_scripts, raw }`
+- [x] Implement `Parser::parse(cmd: &str) -> ParsedCommand`
+- [x] Implement `Display` for `ParsedCommand` (used in audit log output)
+- [x] Final performance test: parse all 50 cases in under 1ms total
+- [x] Run `cargo test` — all tests green
 
 ---
 
@@ -142,13 +142,13 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 
 ---
 
-### T3.1 — `RiskLevel` enum and `AegisError`
+### T3.1 — `RiskLevel` enum and `AegisError` ✅
 
-- [ ] Define `enum RiskLevel { Safe, Warn, Danger, Block }` with `#[non_exhaustive]`
-- [ ] Implement `PartialOrd` for `RiskLevel` (`Safe < Warn < Danger < Block`)
-- [ ] Define `AegisError` via `thiserror` with variants: `Parse`, `Snapshot`, `Config`, `Io`
-- [ ] Implement human-readable `Display` messages for each `AegisError` variant
-- [ ] Write 3 unit tests verifying `PartialOrd` ordering
+- [x] Define `enum RiskLevel { Safe, Warn, Danger, Block }` with `#[non_exhaustive]`
+- [x] Implement `PartialOrd` for `RiskLevel` (`Safe < Warn < Danger < Block`)
+- [x] Define `AegisError` via `thiserror` with variants: `Parse`, `Snapshot`, `Config`, `Io`
+- [x] Implement human-readable `Display` messages for each `AegisError` variant
+- [x] Write 3 unit tests verifying `PartialOrd` ordering
 
 ### T3.2 — `Pattern` struct and TOML loading
 
