@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::Config;
+use aegis::config::{Allowlist, Config};
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::parser::Parser as CommandParser;
@@ -109,6 +109,8 @@ fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
 }
 
 fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
+    let config = load_runtime_config(verbose);
+    let allowlist = Allowlist::new(&config.allowlist);
     let assessment = assess_command(cmd, verbose);
 
     if verbose {
@@ -116,13 +118,27 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     }
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (decision, snapshots) = decide_command(&assessment, &cwd, verbose);
+    let allowlisted = allowlist.is_allowed(cmd);
+    let (decision, snapshots) = decide_command(&assessment, &cwd, verbose, allowlisted);
 
     append_audit_entry(&assessment, decision, &snapshots, verbose);
 
     match decision {
         Decision::Approved | Decision::AutoApproved => exec_command(cmd, verbose),
         Decision::Denied | Decision::Blocked => 1,
+    }
+}
+
+fn load_runtime_config(verbose: bool) -> Config {
+    match Config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            if verbose {
+                eprintln!("warning: failed to load config: {err}");
+            }
+
+            Config::default()
+        }
     }
 }
 
@@ -198,7 +214,17 @@ fn decide_command(
     assessment: &Assessment,
     cwd: &Path,
     verbose: bool,
+    allowlisted: bool,
 ) -> (Decision, Vec<SnapshotRecord>) {
+    if allowlisted {
+        let snapshots = match assessment.risk {
+            RiskLevel::Danger => create_snapshots(cwd, &assessment.command.raw, verbose),
+            _ => Vec::new(),
+        };
+
+        return (Decision::AutoApproved, snapshots);
+    }
+
     match assessment.risk {
         RiskLevel::Block => {
             show_confirmation(assessment, &[]);

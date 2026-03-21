@@ -280,11 +280,11 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T5.2 — Allowlist support
 
-- [ ] Add `allowlist: Vec<String>` field to `AegisConfig`
-- [ ] Implement `Allowlist::is_allowed(cmd: &str) -> bool`
-- [ ] Support glob patterns in allowlist entries: `terraform destroy -target=module.test.*`
-- [ ] If command matches allowlist → skip dialog and execute immediately (still log to audit)
-- [ ] Test: allowlist a specific `terraform destroy -target=...`, block all other `terraform destroy`
+- [x] Add `allowlist: Vec<String>` field to `AegisConfig`
+- [x] Implement `Allowlist::is_allowed(cmd: &str) -> bool`
+- [x] Support glob patterns in allowlist entries: `terraform destroy -target=module.test.*`
+- [x] If command matches allowlist → skip dialog and execute immediately (still log to audit)
+- [x] Test: allowlist a specific `terraform destroy -target=...`, block all other `terraform destroy`
 
 ### T5.3 — Shell wrapper mode
 
