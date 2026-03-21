@@ -246,15 +246,15 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T4.6 — Full pipeline integration
 
-- [ ] In `main.rs`: receive command via the `-c` flag
-- [ ] Pass through `Scanner::assess()`
-- [ ] If `Danger`: call `snapshot_all()`, then call `show_confirmation()`
-- [ ] If `Block`: print reason and exit with code `1` immediately (no snapshot needed)
-- [ ] If user denied: exit with code `1` (do not execute the command)
-- [ ] If approved, `Warn`, or `Safe`: `exec()` the original command transparently
-- [ ] Write an audit log entry in all cases regardless of outcome
-- [ ] Pass through original `stdout`, `stderr`, and exit code unchanged
-- [ ] End-to-end test: `rm -rf /tmp/test_aegis` → intercepted → user denies → directory still exists
+- [x] In `main.rs`: receive command via the `-c` flag
+- [x] Pass through `Scanner::assess()`
+- [x] If `Danger`: call `snapshot_all()`, then call `show_confirmation()`
+- [x] If `Block`: print reason and exit with code `1` immediately (no snapshot needed)
+- [x] If user denied: exit with code `1` (do not execute the command)
+- [x] If approved, `Warn`, or `Safe`: `exec()` the original command transparently
+- [x] Write an audit log entry in all cases regardless of outcome
+- [x] Pass through original `stdout`, `stderr`, and exit code unchanged
+- [x] End-to-end test: `rm -rf /tmp/test_aegis` → intercepted → user denies → directory still exists
 
 ---
 

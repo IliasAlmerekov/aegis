@@ -1,6 +1,14 @@
-use aegis::audit::AuditLogger;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::{self, Command, Stdio};
+
+use aegis::audit::{AuditEntry, AuditLogger, Decision};
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
+use aegis::interceptor::parser::Parser as CommandParser;
+use aegis::interceptor::scanner::Assessment;
+use aegis::snapshot::{SnapshotRecord, SnapshotRegistry};
+use aegis::ui::confirm::show_confirmation;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -71,33 +79,7 @@ fn main() {
         }
         None => {
             if let Some(cmd) = command {
-                match interceptor::assess(&cmd) {
-                    Ok(assessment) if verbose => {
-                        eprintln!(
-                            "scan: risk={:?}, executable={}, matched={}",
-                            assessment.risk,
-                            assessment.command.executable.as_deref().unwrap_or("<none>"),
-                            assessment.matched.len()
-                        );
-
-                        for pattern in &assessment.matched {
-                            eprintln!(
-                                "match: id={}, category={:?}, risk={:?}, description={}",
-                                pattern.id, pattern.category, pattern.risk, pattern.description
-                            );
-
-                            if let Some(safe_alt) = &pattern.safe_alt {
-                                eprintln!("safe alternative: {safe_alt}");
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        eprintln!("warning: interceptor scan initialization failed: {err}");
-                    }
-                }
-
-                println!("intercepting: {cmd}");
+                process::exit(run_shell_wrapper(&cmd, verbose));
             }
         }
     }
@@ -105,4 +87,211 @@ fn main() {
 
 fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
     value.parse()
+}
+
+fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
+    let assessment = assess_command(cmd, verbose);
+
+    if verbose {
+        log_assessment(&assessment);
+    }
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (decision, snapshots) = decide_command(&assessment, &cwd, verbose);
+
+    append_audit_entry(&assessment, decision, &snapshots, verbose);
+
+    match decision {
+        Decision::Approved | Decision::AutoApproved => exec_command(cmd, verbose),
+        Decision::Denied | Decision::Blocked => 1,
+    }
+}
+
+fn assess_command(cmd: &str, verbose: bool) -> Assessment {
+    match interceptor::assess(cmd) {
+        Ok(assessment) => assessment,
+        Err(err) => {
+            if verbose {
+                eprintln!("warning: interceptor scan initialization failed: {err}");
+            }
+
+            Assessment {
+                risk: RiskLevel::Safe,
+                matched: Vec::new(),
+                command: CommandParser::parse(cmd),
+            }
+        }
+    }
+}
+
+fn log_assessment(assessment: &Assessment) {
+    eprintln!(
+        "scan: risk={:?}, executable={}, matched={}",
+        assessment.risk,
+        assessment.command.executable.as_deref().unwrap_or("<none>"),
+        assessment.matched.len()
+    );
+
+    for pattern in &assessment.matched {
+        eprintln!(
+            "match: id={}, category={:?}, risk={:?}, description={}",
+            pattern.id, pattern.category, pattern.risk, pattern.description
+        );
+
+        if let Some(safe_alt) = &pattern.safe_alt {
+            eprintln!("safe alternative: {safe_alt}");
+        }
+    }
+}
+
+fn decide_command(
+    assessment: &Assessment,
+    cwd: &Path,
+    verbose: bool,
+) -> (Decision, Vec<SnapshotRecord>) {
+    match assessment.risk {
+        RiskLevel::Block => {
+            show_confirmation(assessment, &[]);
+            (Decision::Blocked, Vec::new())
+        }
+        RiskLevel::Danger => {
+            let snapshots = create_snapshots(cwd, &assessment.command.raw, verbose);
+            let approved = show_confirmation(assessment, &snapshots);
+            let decision = if approved {
+                Decision::Approved
+            } else {
+                Decision::Denied
+            };
+
+            (decision, snapshots)
+        }
+        RiskLevel::Warn => {
+            let approved = show_confirmation(assessment, &[]);
+            let decision = if approved {
+                Decision::Approved
+            } else {
+                Decision::Denied
+            };
+
+            (decision, Vec::new())
+        }
+        RiskLevel::Safe => (Decision::AutoApproved, Vec::new()),
+        _ => (Decision::AutoApproved, Vec::new()),
+    }
+}
+
+fn create_snapshots(cwd: &Path, cmd: &str, verbose: bool) -> Vec<SnapshotRecord> {
+    match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(SnapshotRegistry::default().snapshot_all(cwd, cmd)),
+        Err(err) => {
+            if verbose {
+                eprintln!("warning: failed to initialize snapshot runtime: {err}");
+            }
+
+            Vec::new()
+        }
+    }
+}
+
+fn append_audit_entry(
+    assessment: &Assessment,
+    decision: Decision,
+    snapshots: &[SnapshotRecord],
+    verbose: bool,
+) {
+    let entry = AuditEntry::new(
+        assessment.command.raw.clone(),
+        assessment.risk,
+        assessment
+            .matched
+            .iter()
+            .map(|pattern| pattern.as_ref().into())
+            .collect(),
+        decision,
+        snapshots.iter().map(Into::into).collect(),
+    );
+
+    if let Err(err) = AuditLogger::default().append(entry) {
+        if verbose {
+            eprintln!("warning: failed to append audit log entry: {err}");
+        }
+    }
+}
+
+fn exec_command(cmd: &str, verbose: bool) -> i32 {
+    let shell = resolve_shell();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let err = Command::new(&shell)
+            .arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .exec();
+
+        if verbose {
+            eprintln!("error: failed to exec shell {}: {err}", shell.display());
+        }
+
+        return 1;
+    }
+
+    #[cfg(not(unix))]
+    {
+        match Command::new(&shell)
+            .arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+        {
+            Ok(status) => status.code().unwrap_or(1),
+            Err(err) => {
+                if verbose {
+                    eprintln!("error: failed to spawn shell {}: {err}", shell.display());
+                }
+
+                1
+            }
+        }
+    }
+}
+
+fn resolve_shell() -> PathBuf {
+    if let Some(shell) = env::var_os("AEGIS_REAL_SHELL").filter(|shell| !shell.is_empty()) {
+        return PathBuf::from(shell);
+    }
+
+    let current_exe = env::current_exe().ok();
+    if let Some(shell) = env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
+        let shell_path = PathBuf::from(shell);
+        if !same_file(&shell_path, current_exe.as_deref()) {
+            return shell_path;
+        }
+    }
+
+    PathBuf::from("/bin/sh")
+}
+
+fn same_file(path: &Path, other: Option<&Path>) -> bool {
+    let Some(other) = other else {
+        return false;
+    };
+
+    if path == other {
+        return true;
+    }
+
+    match (std::fs::canonicalize(path), std::fs::canonicalize(other)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
