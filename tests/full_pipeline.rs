@@ -129,7 +129,10 @@ fn shell_wrapper_echo_hello_prints_expected_output_and_exit_code() {
 fn shell_wrapper_exit_42_preserves_exit_status() {
     let home = TempDir::new().unwrap();
 
-    let output = base_command(home.path()).args(["-c", "exit 42"]).output().unwrap();
+    let output = base_command(home.path())
+        .args(["-c", "exit 42"])
+        .output()
+        .unwrap();
 
     assert_eq!(output.status.code(), Some(42));
     assert!(output.stdout.is_empty());
@@ -247,7 +250,10 @@ fn shell_wrapper_ls_nonexistent_matches_real_shell_passthrough() {
     let home = TempDir::new().unwrap();
     let command = "ls /nonexistent";
 
-    let aegis_output = base_command(home.path()).args(["-c", command]).output().unwrap();
+    let aegis_output = base_command(home.path())
+        .args(["-c", command])
+        .output()
+        .unwrap();
     let shell_output = direct_shell_command(home.path())
         .args(["-c", command])
         .output()
