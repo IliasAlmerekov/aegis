@@ -312,7 +312,10 @@ esac"#,
     #[tokio::test]
     async fn rollback_noop_for_no_containers_sentinel() {
         // Must succeed without touching any docker binary.
-        DockerPlugin::default().rollback(NO_CONTAINERS).await.unwrap();
+        DockerPlugin::default()
+            .rollback(NO_CONTAINERS)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -415,6 +418,9 @@ esac"#
     #[tokio::test]
     async fn rollback_fails_on_malformed_snapshot_id() {
         let result = DockerPlugin::default().rollback("no-colon-here").await;
-        assert!(result.is_err(), "malformed snapshot_id must return an error");
+        assert!(
+            result.is_err(),
+            "malformed snapshot_id must return an error"
+        );
     }
 }
