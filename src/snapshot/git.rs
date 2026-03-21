@@ -222,10 +222,7 @@ mod tests {
         fs::write(&file, "modified\n").unwrap();
 
         // Snapshot stashes the change.
-        let snapshot_id = GitPlugin
-            .snapshot(dir.path(), "rm -rf .")
-            .await
-            .unwrap();
+        let snapshot_id = GitPlugin.snapshot(dir.path(), "rm -rf .").await.unwrap();
         assert_ne!(snapshot_id, CLEAN_SENTINEL, "expected a real stash");
 
         // File should be back to the committed version (trim to ignore CRLF on Windows/WSL).
