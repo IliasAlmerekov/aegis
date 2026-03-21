@@ -214,10 +214,10 @@ fn append_audit_entry(
         snapshots.iter().map(Into::into).collect(),
     );
 
-    if let Err(err) = AuditLogger::default().append(entry) {
-        if verbose {
-            eprintln!("warning: failed to append audit log entry: {err}");
-        }
+    if let Err(err) = AuditLogger::default().append(entry)
+        && verbose
+    {
+        eprintln!("warning: failed to append audit log entry: {err}");
     }
 }
 
@@ -240,7 +240,7 @@ fn exec_command(cmd: &str, verbose: bool) -> i32 {
             eprintln!("error: failed to exec shell {}: {err}", shell.display());
         }
 
-        return 1;
+        1
     }
 
     #[cfg(not(unix))]
