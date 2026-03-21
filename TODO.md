@@ -205,14 +205,14 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 - [ ] Implement `async fn snapshot_all(cwd, cmd) -> Vec<SnapshotRecord>`
 - [ ] Write test with a mock plugin: verify registry only calls `is_applicable` plugins
 
-### T4.2 — Git plugin
+### T4.2 — Git plugin ✅
 
-- [ ] `GitPlugin::is_applicable`: check for `.git/` directory in `cwd`
-- [ ] `GitPlugin::snapshot`: run `git stash push --include-untracked -m "aegis-snap-<timestamp>"`
-- [ ] Store stash ref as `snapshot_id`
-- [ ] `GitPlugin::rollback`: run `git stash pop --index <stash_ref>`
-- [ ] Graceful handling if working tree is clean (nothing to stash — log info, return ok)
-- [ ] Integration test using `tempfile::TempDir` + `git init`
+- [x] `GitPlugin::is_applicable`: check for `.git/` directory in `cwd`
+- [x] `GitPlugin::snapshot`: run `git stash push --include-untracked -m "aegis-snap-<timestamp>"`
+- [x] Store stash ref as `snapshot_id`
+- [x] `GitPlugin::rollback`: run `git stash pop --index <stash_ref>`
+- [x] Graceful handling if working tree is clean (nothing to stash — log info, return ok)
+- [x] Integration test using `tempfile::TempDir` + `git init`
 
 ### T4.3 — Docker plugin
 
