@@ -1,0 +1,455 @@
+# Aegis built-in pattern database
+# Each [[patterns]] entry is compiled into the binary at build time.
+# Fields:
+#   id          — unique identifier, e.g. "FS-001"
+#   category    — Filesystem | Git | Database | Cloud | Docker | Process | Package
+#   risk        — Safe | Warn | Danger | Block
+#   pattern     — regex matched against the full command string
+#   description — human-readable explanation shown in the TUI dialog
+#   safe_alt    — optional safer alternative (shown when available)
+
+# ─── Filesystem ──────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "FS-001"
+category = "Filesystem"
+risk = "Danger"
+pattern = 'rm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|--recursive\s+--force|--force\s+--recursive)'
+description = "Recursive force delete — permanently removes files and directories with no recovery path"
+safe_alt = "Move to trash: 'trash <path>' or 'mv <path> /tmp/backup-$(date +%s)'"
+
+[[patterns]]
+id = "FS-002"
+category = "Filesystem"
+risk = "Danger"
+pattern = 'find\s+.+(-delete|-exec\s+rm)'
+description = "find with -delete or -exec rm — can silently delete large file trees"
+safe_alt = "Dry-run first: 'find <args>' without -delete to preview matched files"
+
+[[patterns]]
+id = "FS-003"
+category = "Filesystem"
+risk = "Danger"
+pattern = 'dd\s+.*(of=/dev/[a-zA-Z]|of=/dev/null)'
+description = "dd writing to a block device or /dev/null — can overwrite entire disks or destroy data"
+safe_alt = "Test with a temp file target: 'dd ... of=/tmp/test.img' before targeting real devices"
+
+[[patterns]]
+id = "FS-004"
+category = "Filesystem"
+risk = "Danger"
+pattern = 'shred\s+'
+description = "shred — overwrites files to prevent recovery; data is irrecoverable"
+safe_alt = "Use 'trash <file>' if you only want to remove without secure erase"
+
+[[patterns]]
+id = "FS-005"
+category = "Filesystem"
+risk = "Warn"
+pattern = 'truncate\s+.*-s\s*0'
+description = "truncate to zero bytes — empties a file's content without removing the inode"
+safe_alt = "Back up the file first: 'cp <file> <file>.bak && truncate -s 0 <file>'"
+
+[[patterns]]
+id = "FS-006"
+category = "Filesystem"
+risk = "Block"
+pattern = 'mkfs(\.[a-z0-9]+)?\s+'
+description = "mkfs — formats a filesystem, permanently destroying all data on the target device"
+safe_alt = "Verify the target device carefully with 'lsblk' before formatting"
+
+[[patterns]]
+id = "FS-007"
+category = "Filesystem"
+risk = "Warn"
+pattern = 'chmod\s+(-R\s+)?[0-7]*7[0-7][0-7]\s+'
+description = "chmod with world-writable bits (x77) — makes files writable by any user on the system"
+safe_alt = "Use the minimum required permissions; world-writable is rarely correct"
+
+[[patterns]]
+id = "FS-008"
+category = "Filesystem"
+risk = "Warn"
+pattern = 'chown\s+-R\s+'
+description = "Recursive chown — changes ownership of an entire directory tree"
+safe_alt = "Confirm the target path is correct before changing ownership recursively"
+
+[[patterns]]
+id = "FS-009"
+category = "Filesystem"
+risk = "Block"
+pattern = '>\s*/dev/sd[a-z]'
+description = "Redirect output to a raw block device — overwrites disk data directly"
+safe_alt = "Use a file path, not a raw device, as the redirect target"
+
+[[patterns]]
+id = "FS-010"
+category = "Filesystem"
+risk = "Danger"
+pattern = 'mv\s+.*/etc(/|\s)'
+description = "Moving /etc or its contents — can break system configuration and make the system unbootable"
+safe_alt = "Copy and modify files under /etc instead of moving them"
+
+# ─── Git ─────────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "GIT-001"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+reset\s+--hard'
+description = "git reset --hard — discards all uncommitted changes in the working tree and index"
+safe_alt = "Stash changes first: 'git stash push -m \"backup\"' then reset if needed"
+
+[[patterns]]
+id = "GIT-002"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+clean\s+.*-[a-zA-Z]*f'
+description = "git clean -f — permanently removes untracked files from the working tree"
+safe_alt = "Preview first: 'git clean -n' (dry-run) before using -f"
+
+[[patterns]]
+id = "GIT-003"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+push\s+.*--force(-with-lease)?'
+description = "git push --force — rewrites remote history, can discard other contributors' commits"
+safe_alt = "Prefer '--force-with-lease' over '--force' to avoid overwriting unseen commits"
+
+[[patterns]]
+id = "GIT-004"
+category = "Git"
+risk = "Danger"
+pattern = 'git\s+filter-branch'
+description = "git filter-branch — rewrites entire repository history; extremely destructive on shared repos"
+safe_alt = "Use 'git filter-repo' (faster, safer) and coordinate with all contributors first"
+
+[[patterns]]
+id = "GIT-005"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+rebase\s+'
+description = "git rebase — rewrites commit history; can cause conflicts and lose work if misused"
+safe_alt = "Ensure your branch is up-to-date and create a backup branch before rebasing"
+
+[[patterns]]
+id = "GIT-006"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+branch\s+(-D|-d\s+-f)'
+description = "git branch -D — force-deletes a branch even with unmerged commits"
+safe_alt = "Verify the branch is fully merged: 'git branch --merged' before deleting"
+
+[[patterns]]
+id = "GIT-007"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+checkout\s+--\s+\.'
+description = "git checkout -- . — discards all unstaged changes in the working directory"
+safe_alt = "Stage or stash changes you want to keep before running this"
+
+[[patterns]]
+id = "GIT-008"
+category = "Git"
+risk = "Warn"
+pattern = 'git\s+stash\s+(drop|clear)'
+description = "git stash drop/clear — permanently removes saved stash entries with no recovery"
+safe_alt = "Apply the stash before dropping: 'git stash apply && git stash drop'"
+
+# ─── Database ────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "DB-001"
+category = "Database"
+risk = "Danger"
+pattern = '(?i)DROP\s+TABLE\s+'
+description = "DROP TABLE — permanently deletes a database table and all its data"
+safe_alt = "Back up the table first: 'CREATE TABLE backup AS SELECT * FROM <table>'"
+
+[[patterns]]
+id = "DB-002"
+category = "Database"
+risk = "Danger"
+pattern = '(?i)DROP\s+DATABASE\s+'
+description = "DROP DATABASE — permanently destroys an entire database and all its contents"
+safe_alt = "Take a full backup with pg_dump / mysqldump before dropping"
+
+[[patterns]]
+id = "DB-003"
+category = "Database"
+risk = "Danger"
+pattern = '(?i)DELETE\s+FROM\s+\w+\s*;'
+description = "DELETE FROM without a WHERE clause — deletes every row in the table"
+safe_alt = "Always add a WHERE clause; test with SELECT first to confirm affected rows"
+
+[[patterns]]
+id = "DB-004"
+category = "Database"
+risk = "Danger"
+pattern = '(?i)TRUNCATE\s+(TABLE\s+)?\w+'
+description = "TRUNCATE TABLE — removes all rows instantly; faster than DELETE and non-transactional on some engines"
+safe_alt = "Use DELETE with WHERE or take a backup before truncating"
+
+[[patterns]]
+id = "DB-005"
+category = "Database"
+risk = "Danger"
+pattern = '--accept-data-loss'
+description = "--accept-data-loss flag — explicitly acknowledges potential data loss in MongoDB/Atlas operations"
+safe_alt = "Investigate why the flag is needed; prefer replica set elections without data loss"
+
+[[patterns]]
+id = "DB-006"
+category = "Database"
+risk = "Danger"
+pattern = '(?i)FLUSHALL|FLUSHDB'
+description = "Redis FLUSHALL / FLUSHDB — wipes all keys in the cache or entire Redis instance"
+safe_alt = "Use key-pattern-based deletion: 'SCAN + DEL' to remove only the intended keys"
+
+[[patterns]]
+id = "DB-007"
+category = "Database"
+risk = "Danger"
+pattern = '(?i)DROP\s+SCHEMA\s+'
+description = "DROP SCHEMA — deletes an entire schema including all objects contained within it"
+safe_alt = "Back up the schema first and verify all dependent objects are accounted for"
+
+[[patterns]]
+id = "DB-008"
+category = "Database"
+risk = "Warn"
+pattern = '(?i)ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN\s+'
+description = "ALTER TABLE DROP COLUMN — removes a column and all its data permanently"
+safe_alt = "Add a NOT NULL DEFAULT before removing to safely migrate dependent queries first"
+
+# ─── Cloud ───────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "CL-001"
+category = "Cloud"
+risk = "Danger"
+pattern = 'terraform\s+destroy'
+description = "terraform destroy — tears down all infrastructure resources in the Terraform state"
+safe_alt = "Use 'terraform plan -destroy' first to review what will be removed"
+
+[[patterns]]
+id = "CL-002"
+category = "Cloud"
+risk = "Danger"
+pattern = 'aws\s+ec2\s+terminate-instances'
+description = "aws ec2 terminate-instances — permanently terminates EC2 instances and deletes their storage"
+safe_alt = "Stop instances first: 'aws ec2 stop-instances' to preserve data before terminating"
+
+[[patterns]]
+id = "CL-003"
+category = "Cloud"
+risk = "Warn"
+pattern = 'kubectl\s+delete\s+'
+description = "kubectl delete — removes Kubernetes resources; some resources (PVCs) may delete persistent storage"
+safe_alt = "Use '--dry-run=client' first to preview affected resources"
+
+[[patterns]]
+id = "CL-004"
+category = "Cloud"
+risk = "Danger"
+pattern = 'pulumi\s+destroy'
+description = "pulumi destroy — destroys all Pulumi stack resources"
+safe_alt = "Run 'pulumi preview --diff' to review what will be destroyed before executing"
+
+[[patterns]]
+id = "CL-005"
+category = "Cloud"
+risk = "Danger"
+pattern = 'aws\s+s3\s+rm\s+.*--recursive'
+description = "aws s3 rm --recursive — recursively deletes all objects under an S3 prefix"
+safe_alt = "List objects first: 'aws s3 ls <path>' and enable versioning before bulk deletes"
+
+[[patterns]]
+id = "CL-006"
+category = "Cloud"
+risk = "Danger"
+pattern = 'aws\s+rds\s+delete-db-instance'
+description = "aws rds delete-db-instance — permanently deletes an RDS database instance"
+safe_alt = "Enable deletion protection and take a final snapshot before deleting"
+
+[[patterns]]
+id = "CL-007"
+category = "Cloud"
+risk = "Danger"
+pattern = 'gcloud\s+compute\s+instances\s+delete'
+description = "gcloud compute instances delete — permanently deletes GCP Compute Engine VM instances"
+safe_alt = "Create a snapshot of the boot disk before deletion for recovery"
+
+[[patterns]]
+id = "CL-008"
+category = "Cloud"
+risk = "Danger"
+pattern = 'az\s+vm\s+delete'
+description = "az vm delete — permanently deletes an Azure virtual machine"
+safe_alt = "Deallocate first: 'az vm deallocate' and capture an image before deleting"
+
+[[patterns]]
+id = "CL-009"
+category = "Cloud"
+risk = "Warn"
+pattern = 'aws\s+iam\s+delete-(role|policy|user|group)'
+description = "aws iam delete — removes IAM identity or policy; can break permissions for dependent services"
+safe_alt = "Detach all policies and verify no services depend on the role before deleting"
+
+[[patterns]]
+id = "CL-010"
+category = "Cloud"
+risk = "Danger"
+pattern = 'kubectl\s+delete\s+namespace'
+description = "kubectl delete namespace — deletes a Kubernetes namespace and every resource inside it"
+safe_alt = "List all resources in the namespace first: 'kubectl get all -n <ns>'"
+
+# ─── Docker ──────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "DK-001"
+category = "Docker"
+risk = "Warn"
+pattern = 'docker\s+system\s+prune'
+description = "docker system prune — removes all stopped containers, dangling images, unused networks, and build cache"
+safe_alt = "Use '--filter until=24h' to limit pruning to older resources only"
+
+[[patterns]]
+id = "DK-002"
+category = "Docker"
+risk = "Warn"
+pattern = 'docker\s+volume\s+prune'
+description = "docker volume prune — removes all unused Docker volumes including any persistent data they hold"
+safe_alt = "List volumes first: 'docker volume ls' and back up data before pruning"
+
+[[patterns]]
+id = "DK-003"
+category = "Docker"
+risk = "Warn"
+pattern = 'docker(-compose|compose)\s+down\s+.*-v'
+description = "docker-compose down -v — stops services and removes named volumes, deleting persistent data"
+safe_alt = "Omit '-v' to keep volumes: 'docker-compose down' preserves volume data"
+
+[[patterns]]
+id = "DK-004"
+category = "Docker"
+risk = "Warn"
+pattern = 'docker\s+rmi\s+'
+description = "docker rmi — removes Docker images; rebuild time is lost if image is deleted unintentionally"
+safe_alt = "Tag images you want to keep before running bulk rmi commands"
+
+[[patterns]]
+id = "DK-005"
+category = "Docker"
+risk = "Warn"
+pattern = 'docker\s+container\s+prune'
+description = "docker container prune — removes all stopped containers, including those with useful logs or data"
+safe_alt = "Inspect stopped containers first: 'docker ps -a' before pruning"
+
+[[patterns]]
+id = "DK-006"
+category = "Docker"
+risk = "Warn"
+pattern = 'docker\s+network\s+prune'
+description = "docker network prune — removes all unused Docker networks; can break containers that reconnect"
+safe_alt = "List networks in use: 'docker network ls' before pruning"
+
+# ─── Process ─────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "PS-001"
+category = "Process"
+risk = "Block"
+pattern = 'kill\s+(-9\s+1|-KILL\s+1|-SIGKILL\s+1)\b'
+description = "kill -9 1 — sends SIGKILL to PID 1 (init/systemd), immediately crashing the entire system"
+safe_alt = "Use 'systemctl stop <service>' to stop individual services safely"
+
+[[patterns]]
+id = "PS-002"
+category = "Process"
+risk = "Warn"
+pattern = 'pkill\s+.*-9'
+description = "pkill -9 — sends SIGKILL to all matching processes with no chance for cleanup or graceful shutdown"
+safe_alt = "Use 'pkill -15' (SIGTERM) first to allow graceful shutdown before escalating"
+
+[[patterns]]
+id = "PS-003"
+category = "Process"
+risk = "Warn"
+pattern = 'killall\s+'
+description = "killall — kills all processes with a given name; can inadvertently terminate critical daemons"
+safe_alt = "Use 'kill <specific-pid>' after 'pgrep <name>' to target only the intended process"
+
+[[patterns]]
+id = "PS-004"
+category = "Process"
+risk = "Block"
+pattern = ':\(\)\{.*:\|:.*\}'
+description = "Fork bomb — exhausts process table by spawning processes recursively, causing system DoS"
+safe_alt = "There is no safe version of a fork bomb; this command must not be run"
+
+[[patterns]]
+id = "PS-005"
+category = "Process"
+risk = "Danger"
+pattern = 'chmod\s+(-R\s+)?777\s+/'
+description = "chmod 777 / — makes the root filesystem world-writable, creating a severe security vulnerability"
+safe_alt = "Apply permissions only to the specific directory that needs them"
+
+[[patterns]]
+id = "PS-006"
+category = "Process"
+risk = "Block"
+pattern = '(sudo\s+)?rm\s+(-rf|-fr)\s+/(\s|$)'
+description = "rm -rf / — deletes the entire root filesystem; unrecoverable system destruction"
+safe_alt = "There is no safe alternative; this command must not be run"
+
+[[patterns]]
+id = "PS-007"
+category = "Process"
+risk = "Block"
+pattern = '(sudo\s+)?umount\s+(-f\s+)?/(\s|$)'
+description = "umount / — unmounts the root filesystem, causing an immediate system crash"
+safe_alt = "Use 'umount <specific-mountpoint>' to unmount only the intended filesystem"
+
+# ─── Package ─────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "PKG-001"
+category = "Package"
+risk = "Danger"
+pattern = 'curl\s+.+\|\s*(ba)?sh'
+description = "curl | sh/bash — downloads and executes a remote script without any integrity verification"
+safe_alt = "Download first: 'curl -o install.sh <url>' then inspect and run 'bash install.sh'"
+
+[[patterns]]
+id = "PKG-002"
+category = "Package"
+risk = "Danger"
+pattern = 'wget\s+.+\|\s*(ba)?sh'
+description = "wget | sh/bash — downloads and executes a remote script without any integrity verification"
+safe_alt = "Download first: 'wget -O install.sh <url>' then inspect and run 'bash install.sh'"
+
+[[patterns]]
+id = "PKG-003"
+category = "Package"
+risk = "Danger"
+pattern = 'bash\s+<\(\s*curl'
+description = "bash <(curl ...) — process substitution that downloads and executes a remote script"
+safe_alt = "Download the script first, review its content, then execute if trusted"
+
+[[patterns]]
+id = "PKG-004"
+category = "Package"
+risk = "Danger"
+pattern = 'eval\s+.*\$\(\s*(curl|wget)'
+description = "eval $(curl/wget ...) — evaluates the output of a remote download as shell code"
+safe_alt = "Never eval untrusted remote content; download, inspect, then run explicitly"
+
+[[patterns]]
+id = "PKG-005"
+category = "Package"
+risk = "Warn"
+pattern = 'pip\s+install\s+.*--trusted-host'
+description = "pip install --trusted-host — disables SSL verification for the specified host"
+safe_alt = "Fix the SSL/TLS issue instead of bypassing verification; use a proper certificate"

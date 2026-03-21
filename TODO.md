@@ -150,15 +150,15 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 - [x] Implement human-readable `Display` messages for each `AegisError` variant
 - [x] Write 3 unit tests verifying `PartialOrd` ordering
 
-### T3.2 — `Pattern` struct and TOML loading
+### T3.2 — `Pattern` struct and TOML loading ✅
 
-- [ ] Define `struct Pattern` with fields: `id`, `category`, `risk`, `pattern`, `description`, `safe_alt`
-- [ ] Use `Cow<'static, str>` for all string fields (supports both built-in and user-defined patterns)
-- [ ] Define `enum Category { Filesystem, Git, Database, Cloud, Docker, Process, Package }`
-- [ ] Implement `#[derive(Deserialize)]` on `Pattern` and `Category` for TOML loading
-- [ ] Create `config/patterns.toml` with 50+ patterns across all 7 categories
-- [ ] Implement `PatternSet::load() -> Result<PatternSet>`
-- [ ] Test: load `patterns.toml`, verify all fields parsed without errors
+- [x] Define `struct Pattern` with fields: `id`, `category`, `risk`, `pattern`, `description`, `safe_alt`
+- [x] Use `Cow<'static, str>` for all string fields (supports both built-in and user-defined patterns)
+- [x] Define `enum Category { Filesystem, Git, Database, Cloud, Docker, Process, Package }`
+- [x] Implement `#[derive(Deserialize)]` on `Pattern` and `Category` for TOML loading
+- [x] Create `config/patterns.toml` with 50+ patterns across all 7 categories
+- [x] Implement `PatternSet::load() -> Result<PatternSet>`
+- [x] Test: load `patterns.toml`, verify all fields parsed without errors
 
 ### T3.3 — Aho-Corasick first pass (fast path)
 
