@@ -21,11 +21,15 @@ impl SnapshotPlugin for GitPlugin {
 
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
         // Implemented in T4.2
-        Err(AegisError::Snapshot("git snapshot not yet implemented".to_string()))
+        Err(AegisError::Snapshot(
+            "git snapshot not yet implemented".to_string(),
+        ))
     }
 
     async fn rollback(&self, _snapshot_id: &str) -> Result<()> {
         // Implemented in T4.2
-        Err(AegisError::Snapshot("git rollback not yet implemented".to_string()))
+        Err(AegisError::Snapshot(
+            "git rollback not yet implemented".to_string(),
+        ))
     }
 }

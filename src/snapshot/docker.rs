@@ -22,11 +22,15 @@ impl SnapshotPlugin for DockerPlugin {
 
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
         // Implemented in T4.3
-        Err(AegisError::Snapshot("docker snapshot not yet implemented".to_string()))
+        Err(AegisError::Snapshot(
+            "docker snapshot not yet implemented".to_string(),
+        ))
     }
 
     async fn rollback(&self, _snapshot_id: &str) -> Result<()> {
         // Implemented in T4.3
-        Err(AegisError::Snapshot("docker rollback not yet implemented".to_string()))
+        Err(AegisError::Snapshot(
+            "docker rollback not yet implemented".to_string(),
+        ))
     }
 }
