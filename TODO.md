@@ -288,13 +288,13 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T5.3 — Shell wrapper mode
 
-- [ ] Implement `aegis -c <cmd>` — the main interception mode, invoked as `$SHELL`
-- [ ] Correctly forward the original command's exit code to the calling process
-- [ ] Correctly forward `stdout` and `stderr` of the original command byte-for-byte
-- [ ] Forward all environment variables and current working directory unchanged
-- [ ] Test: `aegis -c 'echo hello'` → prints `hello`, exits `0`
-- [ ] Test: `aegis -c 'exit 42'` → exits with code `42`
-- [ ] Test: `aegis -c 'ls /nonexistent'` → forwards stderr, exits `2`
+- [x] Implement `aegis -c <cmd>` — the main interception mode, invoked as `$SHELL`
+- [x] Correctly forward the original command's exit code to the calling process
+- [x] Correctly forward `stdout` and `stderr` of the original command byte-for-byte
+- [x] Forward all environment variables and current working directory unchanged
+- [x] Test: `aegis -c 'echo hello'` → prints `hello`, exits `0`
+- [x] Test: `aegis -c 'exit 42'` → exits with code `42`
+- [x] Test: `aegis -c 'ls /nonexistent'` → forwards stderr, exits `2`
 
 ### T5.4 — `install.sh` and setup documentation
 

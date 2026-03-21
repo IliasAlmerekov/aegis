@@ -20,6 +20,12 @@ fn base_command(home: &Path) -> Command {
     command
 }
 
+fn direct_shell_command(home: &Path) -> Command {
+    let mut command = Command::new("/bin/sh");
+    command.env("HOME", home);
+    command
+}
+
 fn read_audit_entries(home: &Path) -> Vec<Value> {
     let path = home.join(".aegis").join("audit.jsonl");
     let contents = fs::read_to_string(path).unwrap();
@@ -92,6 +98,41 @@ fn safe_command_passthroughs_stdout_and_exit_code() {
 
     assert!(output.status.success());
     assert_eq!(output.stdout, b"hello");
+    assert!(output.stderr.is_empty());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Safe");
+}
+
+#[test]
+fn shell_wrapper_echo_hello_prints_expected_output_and_exit_code() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"hello\n");
+    assert!(output.stderr.is_empty());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Safe");
+}
+
+#[test]
+fn shell_wrapper_exit_42_preserves_exit_status() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path()).args(["-c", "exit 42"]).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(42));
+    assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 
     let entries = read_audit_entries(home.path());
@@ -194,6 +235,61 @@ fn safe_command_passthroughs_stderr_and_exit_code() {
     assert_eq!(output.status.code(), Some(42));
     assert!(output.stdout.is_empty());
     assert_eq!(output.stderr, b"boom");
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Safe");
+}
+
+#[test]
+fn shell_wrapper_ls_nonexistent_matches_real_shell_passthrough() {
+    let home = TempDir::new().unwrap();
+    let command = "ls /nonexistent";
+
+    let aegis_output = base_command(home.path()).args(["-c", command]).output().unwrap();
+    let shell_output = direct_shell_command(home.path())
+        .args(["-c", command])
+        .output()
+        .unwrap();
+
+    assert_eq!(aegis_output.status.code(), shell_output.status.code());
+    assert_eq!(aegis_output.stdout, shell_output.stdout);
+    assert_eq!(aegis_output.stderr, shell_output.stderr);
+
+    #[cfg(target_os = "linux")]
+    assert_eq!(aegis_output.status.code(), Some(2));
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Safe");
+}
+
+#[test]
+fn shell_wrapper_preserves_environment_and_working_directory() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let command = "pwd; printf '%s' \"$AEGIS_TEST_VALUE\"";
+
+    let aegis_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_TEST_VALUE", "kept")
+        .args(["-c", command])
+        .output()
+        .unwrap();
+
+    let shell_output = direct_shell_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_TEST_VALUE", "kept")
+        .args(["-c", command])
+        .output()
+        .unwrap();
+
+    assert_eq!(aegis_output.status.code(), Some(0));
+    assert_eq!(aegis_output.status.code(), shell_output.status.code());
+    assert_eq!(aegis_output.stdout, shell_output.stdout);
+    assert_eq!(aegis_output.stderr, shell_output.stderr);
 
     let entries = read_audit_entries(home.path());
     assert_eq!(entries.len(), 1);
