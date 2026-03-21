@@ -239,11 +239,11 @@ fn build_highlighted_command(cmd: &str, patterns: &[Arc<Pattern>]) -> String {
     ranges.sort_unstable_by_key(|r| r.0);
     let mut merged: Vec<(usize, usize)> = Vec::new();
     for (start, end) in ranges {
-        if let Some(last) = merged.last_mut() {
-            if start <= last.1 {
-                last.1 = last.1.max(end);
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+            continue;
         }
         merged.push((start, end));
     }
