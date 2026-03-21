@@ -45,7 +45,7 @@ pub struct SnapshotRegistry {
 impl Default for SnapshotRegistry {
     fn default() -> Self {
         Self {
-            plugins: vec![Box::new(GitPlugin), Box::new(DockerPlugin)],
+            plugins: vec![Box::new(GitPlugin), Box::new(DockerPlugin::new())],
         }
     }
 }
