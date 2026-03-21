@@ -33,25 +33,25 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
-        run: rtk cargo fmt --check
+        run: cargo fmt --check
 
       - name: cargo clippy
-        run: rtk cargo clippy -- -D warnings
+        run: cargo clippy -- -D warnings
 
       - name: cargo test
-        run: rtk cargo test
+        run: cargo test
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
       - name: cargo audit
-        run: rtk cargo audit
+        run: cargo audit
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
       - name: cargo deny check
-        run: rtk cargo deny check
+        run: cargo deny check
 
   build:
     name: Release build (${{ matrix.os }})
@@ -76,4 +76,4 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-release-
 
       - name: cargo build --release
-        run: rtk cargo build --release
+        run: cargo build --release
