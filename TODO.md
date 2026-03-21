@@ -176,13 +176,13 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 - [x] Implement `Scanner::assess(cmd: &str) -> Assessment` (quick → full pipeline)
 - [x] Write 70 test cases, each asserting the expected `RiskLevel`
 
-### T3.5 — Criterion benchmarks
+### T3.5 — Criterion benchmarks ✅
 
-- [ ] Create `benches/scanner_bench.rs`
-- [ ] Benchmark: 1,000 safe commands (target: > 500k ops/sec)
-- [ ] Benchmark: 100 dangerous commands with full regex scan
-- [ ] Benchmark: worst-case heredoc command (long inline Python script)
-- [ ] Run `cargo bench` — confirm p99 latency < 3ms
+- [x] Create `benches/scanner_bench.rs`
+- [x] Benchmark: 1,000 safe commands (target: > 500k ops/sec)
+- [x] Benchmark: 100 dangerous commands with full regex scan
+- [x] Benchmark: worst-case heredoc command (long inline Python script)
+- [x] Run `cargo bench` — confirm p99 latency < 3ms
 
 ---
 

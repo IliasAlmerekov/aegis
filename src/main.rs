@@ -1,10 +1,4 @@
-mod audit;
-mod config;
-mod error;
-mod interceptor;
-mod snapshot;
-mod ui;
-
+use aegis::interceptor;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
