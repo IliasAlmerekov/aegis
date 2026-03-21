@@ -1,5 +1,7 @@
+use aegis::audit::AuditLogger;
 use aegis::interceptor;
-use clap::{Parser, Subcommand};
+use aegis::interceptor::RiskLevel;
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -25,9 +27,20 @@ enum Commands {
     /// Watch and intercept shell commands
     Watch,
     /// View the audit log
-    Audit,
+    Audit(AuditArgs),
     /// Manage aegis configuration
     Config,
+}
+
+#[derive(Args)]
+struct AuditArgs {
+    /// Show only the last N audit entries.
+    #[arg(long)]
+    last: Option<usize>,
+
+    /// Filter entries by risk level: safe, warn, danger, block.
+    #[arg(long, value_parser = parse_risk_level)]
+    risk: Option<RiskLevel>,
 }
 
 fn main() {
@@ -41,8 +54,17 @@ fn main() {
         Some(Commands::Watch) => {
             println!("watch: not yet implemented");
         }
-        Some(Commands::Audit) => {
-            println!("audit: not yet implemented");
+        Some(Commands::Audit(args)) => {
+            let logger = AuditLogger::default();
+            match logger.query(args.last, args.risk) {
+                Ok(entries) => {
+                    print!("{}", AuditLogger::format_entries(&entries));
+                }
+                Err(err) => {
+                    eprintln!("error: failed to read audit log: {err}");
+                    std::process::exit(1);
+                }
+            }
         }
         Some(Commands::Config) => {
             println!("config: not yet implemented");
@@ -79,4 +101,8 @@ fn main() {
             }
         }
     }
+}
+
+fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
+    value.parse()
 }

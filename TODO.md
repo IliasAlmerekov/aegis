@@ -236,13 +236,13 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T4.5 — Audit logger
 
-- [ ] Define `struct AuditEntry { timestamp, command, risk, matched_patterns, decision, snapshots }`
-- [ ] Define `enum Decision { Approved, Denied, AutoApproved, Blocked }`
-- [ ] Implement `AuditLogger::append(entry: AuditEntry) -> Result<()>`
-- [ ] Write to `~/.aegis/audit.jsonl` (append-only, one JSON object per line)
-- [ ] Implement `aegis audit --last N` — display last N entries formatted
-- [ ] Implement `aegis audit --risk <level>` — filter entries by risk level
-- [ ] Test: write 5 entries, read back, compare field-by-field
+- [x] Define `struct AuditEntry { timestamp, command, risk, matched_patterns, decision, snapshots }`
+- [x] Define `enum Decision { Approved, Denied, AutoApproved, Blocked }`
+- [x] Implement `AuditLogger::append(entry: AuditEntry) -> Result<()>`
+- [x] Write to `~/.aegis/audit.jsonl` (append-only, one JSON object per line)
+- [x] Implement `aegis audit --last N` — display last N entries formatted
+- [x] Implement `aegis audit --risk <level>` — filter entries by risk level
+- [x] Test: write 5 entries, read back, compare field-by-field
 
 ### T4.6 — Full pipeline integration
 

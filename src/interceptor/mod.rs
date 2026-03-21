@@ -2,9 +2,11 @@ pub mod parser;
 pub mod patterns;
 pub mod scanner;
 
+use std::fmt;
+use std::str::FromStr;
 use std::sync::LazyLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AegisError;
 
@@ -21,12 +23,41 @@ static SCANNER: LazyLock<Result<scanner::Scanner, String>> = LazyLock::new(|| {
 /// `#[non_exhaustive]` ensures match arms in external crates require a wildcard,
 /// preserving forward-compatibility if new levels are added in v2.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub enum RiskLevel {
     Safe,
     Warn,
     Danger,
     Block,
+}
+
+impl fmt::Display for RiskLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            RiskLevel::Safe => "safe",
+            RiskLevel::Warn => "warn",
+            RiskLevel::Danger => "danger",
+            RiskLevel::Block => "block",
+        };
+
+        f.write_str(value)
+    }
+}
+
+impl FromStr for RiskLevel {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "safe" => Ok(RiskLevel::Safe),
+            "warn" => Ok(RiskLevel::Warn),
+            "danger" => Ok(RiskLevel::Danger),
+            "block" => Ok(RiskLevel::Block),
+            other => Err(format!(
+                "invalid risk level '{other}', expected one of: safe, warn, danger, block"
+            )),
+        }
+    }
 }
 
 /// Assess a command with the loaded interceptor rules.
