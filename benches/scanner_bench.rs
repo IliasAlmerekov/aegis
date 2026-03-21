@@ -1,5 +1,5 @@
 use aegis::interceptor::{patterns::PatternSet, scanner::Scanner};
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 fn make_scanner() -> Scanner {
     let patterns = PatternSet::load().expect("patterns.toml must load");
@@ -130,9 +130,7 @@ fn bench_heredoc_worst_case(c: &mut Criterion) {
     let setup_lines: String = (0..200)
         .map(|i| format!("x{i} = {i} * 2; y{i} = x{i} + {i}\n"))
         .collect();
-    let script_body = format!(
-        "{setup_lines}import os\nos.system('rm -rf /tmp/aegis_test')\n"
-    );
+    let script_body = format!("{setup_lines}import os\nos.system('rm -rf /tmp/aegis_test')\n");
     let cmd = format!("python3 -c \"{script_body}\"");
 
     c.bench_function("heredoc_worst_case", |b| {
