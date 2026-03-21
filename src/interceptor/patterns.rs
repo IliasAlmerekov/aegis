@@ -3,13 +3,13 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
 
 /// Which class of operation the pattern guards against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum Category {
     Filesystem,

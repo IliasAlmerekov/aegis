@@ -270,13 +270,13 @@ On interception of a Danger command: snapshot is created, dialog is shown, user 
 
 ### T5.1 — `AegisConfig` and `aegis.toml`
 
-- [ ] Define `struct AegisConfig { mode, custom_patterns, allowlist, auto_snapshot_git, auto_snapshot_docker }`
-- [ ] Define `enum Mode { Protect, Audit, Strict }` (`Audit` = log only, no blocking)
-- [ ] Implement `Config::load()` — searches `.aegis.toml` → `~/.config/aegis/config.toml` → defaults
-- [ ] Implement `Config::defaults()` for fully functional operation without any config file
-- [ ] Implement `aegis config init` — generates `.aegis.toml` with inline comments explaining each field
-- [ ] Implement `aegis config show` — prints the currently active config in TOML format
-- [ ] Test: load a minimal config and a full config without errors
+- [x] Define `struct AegisConfig { mode, custom_patterns, allowlist, auto_snapshot_git, auto_snapshot_docker }`
+- [x] Define `enum Mode { Protect, Audit, Strict }` (`Audit` = log only, no blocking)
+- [x] Implement `Config::load()` — searches `.aegis.toml` → `~/.config/aegis/config.toml` → defaults
+- [x] Implement `Config::defaults()` for fully functional operation without any config file
+- [x] Implement `aegis config init` — generates `.aegis.toml` with inline comments explaining each field
+- [x] Implement `aegis config show` — prints the currently active config in TOML format
+- [x] Test: load a minimal config and a full config without errors
 
 ### T5.2 — Allowlist support
 

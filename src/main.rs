@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
+use aegis::config::Config;
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::parser::Parser as CommandParser;
@@ -37,7 +38,7 @@ enum Commands {
     /// View the audit log
     Audit(AuditArgs),
     /// Manage aegis configuration
-    Config,
+    Config(ConfigArgs),
 }
 
 #[derive(Args)]
@@ -51,6 +52,20 @@ struct AuditArgs {
     risk: Option<RiskLevel>,
 }
 
+#[derive(Args)]
+struct ConfigArgs {
+    #[command(subcommand)]
+    command: ConfigCommand,
+}
+
+#[derive(Subcommand)]
+enum ConfigCommand {
+    /// Create a project-local .aegis.toml in the current directory
+    Init,
+    /// Print the active config after applying search order and defaults
+    Show,
+}
+
 fn main() {
     let Cli {
         command,
@@ -58,31 +73,35 @@ fn main() {
         subcommand,
     } = Cli::parse();
 
-    match subcommand {
+    let exit_code = match subcommand {
         Some(Commands::Watch) => {
             println!("watch: not yet implemented");
+            0
         }
         Some(Commands::Audit(args)) => {
             let logger = AuditLogger::default();
             match logger.query(args.last, args.risk) {
                 Ok(entries) => {
                     print!("{}", AuditLogger::format_entries(&entries));
+                    0
                 }
                 Err(err) => {
                     eprintln!("error: failed to read audit log: {err}");
-                    std::process::exit(1);
+                    1
                 }
             }
         }
-        Some(Commands::Config) => {
-            println!("config: not yet implemented");
-        }
+        Some(Commands::Config(args)) => handle_config_command(args),
         None => {
             if let Some(cmd) = command {
-                process::exit(run_shell_wrapper(&cmd, verbose));
+                run_shell_wrapper(&cmd, verbose)
+            } else {
+                0
             }
         }
-    }
+    };
+
+    process::exit(exit_code);
 }
 
 fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
@@ -104,6 +123,37 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     match decision {
         Decision::Approved | Decision::AutoApproved => exec_command(cmd, verbose),
         Decision::Denied | Decision::Blocked => 1,
+    }
+}
+
+fn handle_config_command(args: ConfigArgs) -> i32 {
+    match args.command {
+        ConfigCommand::Init => match env::current_dir() {
+            Ok(current_dir) => match Config::init_in(&current_dir) {
+                Ok(path) => {
+                    println!("{}", path.display());
+                    0
+                }
+                Err(err) => {
+                    eprintln!("error: failed to initialize config: {err}");
+                    1
+                }
+            },
+            Err(err) => {
+                eprintln!("error: failed to resolve current directory: {err}");
+                1
+            }
+        },
+        ConfigCommand::Show => match Config::load().and_then(|config| config.to_toml_string()) {
+            Ok(toml) => {
+                print!("{toml}");
+                0
+            }
+            Err(err) => {
+                eprintln!("error: failed to load config: {err}");
+                1
+            }
+        },
     }
 }
 
