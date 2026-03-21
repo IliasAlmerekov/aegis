@@ -29,6 +29,7 @@ codegen-units = 1
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[bench]]
 name = "scanner_bench"

@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+echo "pre-push: running cargo fmt --check"
+cargo fmt --check
+
+echo "pre-push: running cargo clippy -- -D warnings"
+cargo clippy -- -D warnings
+
+echo "pre-push: running cargo test"
+cargo test
+
+if cargo audit --help >/dev/null 2>&1; then
+    echo "pre-push: running cargo audit"
+    cargo audit
+else
+    echo "pre-push: skipping cargo audit (cargo-audit is not installed)"
+fi
+
+if cargo deny --help >/dev/null 2>&1; then
+    echo "pre-push: running cargo deny check"
+    cargo deny check
+else
+    echo "pre-push: skipping cargo deny check (cargo-deny is not installed)"
+fi
