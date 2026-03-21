@@ -27,34 +27,34 @@ pub enum Category {
 /// User-defined patterns loaded from TOML use `Cow::Owned(String)`.
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    pub id:          Cow<'static, str>,
-    pub category:    Category,
-    pub risk:        RiskLevel,
-    pub pattern:     Cow<'static, str>,
+    pub id: Cow<'static, str>,
+    pub category: Category,
+    pub risk: RiskLevel,
+    pub pattern: Cow<'static, str>,
     pub description: Cow<'static, str>,
-    pub safe_alt:    Option<Cow<'static, str>>,
+    pub safe_alt: Option<Cow<'static, str>>,
 }
 
 /// Internal helper: TOML-deserializable representation before conversion to [`Pattern`].
 #[derive(Debug, Deserialize)]
 struct RawPattern {
-    id:          String,
-    category:    Category,
-    risk:        RiskLevel,
-    pattern:     String,
+    id: String,
+    category: Category,
+    risk: RiskLevel,
+    pattern: String,
     description: String,
-    safe_alt:    Option<String>,
+    safe_alt: Option<String>,
 }
 
 impl From<RawPattern> for Pattern {
     fn from(raw: RawPattern) -> Self {
         Pattern {
-            id:          Cow::Owned(raw.id),
-            category:    raw.category,
-            risk:        raw.risk,
-            pattern:     Cow::Owned(raw.pattern),
+            id: Cow::Owned(raw.id),
+            category: raw.category,
+            risk: raw.risk,
+            pattern: Cow::Owned(raw.pattern),
             description: Cow::Owned(raw.description),
-            safe_alt:    raw.safe_alt.map(Cow::Owned),
+            safe_alt: raw.safe_alt.map(Cow::Owned),
         }
     }
 }

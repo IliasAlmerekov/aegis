@@ -23,9 +23,11 @@ confidence-threshold = 0.8
 [bans]
 # Lint level for when multiple versions of the same crate are detected
 multiple-versions = "warn"
-# Banned crates — once_cell is superseded by std::sync::LazyLock (stable since Rust 1.80)
+# Banned crates — once_cell is superseded by std::sync::LazyLock (stable since Rust 1.80).
+# Keep the ban in place for workspace code while allowing the current third-party
+# crates that still depend on it directly.
 deny = [
-    { name = "once_cell", reason = "superseded by std::sync::LazyLock (stable since Rust 1.80)" },
+    { name = "once_cell", wrappers = ["criterion", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "superseded by std::sync::LazyLock (stable since Rust 1.80); only allowed through audited third-party wrappers until the ecosystem catches up" },
 ]
 
 [sources]

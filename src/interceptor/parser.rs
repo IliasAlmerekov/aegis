@@ -726,8 +726,7 @@ mod tests {
     // 31. python -c "..." — inline Python script extracted
     #[test]
     fn inline_script_python() {
-        let scripts =
-            extract_inline_scripts(r#"python3 -c "import os; os.system('cmd')""#);
+        let scripts = extract_inline_scripts(r#"python3 -c "import os; os.system('cmd')""#);
         assert_eq!(scripts.len(), 1);
         assert_eq!(scripts[0].interpreter, "python3");
         assert_eq!(scripts[0].body, "import os; os.system('cmd')");

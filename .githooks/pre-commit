@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+echo "pre-commit: running cargo fmt --check"
+cargo fmt --check
