@@ -218,6 +218,192 @@ fn unescape_ansi_c(s: &str) -> String {
     result
 }
 
+// ── T2.3: Heredoc and inline script scanning ─────────────────────────────────
+
+/// A heredoc (or nowdoc) body extracted from a multi-line command string.
+#[derive(Debug, PartialEq)]
+pub struct HeredocBody {
+    /// The delimiter word (e.g., `EOF`, `SCRIPT`).
+    pub delimiter: String,
+    /// The lines of text between the opening marker and the closing delimiter.
+    pub body: String,
+    /// `true` when the delimiter was quoted (`<<'EOF'`), indicating nowdoc semantics
+    /// (no variable substitution in the original shell).
+    pub is_nowdoc: bool,
+}
+
+/// An inline script body extracted from an interpreter invocation.
+#[derive(Debug, PartialEq)]
+pub struct InlineScript {
+    /// The interpreter name (e.g., `python3`, `node`, `ruby`).
+    pub interpreter: String,
+    /// The script body passed via `-c` or `-e`.
+    pub body: String,
+}
+
+// Private helper — result of scanning a single line for a heredoc operator.
+struct HeredocMarker {
+    delimiter: String,
+    is_nowdoc: bool,
+    strip_tabs: bool,
+}
+
+/// Scan one line for a heredoc operator (`<<`) and return the parsed marker.
+///
+/// Recognises:
+/// - `<<WORD`          — regular heredoc
+/// - `<<'WORD'`        — nowdoc (single-quoted delimiter)
+/// - `<<-WORD`         — heredoc with leading-tab stripping
+/// - `<<-'WORD'`       — nowdoc with leading-tab stripping
+fn find_heredoc_marker(line: &str) -> Option<HeredocMarker> {
+    let start = line.find("<<")?;
+    let rest = &line[start + 2..];
+
+    // Optional `-` enables tab-stripping.
+    let (strip_tabs, rest) = if let Some(stripped) = rest.strip_prefix('-') {
+        (true, stripped)
+    } else {
+        (false, rest)
+    };
+
+    let rest = rest.trim_start();
+
+    // Nowdoc: <<'WORD'
+    if let Some(inner) = rest.strip_prefix('\'') {
+        let close = inner.find('\'')?;
+        let delim = &inner[..close];
+        if delim.is_empty() {
+            return None;
+        }
+        return Some(HeredocMarker {
+            delimiter: delim.to_string(),
+            is_nowdoc: true,
+            strip_tabs,
+        });
+    }
+
+    // Regular heredoc: <<WORD  (alphanumeric + underscore)
+    let word: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+
+    if word.is_empty() {
+        None
+    } else {
+        Some(HeredocMarker {
+            delimiter: word,
+            is_nowdoc: false,
+            strip_tabs,
+        })
+    }
+}
+
+/// Extract all heredoc (and nowdoc) bodies from a multi-line command string.
+///
+/// Each call to this function scans `cmd` line by line, looking for `<<WORD`
+/// or `<<'WORD'` markers. When found, it collects every subsequent line until
+/// the closing delimiter appears on its own line (with leading tabs stripped
+/// when `<<-` was used).
+///
+/// # Examples
+///
+/// ```text
+/// cmd <<EOF
+/// rm -rf /
+/// EOF
+/// ```
+/// → `[HeredocBody { delimiter: "EOF", body: "rm -rf /", is_nowdoc: false }]`
+pub fn extract_heredoc_bodies(cmd: &str) -> Vec<HeredocBody> {
+    let mut bodies = Vec::new();
+    let lines: Vec<&str> = cmd.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        if let Some(marker) = find_heredoc_marker(lines[i]) {
+            i += 1;
+            let mut body_lines: Vec<&str> = Vec::new();
+
+            while i < lines.len() {
+                let candidate = if marker.strip_tabs {
+                    lines[i].trim_start_matches('\t')
+                } else {
+                    lines[i]
+                };
+                if candidate == marker.delimiter {
+                    break;
+                }
+                body_lines.push(lines[i]);
+                i += 1;
+            }
+
+            bodies.push(HeredocBody {
+                delimiter: marker.delimiter,
+                body: body_lines.join("\n"),
+                is_nowdoc: marker.is_nowdoc,
+            });
+        }
+        i += 1;
+    }
+
+    bodies
+}
+
+/// Extract all inline scripts from interpreter invocations in `cmd`.
+///
+/// Recognises the following patterns (the script flag immediately precedes
+/// the script body as the next shell token):
+///
+/// | Interpreter       | Flag |
+/// |-------------------|------|
+/// | `python` / `python3` | `-c` |
+/// | `node` / `nodejs` | `-e` |
+/// | `ruby`            | `-e` |
+/// | `perl`            | `-e` |
+///
+/// # Examples
+///
+/// ```text
+/// python3 -c "import os; os.system('rm -rf /')"
+/// ```
+/// → `[InlineScript { interpreter: "python3", body: "import os; os.system('rm -rf /')" }]`
+pub fn extract_inline_scripts(cmd: &str) -> Vec<InlineScript> {
+    // (interpreter name, script flag)
+    const INTERPRETERS: &[(&str, &str)] = &[
+        ("python", "-c"),
+        ("python3", "-c"),
+        ("node", "-e"),
+        ("nodejs", "-e"),
+        ("ruby", "-e"),
+        ("perl", "-e"),
+    ];
+
+    let mut scripts = Vec::new();
+    let tokens = split_tokens(cmd);
+    let mut i = 0;
+
+    while i < tokens.len() {
+        for &(interp, flag) in INTERPRETERS {
+            if tokens[i] == interp {
+                // Search for the flag in the remaining tokens.
+                if let Some(rel) = tokens[i..].iter().position(|t| t == flag) {
+                    let body_idx = i + rel + 1;
+                    if let Some(body) = tokens.get(body_idx) {
+                        scripts.push(InlineScript {
+                            interpreter: interp.to_string(),
+                            body: body.clone(),
+                        });
+                    }
+                }
+                break;
+            }
+        }
+        i += 1;
+    }
+
+    scripts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +602,84 @@ mod tests {
             extract_nested_commands(r#"bash -c "cmd1 || cmd2""#),
             vec!["cmd1", "cmd2"]
         );
+    }
+
+    // ── T2.3: heredoc and inline script tests ────────────────────────────────
+
+    // 26. Basic heredoc — body between <<EOF and EOF is extracted
+    #[test]
+    fn heredoc_basic_body() {
+        let cmd = "cat <<EOF\nrm -rf /\nEOF";
+        let bodies = extract_heredoc_bodies(cmd);
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0].delimiter, "EOF");
+        assert_eq!(bodies[0].body, "rm -rf /");
+        assert!(!bodies[0].is_nowdoc);
+    }
+
+    // 27. Nowdoc — <<'EOF' is flagged as nowdoc, body is still extracted
+    #[test]
+    fn heredoc_nowdoc_flag() {
+        let cmd = "cat <<'EOF'\nsome secret\nEOF";
+        let bodies = extract_heredoc_bodies(cmd);
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0].body, "some secret");
+        assert!(bodies[0].is_nowdoc);
+    }
+
+    // 28. Multi-line heredoc body — all lines joined with newline
+    #[test]
+    fn heredoc_multiline_body() {
+        let cmd = "bash <<SCRIPT\necho hello\nrm -rf /tmp/foo\nSCRIPT";
+        let bodies = extract_heredoc_bodies(cmd);
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0].body, "echo hello\nrm -rf /tmp/foo");
+    }
+
+    // 29. Heredoc with tab-stripping (<<-) — leading tabs removed from delimiter line
+    #[test]
+    fn heredoc_strip_tabs_delimiter() {
+        // The closing delimiter has a leading tab that should be stripped.
+        let cmd = "cat <<-EOF\n\trm -rf /\n\tEOF";
+        let bodies = extract_heredoc_bodies(cmd);
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0].delimiter, "EOF");
+        // Body line is kept as-is (only the delimiter line is stripped for matching).
+        assert_eq!(bodies[0].body, "\trm -rf /");
+    }
+
+    // 30. No heredoc — empty vec returned
+    #[test]
+    fn heredoc_no_match_returns_empty() {
+        let bodies = extract_heredoc_bodies("echo hello world");
+        assert!(bodies.is_empty());
+    }
+
+    // 31. python -c "..." — inline Python script extracted
+    #[test]
+    fn inline_script_python() {
+        let scripts =
+            extract_inline_scripts(r#"python3 -c "import os; os.system('cmd')""#);
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].interpreter, "python3");
+        assert_eq!(scripts[0].body, "import os; os.system('cmd')");
+    }
+
+    // 32. node -e "..." — inline Node.js script extracted
+    #[test]
+    fn inline_script_node() {
+        let scripts = extract_inline_scripts(r#"node -e "process.exit(1)""#);
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].interpreter, "node");
+        assert_eq!(scripts[0].body, "process.exit(1)");
+    }
+
+    // 33. ruby -e "..." — inline Ruby script extracted
+    #[test]
+    fn inline_script_ruby() {
+        let scripts = extract_inline_scripts(r#"ruby -e "system('rm -rf /')""#);
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].interpreter, "ruby");
+        assert_eq!(scripts[0].body, "system('rm -rf /')");
     }
 }

@@ -8,8 +8,8 @@
 
 | Phase | Name                              | Status         |
 | ----- | --------------------------------- | -------------- |
-| P1    | Foundation                        | ⬜ not started |
-| P2    | Command Parser                    | ⬜ blocked     |
+| P1    | Foundation                        | ✅ done        |
+| P2    | Command Parser                    | 🔄 in progress |
 | P3    | Pattern Engine + Risk Classifier  | ⬜ blocked     |
 | P4    | Snapshot Engine + TUI             | ⬜ blocked     |
 | P5    | Config System + Shell Integration | ⬜ blocked     |
@@ -29,57 +29,57 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 
 ### T1.1 — Repository and Cargo initialization
 
-- [ ] Create GitHub repo: `aegis-dev/aegis` (public, MIT license)
-- [ ] `cargo init --name aegis` — initialize the project
-- [ ] Configure `.gitignore` (`target/`, `.env`, `*.log`)
-- [ ] Add `LICENSE` (MIT) and `README.md` with a one-line description
-- [ ] Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` as stubs
-- [ ] First commit: `chore: init repository`
+- [x] Create GitHub repo: `aegis-dev/aegis` (public, MIT license)
+- [x] `cargo init --name aegis` — initialize the project
+- [x] Configure `.gitignore` (`target/`, `.env`, `*.log`)
+- [x] Add `LICENSE` (MIT) and `README.md` with a one-line description
+- [x] Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` as stubs
+- [x] First commit: `chore: init repository`
 
 ### T1.2 — Cargo.toml — dependencies and build profiles
 
-- [ ] Add `clap 4.5` with `features = ["derive", "env"]`
-- [ ] Add `thiserror 1` and `anyhow 1`
-- [ ] Add `serde 1` with `features = ["derive"]` + `toml 0.8` + `serde_json 1`
-- [ ] Add `tracing 0.1` + `tracing-subscriber 0.3` with `features = ["fmt", "env-filter"]`
-- [ ] Add `async-trait 0.1` (required for `dyn SnapshotPlugin` with async methods)
-- [ ] Add `tokio = { version = "1", features = ["process", "fs", "rt"] }`
-- [ ] Add `crossterm 0.28`
-- [ ] Add `regex 1.11` and `aho-corasick 1.1`
-- [ ] Configure `[profile.release]`: `opt-level = 3`, `lto = "thin"`, `strip = "symbols"`, `codegen-units = 1`
-- [ ] Add `[dev-dependencies]`: `criterion 0.5`, `tempfile 3`
-- [ ] Run `cargo check` — confirm everything compiles
+- [x] Add `clap 4.5` with `features = ["derive", "env"]`
+- [x] Add `thiserror 1` and `anyhow 1`
+- [x] Add `serde 1` with `features = ["derive"]` + `toml 0.8` + `serde_json 1`
+- [x] Add `tracing 0.1` + `tracing-subscriber 0.3` with `features = ["fmt", "env-filter"]`
+- [x] Add `async-trait 0.1` (required for `dyn SnapshotPlugin` with async methods)
+- [x] Add `tokio = { version = "1", features = ["process", "fs", "rt"] }`
+- [x] Add `crossterm 0.28`
+- [x] Add `regex 1.11` and `aho-corasick 1.1`
+- [x] Configure `[profile.release]`: `opt-level = 3`, `lto = "thin"`, `strip = "symbols"`, `codegen-units = 1`
+- [x] Add `[dev-dependencies]`: `criterion 0.5`, `tempfile 3`
+- [x] Run `cargo check` — confirm everything compiles
 
 ### T1.3 — Module structure — empty files
 
-- [ ] Create `src/error.rs` — empty `AegisError` enum with `#[derive(thiserror::Error, Debug)]`
-- [ ] Create `src/interceptor/mod.rs`, `scanner.rs`, `parser.rs`, `patterns.rs`
-- [ ] Create `src/snapshot/mod.rs`, `git.rs`, `docker.rs`
-- [ ] Create `src/ui/confirm.rs`
-- [ ] Create `src/audit/logger.rs`
-- [ ] Create `src/config/model.rs`
-- [ ] Declare all modules in `main.rs` via `mod`
-- [ ] Run `cargo check` — all modules visible to the compiler
+- [x] Create `src/error.rs` — empty `AegisError` enum with `#[derive(thiserror::Error, Debug)]`
+- [x] Create `src/interceptor/mod.rs`, `scanner.rs`, `parser.rs`, `patterns.rs`
+- [x] Create `src/snapshot/mod.rs`, `git.rs`, `docker.rs`
+- [x] Create `src/ui/confirm.rs`
+- [x] Create `src/audit/logger.rs`
+- [x] Create `src/config/model.rs`
+- [x] Declare all modules in `main.rs` via `mod`
+- [x] Run `cargo check` — all modules visible to the compiler
 
 ### T1.4 — Basic CLI entry point
 
-- [ ] Implement `Cli` struct in `main.rs` using clap derive API
-- [ ] Add subcommands: `watch`, `audit`, `config` (empty stubs for now)
-- [ ] Add flag `-c` / `--command` for shell wrapper mode
-- [ ] Add `--version` flag (auto-populated from `Cargo.toml`)
-- [ ] Add `--verbose` / `-v` flag for debug output
-- [ ] Verify: `cargo run -- --version` prints `aegis 0.1.0`
+- [x] Implement `Cli` struct in `main.rs` using clap derive API
+- [x] Add subcommands: `watch`, `audit`, `config` (empty stubs for now)
+- [x] Add flag `-c` / `--command` for shell wrapper mode
+- [x] Add `--version` flag (auto-populated from `Cargo.toml`)
+- [x] Add `--verbose` / `-v` flag for debug output
+- [x] Verify: `cargo run -- --version` prints `aegis 0.1.0`
 
 ### T1.5 — GitHub Actions CI
 
-- [ ] Create `.github/workflows/ci.yml`
-- [ ] Step: `cargo fmt --check`
-- [ ] Step: `cargo clippy -- -D warnings`
-- [ ] Step: `cargo test`
-- [ ] Step: `cargo build --release` for `ubuntu-latest` and `macos-latest`
-- [ ] Step: `cargo audit` (install `cargo-audit` first)
-- [ ] Step: `cargo deny check` (create `deny.toml` with license and advisory rules)
-- [ ] Verify CI is green on first push
+- [x] Create `.github/workflows/ci.yml`
+- [x] Step: `cargo fmt --check`
+- [x] Step: `cargo clippy -- -D warnings`
+- [x] Step: `cargo test`
+- [x] Step: `cargo build --release` for `ubuntu-latest` and `macos-latest`
+- [x] Step: `cargo audit` (install `cargo-audit` first)
+- [x] Step: `cargo deny check` (create `deny.toml` with license and advisory rules)
+- [x] Verify CI is green on first push
 
 ---
 
@@ -93,34 +93,34 @@ Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --
 
 ---
 
-### T2.1 — Basic tokenization
+### T2.1 — Basic tokenization ✅
 
-- [ ] Implement `split_tokens(cmd: &str) -> Vec<String>`
-- [ ] Handle single quotes: `'rm -rf /'` as one token
-- [ ] Handle double quotes: `"rm -rf /"` as one token
-- [ ] Handle backslash escaping: `rm\ -rf\ /`
-- [ ] Handle semicolons and `&&` as command separators
-- [ ] Write 15 unit tests covering edge cases
-- [ ] Run `cargo test interceptor::parser` — all green
+- [x] Implement `split_tokens(cmd: &str) -> Vec<String>`
+- [x] Handle single quotes: `'rm -rf /'` as one token
+- [x] Handle double quotes: `"rm -rf /"` as one token
+- [x] Handle backslash escaping: `rm\ -rf\ /`
+- [x] Handle semicolons and `&&` as command separators
+- [x] Write 15 unit tests covering edge cases
+- [x] Run `cargo test interceptor::parser` — all green
 
-### T2.2 — Unwrap nested `bash -c` commands
+### T2.2 — Unwrap nested `bash -c` commands ✅
 
-- [ ] Detect pattern: `bash -c '...'`, `sh -c '...'`
-- [ ] Recursively extract the nested command string
-- [ ] Handle: `bash -c "cmd1 && cmd2"` → `["cmd1", "cmd2"]`
-- [ ] Handle: `bash -c $'escaped\nnewline'`
-- [ ] Handle: `env VAR=val bash -c '...'` (env prefix before bash)
-- [ ] Write 10 test cases for nested commands
+- [x] Detect pattern: `bash -c '...'`, `sh -c '...'`
+- [x] Recursively extract the nested command string
+- [x] Handle: `bash -c "cmd1 && cmd2"` → `["cmd1", "cmd2"]`
+- [x] Handle: `bash -c $'escaped\nnewline'`
+- [x] Handle: `env VAR=val bash -c '...'` (env prefix before bash)
+- [x] Write 10 test cases for nested commands
 
-### T2.3 — Heredoc and inline script scanning
+### T2.3 — Heredoc and inline script scanning ✅
 
-- [ ] Detect heredoc syntax: `cmd <<EOF ... EOF`
-- [ ] Extract heredoc body as a separate string for scanning
-- [ ] Handle nowdoc: `<<'EOF'` (no variable substitution)
-- [ ] Detect and extract inline Python: `python -c "..."`
-- [ ] Detect and extract inline Node.js: `node -e "..."`
-- [ ] Detect and extract inline Ruby: `ruby -e "..."`
-- [ ] Write 8 test cases for heredoc and inline scripts
+- [x] Detect heredoc syntax: `cmd <<EOF ... EOF`
+- [x] Extract heredoc body as a separate string for scanning
+- [x] Handle nowdoc: `<<'EOF'` (no variable substitution)
+- [x] Detect and extract inline Python: `python -c "..."`
+- [x] Detect and extract inline Node.js: `node -e "..."`
+- [x] Detect and extract inline Ruby: `ruby -e "..."`
+- [x] Write 8 test cases for heredoc and inline scripts
 
 ### T2.4 — `ParsedCommand` struct and public API
 
