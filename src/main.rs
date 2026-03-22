@@ -7,7 +7,7 @@ use aegis::config::{Allowlist, AllowlistMatch, Config};
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::parser::Parser as CommandParser;
-use aegis::interceptor::scanner::Assessment;
+use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::snapshot::{SnapshotRecord, SnapshotRegistry};
 use aegis::ui::confirm::show_confirmation;
 use clap::{Args, Parser, Subcommand};
@@ -113,12 +113,13 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     let allowlist = Allowlist::new(&config.allowlist);
     let assessment = assess_command(cmd, verbose);
 
-    if verbose {
-        log_assessment(&assessment);
-    }
-
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let allowlist_match = allowlist.match_reason(cmd);
+
+    if verbose {
+        log_assessment(&assessment, allowlist_match.as_ref());
+    }
+
     let (decision, snapshots) =
         decide_command(&assessment, &cwd, verbose, allowlist_match.as_ref());
 
@@ -202,23 +203,38 @@ fn assess_command(cmd: &str, verbose: bool) -> Assessment {
     }
 }
 
-fn log_assessment(assessment: &Assessment) {
+fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMatch>) {
+    let source_label = if allowlist_match.is_some() {
+        "allowlist"
+    } else {
+        match assessment.decision_source() {
+            DecisionSource::BuiltinPattern => "built-in pattern",
+            DecisionSource::CustomPattern => "custom pattern",
+            DecisionSource::Fallback => "fallback",
+        }
+    };
+
     eprintln!(
-        "scan: risk={:?}, executable={}, matched={}",
+        "scan: risk={:?}, executable={}, matched={}, source={}",
         assessment.risk,
         assessment.command.executable.as_deref().unwrap_or("<none>"),
-        assessment.matched.len()
+        assessment.matched.len(),
+        source_label,
     );
 
-    for pattern in &assessment.matched {
+    for m in &assessment.matched {
         eprintln!(
-            "match: id={}, category={:?}, risk={:?}, description={}",
-            pattern.id, pattern.category, pattern.risk, pattern.description
+            "match: id={}, category={:?}, risk={:?}, matched={:?}, description={}",
+            m.pattern.id, m.pattern.category, m.pattern.risk, m.matched_text, m.pattern.description
         );
 
-        if let Some(safe_alt) = &pattern.safe_alt {
+        if let Some(safe_alt) = &m.pattern.safe_alt {
             eprintln!("safe alternative: {safe_alt}");
         }
+    }
+
+    if let Some(rule) = allowlist_match {
+        eprintln!("allowlist: matched rule {:?}", rule.pattern);
     }
 }
 
@@ -236,14 +252,6 @@ fn decide_command(
     let is_allowlisted = allowlist_match.is_some() && assessment.risk != RiskLevel::Block;
 
     if is_allowlisted {
-        if verbose {
-            let rule = allowlist_match.unwrap();
-            eprintln!(
-                "allowlist: matched rule {:?} — skipping prompt",
-                rule.pattern
-            );
-        }
-
         let snapshots = match assessment.risk {
             RiskLevel::Danger => create_snapshots(cwd, &assessment.command.raw, verbose),
             _ => Vec::new(),
@@ -309,11 +317,7 @@ fn append_audit_entry(
     let entry = AuditEntry::new(
         assessment.command.raw.clone(),
         assessment.risk,
-        assessment
-            .matched
-            .iter()
-            .map(|pattern| pattern.as_ref().into())
-            .collect(),
+        assessment.matched.iter().map(Into::into).collect(),
         decision,
         snapshots.iter().map(Into::into).collect(),
         allowlist_match.map(|m| m.pattern.clone()),

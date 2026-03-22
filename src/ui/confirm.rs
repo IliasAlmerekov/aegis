@@ -1,7 +1,6 @@
 // crossterm TUI confirmation dialog
 
 use std::io::{self, BufRead, Write};
-use std::sync::Arc;
 
 use crossterm::{
     queue,
@@ -10,8 +9,8 @@ use crossterm::{
 use regex::Regex;
 
 use crate::interceptor::RiskLevel;
-use crate::interceptor::patterns::Pattern;
-use crate::interceptor::scanner::Assessment;
+use crate::interceptor::patterns::PatternSource;
+use crate::interceptor::scanner::{Assessment, DecisionSource, MatchResult};
 use crate::snapshot::SnapshotRecord;
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -76,11 +75,15 @@ fn render_block<W: Write>(assessment: &Assessment, out: &mut W) {
 
     if !assessment.matched.is_empty() {
         let _ = queue!(out, Print("\n  Reason:\n"));
-        for p in &assessment.matched {
+        for m in &assessment.matched {
+            let source_label = pattern_source_label(m.pattern.source);
             let _ = queue!(
                 out,
                 SetForegroundColor(Color::Red),
-                Print(format!("    [{}] {}\n", p.id, p.description)),
+                Print(format!(
+                    "    [{}] {:?} | {} ({})\n",
+                    m.pattern.id, m.pattern.category, m.pattern.description, source_label
+                )),
                 ResetColor,
             );
         }
@@ -107,17 +110,21 @@ fn render_dialog<W: Write>(assessment: &Assessment, snapshots: &[SnapshotRecord]
 
     print_command_line(assessment, out);
 
-    // Matched patterns + safe alternatives
+    // Matched patterns + safe alternatives + diagnostics
     if !assessment.matched.is_empty() {
         let _ = queue!(out, Print("\n  Matched rules:\n"));
-        for p in &assessment.matched {
+        for m in &assessment.matched {
+            let source_label = pattern_source_label(m.pattern.source);
             let _ = queue!(
                 out,
                 SetForegroundColor(color),
-                Print(format!("    [{}] {}", p.id, p.description)),
+                Print(format!(
+                    "    [{}] {:?} | {}",
+                    m.pattern.id, m.pattern.category, m.pattern.description
+                )),
                 ResetColor,
             );
-            if let Some(alt) = &p.safe_alt {
+            if let Some(alt) = &m.pattern.safe_alt {
                 let _ = queue!(
                     out,
                     SetForegroundColor(Color::Green),
@@ -125,8 +132,23 @@ fn render_dialog<W: Write>(assessment: &Assessment, snapshots: &[SnapshotRecord]
                     ResetColor,
                 );
             }
-            let _ = queue!(out, Print("\n"));
+            let _ = queue!(
+                out,
+                SetForegroundColor(Color::DarkGrey),
+                Print(format!(
+                    "\n         matched: {:?}  source: {}",
+                    m.matched_text, source_label
+                )),
+                ResetColor,
+                Print("\n"),
+            );
         }
+
+        let decision_label = decision_source_label(assessment.decision_source());
+        let _ = queue!(
+            out,
+            Print(format!("\n  Decision source: {decision_label}\n")),
+        );
     }
 
     // Snapshots
@@ -220,13 +242,13 @@ fn prompt_warn<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
 /// Build a copy of `cmd` with matched regex ranges wrapped in ANSI bold-red codes.
 ///
 /// Overlapping ranges are merged before highlighting so the output is well-formed.
-fn build_highlighted_command(cmd: &str, patterns: &[Arc<Pattern>]) -> String {
+fn build_highlighted_command(cmd: &str, matches: &[MatchResult]) -> String {
     // Collect all match ranges from every pattern's regex.
     let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for p in patterns {
-        if let Ok(rx) = Regex::new(&p.pattern) {
-            for m in rx.find_iter(cmd) {
-                ranges.push((m.start(), m.end()));
+    for m in matches {
+        if let Ok(rx) = Regex::new(&m.pattern.pattern) {
+            for hit in rx.find_iter(cmd) {
+                ranges.push((hit.start(), hit.end()));
             }
         }
     }
@@ -266,39 +288,63 @@ fn build_highlighted_command(cmd: &str, patterns: &[Arc<Pattern>]) -> String {
     result
 }
 
+// ── Label helpers ─────────────────────────────────────────────────────────────
+
+fn pattern_source_label(source: PatternSource) -> &'static str {
+    match source {
+        PatternSource::Builtin => "built-in",
+        PatternSource::Custom => "custom",
+    }
+}
+
+fn decision_source_label(source: DecisionSource) -> &'static str {
+    match source {
+        DecisionSource::BuiltinPattern => "built-in pattern",
+        DecisionSource::CustomPattern => "custom pattern",
+        DecisionSource::Fallback => "fallback (no patterns matched)",
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
 
+    use std::sync::Arc;
+
     use super::*;
     use crate::interceptor::parser::Parser;
-    use crate::interceptor::patterns::{Category, Pattern};
+    use crate::interceptor::patterns::{Category, Pattern, PatternSource};
+    use crate::interceptor::scanner::MatchResult;
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    fn make_pattern(
+    fn make_match(
         id: &'static str,
         risk: RiskLevel,
         pattern: &'static str,
         description: &'static str,
         safe_alt: Option<&'static str>,
-    ) -> Arc<Pattern> {
-        Arc::new(Pattern {
-            id: Cow::Borrowed(id),
-            category: Category::Filesystem,
-            risk,
-            pattern: Cow::Borrowed(pattern),
-            description: Cow::Borrowed(description),
-            safe_alt: safe_alt.map(Cow::Borrowed),
-        })
+    ) -> MatchResult {
+        MatchResult {
+            pattern: Arc::new(Pattern {
+                id: Cow::Borrowed(id),
+                category: Category::Filesystem,
+                risk,
+                pattern: Cow::Borrowed(pattern),
+                description: Cow::Borrowed(description),
+                safe_alt: safe_alt.map(Cow::Borrowed),
+                source: PatternSource::Builtin,
+            }),
+            matched_text: String::new(),
+        }
     }
 
-    fn make_assessment(cmd: &str, risk: RiskLevel, patterns: Vec<Arc<Pattern>>) -> Assessment {
+    fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) -> Assessment {
         Assessment {
             risk,
-            matched: patterns,
+            matched: matches,
             command: Parser::parse(cmd),
         }
     }
@@ -313,7 +359,7 @@ mod tests {
 
     #[test]
     fn block_always_returns_false() {
-        let p = make_pattern(
+        let p = make_match(
             "PS-006",
             RiskLevel::Block,
             "rm",
@@ -330,7 +376,7 @@ mod tests {
 
     #[test]
     fn block_output_contains_reason() {
-        let p = make_pattern(
+        let p = make_match(
             "PS-006",
             RiskLevel::Block,
             "rm",
@@ -351,7 +397,7 @@ mod tests {
 
     #[test]
     fn block_output_contains_command() {
-        let p = make_pattern("PS-006", RiskLevel::Block, "rm", "Root delete", None);
+        let p = make_match("PS-006", RiskLevel::Block, "rm", "Root delete", None);
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         let mut output = Vec::new();
@@ -368,7 +414,7 @@ mod tests {
 
     #[test]
     fn danger_yes_approves() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -384,7 +430,7 @@ mod tests {
 
     #[test]
     fn danger_y_does_not_approve() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -400,7 +446,7 @@ mod tests {
 
     #[test]
     fn danger_empty_does_not_approve() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -416,7 +462,7 @@ mod tests {
 
     #[test]
     fn danger_anything_else_denies() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -436,7 +482,7 @@ mod tests {
 
     #[test]
     fn warn_enter_approves() {
-        let p = make_pattern("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
         let approved =
@@ -446,7 +492,7 @@ mod tests {
 
     #[test]
     fn warn_n_denies() {
-        let p = make_pattern("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
         let denied =
@@ -456,7 +502,7 @@ mod tests {
 
     #[test]
     fn warn_no_denies() {
-        let p = make_pattern("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
         let denied =
@@ -466,7 +512,7 @@ mod tests {
 
     #[test]
     fn warn_any_other_input_approves() {
-        let p = make_pattern("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
         let approved =
@@ -478,7 +524,7 @@ mod tests {
 
     #[test]
     fn danger_output_contains_command() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -499,7 +545,7 @@ mod tests {
 
     #[test]
     fn danger_output_contains_pattern_description() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -524,7 +570,7 @@ mod tests {
 
     #[test]
     fn dialog_shows_snapshot_records() {
-        let p = make_pattern(
+        let p = make_match(
             "FS-001",
             RiskLevel::Danger,
             r"rm\s+",
@@ -551,7 +597,7 @@ mod tests {
 
     #[test]
     fn highlighting_wraps_match_in_ansi() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"rm\s+-rf", "desc", None);
+        let p = make_match("FS-001", RiskLevel::Danger, r"rm\s+-rf", "desc", None);
         let patterns = vec![p];
         let result = build_highlighted_command("rm -rf /home", &patterns);
         assert!(
@@ -566,7 +612,7 @@ mod tests {
 
     #[test]
     fn highlighting_no_match_returns_unchanged() {
-        let p = make_pattern("FS-001", RiskLevel::Danger, r"terraform", "desc", None);
+        let p = make_match("FS-001", RiskLevel::Danger, r"terraform", "desc", None);
         let patterns = vec![p];
         let cmd = "echo hello";
         let result = build_highlighted_command(cmd, &patterns);
@@ -576,8 +622,8 @@ mod tests {
     #[test]
     fn highlighting_merges_overlapping_ranges() {
         // Two patterns that overlap on "rm -rf"
-        let p1 = make_pattern("A", RiskLevel::Danger, r"rm\s+-rf /", "desc", None);
-        let p2 = make_pattern("B", RiskLevel::Danger, r"rm\s+-rf", "desc", None);
+        let p1 = make_match("A", RiskLevel::Danger, r"rm\s+-rf /", "desc", None);
+        let p2 = make_match("B", RiskLevel::Danger, r"rm\s+-rf", "desc", None);
         let result = build_highlighted_command("rm -rf /home", &[p1, p2]);
         // Should not have double ANSI codes inside the overlap.
         let opens = result.matches("\x1b[1;31m").count();

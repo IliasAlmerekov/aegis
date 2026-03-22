@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
 
+/// Whether a pattern was compiled into the binary or loaded from user config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatternSource {
+    Builtin,
+    Custom,
+}
+
 /// Which class of operation the pattern guards against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -33,6 +40,7 @@ pub struct Pattern {
     pub pattern: Cow<'static, str>,
     pub description: Cow<'static, str>,
     pub safe_alt: Option<Cow<'static, str>>,
+    pub source: PatternSource,
 }
 
 /// Internal helper: TOML-deserializable representation before conversion to [`Pattern`].
@@ -55,6 +63,7 @@ impl From<RawPattern> for Pattern {
             pattern: Cow::Owned(raw.pattern),
             description: Cow::Owned(raw.description),
             safe_alt: raw.safe_alt.map(Cow::Owned),
+            source: PatternSource::Builtin,
         }
     }
 }

@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
-use crate::interceptor::patterns::Pattern;
+use crate::interceptor::patterns::Category;
+use crate::interceptor::scanner::MatchResult;
 use crate::snapshot::SnapshotRecord;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -46,6 +47,12 @@ pub struct MatchedPattern {
     pub risk: RiskLevel,
     pub description: String,
     pub safe_alt: Option<String>,
+    /// Category of the pattern (e.g. Filesystem, Git). Optional for backwards compat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<Category>,
+    /// The actual substring of the command that triggered this pattern.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_text: Option<String>,
 }
 
 /// Stable audit representation of one snapshot created before execution.
@@ -94,13 +101,15 @@ impl std::fmt::Display for Decision {
     }
 }
 
-impl From<&Pattern> for MatchedPattern {
-    fn from(pattern: &Pattern) -> Self {
+impl From<&MatchResult> for MatchedPattern {
+    fn from(m: &MatchResult) -> Self {
         Self {
-            id: pattern.id.to_string(),
-            risk: pattern.risk,
-            description: pattern.description.to_string(),
-            safe_alt: pattern.safe_alt.as_ref().map(ToString::to_string),
+            id: m.pattern.id.to_string(),
+            risk: m.pattern.risk,
+            description: m.pattern.description.to_string(),
+            safe_alt: m.pattern.safe_alt.as_ref().map(ToString::to_string),
+            category: Some(m.pattern.category),
+            matched_text: Some(m.matched_text.clone()),
         }
     }
 }
@@ -264,6 +273,8 @@ mod tests {
                 risk,
                 description: format!("pattern-{index}"),
                 safe_alt: Some(format!("safe-{index}")),
+                category: None,
+                matched_text: None,
             }],
             decision: match index % 4 {
                 0 => Decision::Approved,

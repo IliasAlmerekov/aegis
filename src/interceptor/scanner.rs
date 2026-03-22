@@ -7,16 +7,53 @@ use regex::Regex;
 
 use crate::interceptor::RiskLevel;
 use crate::interceptor::parser::{ParsedCommand, Parser, logical_segments};
-use crate::interceptor::patterns::{Pattern, PatternSet};
+use crate::interceptor::patterns::{Pattern, PatternSet, PatternSource};
+
+/// A single pattern match with the actual text fragment that triggered it.
+#[derive(Debug, Clone)]
+pub struct MatchResult {
+    pub pattern: Arc<Pattern>,
+    /// The substring of the scanned text that the pattern's regex matched.
+    pub matched_text: String,
+}
+
+/// What ultimately caused the final interception decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecisionSource {
+    /// Matched one or more built-in patterns compiled into the binary.
+    BuiltinPattern,
+    /// Matched one or more user-defined patterns from aegis.toml.
+    CustomPattern,
+    /// No patterns matched; the command was assessed Safe by default.
+    Fallback,
+}
 
 /// The result of assessing a shell command through the full scanner pipeline.
 pub struct Assessment {
     /// The highest `RiskLevel` among all matched patterns (`Safe` when none matched).
     pub risk: RiskLevel,
     /// Every pattern that matched the command (raw + inline scripts).
-    pub matched: Vec<Arc<Pattern>>,
+    pub matched: Vec<MatchResult>,
     /// The parsed representation of the original command string.
     pub command: ParsedCommand,
+}
+
+impl Assessment {
+    /// Determine what caused this assessment, ignoring allowlist (handled by the caller).
+    pub fn decision_source(&self) -> DecisionSource {
+        if self.matched.is_empty() {
+            return DecisionSource::Fallback;
+        }
+        if self
+            .matched
+            .iter()
+            .any(|m| m.pattern.source == PatternSource::Custom)
+        {
+            DecisionSource::CustomPattern
+        } else {
+            DecisionSource::BuiltinPattern
+        }
+    }
 }
 
 /// First-pass scanner backed by an Aho-Corasick automaton.
@@ -106,15 +143,14 @@ impl Scanner {
     /// false positives and produces the authoritative match list.
     ///
     /// **Complexity:** O(p × n) where p = number of patterns, n = command length.
-    pub fn full_scan(&self, cmd: &str) -> Vec<Arc<Pattern>> {
+    pub fn full_scan(&self, cmd: &str) -> Vec<MatchResult> {
         self.compiled
             .iter()
             .filter_map(|(pattern, rx)| {
-                if rx.is_match(cmd) {
-                    Some(Arc::clone(pattern))
-                } else {
-                    None
-                }
+                rx.find(cmd).map(|m| MatchResult {
+                    pattern: Arc::clone(pattern),
+                    matched_text: m.as_str().to_string(),
+                })
             })
             .collect()
     }
@@ -151,7 +187,7 @@ impl Scanner {
         // context for every sub-command, so the pattern correctly fires on `rm -rf /`.
         for segment in logical_segments(cmd) {
             for p in self.full_scan(&segment) {
-                if !matched.iter().any(|m| m.id == p.id) {
+                if !matched.iter().any(|m| m.pattern.id == p.pattern.id) {
                     matched.push(p);
                 }
             }
@@ -161,7 +197,7 @@ impl Scanner {
         // so that dangerous code embedded inside an interpreter call is caught.
         for script in &command.inline_scripts {
             for p in self.full_scan(&script.body) {
-                if !matched.iter().any(|m| m.id == p.id) {
+                if !matched.iter().any(|m| m.pattern.id == p.pattern.id) {
                     matched.push(p);
                 }
             }
@@ -169,7 +205,7 @@ impl Scanner {
 
         let risk = matched
             .iter()
-            .map(|p| p.risk)
+            .map(|p| p.pattern.risk)
             .max()
             .unwrap_or(RiskLevel::Safe);
 
@@ -716,7 +752,7 @@ mod tests {
         let s = scanner();
         let a = s.assess("rm -rf /");
         assert_eq!(a.risk, RiskLevel::Block);
-        let ids: Vec<&str> = a.matched.iter().map(|p| p.id.as_ref()).collect();
+        let ids: Vec<&str> = a.matched.iter().map(|m| m.pattern.id.as_ref()).collect();
         assert!(
             ids.contains(&"PS-006"),
             "PS-006 must be in matched: {ids:?}"
