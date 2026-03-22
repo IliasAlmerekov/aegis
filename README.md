@@ -11,15 +11,7 @@
 
 ## Why Aegis exists
 
-AI coding agents are fast and capable. They are also capable of destroying production data in seconds.
-
-**Replit, 2024.** A developer gave an AI agent access to their production environment. The agent, attempting to "clean up" a failed migration, ran `prisma migrate reset --force` against the live database. Every row in every table was gone. Backups had not been tested. Recovery took three days.
-
-**DataTalks.Club, 2024.** During a live course session, an AI agent helping with infrastructure setup executed `terraform destroy` to "start fresh" after encountering a configuration error. The entire workshop environment — EC2 instances, RDS databases, S3 buckets — was torn down in under two minutes.
-
-**Prisma community, 2024.** A widely-shared incident: an AI agent ran `git filter-branch` to remove a secret accidentally committed to a shared repository. The rewrite corrupted the remote history across fourteen forks. The team spent a week recovering contributor branches.
-
-These are not edge cases. Every agent that can run shell commands can run destructive shell commands. Aegis puts a human back in the loop — with zero friction for safe commands and a mandatory confirmation gate for everything else.
+AI coding agents are fast and capable. They are also capable of destroying production data in seconds. Any agent that can run shell commands can run destructive shell commands. Aegis puts a human back in the loop — with zero friction for safe commands and a mandatory confirmation gate for everything else.
 
 ---
 
@@ -87,7 +79,7 @@ aegis -c 'echo hello'
 # → hello (passes through instantly, no dialog)
 ```
 
-Safe commands have less than 2ms overhead. Aegis only interrupts you when it matters.
+Aegis only interrupts you when it matters.
 
 ---
 
@@ -97,13 +89,13 @@ Aegis is set as your `$SHELL`. When any program (Claude Code, Codex CLI, a scrip
 
 ```
 AI agent → $SHELL → Aegis → assess(cmd)
-                               ├── Safe   → exec immediately (< 2ms)
+                               ├── Safe   → exec immediately
                                ├── Warn   → show dialog, default = Yes
                                ├── Danger → snapshot + show dialog, default = No
                                └── Block  → print reason, exit 1 (no dialog)
 ```
 
-Before showing the dialog for `Danger` commands, Aegis creates a snapshot (git stash, Docker commit) so you can roll back even if you accidentally approve.
+Before showing the dialog for `Danger` commands, Aegis creates a snapshot (git stash, Docker commit). Snapshot IDs are written to the audit log. There is no built-in rollback command yet — use the snapshot ID from the audit log to roll back manually if needed.
 
 All decisions — approved, denied, blocked — are written to `~/.aegis/audit.jsonl`.
 
@@ -149,10 +141,12 @@ For stronger guarantees, pair Aegis with OS-level controls: run your agent in a 
 
 ## aegis.toml reference
 
-Aegis searches for config in this order:
+Aegis merges config from all available sources, in priority order (highest first):
 1. `.aegis.toml` in the current directory (project-level)
 2. `~/.config/aegis/config.toml` (global)
-3. Built-in defaults (works without any config file)
+3. Built-in defaults
+
+Project values override global values; global values override defaults. Vec fields (`custom_patterns`, `allowlist`) are concatenated — global entries first, then project entries.
 
 Generate a starter config:
 
@@ -166,8 +160,8 @@ aegis config show      # prints the active config (merged from all sources)
 ```toml
 # Operating mode.
 #   Protect  — prompt on Warn/Danger, block on Block (default)
-#   Audit    — log everything but never block or prompt
-#   Strict   — same as Protect but with tighter defaults (future)
+#   Audit    — log everything but never block or prompt (not yet implemented)
+#   Strict   — same as Protect but with tighter defaults (not yet implemented)
 mode = "Protect"
 
 # Create a git stash snapshot before Danger commands when a .git directory exists.
@@ -198,14 +192,16 @@ custom_patterns = [
 | Mode | Warn | Danger | Block |
 |------|------|--------|-------|
 | `Protect` | dialog (default Yes) | snapshot + dialog (default No) | immediate exit 1 |
-| `Audit` | log only | log only | log only |
-| `Strict` | dialog (default No) | snapshot + dialog (default No) | immediate exit 1 |
+| `Audit` *(not yet implemented)* | log only | log only | log only |
+| `Strict` *(not yet implemented)* | dialog (default No) | snapshot + dialog (default No) | immediate exit 1 |
+
+> **Note:** Only `Protect` mode is active in this release. The `mode` field is parsed and stored but not yet consulted at runtime — all commands run with `Protect` semantics regardless of the configured value.
 
 ---
 
 ## Pattern reference
 
-Aegis ships with 55 built-in patterns across 7 categories. Every pattern has an ID, a risk level, a description, and (where applicable) a safer alternative.
+Aegis ships with 54 built-in patterns across 7 categories. Every pattern has an ID, a risk level, a description, and (where applicable) a safer alternative.
 
 ### Risk levels
 
@@ -384,7 +380,7 @@ impl aegis::snapshot::SnapshotPlugin for MyPlugin {
 | Plugin | Trigger | Snapshot mechanism | Rollback |
 |--------|---------|-------------------|---------|
 | `GitPlugin` | `.git/` exists in `cwd` | `git stash push --include-untracked` | `git stash pop --index <ref>` |
-| `DockerPlugin` | Docker CLI available + containers running | `docker commit <container>` | `docker run` from saved image |
+| `DockerPlugin` | Docker CLI available + containers running | `docker commit <container>` | `docker run -d` from saved image — restores filesystem state only; original port bindings, env vars, and network config are **not** restored |
 
 ---
 
@@ -414,18 +410,17 @@ Example entry:
 
 ## Performance
 
-The fast path (safe commands) is under 2ms:
+The scanner is designed to minimise latency on the safe-command hot path:
 
 1. **Aho-Corasick first pass** — keyword scan, no allocations. If nothing matches, return `Safe` immediately.
 2. **Regex full scan** — only reached for commands that contain a suspicious keyword.
 3. Regex patterns are compiled once at startup via `std::sync::LazyLock` and reused.
 
-Benchmarks (`cargo bench`):
+Run the benchmarks yourself to see numbers on your hardware:
 
-| Scenario | Throughput |
-|----------|-----------|
-| Safe command (fast path) | > 500,000 ops/sec |
-| Danger command (full scan) | > 50,000 ops/sec |
+```bash
+cargo bench
+```
 
 ---
 
