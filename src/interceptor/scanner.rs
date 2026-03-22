@@ -6,7 +6,7 @@ use aho_corasick::AhoCorasick;
 use regex::Regex;
 
 use crate::interceptor::RiskLevel;
-use crate::interceptor::parser::{ParsedCommand, Parser};
+use crate::interceptor::parser::{ParsedCommand, Parser, logical_segments};
 use crate::interceptor::patterns::{Pattern, PatternSet};
 
 /// The result of assessing a shell command through the full scanner pipeline.
@@ -139,6 +139,23 @@ impl Scanner {
         }
 
         let mut matched = self.full_scan(cmd);
+
+        // Per-segment scan: required for patterns that use end-of-string anchors (`$`).
+        //
+        // Running regexes against the full raw string misses cases where a separator
+        // immediately follows the dangerous token with no intervening whitespace, e.g.:
+        //   `rm -rf /;echo done`  →  `/` is followed by `;`, not `\s` or `$`
+        //   → PS-006 pattern `…/(\s|$)` would NOT match the raw string.
+        //
+        // Scanning each logical segment independently reconstructs the end-of-string
+        // context for every sub-command, so the pattern correctly fires on `rm -rf /`.
+        for segment in logical_segments(cmd) {
+            for p in self.full_scan(&segment) {
+                if !matched.iter().any(|m| m.id == p.id) {
+                    matched.push(p);
+                }
+            }
+        }
 
         // Also scan any inline scripts (python -c "...", node -e "...", etc.)
         // so that dangerous code embedded inside an interpreter call is caught.
@@ -710,6 +727,128 @@ mod tests {
         let cmd = "git reset --hard HEAD~1";
         let a = s.assess(cmd);
         assert_eq!(a.command.raw, cmd);
+    }
+
+    // ── assess: compound command classification ───────────────────────────────
+    //
+    // Rule: the risk of a compound command is the highest risk across all segments.
+
+    #[test]
+    fn assess_compound_commands() {
+        let s = scanner();
+
+        let cases: &[(&str, RiskLevel)] = &[
+            // Safe first segment, Danger second — result is Danger
+            ("echo ok && rm -rf /home/user/project", RiskLevel::Danger),
+            // Safe first segment, Block second — result is Block
+            ("echo ok && rm -rf /", RiskLevel::Block),
+            // Semicolon with no space after slash — Block must still fire
+            // (this is the core bug per-segment scanning fixes: PS-006 requires /(\s|$),
+            // and in the raw string `rm -rf /;echo done` the `/` is followed by `;`)
+            ("rm -rf /;echo done", RiskLevel::Block),
+            ("rm -rf /&&echo done", RiskLevel::Block),
+            // Block first, safe second — Block wins
+            ("rm -rf / && echo done", RiskLevel::Block),
+            // Danger in middle segment of three
+            ("echo a; DROP TABLE users; echo b", RiskLevel::Danger),
+            // Block in last segment of three
+            ("echo a; echo b; rm -rf /", RiskLevel::Block),
+            // Danger via pipe right-hand side
+            (
+                "echo creds | aws ec2 terminate-instances --instance-ids i-1234",
+                RiskLevel::Danger,
+            ),
+            // || fallback is dangerous
+            (
+                "false || terraform destroy -auto-approve",
+                RiskLevel::Danger,
+            ),
+            // All segments safe — result is Safe
+            ("echo hello && ls /tmp && pwd", RiskLevel::Safe),
+        ];
+
+        for (cmd, expected) in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk, *expected,
+                "compound command {cmd:?}: got {:?}, expected {expected:?}",
+                assessment.risk,
+            );
+        }
+    }
+
+    // ── assess: bypass-prone command forms ───────────────────────────────────
+    //
+    // For each form the raw string always reaches the Aho-Corasick + regex scan,
+    // so dangerous payloads wrapped in these shells/operators are still caught.
+
+    #[test]
+    fn assess_bypass_prone_forms() {
+        let s = scanner();
+
+        let cases: &[(&str, RiskLevel)] = &[
+            // sh -c wrapping a Block payload.
+            // The tokenizer strips the surrounding quotes; the reconstructed segment is
+            // `sh -c rm -rf /` where `/` is at end-of-segment → PS-006 `(\s|$)` fires.
+            ("sh -c 'rm -rf /'", RiskLevel::Block),
+            // bash -c with a SQL payload
+            ("bash -c 'DROP TABLE users;'", RiskLevel::Danger),
+            // bash -lc: combined login+command flag — same quote-stripping effect → Block
+            ("bash -lc 'rm -rf /'", RiskLevel::Block),
+            // bash -ic: combined interactive+command flag
+            (
+                "bash -ic 'terraform destroy -auto-approve'",
+                RiskLevel::Danger,
+            ),
+            // bash --login -c: long login flag before -c
+            (
+                "bash --login -c 'kubectl delete namespace production'",
+                RiskLevel::Danger,
+            ),
+            // env-prefix without 'env' keyword — raw string is still fully scanned
+            (
+                "MY_VAR=x bash -c 'aws ec2 terminate-instances --instance-ids i-1234'",
+                RiskLevel::Danger,
+            ),
+            // heredoc: dangerous command on its own line → followed by \n → PS-006 (\s|$) matches
+            ("bash <<EOF\nrm -rf /\nEOF", RiskLevel::Block),
+            // heredoc: non-root dangerous path → FS-001 Danger
+            (
+                "bash <<EOF\nrm -rf /home/user/project\nEOF",
+                RiskLevel::Danger,
+            ),
+            // pipe chain: right-hand segment `bash -c rm -rf /` — quotes stripped → Block
+            ("echo safe | bash -c 'rm -rf /'", RiskLevel::Block),
+            // semicolon chain: dangerous second command in raw string
+            ("echo ok; terraform destroy", RiskLevel::Danger),
+            // && chain: dangerous right-hand side in raw string
+            ("ls && DROP TABLE users;", RiskLevel::Danger),
+            // || chain: dangerous fallback command in raw string
+            (
+                "false || kubectl delete namespace staging",
+                RiskLevel::Danger,
+            ),
+            // command substitution: `/` followed by `)` → PS-006 does not match → Danger
+            ("echo $(rm -rf /)", RiskLevel::Danger),
+            // subshell grouping: same trailing `)` → Danger
+            ("(rm -rf /)", RiskLevel::Danger),
+            // python -c inline script: body scanned separately, trailing `'` → Danger
+            (
+                r#"python3 -c "import os; os.system('rm -rf /')""#,
+                RiskLevel::Danger,
+            ),
+            // double-quoted fragment: space after `/` before `&&` → PS-006 (\s|$) matches → Block
+            (r#"bash -c "rm -rf / && echo done""#, RiskLevel::Block),
+        ];
+
+        for (cmd, expected) in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk, *expected,
+                "bypass form {cmd:?}: got {:?}, expected {expected:?}",
+                assessment.risk,
+            );
+        }
     }
 
     // ── performance ──────────────────────────────────────────────────────────

