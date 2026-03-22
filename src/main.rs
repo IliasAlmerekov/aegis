@@ -2,15 +2,15 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
-use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{Allowlist, AllowlistMatch, CiPolicy, Config};
+use aegis::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
+use aegis::config::{Allowlist, AllowlistMatch, AuditConfig, CiPolicy, Config};
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::parser::Parser as CommandParser;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::snapshot::{SnapshotRecord, SnapshotRegistry};
 use aegis::ui::confirm::show_confirmation;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(
@@ -50,6 +50,17 @@ struct AuditArgs {
     /// Filter entries by risk level: safe, warn, danger, block.
     #[arg(long, value_parser = parse_risk_level)]
     risk: Option<RiskLevel>,
+
+    /// Output format: text (default), json, ndjson.
+    #[arg(long, value_enum, default_value_t = AuditOutputFormat::Text)]
+    format: AuditOutputFormat,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum AuditOutputFormat {
+    Text,
+    Json,
+    Ndjson,
 }
 
 #[derive(Args)]
@@ -106,10 +117,16 @@ fn main() {
         Some(Commands::Audit(args)) => {
             let logger = AuditLogger::default();
             match logger.query(args.last, args.risk) {
-                Ok(entries) => {
-                    print!("{}", AuditLogger::format_entries(&entries));
-                    0
-                }
+                Ok(entries) => match format_audit_entries(&entries, args.format) {
+                    Ok(output) => {
+                        print!("{output}");
+                        0
+                    }
+                    Err(err) => {
+                        eprintln!("error: failed to serialize audit output: {err}");
+                        EXIT_INTERNAL
+                    }
+                },
                 Err(err) => {
                     eprintln!("error: failed to read audit log: {err}");
                     EXIT_INTERNAL
@@ -131,6 +148,27 @@ fn main() {
 
 fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
     value.parse()
+}
+
+fn format_audit_entries(
+    entries: &[AuditEntry],
+    format: AuditOutputFormat,
+) -> Result<String, String> {
+    match format {
+        AuditOutputFormat::Text => Ok(AuditLogger::format_entries(entries)),
+        AuditOutputFormat::Json => {
+            serde_json::to_string_pretty(entries).map_err(|err| err.to_string())
+        }
+        AuditOutputFormat::Ndjson => {
+            let mut out = String::new();
+            for entry in entries {
+                let line = serde_json::to_string(entry).map_err(|err| err.to_string())?;
+                out.push_str(&line);
+                out.push('\n');
+            }
+            Ok(out)
+        }
+    }
 }
 
 fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
@@ -166,6 +204,7 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
         decision,
         &snapshots,
         allowlist_match.as_ref(),
+        &config.audit,
         verbose,
     );
 
@@ -414,6 +453,7 @@ fn append_audit_entry(
     decision: Decision,
     snapshots: &[SnapshotRecord],
     allowlist_match: Option<&AllowlistMatch>,
+    audit_config: &AuditConfig,
     verbose: bool,
 ) {
     let entry = AuditEntry::new(
@@ -425,7 +465,13 @@ fn append_audit_entry(
         allowlist_match.map(|m| m.pattern.clone()),
     );
 
-    if let Err(err) = AuditLogger::default().append(entry)
+    let logger = if let Some(policy) = AuditRotationPolicy::from_config(audit_config) {
+        AuditLogger::default().with_rotation(policy)
+    } else {
+        AuditLogger::default()
+    };
+
+    if let Err(err) = logger.append(entry)
         && verbose
     {
         eprintln!("warning: failed to append audit log entry: {err}");

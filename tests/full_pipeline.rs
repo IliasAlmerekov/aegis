@@ -16,6 +16,10 @@ fn aegis_bin() -> PathBuf {
 fn base_command(home: &Path) -> Command {
     let mut command = Command::new(aegis_bin());
     command.env("AEGIS_REAL_SHELL", "/bin/sh");
+    // These end-to-end tests exercise the normal interactive/non-interactive
+    // product flow, not the CI fast-path. Force CI detection off so host
+    // environments like GitHub Actions do not change the expected exit codes.
+    command.env("AEGIS_CI", "0");
     command.env("HOME", home);
     command
 }
@@ -510,6 +514,112 @@ fn audit_logger_failure_verbose_prints_warning() {
         String::from_utf8_lossy(&output.stderr).contains("failed to append audit log entry"),
         "verbose mode must print a warning when audit append fails"
     );
+}
+
+#[test]
+fn audit_rotation_config_rotates_and_audit_command_reads_archives() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 1
+retention_files = 3
+compress_rotated = false
+"#,
+    )
+    .unwrap();
+
+    for command in ["printf one", "printf two", "printf three"] {
+        let output = base_command(home.path())
+            .current_dir(workspace.path())
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    }
+
+    let audit_dir = home.path().join(".aegis");
+    assert!(audit_dir.join("audit.jsonl").exists());
+    assert!(audit_dir.join("audit.jsonl.1").exists());
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["audit", "--last", "3"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("command: printf one"));
+    assert!(stdout.contains("command: printf two"));
+    assert!(stdout.contains("command: printf three"));
+}
+
+#[test]
+fn audit_command_can_export_json_array() {
+    let home = TempDir::new().unwrap();
+
+    for command in ["printf one", "git stash clear"] {
+        let output = base_command(home.path())
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        if command == "git stash clear" {
+            assert_eq!(output.status.code(), Some(2));
+        } else {
+            assert!(output.status.success());
+        }
+    }
+
+    let output = base_command(home.path())
+        .args(["audit", "--format", "json"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let entries: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["command"], "printf one");
+    assert_eq!(entries[1]["command"], "git stash clear");
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[1]["risk"], "Warn");
+}
+
+#[test]
+fn audit_command_can_export_ndjson_with_filters() {
+    let home = TempDir::new().unwrap();
+
+    for command in ["printf one", "git stash clear", "printf two"] {
+        let output = base_command(home.path())
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        if command == "git stash clear" {
+            assert_eq!(output.status.code(), Some(2));
+        } else {
+            assert!(output.status.success());
+        }
+    }
+
+    let output = base_command(home.path())
+        .args([
+            "audit", "--format", "ndjson", "--risk", "Warn", "--last", "1",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 1);
+
+    let entry: Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(entry["command"], "git stash clear");
+    assert_eq!(entry["risk"], "Warn");
 }
 
 // Confirmation UI failure (stdin EOF) ────────────────────────────────────

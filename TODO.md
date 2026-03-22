@@ -219,20 +219,20 @@
     - block destructive commands in CI by default,
     - or require policy override.
 
-- [ ] Improve audit timestamps.
+- [x] Improve audit timestamps.
   - Current logger stores Unix seconds only.
   - Prefer RFC 3339 / ISO 8601 with timezone and maybe monotonic sequence info.
 
-- [ ] Improve audit querying scalability.
+- [x] Improve audit querying scalability.
   - Current implementation reads full JSONL into memory.
   - Add streaming/tail-oriented querying for large logs.
 
-- [ ] Add log rotation strategy.
+- [x] Add log rotation strategy.
   - size-based or date-based
   - optional compression
   - retention settings
 
-- [ ] Add machine-readable audit export options.
+- [x] Add machine-readable audit export options.
   - JSON
   - NDJSON filtering
   - maybe jq-friendly modes

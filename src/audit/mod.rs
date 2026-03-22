@@ -1,3 +1,5 @@
 pub mod logger;
 
-pub use logger::{AuditEntry, AuditLogger, AuditSnapshot, Decision, MatchedPattern};
+pub use logger::{
+    AuditEntry, AuditLogger, AuditRotationPolicy, AuditSnapshot, Decision, MatchedPattern,
+};

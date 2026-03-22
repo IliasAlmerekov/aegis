@@ -186,6 +186,14 @@ custom_patterns = [
     #   description = "Internal teardown script — always requires approval",
     #   safe_alt = "my-destroy-script.sh --dry-run" },
 ]
+
+[audit]
+# Rotate ~/.aegis/audit.jsonl after it grows beyond this many bytes.
+# Disabled by default to preserve the historical single-file behaviour.
+rotation_enabled = false
+max_file_size_bytes = 10485760
+retention_files = 5
+compress_rotated = true
 ```
 
 ### Mode quick-reference
@@ -388,20 +396,32 @@ impl aegis::snapshot::SnapshotPlugin for MyPlugin {
 ## Audit log
 
 Every interception — approved, denied, blocked, or auto-approved — is appended to `~/.aegis/audit.jsonl` as a single JSON object.
+New entries use RFC 3339 / ISO 8601 timestamps with an explicit timezone. Older logs that stored Unix seconds are still readable.
+When `[audit].rotation_enabled = true`, Aegis rotates by size, keeps `retention_files` archives (`audit.jsonl.1`, `.2`, ...), and can gzip rotated segments as `.gz`. `aegis audit` reads both the active file and rotated archives.
 
 ```bash
 aegis audit --last 20           # show last 20 entries
 aegis audit --risk Danger       # filter by risk level
+aegis audit --format json       # export as JSON array
+aegis audit --format ndjson     # export as newline-delimited JSON
 ```
 
 Example entry:
 
 ```json
 {
-  "timestamp": "2024-11-14T09:23:41Z",
+  "timestamp": "2024-11-14T09:23:41.384215Z",
+  "sequence": 17,
   "command": "terraform destroy -auto-approve",
   "risk": "Danger",
-  "matched_patterns": ["CL-001"],
+  "matched_patterns": [
+    {
+      "id": "CL-001",
+      "risk": "Danger",
+      "description": "Terraform destroy",
+      "safe_alt": "terraform plan"
+    }
+  ],
   "decision": "Denied",
   "snapshots": [{"plugin": "git", "snapshot_id": "stash@{0}"}]
 }

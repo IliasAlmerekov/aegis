@@ -124,11 +124,11 @@ Subprocess calls (snapshot, exec) involve real I/O and can take 100ms+. These ar
 
 ## ADR-007: Append-only audit log (JSONL)
 
-**Decision:** Audit log is append-only JSONL at `~/.aegis/audit.jsonl`. It is never rewritten or rotated by Aegis itself.
+**Decision:** Audit log uses append-only JSONL segments rooted at `~/.aegis/audit.jsonl`. The active segment is append-only; when configured, Aegis rotates it by size into immutable numbered archives, optionally gzip-compressed. New entries store RFC 3339 timestamps with timezone plus a per-process sequence number; legacy Unix-second timestamps remain readable.
 
 **Rationale:** The audit log is a security artifact. An append-only log cannot be silently corrupted by a bug that rewrites the file. JSONL (one JSON object per line) allows streaming reads, `grep`, `jq` filtering, and line-by-line processing without parsing the entire file.
 
-Log rotation, if needed, is the user's responsibility (`logrotate` or similar). Aegis does not implement it.
+Rotation is size-based and keeps a bounded number of archives. Querying must read both the active segment and rotated archives so operators can still inspect history after rotation.
 
 The format (field names, types) is a public contract from v1 and must not change in breaking ways.
 

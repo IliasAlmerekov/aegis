@@ -25,6 +25,14 @@ auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have t
 # Block (default) — hard-block any non-safe command; no interactive dialog is shown.
 # Allow           — pass-through; commands are executed without prompting (opt-in override).
 ci_policy = "Block"
+
+[audit]
+# Rotate ~/.aegis/audit.jsonl after it grows beyond this many bytes.
+# Rotation is disabled by default to preserve the historical single-file contract.
+rotation_enabled = false
+max_file_size_bytes = 10485760
+retention_files = 5
+compress_rotated = true
 "#;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -79,6 +87,27 @@ pub struct AegisConfig {
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
     pub ci_policy: CiPolicy,
+    pub audit: AuditConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuditConfig {
+    pub rotation_enabled: bool,
+    pub max_file_size_bytes: u64,
+    pub retention_files: usize,
+    pub compress_rotated: bool,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            rotation_enabled: false,
+            max_file_size_bytes: 10 * 1024 * 1024,
+            retention_files: 5,
+            compress_rotated: true,
+        }
+    }
 }
 
 impl Default for AegisConfig {
@@ -105,6 +134,7 @@ impl AegisConfig {
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
             ci_policy: CiPolicy::Block,
+            audit: AuditConfig::default(),
         }
     }
 
@@ -157,7 +187,9 @@ impl AegisConfig {
             PartialConfig::default()
         };
 
-        Ok(Self::merge(global, project))
+        let merged = Self::merge(global, project);
+        merged.validate()?;
+        Ok(merged)
     }
 
     fn merge(global: PartialConfig, project: PartialConfig) -> Self {
@@ -185,7 +217,47 @@ impl AegisConfig {
                 .ci_policy
                 .or(global.ci_policy)
                 .unwrap_or(defaults.ci_policy),
+            audit: AuditConfig {
+                rotation_enabled: project
+                    .audit
+                    .rotation_enabled
+                    .or(global.audit.rotation_enabled)
+                    .unwrap_or(defaults.audit.rotation_enabled),
+                max_file_size_bytes: project
+                    .audit
+                    .max_file_size_bytes
+                    .or(global.audit.max_file_size_bytes)
+                    .unwrap_or(defaults.audit.max_file_size_bytes),
+                retention_files: project
+                    .audit
+                    .retention_files
+                    .or(global.audit.retention_files)
+                    .unwrap_or(defaults.audit.retention_files),
+                compress_rotated: project
+                    .audit
+                    .compress_rotated
+                    .or(global.audit.compress_rotated)
+                    .unwrap_or(defaults.audit.compress_rotated),
+            },
         }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.audit.rotation_enabled && self.audit.max_file_size_bytes == 0 {
+            return Err(AegisError::Config(
+                "audit.max_file_size_bytes must be greater than 0 when audit rotation is enabled"
+                    .to_string(),
+            ));
+        }
+
+        if self.audit.rotation_enabled && self.audit.retention_files == 0 {
+            return Err(AegisError::Config(
+                "audit.retention_files must be greater than 0 when audit rotation is enabled"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
     }
 }
 
@@ -202,6 +274,16 @@ struct PartialConfig {
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
     ci_policy: Option<CiPolicy>,
+    audit: PartialAuditConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PartialAuditConfig {
+    rotation_enabled: Option<bool>,
+    max_file_size_bytes: Option<u64>,
+    retention_files: Option<usize>,
+    compress_rotated: Option<bool>,
 }
 
 impl PartialConfig {
@@ -370,6 +452,65 @@ description = "Project build dir removal"
         assert_eq!(config.mode, Mode::Strict); // from global
         assert!(!config.auto_snapshot_docker); // from global
         assert!(!config.auto_snapshot_git); // from project
+    }
+
+    #[test]
+    fn audit_rotation_settings_merge_per_field() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+        fs::create_dir_all(&global_dir).unwrap();
+
+        fs::write(
+            global_dir.join(GLOBAL_CONFIG_FILE),
+            r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 2048
+retention_files = 7
+compress_rotated = true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            workspace.path().join(PROJECT_CONFIG_FILE),
+            r#"
+[audit]
+retention_files = 2
+compress_rotated = false
+"#,
+        )
+        .unwrap();
+
+        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+        assert!(config.audit.rotation_enabled);
+        assert_eq!(config.audit.max_file_size_bytes, 2048);
+        assert_eq!(config.audit.retention_files, 2);
+        assert!(!config.audit.compress_rotated);
+    }
+
+    #[test]
+    fn invalid_audit_rotation_config_is_rejected() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        fs::write(
+            workspace.path().join(PROJECT_CONFIG_FILE),
+            r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+retention_files = 0
+"#,
+        )
+        .unwrap();
+
+        let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
+        assert!(
+            err.to_string().contains("audit.max_file_size_bytes")
+                || err.to_string().contains("audit.retention_files")
+        );
     }
 
     #[test]
