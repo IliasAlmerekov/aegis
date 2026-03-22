@@ -149,6 +149,32 @@ The format (field names, types) is a public contract from v1 and must not change
 
 ---
 
+## ADR-010: Security model — heuristic guardrail, not a sandbox
+
+**Decision:** Aegis is explicitly documented as a heuristic command guardrail. It is not a sandbox, not a complete security boundary, and makes no claim to catch obfuscated, indirect, or runtime-assembled commands.
+
+**Rationale:** Without a written security model, users may develop incorrect expectations — believing Aegis provides stronger guarantees than it actually does. A tool that overpromises and underdelivers is more dangerous than one with clearly stated limits, because users make trust decisions based on it.
+
+The honest model:
+
+1. **Heuristic matching.** Aegis applies pattern matching to the raw command string. This catches the common case: an AI agent issuing a recognisable destructive command directly. It cannot catch commands that are assembled, encoded, or deferred at runtime — doing so would require a full shell interpreter and OS-level tracing.
+
+2. **No sandbox.** Approved commands run with the user's full permissions. Aegis does not restrict file descriptors, network access, syscalls, or namespaces. It is not `seccomp`, `pledge`, or a container.
+
+3. **Explicit non-goals.** The following are out of scope by design and documented as such in `README.md`:
+   - Obfuscated shell (`$'\x72\x6d'` for `rm`)
+   - Indirect execution (write a script, then execute it in a later command)
+   - Script-generated commands (`eval "$(fn_that_returns_rm_rf)"`)
+   - Alias/function expansion (`alias ls='rm -rf /'`)
+   - Encoded payloads (`base64 -d | bash` variants beyond `PKG-004`)
+   - Subshell injection in otherwise-safe commands
+
+**What this means in practice:** Aegis protects against accidental and well-intentioned-but-mistaken destructive commands — the failure mode of current AI agents operating honestly. It is not designed to stop an adversarially-controlled agent that is actively trying to evade detection. For stronger guarantees, users should combine Aegis with OS-level controls (containers, restricted accounts, network segmentation).
+
+**Status:** Documented in `README.md § Security model`. Not enforced by code — it is a statement about scope, not an implementation constraint.
+
+---
+
 ## ADR-009: Fuzz testing for parser
 
 **Decision:** `parser.rs` has dedicated fuzz targets using `cargo-fuzz` (libFuzzer).

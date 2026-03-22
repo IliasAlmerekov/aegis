@@ -57,7 +57,10 @@ fn dangerous_command_denied_preserves_directory() {
     fs::create_dir_all(&target_dir).unwrap();
     fs::write(target_dir.join("sentinel.txt"), "still here").unwrap();
 
+    // Use home as CWD (not the project root) so the GitPlugin does not
+    // git-stash the developer's uncommitted changes as a "snapshot".
     let mut child = base_command(home.path())
+        .current_dir(home.path())
         .args(["-c", &format!("rm -rf {}", target_dir.display())])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -301,4 +304,202 @@ fn shell_wrapper_preserves_environment_and_working_directory() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["decision"], "AutoApproved");
     assert_eq!(entries[0]["risk"], "Safe");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regression tests: security-critical failure modes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Config parse failure ─────────────────────────────────────────────────────
+
+/// A malformed `.aegis.toml` must not crash the binary.
+/// `load_runtime_config` falls back to `Config::default()` on parse error.
+#[test]
+fn broken_config_toml_does_not_crash_safe_command_passes() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "this is : broken toml {{{",
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"hello\n");
+}
+
+/// With a broken config, dangerous commands must still be intercepted.
+/// The fallback is `Config::default()` — empty allowlist, Protect mode.
+#[test]
+fn broken_config_toml_dangerous_command_still_intercepted() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "not_a_valid_field = true\nunknown_key = 42",
+    )
+    .unwrap();
+
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "rm -rf /tmp/aegis_cfg_test_dir"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    child.stdin.as_mut().unwrap().write_all(b"no\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("AEGIS INTERCEPTED"),
+        "dangerous command must be intercepted even when config is broken"
+    );
+}
+
+// Audit logger failure ─────────────────────────────────────────────────────
+
+/// If `~/.aegis` is a file instead of a directory, audit append fails.
+/// The binary must NOT crash — error is swallowed in non-verbose mode.
+#[test]
+fn audit_logger_failure_does_not_crash_binary() {
+    let home = TempDir::new().unwrap();
+    fs::write(home.path().join(".aegis"), "I am a file, not a directory").unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "binary must not crash when audit log is unwritable"
+    );
+    assert_eq!(output.stdout, b"hello\n");
+}
+
+/// With `--verbose`, a failed audit append must emit a warning to stderr.
+#[test]
+fn audit_logger_failure_verbose_prints_warning() {
+    let home = TempDir::new().unwrap();
+    fs::write(home.path().join(".aegis"), "I am a file, not a directory").unwrap();
+
+    let output = base_command(home.path())
+        .args(["-v", "-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("failed to append audit log entry"),
+        "verbose mode must print a warning when audit append fails"
+    );
+}
+
+// Confirmation UI failure (stdin EOF) ────────────────────────────────────
+
+/// A Danger-level command with stdin closed (EOF) must be DENIED.
+/// `prompt_danger` reads empty string on EOF; `"" != "yes"` → denied.
+/// Prevents silent auto-approval when stdin is /dev/null.
+#[test]
+fn danger_command_with_eof_stdin_is_denied() {
+    let home = TempDir::new().unwrap();
+    let target = home.path().join("sentinel_eof_test");
+    fs::create_dir_all(&target).unwrap();
+
+    // current_dir = home (not the project root git repo) so the GitPlugin
+    // does not stash the developer's working tree when creating a snapshot.
+    let output = base_command(home.path())
+        .current_dir(home.path())
+        .args(["-c", &format!("rm -rf {}", target.display())])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "Danger command must be denied when stdin is closed"
+    );
+    assert!(target.exists(), "target must still exist after denial");
+}
+
+/// A Warn-level command with stdin closed (EOF) is auto-approved because
+/// empty input means "proceed" in the Warn prompt (`"" != "n"`).
+/// Documents the current behaviour so any change is deliberate.
+#[test]
+fn warn_command_with_eof_stdin_is_auto_approved() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "git stash clear"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Command cancelled."),
+        "empty stdin must NOT cancel a Warn command; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("AEGIS INTERCEPTED A SUSPICIOUS COMMAND"),
+        "Warn command must show the interception dialog; stderr:\n{stderr}"
+    );
+}
+
+// Shell resolution failure ────────────────────────────────────────────────
+
+/// When `SHELL` points to the aegis binary itself, `resolve_shell` must
+/// fall back to `/bin/sh` to prevent an infinite exec loop.
+#[test]
+fn shell_env_pointing_to_aegis_binary_falls_back_to_bin_sh() {
+    let home = TempDir::new().unwrap();
+
+    let output = Command::new(aegis_bin())
+        .env("HOME", home.path())
+        .env("SHELL", aegis_bin().as_os_str())
+        .args(["-c", "echo hi"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "binary must not loop when SHELL points to itself"
+    );
+    assert_eq!(output.stdout, b"hi\n");
+}
+
+/// When `AEGIS_REAL_SHELL` points to a nonexistent binary, `exec_command`
+/// must return exit code 1 rather than panicking.
+#[test]
+fn nonexistent_aegis_real_shell_returns_exit_code_1() {
+    let home = TempDir::new().unwrap();
+
+    let output = Command::new(aegis_bin())
+        .env("HOME", home.path())
+        .env("AEGIS_REAL_SHELL", "/nonexistent/shell/binary")
+        .args(["-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "unresolvable shell must yield exit code 1, not a panic"
+    );
 }

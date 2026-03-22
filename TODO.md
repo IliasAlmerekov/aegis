@@ -1,407 +1,340 @@
-# Aegis — TODO
+# TODO — Aegis Senior Review
 
-> Each phase blocks the next one. Do not move to P2 until the P1 gate condition is met.
+## P0 — Critical before trusting this as a security tool
 
----
+- [x] Change scanner initialization failure from **fail-open** to **fail-closed** or at least **warn-and-deny by default**.
+  - Current behavior falls back to `RiskLevel::Safe` when scan initialization fails.
+  - Required outcome:
+    - either block execution with clear error,
+    - or require explicit user approval for every command until scanner is healthy.
 
-## Progress
+- [x] Decide and document the exact security model.
+  - Clarify that Aegis is:
+    - a heuristic command guardrail,
+    - not a sandbox,
+    - not a complete security boundary.
+  - Add explicit non-goals:
+    - obfuscated shell,
+    - indirect execution,
+    - script-generated commands,
+    - alias/function expansion bypasses,
+    - encoded payloads.
 
-| Phase | Name                              | Status         |
-| ----- | --------------------------------- | -------------- |
-| P1    | Foundation                        | ✅ done        |
-| P2    | Command Parser                    | 🔄 in progress |
-| P3    | Pattern Engine + Risk Classifier  | ⬜ blocked     |
-| P4    | Snapshot Engine + TUI             | ⬜ blocked     |
-| P5    | Config System + Shell Integration | ⬜ blocked     |
-| P6    | Polish and Public Release         | 🔄 in progress |
+- [x] Fix the `Block` flow to match product behavior.
+  - README says `Block` means immediate denial without dialog.
+  - Code currently calls confirmation UI for `Block`.
+  - Pick one behavior and make code + docs consistent.
 
----
-
-## P1 — Foundation
-
-> Repository, toolchain, CI, empty binary
-> **Timeline:** 3 days
-
-**🔒 Gate condition (required before P2):**
-Binary compiles on macOS and Linux. CI is green. Version is printed by `aegis --version`.
-
----
-
-### T1.1 — Repository and Cargo initialization
-
-- [x] Create GitHub repo: `aegis-dev/aegis` (public, MIT license)
-- [x] `cargo init --name aegis` — initialize the project
-- [x] Configure `.gitignore` (`target/`, `.env`, `*.log`)
-- [x] Add `LICENSE` (MIT) and `README.md` with a one-line description
-- [x] Create `CONTRIBUTING.md` and `CODE_OF_CONDUCT.md` as stubs
-- [x] First commit: `chore: init repository`
-
-### T1.2 — Cargo.toml — dependencies and build profiles
-
-- [x] Add `clap 4.5` with `features = ["derive", "env"]`
-- [x] Add `thiserror 1` and `anyhow 1`
-- [x] Add `serde 1` with `features = ["derive"]` + `toml 0.8` + `serde_json 1`
-- [x] Add `tracing 0.1` + `tracing-subscriber 0.3` with `features = ["fmt", "env-filter"]`
-- [x] Add `async-trait 0.1` (required for `dyn SnapshotPlugin` with async methods)
-- [x] Add `tokio = { version = "1", features = ["process", "fs", "rt"] }`
-- [x] Add `crossterm 0.28`
-- [x] Add `regex 1.11` and `aho-corasick 1.1`
-- [x] Configure `[profile.release]`: `opt-level = 3`, `lto = "thin"`, `strip = "symbols"`, `codegen-units = 1`
-- [x] Add `[dev-dependencies]`: `criterion 0.5`, `tempfile 3`
-- [x] Run `cargo check` — confirm everything compiles
-
-### T1.3 — Module structure — empty files
-
-- [x] Create `src/error.rs` — empty `AegisError` enum with `#[derive(thiserror::Error, Debug)]`
-- [x] Create `src/interceptor/mod.rs`, `scanner.rs`, `parser.rs`, `patterns.rs`
-- [x] Create `src/snapshot/mod.rs`, `git.rs`, `docker.rs`
-- [x] Create `src/ui/confirm.rs`
-- [x] Create `src/audit/logger.rs`
-- [x] Create `src/config/model.rs`
-- [x] Declare all modules in `main.rs` via `mod`
-- [x] Run `cargo check` — all modules visible to the compiler
-
-### T1.4 — Basic CLI entry point
-
-- [x] Implement `Cli` struct in `main.rs` using clap derive API
-- [x] Add subcommands: `watch`, `audit`, `config` (empty stubs for now)
-- [x] Add flag `-c` / `--command` for shell wrapper mode
-- [x] Add `--version` flag (auto-populated from `Cargo.toml`)
-- [x] Add `--verbose` / `-v` flag for debug output
-- [x] Verify: `cargo run -- --version` prints `aegis 0.1.0`
-
-### T1.5 — GitHub Actions CI
-
-- [x] Create `.github/workflows/ci.yml`
-- [x] Step: `cargo fmt --check`
-- [x] Step: `cargo clippy -- -D warnings`
-- [x] Step: `cargo test`
-- [x] Step: `cargo build --release` for `ubuntu-latest` and `macos-latest`
-- [x] Step: `cargo audit` (install `cargo-audit` first)
-- [x] Step: `cargo deny check` (create `deny.toml` with license and advisory rules)
-- [x] Verify CI is green on first push
+- [x] Add regression tests for security-critical failure modes.
+  - scanner init failure
+  - config parse failure
+  - snapshot runtime init failure
+  - audit logger failure
+  - confirmation UI failure
+  - shell resolution failure
 
 ---
 
-## P2 — Command Parser
+## P1 — Correctness and trustworthiness
 
-> Tokenizer for commands: simple, heredoc, and inline scripts
-> **Timeline:** 4 days
+- [ ] Fix config loading semantics.
+  - README says config is merged from:
+    1. project `.aegis.toml`
+    2. global `~/.config/aegis/config.toml`
+    3. defaults
+  - Current implementation selects the first existing file.
+  - Implement real layered merge or rewrite docs to reflect true behavior.
 
-**🔒 Gate condition (required before P3):**
-`parse(cmd)` correctly extracts the executable and arguments from 50 test cases including heredoc and `bash -c "..."`.
+- [ ] Add tests for layered config precedence.
+  - global only
+  - project only
+  - both present
+  - partial override cases
+  - malformed project config with valid global fallback behavior
 
----
+- [ ] Remove all README claims that are not yet proven by tests/benchmarks.
+  - “< 2ms overhead”
+  - throughput numbers
+  - “55 built-in patterns”
+  - agent compatibility claims
+  - any public incident references that are not sourced
 
-### T2.1 — Basic tokenization ✅
+- [ ] Add exact source links for incident claims in README.
+  - Replit case
+  - DataTalks.Club case
+  - Prisma/community case
+  - If unverifiable, remove them.
 
-- [x] Implement `split_tokens(cmd: &str) -> Vec<String>`
-- [x] Handle single quotes: `'rm -rf /'` as one token
-- [x] Handle double quotes: `"rm -rf /"` as one token
-- [x] Handle backslash escaping: `rm\ -rf\ /`
-- [x] Handle semicolons and `&&` as command separators
-- [x] Write 15 unit tests covering edge cases
-- [x] Run `cargo test interceptor::parser` — all green
-
-### T2.2 — Unwrap nested `bash -c` commands ✅
-
-- [x] Detect pattern: `bash -c '...'`, `sh -c '...'`
-- [x] Recursively extract the nested command string
-- [x] Handle: `bash -c "cmd1 && cmd2"` → `["cmd1", "cmd2"]`
-- [x] Handle: `bash -c $'escaped\nnewline'`
-- [x] Handle: `env VAR=val bash -c '...'` (env prefix before bash)
-- [x] Write 10 test cases for nested commands
-
-### T2.3 — Heredoc and inline script scanning ✅
-
-- [x] Detect heredoc syntax: `cmd <<EOF ... EOF`
-- [x] Extract heredoc body as a separate string for scanning
-- [x] Handle nowdoc: `<<'EOF'` (no variable substitution)
-- [x] Detect and extract inline Python: `python -c "..."`
-- [x] Detect and extract inline Node.js: `node -e "..."`
-- [x] Detect and extract inline Ruby: `ruby -e "..."`
-- [x] Write 8 test cases for heredoc and inline scripts
-
-### T2.4 — `ParsedCommand` struct and public API ✅
-
-- [x] Define `struct ParsedCommand { executable, args, inline_scripts, raw }`
-- [x] Implement `Parser::parse(cmd: &str) -> ParsedCommand`
-- [x] Implement `Display` for `ParsedCommand` (used in audit log output)
-- [x] Final performance test: parse all 50 cases in under 1ms total
-- [x] Run `cargo test` — all tests green
+- [ ] Audit all docs for implementation drift.
+  - `Block` behavior
+  - merged config wording
+  - rollback semantics
+  - Docker snapshot guarantees
+  - “works without friction” claims
 
 ---
 
-## P3 — Pattern Engine + Risk Classifier
+## P1 — Snapshot system hardening
 
-> Aho-Corasick + Regex, 50+ patterns, RiskLevel enum
-> **Timeline:** 5 days
+### Git plugin
 
-**🔒 Gate condition (required before P4):**
-`Scanner::assess(cmd)` returns the correct `RiskLevel` for all 70 test cases. p99 latency < 3ms.
+- [ ] Replace string-based clean-tree detection with a locale-independent mechanism.
+  - Do not rely on `"No local changes to save"` text matching.
+  - Prefer a deterministic check such as:
+    - `git status --porcelain`
+    - or other structured signal.
 
----
+- [ ] Improve Git repository detection.
+  - Current check only tests `cwd/.git`.
+  - Support:
+    - worktrees,
+    - nested repos,
+    - submodules,
+    - `.git` file pointers,
+    - running inside subdirectories of a repo.
 
-### T3.1 — `RiskLevel` enum and `AegisError` ✅
+- [ ] Add tests for Git edge cases.
+  - running from repo subdirectory
+  - worktree
+  - clean repo
+  - untracked files
+  - staged + unstaged changes
+  - stash conflict on rollback
 
-- [x] Define `enum RiskLevel { Safe, Warn, Danger, Block }` with `#[non_exhaustive]`
-- [x] Implement `PartialOrd` for `RiskLevel` (`Safe < Warn < Danger < Block`)
-- [x] Define `AegisError` via `thiserror` with variants: `Parse`, `Snapshot`, `Config`, `Io`
-- [x] Implement human-readable `Display` messages for each `AegisError` variant
-- [x] Write 3 unit tests verifying `PartialOrd` ordering
+- [ ] Define rollback conflict strategy.
+  - What happens if `git stash pop --index` conflicts?
+  - Surface clear recovery instructions.
+  - Log enough context for manual restore.
 
-### T3.2 — `Pattern` struct and TOML loading ✅
+### Docker plugin
 
-- [x] Define `struct Pattern` with fields: `id`, `category`, `risk`, `pattern`, `description`, `safe_alt`
-- [x] Use `Cow<'static, str>` for all string fields (supports both built-in and user-defined patterns)
-- [x] Define `enum Category { Filesystem, Git, Database, Cloud, Docker, Process, Package }`
-- [x] Implement `#[derive(Deserialize)]` on `Pattern` and `Category` for TOML loading
-- [x] Create `config/patterns.toml` with 50+ patterns across all 7 categories
-- [x] Implement `PatternSet::load() -> Result<PatternSet>`
-- [x] Test: load `patterns.toml`, verify all fields parsed without errors
+- [ ] Redesign Docker rollback semantics.
+  - `docker commit` + `docker run -d image` is **not** a true environment rollback.
+  - It does not restore:
+    - ports,
+    - volumes,
+    - env vars,
+    - network attachments,
+    - restart policy,
+    - labels,
+    - container name,
+    - compose metadata.
+  - Either:
+    - reduce claims in docs,
+    - or implement real metadata capture + replay.
 
-### T3.3 — Aho-Corasick first pass (fast path) ✅
+- [ ] Capture container configuration before snapshot.
+  - Inspect and persist:
+    - image
+    - command / entrypoint
+    - env
+    - mounts
+    - ports
+    - network mode
+    - labels
+    - restart policy
+    - name
 
-- [x] Build `AhoCorasick` automaton from keywords of all patterns at startup
-- [x] Implement `quick_scan(cmd: &str) -> bool` — check if any keyword matches at all
-- [x] If `quick_scan` returns `false` → return `Safe` immediately (zero-cost path, no regex)
-- [x] Benchmark: 10,000 safe commands through `quick_scan` in under 10ms total
+- [ ] Add rollback strategy for named containers.
+  - Handle name collisions.
+  - Handle already removed containers.
+  - Handle networks that no longer exist.
 
-### T3.4 — Regex full scan (slow path) ✅
+- [ ] Add integration tests against real Docker, not only mocked CLI.
+  - Mock tests are useful but insufficient for lifecycle correctness.
 
-- [x] Use `std::sync::LazyLock<Regex>` for each compiled pattern — **not** `once_cell` (deprecated since Rust 1.80)
-- [x] Implement `Scanner::full_scan(cmd: &str) -> Vec<Arc<Pattern>>`
-- [x] Return the maximum `RiskLevel` from all matched patterns
-- [x] Define `struct Assessment { risk, matched: Vec<Arc<Pattern>>, command: ParsedCommand }`
-- [x] Implement `Scanner::assess(cmd: &str) -> Assessment` (quick → full pipeline)
-- [x] Write 70 test cases, each asserting the expected `RiskLevel`
-
-### T3.5 — Criterion benchmarks ✅
-
-- [x] Create `benches/scanner_bench.rs`
-- [x] Benchmark: 1,000 safe commands (target: > 500k ops/sec)
-- [x] Benchmark: 100 dangerous commands with full regex scan
-- [x] Benchmark: worst-case heredoc command (long inline Python script)
-- [x] Run `cargo bench` — confirm p99 latency < 3ms
-
----
-
-## P4 — Snapshot Engine + TUI
-
-> Git checkpoint, Docker commit, terminal confirmation dialog, audit log
-> **Timeline:** 5 days
-
-**🔒 Gate condition (required before P5):**
-On interception of a Danger command: snapshot is created, dialog is shown, user can approve or deny. Audit log is written in both cases.
-
----
-
-### T4.1 — `SnapshotPlugin` trait
-
-- [ ] Define `trait SnapshotPlugin: Send + Sync` with methods: `name`, `is_applicable`, `snapshot`, `rollback`
-- [ ] Annotate trait with `#[async_trait]` from the `async-trait` crate
-- [ ] Define `struct SnapshotRegistry` holding `Vec<Box<dyn SnapshotPlugin>>`
-- [ ] Implement `SnapshotRegistry::default()` loading `GitPlugin` and `DockerPlugin`
-- [ ] Implement `async fn snapshot_all(cwd, cmd) -> Vec<SnapshotRecord>`
-- [ ] Write test with a mock plugin: verify registry only calls `is_applicable` plugins
-
-### T4.2 — Git plugin ✅
-
-- [x] `GitPlugin::is_applicable`: check for `.git/` directory in `cwd`
-- [x] `GitPlugin::snapshot`: run `git stash push --include-untracked -m "aegis-snap-<timestamp>"`
-- [x] Store stash ref as `snapshot_id`
-- [x] `GitPlugin::rollback`: run `git stash pop --index <stash_ref>`
-- [x] Graceful handling if working tree is clean (nothing to stash — log info, return ok)
-- [x] Integration test using `tempfile::TempDir` + `git init`
-
-### T4.3 — Docker plugin
-
-- [ ] `DockerPlugin::is_applicable`: check Docker CLI is available and containers are running
-- [ ] `DockerPlugin::snapshot`: run `docker commit <container_id> aegis-snap-<timestamp>`
-- [ ] `DockerPlugin::rollback`: restore from saved image via `docker run`
-- [ ] Graceful skip if Docker is not installed or not running (log warning, continue)
-- [ ] Test using a mock Docker CLI binary in a temp directory
-
-### T4.4 — TUI confirmation dialog ✅
-
-- [x] Implement `show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool`
-- [x] Display: the full command with the dangerous fragment highlighted
-- [x] Display: list of matched patterns with human-readable descriptions
-- [x] Display: list of created snapshots (plugin name + snapshot id)
-- [x] Display: `safe_alt` suggestion when available
-- [x] `Danger` behavior: default = No, requires typing `yes` in full to proceed
-- [x] `Warn` behavior: default = Yes, Enter continues, typing `n` denies
-- [x] `Block` behavior: print reason and exit immediately, no prompt shown
-- [x] Test: simulate user input via a channel or stdin mock
-
-### T4.5 — Audit logger
-
-- [x] Define `struct AuditEntry { timestamp, command, risk, matched_patterns, decision, snapshots }`
-- [x] Define `enum Decision { Approved, Denied, AutoApproved, Blocked }`
-- [x] Implement `AuditLogger::append(entry: AuditEntry) -> Result<()>`
-- [x] Write to `~/.aegis/audit.jsonl` (append-only, one JSON object per line)
-- [x] Implement `aegis audit --last N` — display last N entries formatted
-- [x] Implement `aegis audit --risk <level>` — filter entries by risk level
-- [x] Test: write 5 entries, read back, compare field-by-field
-
-### T4.6 — Full pipeline integration
-
-- [x] In `main.rs`: receive command via the `-c` flag
-- [x] Pass through `Scanner::assess()`
-- [x] If `Danger`: call `snapshot_all()`, then call `show_confirmation()`
-- [x] If `Block`: print reason and exit with code `1` immediately (no snapshot needed)
-- [x] If user denied: exit with code `1` (do not execute the command)
-- [x] If approved, `Warn`, or `Safe`: `exec()` the original command transparently
-- [x] Write an audit log entry in all cases regardless of outcome
-- [x] Pass through original `stdout`, `stderr`, and exit code unchanged
-- [x] End-to-end test: `rm -rf /tmp/test_aegis` → intercepted → user denies → directory still exists
+- [ ] Make Docker snapshot behavior opt-in until real rollback guarantees exist.
 
 ---
 
-## P5 — Config System + Shell Integration
+## P1 — Command classification quality
 
-> `aegis.toml`, installation as `$SHELL`, agent compatibility tests
-> **Timeline:** 4 days
+- [ ] Add explicit parser/normalization tests for bypass-prone command forms.
+  - subshells
+  - `sh -c`
+  - `bash -lc`
+  - heredocs
+  - pipes
+  - command substitution
+  - env-prefixed commands
+  - multiline input
+  - quoted fragments
+  - semicolon/&&/|| chains
 
-**🔒 Gate condition (required before P6):**
-`export SHELL=$(which aegis)` in `.bashrc`/`.zshrc` — Claude Code and Codex CLI are intercepted transparently. `aegis config init` generates a working `aegis.toml`.
+- [ ] Define how classification works for compound commands.
+  - Example:
+    - `echo ok && rm -rf /tmp/x`
+  - Must classify by highest-risk segment, not first token only.
 
----
+- [ ] Add coverage for encoded/indirect execution patterns.
+  - `echo <payload> | sh`
+  - `python -c`
+  - `node -e`
+  - `perl -e`
+  - `eval "$VAR"`
+  - process substitution
 
-### T5.1 — `AegisConfig` and `aegis.toml`
+- [ ] Review allowlist design.
+  - Ensure allowlist cannot silently neutralize catastrophic patterns too broadly.
+  - Add support for previewing why a command matched allowlist.
 
-- [x] Define `struct AegisConfig { mode, custom_patterns, allowlist, auto_snapshot_git, auto_snapshot_docker }`
-- [x] Define `enum Mode { Protect, Audit, Strict }` (`Audit` = log only, no blocking)
-- [x] Implement `Config::load()` — searches `.aegis.toml` → `~/.config/aegis/config.toml` → defaults
-- [x] Implement `Config::defaults()` for fully functional operation without any config file
-- [x] Implement `aegis config init` — generates `.aegis.toml` with inline comments explaining each field
-- [x] Implement `aegis config show` — prints the currently active config in TOML format
-- [x] Test: load a minimal config and a full config without errors
-
-### T5.2 — Allowlist support
-
-- [x] Add `allowlist: Vec<String>` field to `AegisConfig`
-- [x] Implement `Allowlist::is_allowed(cmd: &str) -> bool`
-- [x] Support glob patterns in allowlist entries: `terraform destroy -target=module.test.*`
-- [x] If command matches allowlist → skip dialog and execute immediately (still log to audit)
-- [x] Test: allowlist a specific `terraform destroy -target=...`, block all other `terraform destroy`
-
-### T5.3 — Shell wrapper mode
-
-- [x] Implement `aegis -c <cmd>` — the main interception mode, invoked as `$SHELL`
-- [x] Correctly forward the original command's exit code to the calling process
-- [x] Correctly forward `stdout` and `stderr` of the original command byte-for-byte
-- [x] Forward all environment variables and current working directory unchanged
-- [x] Test: `aegis -c 'echo hello'` → prints `hello`, exits `0`
-- [x] Test: `aegis -c 'exit 42'` → exits with code `42`
-- [x] Test: `aegis -c 'ls /nonexistent'` → forwards stderr, exits `2`
-
-### T5.4 — `install.sh` and setup documentation
-
-- [x] Write `scripts/install.sh`: detect platform, download correct binary, place in `/usr/local/bin/aegis`
-- [x] Print post-install instructions for bash: `export SHELL=$(which aegis)` → `~/.bashrc`
-- [x] Print post-install instructions for zsh: same for `~/.zshrc`
-- [x] Add a note for Claude Code users: configure the shell path in claude settings
-- [x] Test full install on clean Ubuntu 22.04 in a Docker container
-- [ ] Test full install on macOS 14 (both arm64 and x86_64)
-
-### T5.5 — Agent compatibility tests
-
-- [x] Test: Claude Code executes a command through Aegis — interception works end-to-end
-- [x] Test: Codex CLI executes a command through Aegis — interception works end-to-end
-- [x] Test: Gemini CLI executes a command through Aegis — interception works end-to-end
-- [x] Verify interception latency for safe commands < 5ms (does not slow normal workflow)
-- [x] Run 1,000 safe commands sequentially — verify no performance degradation
+- [ ] Add “why matched” diagnostics.
+  - show matched pattern IDs
+  - matched substring
+  - category
+  - safe alternative
+  - final decision source:
+    - built-in pattern
+    - custom pattern
+    - allowlist
+    - fallback
 
 ---
 
-## P6 — Polish and Public Release
+## P2 — Reliability and UX
 
-> README, GitHub Release, binaries, changelog, community
-> **Timeline:** 3 days
+- [ ] Add structured exit-code contract.
+  - distinguish:
+    - command denied
+    - command blocked
+    - internal Aegis failure
+    - underlying shell failure
+  - document these exit codes.
 
-**🔒 Gate condition (this is the final phase):**
-`v1.0.0` is published on GitHub Releases. `cargo install aegis` works. README includes a demo GIF.
+- [ ] Harden shell resolution.
+  - Current fallback to `/bin/sh` is pragmatic but should be documented.
+  - Add tests for:
+    - `SHELL` pointing to Aegis itself
+    - invalid shell path
+    - missing `AEGIS_REAL_SHELL`
+    - recursive invocation prevention
+
+- [ ] Add non-interactive mode handling.
+  - If stdin is not a TTY:
+    - define exact behavior for `Warn`, `Danger`, `Block`.
+  - Important for CI and agent runners.
+
+- [ ] Implement explicit CI policy behavior.
+  - Example:
+    - block destructive commands in CI by default,
+    - or require policy override.
+
+- [ ] Improve audit timestamps.
+  - Current logger stores Unix seconds only.
+  - Prefer RFC 3339 / ISO 8601 with timezone and maybe monotonic sequence info.
+
+- [ ] Improve audit querying scalability.
+  - Current implementation reads full JSONL into memory.
+  - Add streaming/tail-oriented querying for large logs.
+
+- [ ] Add log rotation strategy.
+  - size-based or date-based
+  - optional compression
+  - retention settings
+
+- [ ] Add machine-readable audit export options.
+  - JSON
+  - NDJSON filtering
+  - maybe jq-friendly modes
 
 ---
 
-### T6.1 — README and documentation
+## P2 — Release and supply-chain readiness
 
-- [x] Write README opening with 2–3 real incidents: DataTalks.Club, Replit, Prisma (with dates and impact numbers)
-- [x] Add one-liner install command prominently at the top of the README
-- [ ] Record and embed a demo GIF or asciinema: agent attempts `terraform destroy` → Aegis intercepts → user sees dialog → denies
-- [x] Write Quick Start section: 5 steps from zero to first interception
-- [x] Write `aegis.toml` reference with all config options and their defaults
-- [x] Write full pattern list: all 50+ patterns with descriptions and safe alternatives
-- [x] Write Plugin architecture section: how to implement a custom snapshot backend
-- [x] Add badges: CI status, crates.io version, license, platform support
+- [ ] Validate release workflow end to end with a real tag.
+  - README/TODO already mention this as unfinished.
 
-### T6.2 — GitHub Release pipeline
+- [ ] Add checksum verification to installer.
+  - Do not only download artifacts.
+  - Verify SHA256 before install.
 
-- [x] Create `.github/workflows/release.yml` triggered on push of tag `v*`
-- [x] Build cross-compiled targets: `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`
-- [x] Generate `SHA256` checksums for each binary artifact
-- [x] Automatically create a GitHub Release with all binaries and checksums attached
-- [x] Update `install.sh` to download from GitHub Releases based on detected platform
-- [ ] Test by creating tag `v1.0.0-rc1` — verify pipeline produces all four artifacts
+- [ ] Reconsider the `curl | sh` install path in a security-oriented product.
+  - At minimum:
+    - publish checksums,
+    - document manual install,
+    - recommend verification path first.
 
-### T6.3 — crates.io publication
+- [ ] Add reproducible release notes.
+  - artifact list
+  - checksums
+  - supported targets
+  - changelog
 
-- [x] Fill in `Cargo.toml` metadata: `description`, `repository`, `homepage`, `keywords`, `categories`
-- [ ] Run `cargo publish --dry-run` — verify all required files are included in the package
-- [ ] Run `cargo publish` — publish `v1.0.0` to crates.io
-- [ ] Verify `cargo install aegis` installs successfully and runs correctly
+- [ ] Add supply-chain checks to CI.
+  - `cargo audit`
+  - `cargo deny`
+  - license review
+  - minimal versions / outdated dependency checks
 
-### T6.4 — Post-release announcement
-
-- [ ] Post to Reddit: `r/ClaudeAI`, `r/rust`, `r/devops` — include the demo GIF
-- [ ] Open a thread in the Anthropic Discord `#claude-code-lounge`
-- [ ] Post on X/Twitter with the demo GIF and install one-liner
-- [ ] Create a GitHub Discussion: `v2 Roadmap — what snapshot backends do you need?`
-- [x] Add `ROADMAP.md` to the repo: planned v2 features (Cloud plugin, Slack notify, Policy DSL, rollback command)
+- [ ] Add crate publishing validation.
+  - `cargo publish --dry-run`
+  - package content review
+  - README rendering check
 
 ---
 
-## Reference
+## P2 — Product clarity
 
-### Architecture decisions
+- [ ] Rework README positioning.
+  - Current messaging is strong, but some claims sound more mature than implementation is.
+  - Rewrite around:
+    - “MVP”
+    - “local guardrail”
+    - “human approval layer”
+    - “best-effort snapshots”
 
-- Use `std::sync::LazyLock<Regex>` for pattern compilation — **not** `once_cell` (deprecated since Rust 1.80)
-- Use `async-trait` crate for async methods on `dyn SnapshotPlugin` — `async fn` is not object-safe without it
-- Use `Cow<'static, str>` in `Pattern` — supports built-in (`&'static str`) and user-defined (`String`) patterns
-- Add `#[non_exhaustive]` to `RiskLevel` — forward compatibility when adding new levels in v2
-- Single-crate structure for v1 — do not add a workspace until the project has 2+ crates with shared deps
+- [ ] Add a clear limitations section.
+  - This is mandatory for trust.
 
-### Key types
+- [ ] Add architecture diagram based on actual code paths.
+  - shell wrapper
+  - scanner
+  - decision engine
+  - snapshots
+  - audit logger
+  - exec path
 
-```
-RiskLevel:     Safe < Warn < Danger < Block  (#[non_exhaustive])
-AegisError:    Parse | Snapshot | Config | Io  (thiserror)
-ParsedCommand: executable + args + inline_scripts + raw
-Assessment:    risk + matched_patterns + parsed_command
-AuditEntry:    timestamp + command + risk + decision + snapshots
-Decision:      Approved | Denied | AutoApproved | Blocked
-```
+- [ ] Add a threat model document.
+  - assets protected
+  - attacker model
+  - trust assumptions
+  - bypasses not handled
+  - operational recommendations
 
-### Pattern categories
+---
 
-```
-Filesystem  (FS-001..006)  rm -rf, find -delete, dd, shred, truncate
-Git         (GIT-001..006) reset --hard, clean -f, push --force, filter-branch
-Database    (DB-001..006)  DROP TABLE, DELETE without WHERE, --accept-data-loss, FLUSHALL
-Cloud       (CL-001..009)  terraform destroy, aws terminate, kubectl delete, pulumi destroy
-Docker      (DK-001..004)  system prune, volume prune, docker-compose down -v
-Process     (PS-001..004)  kill -9 1, pkill production services, chmod 777
-Package     (PKG-001..002) curl | bash, install without integrity check
-```
+## P3 — Nice to have
 
-### CI checklist (every push)
+- [ ] Add Windows support only after shell interception model is clearly redesigned.
+- [ ] Add rollback CLI only after snapshot fidelity is trustworthy.
+- [ ] Add remote audit sinks only after local audit format is stable.
+- [ ] Add web dashboard only after core security semantics are stable.
+- [ ] Add policy DSL only after current policy engine semantics are proven.
 
-```
-cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
-cargo audit
-cargo deny check
-cargo build --release  (ubuntu-latest + macos-latest)
-```
+---
+
+## Suggested release policy
+
+### Not ready for “security product” messaging until these are done
+
+- [ ] fail-open removed
+- [ ] `Block` semantics fixed
+- [ ] config/docs consistency fixed
+- [ ] Docker claims reduced or implementation upgraded
+- [ ] limitations/threat-model documented
+- [ ] critical regression tests added
+
+### Acceptable for “public MVP” once these are done
+
+- [ ] installer checksum verification
+- [ ] real release tag tested
+- [ ] docs aligned with implementation
+- [ ] non-interactive behavior documented
+- [ ] audit/query basics stable
+
+---
+
+## Final recommendation
+
+**Current state:** strong prototype / public MVP candidate  
+**Not yet:** trustworthy security boundary or production-grade protection layer
