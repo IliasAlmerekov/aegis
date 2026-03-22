@@ -144,13 +144,22 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
 
     if verbose {
         if in_ci {
-            eprintln!("ci: detected CI environment, ci_policy={:?}", config.ci_policy);
+            eprintln!(
+                "ci: detected CI environment, ci_policy={:?}",
+                config.ci_policy
+            );
         }
         log_assessment(&assessment, allowlist_match.as_ref());
     }
 
-    let (decision, snapshots) =
-        decide_command(&assessment, &cwd, verbose, allowlist_match.as_ref(), in_ci, config.ci_policy);
+    let (decision, snapshots) = decide_command(
+        &assessment,
+        &cwd,
+        verbose,
+        allowlist_match.as_ref(),
+        in_ci,
+        config.ci_policy,
+    );
 
     append_audit_entry(
         &assessment,
@@ -182,14 +191,14 @@ fn is_ci_environment() -> bool {
 
     // Standard CI provider signals.
     const CI_VARS: &[&str] = &[
-        "CI",            // GitHub Actions, GitLab CI, CircleCI, Buildkite, Travis, Heroku
+        "CI", // GitHub Actions, GitLab CI, CircleCI, Buildkite, Travis, Heroku
         "GITHUB_ACTIONS",
         "GITLAB_CI",
         "CIRCLECI",
         "BUILDKITE",
         "TRAVIS",
         "JENKINS_URL",
-        "TF_BUILD",      // Azure Pipelines
+        "TF_BUILD", // Azure Pipelines
     ];
 
     CI_VARS.iter().any(|var| {
@@ -667,8 +676,14 @@ mod tests {
     #[test]
     fn ci_policy_block_blocks_warn_in_ci() {
         let assessment = make_assessment(RiskLevel::Warn);
-        let (decision, snapshots) =
-            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        let (decision, snapshots) = decide_command(
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            true,
+            CiPolicy::Block,
+        );
         assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
     }
@@ -676,8 +691,14 @@ mod tests {
     #[test]
     fn ci_policy_block_blocks_danger_in_ci() {
         let assessment = make_assessment(RiskLevel::Danger);
-        let (decision, snapshots) =
-            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        let (decision, snapshots) = decide_command(
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            true,
+            CiPolicy::Block,
+        );
         assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
     }
@@ -685,8 +706,14 @@ mod tests {
     #[test]
     fn ci_policy_block_blocks_block_in_ci() {
         let assessment = make_assessment(RiskLevel::Block);
-        let (decision, snapshots) =
-            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        let (decision, snapshots) = decide_command(
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            true,
+            CiPolicy::Block,
+        );
         assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
     }
@@ -698,8 +725,14 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) =
-            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        let (decision, _) = decide_command(
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            true,
+            CiPolicy::Block,
+        );
         assert_eq!(decision, Decision::AutoApproved);
     }
 
@@ -712,8 +745,14 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) =
-            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Allow);
+        let (decision, _) = decide_command(
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            true,
+            CiPolicy::Allow,
+        );
         assert_eq!(decision, Decision::AutoApproved);
     }
 
@@ -725,8 +764,14 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) =
-            decide_command(&assessment, Path::new("."), false, None, false, CiPolicy::Block);
+        let (decision, _) = decide_command(
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            false,
+            CiPolicy::Block,
+        );
         assert_eq!(decision, Decision::AutoApproved);
     }
 }
