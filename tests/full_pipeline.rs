@@ -225,8 +225,106 @@ exit 0
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0]["decision"], "AutoApproved");
     assert_eq!(entries[0]["risk"], "Danger");
+    // The audit log must record which allowlist rule fired so operators can
+    // trace auto-approvals back to their config.
+    assert_eq!(
+        entries[0]["allowlist_pattern"],
+        "terraform destroy -target=module.test.*"
+    );
     assert_eq!(entries[1]["decision"], "Denied");
     assert_eq!(entries[1]["risk"], "Danger");
+    // Non-matching command — allowlist_pattern field must be absent from JSON.
+    assert!(entries[1].get("allowlist_pattern").is_none());
+}
+
+/// Block-level commands must never be silently auto-approved by an allowlist
+/// entry — even when the glob pattern explicitly covers the command.
+///
+/// Rationale: Block = catastrophic irreversible harm (rm -rf /, fork bomb,
+/// mkfs). No config entry should be able to bypass these without the operator
+/// seeing the Block dialog.
+#[test]
+fn block_command_is_never_allowlisted() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    // Allowlist entry that would match `rm -rf /` if the guard were absent.
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"allowlist = ["rm -rf /"]
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "rm -rf /"])
+        .stdin(Stdio::null()) // EOF stdin → Block dialog auto-closes
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+
+    // Must be blocked (exit 1), never auto-approved.
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "Block command must not be auto-approved even when it matches an allowlist entry"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("AEGIS BLOCKED"),
+        "Block dialog must still be shown"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "Blocked");
+    assert_eq!(entries[0]["risk"], "Block");
+    // The allowlist_pattern is still recorded in the audit log so the operator
+    // can see that their allowlist entry was evaluated (and refused for Block).
+    assert_eq!(entries[0]["allowlist_pattern"], "rm -rf /");
+}
+
+/// When verbose mode is on and a command matches the allowlist, stderr must
+/// include a message identifying which rule fired.
+#[test]
+fn verbose_allowlist_match_prints_rule_name() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"allowlist = ["terraform destroy -target=module.ci.*"]
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .args(["-v", "-c", "terraform destroy -target=module.ci.api"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("allowlist"),
+        "verbose output must mention 'allowlist'; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("terraform destroy -target=module.ci.*"),
+        "verbose output must include the matched rule; stderr:\n{stderr}"
+    );
 }
 
 #[test]

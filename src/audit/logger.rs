@@ -22,6 +22,12 @@ pub struct AuditEntry {
     pub matched_patterns: Vec<MatchedPattern>,
     pub decision: Decision,
     pub snapshots: Vec<AuditSnapshot>,
+    /// The allowlist glob pattern that caused this command to be auto-approved,
+    /// if any.  `None` when the command was not allowlisted.
+    ///
+    /// Skipped in JSON output when absent to keep old log entries valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist_pattern: Option<String>,
 }
 
 /// User-visible outcome of the interception flow.
@@ -61,6 +67,7 @@ impl AuditEntry {
         matched_patterns: Vec<MatchedPattern>,
         decision: Decision,
         snapshots: Vec<AuditSnapshot>,
+        allowlist_pattern: Option<String>,
     ) -> Self {
         Self {
             timestamp: current_timestamp(),
@@ -69,6 +76,7 @@ impl AuditEntry {
             matched_patterns,
             decision,
             snapshots,
+            allowlist_pattern,
         }
     }
 }
@@ -219,6 +227,10 @@ impl AuditLogger {
                     .join(", ");
                 out.push_str(&format!("  snapshots: {snapshots}\n"));
             }
+
+            if let Some(pattern) = &entry.allowlist_pattern {
+                out.push_str(&format!("  allowlisted by: {pattern}\n"));
+            }
         }
 
         out
@@ -263,6 +275,7 @@ mod tests {
                 plugin: "git".to_string(),
                 snapshot_id: format!("snap-{index}"),
             }],
+            allowlist_pattern: None,
         }
     }
 

@@ -166,7 +166,7 @@
     - `echo ok && rm -rf /tmp/x`
   - Must classify by highest-risk segment, not first token only.
 
-- [ ] Add coverage for encoded/indirect execution patterns.
+- [x] Add coverage for encoded/indirect execution patterns.
   - `echo <payload> | sh`
   - `python -c`
   - `node -e`
@@ -174,7 +174,7 @@
   - `eval "$VAR"`
   - process substitution
 
-- [ ] Review allowlist design.
+- [x] Review allowlist design.
   - Ensure allowlist cannot silently neutralize catastrophic patterns too broadly.
   - Add support for previewing why a command matched allowlist.
 

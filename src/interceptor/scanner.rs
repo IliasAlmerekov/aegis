@@ -371,9 +371,11 @@ mod tests {
     #[test]
     fn safe_commands_not_flagged() {
         let s = scanner();
+        // Note: commands containing AC keywords (e.g. "echo" from EXEC-001) correctly
+        // trigger quick_scan=true even when safe — false positives are acceptable, they
+        // only cost one extra regex pass. This list tests commands with no AC keywords at all.
         for cmd in [
             "ls -la /home/user",
-            "echo hello world",
             "cat /etc/hostname",
             "cargo build --release",
             "grep -r TODO src/",
@@ -846,6 +848,115 @@ mod tests {
             assert_eq!(
                 assessment.risk, *expected,
                 "bypass form {cmd:?}: got {:?}, expected {expected:?}",
+                assessment.risk,
+            );
+        }
+    }
+
+    // ── assess: indirect / encoded execution patterns ────────────────────────
+    //
+    // EXEC-001: echo | sh/bash     (indirect shell execution of a string)
+    // EXEC-002: python -c          (inline Python interpreter)
+    // EXEC-003: node -e            (inline Node.js interpreter)
+    // EXEC-004: perl -e            (inline Perl interpreter)
+    // EXEC-005: eval "$VAR"        (eval with unexpandable variable)
+    // EXEC-006: cmd <(...)         (process substitution as shell input)
+
+    #[test]
+    fn assess_indirect_execution_forms() {
+        let s = scanner();
+
+        let cases: &[(&str, RiskLevel)] = &[
+            // ── EXEC-001: echo payload | sh ──────────────────────────────────
+            ("echo 'ls /tmp' | sh", RiskLevel::Danger),
+            ("echo malicious_payload | bash", RiskLevel::Danger),
+            // ── EXEC-002: python -c ──────────────────────────────────────────
+            ("python -c 'import sys'", RiskLevel::Warn),
+            ("python3 -c \"print('hi')\"", RiskLevel::Warn),
+            ("python2 -ic \"import os\"", RiskLevel::Warn),
+            // ── EXEC-003: node -e ────────────────────────────────────────────
+            ("node -e 'console.log(1)'", RiskLevel::Warn),
+            ("nodejs -e 'process.version'", RiskLevel::Warn),
+            // ── EXEC-004: perl -e ────────────────────────────────────────────
+            ("perl -e 'print 42'", RiskLevel::Warn),
+            // ── EXEC-005: eval with variable ─────────────────────────────────
+            ("eval \"$DEPLOY_CMD\"", RiskLevel::Warn),
+            ("eval $INIT_SCRIPT", RiskLevel::Warn),
+            ("eval \"${MY_BOOTSTRAP_SCRIPT}\"", RiskLevel::Warn),
+            // ── EXEC-006: sh/bash <(...) ─────────────────────────────────────
+            ("sh <(generate_config.sh)", RiskLevel::Warn),
+            ("bash <(cat bootstrap.sh)", RiskLevel::Warn),
+            // ── EXEC-007: source <(...) ──────────────────────────────────────
+            ("source <(kubectl completion bash)", RiskLevel::Warn),
+            ("source <(helm completion zsh)", RiskLevel::Warn),
+        ];
+
+        for (cmd, expected) in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk, *expected,
+                "indirect execution form {cmd:?}: got {:?}, expected {expected:?}",
+                assessment.risk,
+            );
+        }
+    }
+
+    #[test]
+    fn indirect_execution_safe_commands_not_flagged() {
+        let s = scanner();
+
+        // Commands that superficially resemble indirect execution patterns but are safe.
+        for cmd in [
+            "python3 script.py",
+            "node server.js",
+            "perl script.pl",
+            "echo hello world",
+            "echo hello | grep foo",
+            "source ~/.bashrc",
+            ". ~/.profile",
+        ] {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk,
+                RiskLevel::Safe,
+                "expected Safe for {cmd:?}, got {:?}",
+                assessment.risk,
+            );
+        }
+    }
+
+    #[test]
+    fn indirect_execution_dangerous_body_escalates_risk() {
+        let s = scanner();
+
+        // A dangerous payload inside an inline interpreter invocation is caught
+        // by the per-inline-script body scan and escalates risk beyond Warn.
+        let cases: &[(&str, RiskLevel)] = &[
+            // EXEC-002 (Warn) + FS-004 shred in body (Danger) → Danger
+            (
+                "python3 -c \"import os; os.system('shred -u secrets.key')\"",
+                RiskLevel::Danger,
+            ),
+            // EXEC-003 (Warn) + CL-001 terraform destroy in body (Danger) → Danger
+            (
+                "node -e \"require('cp').execSync('terraform destroy')\"",
+                RiskLevel::Danger,
+            ),
+            // EXEC-004 (Warn) + FS-001 rm -rf in body (Danger) → Danger
+            (
+                "perl -e 'system(\"rm -rf /home/user/project\")'",
+                RiskLevel::Danger,
+            ),
+            // EXEC-001: echo|sh wrapping a dangerous payload — both EXEC-001 and
+            // the contained pattern fire, result is still Danger (max of both).
+            ("echo 'terraform destroy' | sh", RiskLevel::Danger),
+        ];
+
+        for (cmd, expected) in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk, *expected,
+                "dangerous body escalation {cmd:?}: got {:?}, expected {expected:?}",
                 assessment.risk,
             );
         }

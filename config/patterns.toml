@@ -453,3 +453,61 @@ risk = "Warn"
 pattern = 'pip\s+install\s+.*--trusted-host'
 description = "pip install --trusted-host — disables SSL verification for the specified host"
 safe_alt = "Fix the SSL/TLS issue instead of bypassing verification; use a proper certificate"
+
+# ─── Indirect Execution ───────────────────────────────────────────────────────
+
+[[patterns]]
+id = "EXEC-001"
+category = "Process"
+risk = "Danger"
+pattern = 'echo\s+.+\|\s*(ba)?sh\b'
+description = "echo payload | sh/bash — executes an inline string as shell code, bypassing script file inspection"
+safe_alt = "Write the command to a script file, review it, then execute explicitly"
+
+[[patterns]]
+id = "EXEC-002"
+category = "Process"
+risk = "Warn"
+pattern = 'python[23]?\s+-[a-zA-Z]*c\b'
+description = "python -c — executes an inline Python script; dangerous code inside may evade shell-level pattern scanning"
+safe_alt = "Write the code to a .py file and run it: 'python3 script.py'"
+
+[[patterns]]
+id = "EXEC-003"
+category = "Process"
+risk = "Warn"
+pattern = '(node|nodejs)\s+-e\b'
+description = "node -e — executes an inline Node.js snippet; dangerous code inside may evade shell-level pattern scanning"
+safe_alt = "Write the code to a .js file and run it: 'node script.js'"
+
+[[patterns]]
+id = "EXEC-004"
+category = "Process"
+risk = "Warn"
+pattern = 'perl\s+-e\b'
+description = "perl -e — executes an inline Perl script; dangerous code inside may evade shell-level pattern scanning"
+safe_alt = "Write the code to a .pl file and run it: 'perl script.pl'"
+
+[[patterns]]
+id = "EXEC-005"
+category = "Process"
+risk = "Warn"
+pattern = 'eval\s+"?\$'
+description = "eval \"$VAR\" — evaluates a variable's contents as shell code; the variable value cannot be scanned at intercept time"
+safe_alt = "Avoid eval with variables; pass data as arguments or via a temporary script file"
+
+[[patterns]]
+id = "EXEC-006"
+category = "Process"
+risk = "Warn"
+pattern = '(ba)?sh\s+<\('
+description = "sh/bash <(...) — executes command output via process substitution as a script without writing to disk"
+safe_alt = "Redirect the output to a file, inspect it, then execute: 'cmd > script.sh && bash script.sh'"
+
+[[patterns]]
+id = "EXEC-007"
+category = "Process"
+risk = "Warn"
+pattern = 'source\s+<\('
+description = "source <(...) — sources the output of a command directly into the shell without a file on disk"
+safe_alt = "Redirect the output to a temp file, inspect it, then source explicitly: 'cmd > /tmp/init.sh && source /tmp/init.sh'"

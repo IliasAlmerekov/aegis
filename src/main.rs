@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{Allowlist, Config};
+use aegis::config::{Allowlist, AllowlistMatch, Config};
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::parser::Parser as CommandParser;
@@ -118,10 +118,17 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     }
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let allowlisted = allowlist.is_allowed(cmd);
-    let (decision, snapshots) = decide_command(&assessment, &cwd, verbose, allowlisted);
+    let allowlist_match = allowlist.match_reason(cmd);
+    let (decision, snapshots) =
+        decide_command(&assessment, &cwd, verbose, allowlist_match.as_ref());
 
-    append_audit_entry(&assessment, decision, &snapshots, verbose);
+    append_audit_entry(
+        &assessment,
+        decision,
+        &snapshots,
+        allowlist_match.as_ref(),
+        verbose,
+    );
 
     match decision {
         Decision::Approved | Decision::AutoApproved => exec_command(cmd, verbose),
@@ -219,9 +226,24 @@ fn decide_command(
     assessment: &Assessment,
     cwd: &Path,
     verbose: bool,
-    allowlisted: bool,
+    allowlist_match: Option<&AllowlistMatch>,
 ) -> (Decision, Vec<SnapshotRecord>) {
-    if allowlisted {
+    // Block-level commands are catastrophic and irreversible.  The allowlist
+    // must never silently bypass them — even an explicit allowlist entry is
+    // refused here.  The operator will see the Block dialog and the audit log
+    // will record the allowlist pattern that *would have* matched so they can
+    // review their config.
+    let is_allowlisted = allowlist_match.is_some() && assessment.risk != RiskLevel::Block;
+
+    if is_allowlisted {
+        if verbose {
+            let rule = allowlist_match.unwrap();
+            eprintln!(
+                "allowlist: matched rule {:?} — skipping prompt",
+                rule.pattern
+            );
+        }
+
         let snapshots = match assessment.risk {
             RiskLevel::Danger => create_snapshots(cwd, &assessment.command.raw, verbose),
             _ => Vec::new(),
@@ -281,6 +303,7 @@ fn append_audit_entry(
     assessment: &Assessment,
     decision: Decision,
     snapshots: &[SnapshotRecord],
+    allowlist_match: Option<&AllowlistMatch>,
     verbose: bool,
 ) {
     let entry = AuditEntry::new(
@@ -293,6 +316,7 @@ fn append_audit_entry(
             .collect(),
         decision,
         snapshots.iter().map(Into::into).collect(),
+        allowlist_match.map(|m| m.pattern.clone()),
     );
 
     if let Err(err) = AuditLogger::default().append(entry)
