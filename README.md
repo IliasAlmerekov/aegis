@@ -167,8 +167,9 @@ mode = "Protect"
 # Create a git stash snapshot before Danger commands when a .git directory exists.
 auto_snapshot_git = true
 
-# Commit running containers before Danger commands when Docker is available.
-auto_snapshot_docker = true
+# Snapshot running containers before Danger commands when Docker is available.
+# Disabled by default — enable once you have tested rollback in your environment.
+auto_snapshot_docker = false
 
 # Commands matching these glob patterns are trusted and bypass the dialog.
 # They are still logged to the audit file.

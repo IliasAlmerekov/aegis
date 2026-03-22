@@ -19,7 +19,7 @@ custom_patterns = [] # Extra user-defined patterns loaded for this project.
 allowlist = [] # Commands matching these patterns are trusted and may skip prompts in future phases.
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
-auto_snapshot_docker = true # Create a Docker snapshot before dangerous commands when possible.
+auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
 "#;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -76,7 +76,7 @@ impl AegisConfig {
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
             auto_snapshot_git: true,
-            auto_snapshot_docker: true,
+            auto_snapshot_docker: false,
         }
     }
 
@@ -202,7 +202,7 @@ mod tests {
         assert!(config.custom_patterns.is_empty());
         assert!(config.allowlist.is_empty());
         assert!(config.auto_snapshot_git);
-        assert!(config.auto_snapshot_docker);
+        assert!(!config.auto_snapshot_docker); // default is false (opt-in)
     }
 
     #[test]
@@ -380,7 +380,7 @@ description = "Project build dir removal"
 
         assert_eq!(config.mode, Mode::Audit);
         assert!(!config.auto_snapshot_git);
-        assert!(config.auto_snapshot_docker); // default
+        assert!(!config.auto_snapshot_docker); // default is false (opt-in)
         assert!(config.allowlist.is_empty());
     }
 

@@ -143,7 +143,7 @@
 - [x] Add integration tests against real Docker, not only mocked CLI.
   - Mock tests are useful but insufficient for lifecycle correctness.
 
-- [ ] Make Docker snapshot behavior opt-in until real rollback guarantees exist.
+- [x] Make Docker snapshot behavior opt-in until real rollback guarantees exist.
 
 ---
 
