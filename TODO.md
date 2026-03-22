@@ -214,7 +214,7 @@
     - define exact behavior for `Warn`, `Danger`, `Block`.
   - Important for CI and agent runners.
 
-- [ ] Implement explicit CI policy behavior.
+- [x] Implement explicit CI policy behavior.
   - Example:
     - block destructive commands in CI by default,
     - or require policy override.

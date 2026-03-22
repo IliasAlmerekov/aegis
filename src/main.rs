@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{Allowlist, AllowlistMatch, Config};
+use aegis::config::{Allowlist, AllowlistMatch, CiPolicy, Config};
 use aegis::interceptor;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::parser::Parser as CommandParser;
@@ -140,13 +140,17 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let allowlist_match = allowlist.match_reason(cmd);
+    let in_ci = is_ci_environment();
 
     if verbose {
+        if in_ci {
+            eprintln!("ci: detected CI environment, ci_policy={:?}", config.ci_policy);
+        }
         log_assessment(&assessment, allowlist_match.as_ref());
     }
 
     let (decision, snapshots) =
-        decide_command(&assessment, &cwd, verbose, allowlist_match.as_ref());
+        decide_command(&assessment, &cwd, verbose, allowlist_match.as_ref(), in_ci, config.ci_policy);
 
     append_audit_entry(
         &assessment,
@@ -161,6 +165,39 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
         Decision::Denied => EXIT_DENIED,
         Decision::Blocked => EXIT_BLOCKED,
     }
+}
+
+/// Returns `true` when aegis is running inside a CI environment.
+///
+/// Detection order:
+/// 1. `AEGIS_CI=1` — explicit override (useful for testing or forcing CI mode
+///    in environments that do not set the standard variables).
+/// 2. Well-known CI env vars set by major CI providers (GitHub Actions,
+///    GitLab CI, CircleCI, Buildkite, Travis CI, Jenkins, Azure Pipelines).
+fn is_ci_environment() -> bool {
+    // Explicit override — highest priority.
+    if let Ok(val) = env::var("AEGIS_CI") {
+        return val == "1" || val.eq_ignore_ascii_case("true");
+    }
+
+    // Standard CI provider signals.
+    const CI_VARS: &[&str] = &[
+        "CI",            // GitHub Actions, GitLab CI, CircleCI, Buildkite, Travis, Heroku
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "BUILDKITE",
+        "TRAVIS",
+        "JENKINS_URL",
+        "TF_BUILD",      // Azure Pipelines
+    ];
+
+    CI_VARS.iter().any(|var| {
+        env::var(var)
+            .ok()
+            .map(|v| !v.is_empty() && v != "false" && v != "0")
+            .unwrap_or(false)
+    })
 }
 
 fn load_runtime_config(verbose: bool) -> Config {
@@ -269,7 +306,37 @@ fn decide_command(
     cwd: &Path,
     verbose: bool,
     allowlist_match: Option<&AllowlistMatch>,
+    in_ci: bool,
+    ci_policy: CiPolicy,
 ) -> (Decision, Vec<SnapshotRecord>) {
+    // ── CI fast-path ─────────────────────────────────────────────────────────
+    //
+    // When running inside a CI environment with CiPolicy::Block (the default),
+    // any non-safe command is hard-blocked immediately — no dialog, no prompt.
+    // Rationale: CI runners have no interactive TTY; showing a prompt would
+    // hang the pipeline indefinitely.  Failing fast with a clear error message
+    // is far safer than silently auto-approving destructive commands.
+    //
+    // The allowlist is still honoured at Warn and Danger levels (an operator
+    // who explicitly allowlisted a command has already reviewed it), but
+    // Block-level patterns are never bypassed — not even in CI with Allow.
+    if in_ci && ci_policy == CiPolicy::Block && assessment.risk != RiskLevel::Safe {
+        let is_allowlisted = allowlist_match.is_some() && assessment.risk != RiskLevel::Block;
+        if !is_allowlisted {
+            eprintln!(
+                "aegis: CI policy blocked command (risk={:?}): {}",
+                assessment.risk, assessment.command.raw,
+            );
+            eprintln!(
+                "aegis: set ci_policy = \"Allow\" in .aegis.toml to override, \
+                 or add the command to the allowlist."
+            );
+            return (Decision::Blocked, Vec::new());
+        }
+    }
+
+    // ── Normal interactive path ───────────────────────────────────────────────
+    //
     // Block-level commands are catastrophic and irreversible.  The allowlist
     // must never silently bypass them — even an explicit allowlist entry is
     // refused here.  The operator will see the Block dialog and the audit log
@@ -585,5 +652,81 @@ mod tests {
         assert_ne!(EXIT_DENIED, 0);
         assert_ne!(EXIT_BLOCKED, 0);
         assert_ne!(EXIT_INTERNAL, 0);
+    }
+
+    // ── CI policy ─────────────────────────────────────────────────────────────
+
+    fn make_assessment(risk: RiskLevel) -> Assessment {
+        Assessment {
+            risk,
+            matched: Vec::new(),
+            command: CommandParser::parse("rm -rf /"),
+        }
+    }
+
+    #[test]
+    fn ci_policy_block_blocks_warn_in_ci() {
+        let assessment = make_assessment(RiskLevel::Warn);
+        let (decision, snapshots) =
+            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        assert_eq!(decision, Decision::Blocked);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn ci_policy_block_blocks_danger_in_ci() {
+        let assessment = make_assessment(RiskLevel::Danger);
+        let (decision, snapshots) =
+            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        assert_eq!(decision, Decision::Blocked);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn ci_policy_block_blocks_block_in_ci() {
+        let assessment = make_assessment(RiskLevel::Block);
+        let (decision, snapshots) =
+            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        assert_eq!(decision, Decision::Blocked);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn ci_policy_block_allows_safe_in_ci() {
+        let assessment = Assessment {
+            risk: RiskLevel::Safe,
+            matched: Vec::new(),
+            command: CommandParser::parse("echo hello"),
+        };
+        let (decision, _) =
+            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Block);
+        assert_eq!(decision, Decision::AutoApproved);
+    }
+
+    #[test]
+    fn ci_policy_allow_does_not_short_circuit_in_ci() {
+        // With CiPolicy::Allow, CI detection is ignored — the normal flow runs.
+        // A Safe command must still be AutoApproved.
+        let assessment = Assessment {
+            risk: RiskLevel::Safe,
+            matched: Vec::new(),
+            command: CommandParser::parse("echo hello"),
+        };
+        let (decision, _) =
+            decide_command(&assessment, Path::new("."), false, None, true, CiPolicy::Allow);
+        assert_eq!(decision, Decision::AutoApproved);
+    }
+
+    #[test]
+    fn not_in_ci_does_not_trigger_ci_policy() {
+        // Outside CI, even CiPolicy::Block must not affect Safe commands.
+        let assessment = Assessment {
+            risk: RiskLevel::Safe,
+            matched: Vec::new(),
+            command: CommandParser::parse("echo hello"),
+        };
+        let (decision, _) =
+            decide_command(&assessment, Path::new("."), false, None, false, CiPolicy::Block);
+        assert_eq!(decision, Decision::AutoApproved);
     }
 }

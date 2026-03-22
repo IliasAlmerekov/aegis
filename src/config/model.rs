@@ -20,6 +20,11 @@ allowlist = [] # Commands matching these patterns are trusted and may skip promp
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
+
+# CI policy: what to do when aegis detects it is running inside a CI environment.
+# Block (default) — hard-block any non-safe command; no interactive dialog is shown.
+# Allow           — pass-through; commands are executed without prompting (opt-in override).
+ci_policy = "Block"
 "#;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -31,6 +36,27 @@ pub enum Mode {
     Protect,
     Audit,
     Strict,
+}
+
+/// What aegis does when it detects a CI environment.
+///
+/// `Block` is the safe default: no interactive TTY is available in CI, so
+/// prompting would hang the pipeline.  Instead, non-safe commands are
+/// hard-blocked and the pipeline fails fast with a clear error message.
+///
+/// `Allow` is an explicit opt-in override for cases where a project has
+/// audited its CI pipeline and is confident that destructive commands are
+/// intentional (e.g., a release script that runs `terraform destroy` in a
+/// tear-down job).  Set this only in `.aegis.toml`, not globally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum CiPolicy {
+    /// Hard-block all non-safe commands. No dialog. Pipeline fails fast.
+    #[default]
+    Block,
+    /// Pass-through: commands run without prompting. Use only when you have
+    /// deliberately reviewed the CI pipeline for destructive commands.
+    Allow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +78,7 @@ pub struct AegisConfig {
     pub allowlist: Vec<String>,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
+    pub ci_policy: CiPolicy,
 }
 
 impl Default for AegisConfig {
@@ -77,6 +104,7 @@ impl AegisConfig {
             allowlist: Vec::new(),
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
+            ci_policy: CiPolicy::Block,
         }
     }
 
@@ -153,6 +181,10 @@ impl AegisConfig {
                 .auto_snapshot_docker
                 .or(global.auto_snapshot_docker)
                 .unwrap_or(defaults.auto_snapshot_docker),
+            ci_policy: project
+                .ci_policy
+                .or(global.ci_policy)
+                .unwrap_or(defaults.ci_policy),
         }
     }
 }
@@ -169,6 +201,7 @@ struct PartialConfig {
     allowlist: Vec<String>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
+    ci_policy: Option<CiPolicy>,
 }
 
 impl PartialConfig {
