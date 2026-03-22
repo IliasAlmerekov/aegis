@@ -37,7 +37,7 @@
 
 ## P1 — Correctness and trustworthiness
 
-- [ ] Fix config loading semantics.
+- [x] Fix config loading semantics.
   - README says config is merged from:
     1. project `.aegis.toml`
     2. global `~/.config/aegis/config.toml`
@@ -45,27 +45,27 @@
   - Current implementation selects the first existing file.
   - Implement real layered merge or rewrite docs to reflect true behavior.
 
-- [ ] Add tests for layered config precedence.
+- [x] Add tests for layered config precedence.
   - global only
   - project only
   - both present
   - partial override cases
   - malformed project config with valid global fallback behavior
 
-- [ ] Remove all README claims that are not yet proven by tests/benchmarks.
+- [x] Remove all README claims that are not yet proven by tests/benchmarks.
   - “< 2ms overhead”
   - throughput numbers
   - “55 built-in patterns”
   - agent compatibility claims
   - any public incident references that are not sourced
 
-- [ ] Add exact source links for incident claims in README.
+- [x] Add exact source links for incident claims in README.
   - Replit case
   - DataTalks.Club case
   - Prisma/community case
   - If unverifiable, remove them.
 
-- [ ] Audit all docs for implementation drift.
+- [x] Audit all docs for implementation drift.
   - `Block` behavior
   - merged config wording
   - rollback semantics
@@ -78,13 +78,13 @@
 
 ### Git plugin
 
-- [ ] Replace string-based clean-tree detection with a locale-independent mechanism.
+- [x] Replace string-based clean-tree detection with a locale-independent mechanism.
   - Do not rely on `"No local changes to save"` text matching.
   - Prefer a deterministic check such as:
     - `git status --porcelain`
     - or other structured signal.
 
-- [ ] Improve Git repository detection.
+- [x] Improve Git repository detection.
   - Current check only tests `cwd/.git`.
   - Support:
     - worktrees,
@@ -93,7 +93,7 @@
     - `.git` file pointers,
     - running inside subdirectories of a repo.
 
-- [ ] Add tests for Git edge cases.
+- [x] Add tests for Git edge cases.
   - running from repo subdirectory
   - worktree
   - clean repo
@@ -101,14 +101,14 @@
   - staged + unstaged changes
   - stash conflict on rollback
 
-- [ ] Define rollback conflict strategy.
+- [x] Define rollback conflict strategy.
   - What happens if `git stash pop --index` conflicts?
   - Surface clear recovery instructions.
   - Log enough context for manual restore.
 
 ### Docker plugin
 
-- [ ] Redesign Docker rollback semantics.
+- [x] Redesign Docker rollback semantics.
   - `docker commit` + `docker run -d image` is **not** a true environment rollback.
   - It does not restore:
     - ports,
@@ -123,7 +123,7 @@
     - reduce claims in docs,
     - or implement real metadata capture + replay.
 
-- [ ] Capture container configuration before snapshot.
+- [x] Capture container configuration before snapshot.
   - Inspect and persist:
     - image
     - command / entrypoint
@@ -135,7 +135,7 @@
     - restart policy
     - name
 
-- [ ] Add rollback strategy for named containers.
+- [x] Add rollback strategy for named containers.
   - Handle name collisions.
   - Handle already removed containers.
   - Handle networks that no longer exist.
@@ -320,7 +320,7 @@
 - [ ] fail-open removed
 - [ ] `Block` semantics fixed
 - [ ] config/docs consistency fixed
-- [ ] Docker claims reduced or implementation upgraded
+- [x] Docker claims reduced or implementation upgraded
 - [ ] limitations/threat-model documented
 - [ ] critical regression tests added
 

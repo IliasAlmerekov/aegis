@@ -380,7 +380,7 @@ impl aegis::snapshot::SnapshotPlugin for MyPlugin {
 | Plugin | Trigger | Snapshot mechanism | Rollback |
 |--------|---------|-------------------|---------|
 | `GitPlugin` | `.git/` exists in `cwd` | `git stash push --include-untracked` | `git stash pop --index <ref>` |
-| `DockerPlugin` | Docker CLI available + containers running | `docker commit <container>` | `docker run -d` from saved image — restores filesystem state only; original port bindings, env vars, and network config are **not** restored |
+| `DockerPlugin` | Docker CLI available + containers running | `docker inspect` (captures name, ports, bind mounts, network, restart policy, labels) + `docker commit` (filesystem layers) | Stops and removes the original container, then recreates it from the snapshot image with its original host-level config. **Named volume data and removed networks are not restored.** |
 
 ---
 

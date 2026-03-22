@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::error::AegisError;
@@ -27,6 +29,165 @@ impl Default for DockerPlugin {
 impl DockerPlugin {
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+/// Host-level configuration captured from a running container before snapshot.
+///
+/// These fields are **not** preserved by `docker commit` (which saves only filesystem
+/// layers) but are required to recreate a container with the same runtime behaviour.
+#[derive(Debug, Serialize, Deserialize)]
+struct ContainerConfig {
+    /// Container name without the leading `/`.
+    name: String,
+    /// Bind mounts, e.g. `["/host/path:/container/path:ro"]`.
+    /// Named volumes are recorded by mount spec but their data is not captured.
+    binds: Vec<String>,
+    /// Port mappings as `"[host_ip:]host_port:container_port/proto"` strings.
+    port_bindings: Vec<String>,
+    /// User-defined labels.
+    labels: HashMap<String, String>,
+    /// Network mode, e.g. `"bridge"`, `"host"`, or a custom named network.
+    network_mode: String,
+    /// Restart policy name, e.g. `"no"`, `"always"`, `"on-failure"`.
+    restart_policy: String,
+}
+
+/// One record in the snapshot_id string — one entry per snapshotted container.
+/// The snapshot_id is a newline-separated sequence of these JSON objects.
+#[derive(Debug, Serialize, Deserialize)]
+struct ContainerRecord {
+    /// Short container ID as returned by `docker ps -q`.
+    container_id: String,
+    /// Name of the committed snapshot image (`aegis-snap-<id>-<ts>`).
+    image: String,
+    /// Host-level config captured before the commit via `docker inspect`.
+    config: ContainerConfig,
+}
+
+impl DockerPlugin {
+    /// Run `docker inspect <container_id>` and extract the fields needed for rollback.
+    async fn inspect_container(&self, container_id: &str) -> Result<ContainerConfig> {
+        let out = Command::new(&self.docker_bin)
+            .args(["inspect", container_id])
+            .output()
+            .await
+            .map_err(|e| AegisError::Snapshot(format!("docker inspect failed: {e}")))?;
+
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(AegisError::Snapshot(format!(
+                "docker inspect {container_id} failed: {stderr}"
+            )));
+        }
+
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+            .map_err(|e| AegisError::Snapshot(format!("failed to parse docker inspect: {e}")))?;
+
+        // `docker inspect` always returns an array, even for a single container.
+        let c = &json[0];
+
+        let name = c["Name"]
+            .as_str()
+            .unwrap_or("")
+            .trim_start_matches('/')
+            .to_string();
+
+        // Binds can be null when there are no bind mounts.
+        let binds: Vec<String> = c["HostConfig"]["Binds"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // PortBindings: { "80/tcp": [{ "HostIp": "", "HostPort": "8080" }], ... }
+        let mut port_bindings = Vec::new();
+        if let Some(obj) = c["HostConfig"]["PortBindings"].as_object() {
+            for (container_port, bindings) in obj {
+                if let Some(arr) = bindings.as_array() {
+                    for b in arr {
+                        let host_port = b["HostPort"].as_str().unwrap_or("").trim();
+                        if host_port.is_empty() {
+                            continue;
+                        }
+                        let host_ip = b["HostIp"].as_str().unwrap_or("").trim();
+                        let spec = if host_ip.is_empty() {
+                            format!("{host_port}:{container_port}")
+                        } else {
+                            format!("{host_ip}:{host_port}:{container_port}")
+                        };
+                        port_bindings.push(spec);
+                    }
+                }
+            }
+        }
+
+        let labels: HashMap<String, String> = c["Config"]["Labels"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let network_mode = c["HostConfig"]["NetworkMode"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        let restart_policy = c["HostConfig"]["RestartPolicy"]["Name"]
+            .as_str()
+            .unwrap_or("no")
+            .to_string();
+
+        Ok(ContainerConfig {
+            name,
+            binds,
+            port_bindings,
+            labels,
+            network_mode,
+            restart_policy,
+        })
+    }
+
+    /// Build the `docker run` argument list to recreate a container from a snapshot image.
+    ///
+    /// Env vars, CMD, and ENTRYPOINT are already baked into the committed image by
+    /// `docker commit` — only host-level config (name, ports, volumes, network, restart,
+    /// labels) needs to be replayed here.
+    fn build_run_args(image: &str, cfg: &ContainerConfig) -> Vec<String> {
+        let mut args = vec!["run".to_string(), "-d".to_string()];
+
+        if !cfg.name.is_empty() {
+            args.extend(["--name".to_string(), cfg.name.clone()]);
+        }
+
+        for bind in &cfg.binds {
+            args.extend(["-v".to_string(), bind.clone()]);
+        }
+
+        for p in &cfg.port_bindings {
+            args.extend(["-p".to_string(), p.clone()]);
+        }
+
+        for (k, v) in &cfg.labels {
+            args.extend(["--label".to_string(), format!("{k}={v}")]);
+        }
+
+        if !cfg.network_mode.is_empty() {
+            args.extend(["--network".to_string(), cfg.network_mode.clone()]);
+        }
+
+        if cfg.restart_policy != "no" && !cfg.restart_policy.is_empty() {
+            args.extend(["--restart".to_string(), cfg.restart_policy.clone()]);
+        }
+
+        args.push(image.to_string());
+        args
     }
 }
 
@@ -61,10 +222,28 @@ impl SnapshotPlugin for DockerPlugin {
         }
     }
 
-    /// Commit each running container as `aegis-snap-<container_id>-<timestamp>`.
+    /// Capture each running container's filesystem state and host-level configuration.
     ///
-    /// The returned `snapshot_id` is newline-separated `<container_id>:<image_name>` pairs,
-    /// one per container, so `rollback` can restore each one independently.
+    /// For each container:
+    /// 1. `docker inspect` — records name, bind mounts, port bindings, network, restart
+    ///    policy, and labels.
+    /// 2. `docker commit` — saves the filesystem diff as `aegis-snap-<id>-<ts>`.
+    ///
+    /// # Snapshot format
+    ///
+    /// Returns a newline-separated list of JSON objects, one per container:
+    /// ```json
+    /// {"container_id":"abc123","image":"aegis-snap-abc123-1700000000","config":{...}}
+    /// ```
+    ///
+    /// # Limitations
+    ///
+    /// - **Named volume data**: the volume *association* is recorded so the mount spec is
+    ///   replayed on rollback, but the volume data itself is not captured.
+    /// - **Removed networks**: if a custom network referenced in the config no longer exists
+    ///   when rollback runs, `docker run` will fail with a descriptive error from Docker.
+    /// - **Env / CMD / ENTRYPOINT**: these are baked into the committed image by
+    ///   `docker commit` and do not need to be replayed separately.
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
         let ps_out = Command::new(&self.docker_bin)
             .args(["ps", "-q"])
@@ -96,10 +275,11 @@ impl SnapshotPlugin for DockerPlugin {
 
         let mut records = Vec::with_capacity(container_ids.len());
         for container_id in container_ids {
-            let image_name = format!("aegis-snap-{container_id}-{timestamp}");
+            let config = self.inspect_container(container_id).await?;
+            let image = format!("aegis-snap-{container_id}-{timestamp}");
 
             let commit_out = Command::new(&self.docker_bin)
-                .args(["commit", container_id, &image_name])
+                .args(["commit", container_id, &image])
                 .output()
                 .await
                 .map_err(|e| AegisError::Snapshot(format!("docker commit failed: {e}")))?;
@@ -111,47 +291,74 @@ impl SnapshotPlugin for DockerPlugin {
                 )));
             }
 
-            tracing::info!(container_id, %image_name, "docker snapshot created");
-            records.push(format!("{container_id}:{image_name}"));
+            tracing::info!(container_id, %image, "docker snapshot created");
+            let record = ContainerRecord {
+                container_id: container_id.to_string(),
+                image,
+                config,
+            };
+            records.push(
+                serde_json::to_string(&record).map_err(|e| {
+                    AegisError::Snapshot(format!("failed to serialize snapshot record: {e}"))
+                })?,
+            );
         }
 
         Ok(records.join("\n"))
     }
 
-    /// Restore each container from its committed snapshot image.
+    /// Restore each container from its snapshot image and captured configuration.
     ///
-    /// Stops the original container (best-effort; it may already be gone),
-    /// then starts a new detached container from the snapshot image.
+    /// For each record:
+    /// 1. `docker stop <id>` — best-effort; the container may already be gone.
+    /// 2. `docker rm <id>` — best-effort; frees the original name so it can be reused.
+    /// 3. `docker run -d [original flags] <snapshot-image>` — recreates the container
+    ///    with its original name, port bindings, volumes, network, restart policy, and labels.
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
         if snapshot_id == NO_CONTAINERS {
             tracing::info!("docker snapshot had no containers, nothing to roll back");
             return Ok(());
         }
 
-        for record in snapshot_id.lines() {
-            let (container_id, image_name) = record.split_once(':').ok_or_else(|| {
-                AegisError::Snapshot(format!("malformed docker snapshot record: {record:?}"))
+        for line in snapshot_id.lines() {
+            let record: ContainerRecord = serde_json::from_str(line).map_err(|e| {
+                AegisError::Snapshot(format!("malformed docker snapshot record: {e}"))
             })?;
 
-            // Stop the original container — best-effort; log warning on failure.
+            // Step 1: stop — best-effort.
             let stop_out = Command::new(&self.docker_bin)
-                .args(["stop", container_id])
+                .args(["stop", &record.container_id])
                 .output()
                 .await
                 .map_err(|e| AegisError::Snapshot(format!("docker stop failed: {e}")))?;
 
             if !stop_out.status.success() {
-                let stderr = String::from_utf8_lossy(&stop_out.stderr);
                 tracing::warn!(
-                    container_id,
-                    %stderr,
+                    container_id = %record.container_id,
+                    stderr = %String::from_utf8_lossy(&stop_out.stderr),
                     "docker stop failed — container may already be gone, continuing rollback"
                 );
             }
 
-            // Start a new container from the snapshot image.
+            // Step 2: remove — best-effort; releases the container name for recreation.
+            let rm_out = Command::new(&self.docker_bin)
+                .args(["rm", &record.container_id])
+                .output()
+                .await
+                .map_err(|e| AegisError::Snapshot(format!("docker rm failed: {e}")))?;
+
+            if !rm_out.status.success() {
+                tracing::warn!(
+                    container_id = %record.container_id,
+                    stderr = %String::from_utf8_lossy(&rm_out.stderr),
+                    "docker rm failed — continuing rollback"
+                );
+            }
+
+            // Step 3: recreate with original host-level config.
+            let run_args = Self::build_run_args(&record.image, &record.config);
             let run_out = Command::new(&self.docker_bin)
-                .args(["run", "-d", image_name])
+                .args(&run_args)
                 .output()
                 .await
                 .map_err(|e| AegisError::Snapshot(format!("docker run failed: {e}")))?;
@@ -159,11 +366,16 @@ impl SnapshotPlugin for DockerPlugin {
             if !run_out.status.success() {
                 let stderr = String::from_utf8_lossy(&run_out.stderr);
                 return Err(AegisError::Snapshot(format!(
-                    "docker run {image_name} failed: {stderr}"
+                    "docker run {} failed: {stderr}",
+                    record.image
                 )));
             }
 
-            tracing::info!(container_id, image_name, "docker snapshot rolled back");
+            tracing::info!(
+                container_id = %record.container_id,
+                image = %record.image,
+                "docker container rolled back"
+            );
         }
 
         Ok(())
@@ -194,6 +406,29 @@ mod tests {
         }
     }
 
+    /// Minimal `docker inspect` JSON for a container with no special config.
+    const MINIMAL_INSPECT: &str = r#"[{"Name":"/test-ctr","Config":{"Labels":{}},"HostConfig":{"Binds":null,"PortBindings":{},"NetworkMode":"bridge","RestartPolicy":{"Name":"no"}}}]"#;
+
+    /// Richer inspect JSON covering ports, binds, network, restart, and labels.
+    const RICH_INSPECT: &str = r#"[{"Name":"/web","Config":{"Labels":{"app":"frontend"}},"HostConfig":{"Binds":["/data:/app/data"],"PortBindings":{"80/tcp":[{"HostIp":"","HostPort":"8080"}]},"NetworkMode":"my-net","RestartPolicy":{"Name":"always"}}}]"#;
+
+    /// Build a minimal ContainerRecord JSON string suitable for use as a snapshot_id line.
+    fn minimal_record(container_id: &str, image: &str) -> String {
+        serde_json::to_string(&ContainerRecord {
+            container_id: container_id.to_string(),
+            image: image.to_string(),
+            config: ContainerConfig {
+                name: String::new(),
+                binds: vec![],
+                port_bindings: vec![],
+                labels: HashMap::new(),
+                network_mode: "bridge".to_string(),
+                restart_policy: "no".to_string(),
+            },
+        })
+        .unwrap()
+    }
+
     // ── is_applicable ──────────────────────────────────────────────────────────
 
     #[test]
@@ -207,7 +442,6 @@ mod tests {
     #[test]
     fn is_applicable_no_running_containers() {
         let dir = TempDir::new().unwrap();
-        // docker ps exits 0 but prints nothing — no running containers
         write_mock_docker(
             dir.path(),
             r#"case "$1" in
@@ -234,7 +468,6 @@ esac"#,
     #[test]
     fn is_applicable_docker_not_running() {
         let dir = TempDir::new().unwrap();
-        // docker ps exits non-zero — daemon not running
         write_mock_docker(
             dir.path(),
             r#"case "$1" in
@@ -267,39 +500,99 @@ esac"#,
     #[tokio::test]
     async fn snapshot_commits_each_running_container() {
         let dir = TempDir::new().unwrap();
+        let inspect_json = MINIMAL_INSPECT;
         write_mock_docker(
             dir.path(),
-            r#"case "$1" in
-  ps) printf "abc123\ndef456\n"; exit 0 ;;
-  commit) printf "sha256:mockhash\n"; exit 0 ;;
-  *) exit 1 ;;
-esac"#,
+            &format!(
+                r#"case "$1" in
+  ps)      printf "abc123\ndef456\n"; exit 0 ;;
+  inspect) printf '{inspect_json}'; exit 0 ;;
+  commit)  printf "sha256:mockhash\n"; exit 0 ;;
+  *)       exit 1 ;;
+esac"#
+            ),
         );
         let id = plugin(&dir.path().join("docker"))
             .snapshot(Path::new("/"), "docker rm -f web")
             .await
             .unwrap();
 
+        assert_eq!(id.lines().count(), 2, "one JSON record per container");
         assert!(id.contains("abc123"), "snapshot_id must reference abc123");
         assert!(id.contains("def456"), "snapshot_id must reference def456");
-        assert!(
-            id.contains("aegis-snap-"),
-            "snapshot_id must use aegis-snap- prefix"
+        assert!(id.contains("aegis-snap-"), "must use aegis-snap- prefix");
+
+        // Each line must be valid JSON with the expected fields.
+        for line in id.lines() {
+            let rec: ContainerRecord = serde_json::from_str(line)
+                .expect("each snapshot_id line must be a valid ContainerRecord");
+            assert!(rec.image.starts_with("aegis-snap-"));
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_captures_container_metadata_from_inspect() {
+        let dir = TempDir::new().unwrap();
+        let inspect_json = RICH_INSPECT;
+        write_mock_docker(
+            dir.path(),
+            &format!(
+                r#"case "$1" in
+  ps)      printf "abc123\n"; exit 0 ;;
+  inspect) printf '{inspect_json}'; exit 0 ;;
+  commit)  printf "sha256:mockhash\n"; exit 0 ;;
+  *)       exit 1 ;;
+esac"#
+            ),
         );
-        // Two records, one per line
-        assert_eq!(id.lines().count(), 2);
+        let id = plugin(&dir.path().join("docker"))
+            .snapshot(Path::new("/"), "docker stop web")
+            .await
+            .unwrap();
+
+        let rec: ContainerRecord = serde_json::from_str(id.trim()).unwrap();
+        assert_eq!(rec.config.name, "web");
+        assert_eq!(rec.config.network_mode, "my-net");
+        assert_eq!(rec.config.restart_policy, "always");
+        assert_eq!(rec.config.binds, vec!["/data:/app/data"]);
+        assert!(
+            rec.config.port_bindings.iter().any(|p| p.contains("8080")),
+            "port binding must reference host port 8080"
+        );
+        assert_eq!(rec.config.labels.get("app"), Some(&"frontend".to_string()));
+    }
+
+    #[tokio::test]
+    async fn snapshot_fails_when_inspect_returns_error() {
+        let dir = TempDir::new().unwrap();
+        write_mock_docker(
+            dir.path(),
+            r#"case "$1" in
+  ps)      printf "abc123\n"; exit 0 ;;
+  inspect) printf "Error: no such container\n" >&2; exit 1 ;;
+  *)       exit 1 ;;
+esac"#,
+        );
+        let result = plugin(&dir.path().join("docker"))
+            .snapshot(Path::new("/"), "rm -rf /")
+            .await;
+        assert!(result.is_err(), "snapshot must propagate inspect failure");
     }
 
     #[tokio::test]
     async fn snapshot_fails_when_commit_returns_error() {
         let dir = TempDir::new().unwrap();
+        let inspect_json = MINIMAL_INSPECT;
         write_mock_docker(
             dir.path(),
-            r#"case "$1" in
-  ps) printf "abc123\n"; exit 0 ;;
-  commit) printf "Error: permission denied\n" >&2; exit 1 ;;
-  *) exit 1 ;;
-esac"#,
+            &format!(
+                r#"case "$1" in
+  ps)      printf "abc123\n"; exit 0 ;;
+  inspect) printf '{inspect_json}'; exit 0 ;;
+  commit)  printf "Error: permission denied\n" >&2; exit 1 ;;
+  *)       exit 1 ;;
+esac"#
+            ),
         );
         let result = plugin(&dir.path().join("docker"))
             .snapshot(Path::new("/"), "rm -rf /")
@@ -319,7 +612,7 @@ esac"#,
     }
 
     #[tokio::test]
-    async fn rollback_stops_then_restarts_each_container() {
+    async fn rollback_stops_removes_then_recreates_container() {
         let dir = TempDir::new().unwrap();
         let log = dir.path().join("calls.log");
         let log_path = log.to_string_lossy().into_owned();
@@ -330,40 +623,110 @@ esac"#,
                 r#"printf "%s\n" "$*" >> {log_path}
 case "$1" in
   stop) exit 0 ;;
+  rm)   exit 0 ;;
   run)  printf "newcontainer\n"; exit 0 ;;
   *)    exit 1 ;;
 esac"#
             ),
         );
 
+        let snapshot_id = minimal_record("abc123", "aegis-snap-abc123-1700000000");
         plugin(&dir.path().join("docker"))
-            .rollback("abc123:aegis-snap-abc123-1700000000")
+            .rollback(&snapshot_id)
             .await
             .unwrap();
 
         let calls = fs::read_to_string(&log).unwrap();
         assert!(calls.contains("stop abc123"), "must call docker stop");
+        assert!(calls.contains("rm abc123"), "must call docker rm to free the name");
         assert!(
-            calls.contains("run -d aegis-snap-abc123"),
-            "must call docker run"
+            calls.contains("aegis-snap-abc123-1700000000"),
+            "must recreate from snapshot image"
         );
     }
 
     #[tokio::test]
+    async fn rollback_uses_captured_name_ports_and_network() {
+        let dir = TempDir::new().unwrap();
+        let log = dir.path().join("calls.log");
+        let log_path = log.to_string_lossy().into_owned();
+
+        write_mock_docker(
+            dir.path(),
+            &format!(
+                r#"printf "%s\n" "$*" >> {log_path}
+case "$1" in
+  stop) exit 0 ;;
+  rm)   exit 0 ;;
+  run)  printf "newcontainer\n"; exit 0 ;;
+  *)    exit 1 ;;
+esac"#
+            ),
+        );
+
+        let record = ContainerRecord {
+            container_id: "abc123".to_string(),
+            image: "aegis-snap-abc123-1700000000".to_string(),
+            config: ContainerConfig {
+                name: "web".to_string(),
+                binds: vec!["/data:/app/data".to_string()],
+                port_bindings: vec!["8080:80/tcp".to_string()],
+                labels: HashMap::new(),
+                network_mode: "my-net".to_string(),
+                restart_policy: "always".to_string(),
+            },
+        };
+        let snapshot_id = serde_json::to_string(&record).unwrap();
+
+        plugin(&dir.path().join("docker"))
+            .rollback(&snapshot_id)
+            .await
+            .unwrap();
+
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("--name web"), "must restore container name");
+        assert!(calls.contains("-p 8080:80/tcp"), "must restore port binding");
+        assert!(calls.contains("-v /data:/app/data"), "must restore bind mount");
+        assert!(calls.contains("--network my-net"), "must restore network");
+        assert!(calls.contains("--restart always"), "must restore restart policy");
+    }
+
+    #[tokio::test]
     async fn rollback_continues_when_stop_fails() {
-        // A container that is already gone should not abort rollback.
         let dir = TempDir::new().unwrap();
         write_mock_docker(
             dir.path(),
             r#"case "$1" in
   stop) printf "No such container\n" >&2; exit 1 ;;
+  rm)   exit 0 ;;
   run)  printf "newcontainer\n"; exit 0 ;;
   *)    exit 1 ;;
 esac"#,
         );
+        let snapshot_id = minimal_record("abc123", "aegis-snap-abc123-1700000000");
         // Must succeed despite stop failure.
         plugin(&dir.path().join("docker"))
-            .rollback("abc123:aegis-snap-abc123-1700000000")
+            .rollback(&snapshot_id)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rollback_continues_when_rm_fails() {
+        let dir = TempDir::new().unwrap();
+        write_mock_docker(
+            dir.path(),
+            r#"case "$1" in
+  stop) exit 0 ;;
+  rm)   printf "No such container\n" >&2; exit 1 ;;
+  run)  printf "newcontainer\n"; exit 0 ;;
+  *)    exit 1 ;;
+esac"#,
+        );
+        let snapshot_id = minimal_record("abc123", "aegis-snap-abc123-1700000000");
+        // Must succeed despite rm failure (container may already be removed).
+        plugin(&dir.path().join("docker"))
+            .rollback(&snapshot_id)
             .await
             .unwrap();
     }
@@ -375,12 +738,14 @@ esac"#,
             dir.path(),
             r#"case "$1" in
   stop) exit 0 ;;
+  rm)   exit 0 ;;
   run)  printf "Error: image not found\n" >&2; exit 1 ;;
   *)    exit 1 ;;
 esac"#,
         );
+        let snapshot_id = minimal_record("abc123", "aegis-snap-abc123-1700000000");
         let result = plugin(&dir.path().join("docker"))
-            .rollback("abc123:aegis-snap-abc123-1700000000")
+            .rollback(&snapshot_id)
             .await;
         assert!(result.is_err(), "rollback must propagate run failure");
     }
@@ -397,30 +762,100 @@ esac"#,
                 r#"printf "%s\n" "$*" >> {log_path}
 case "$1" in
   stop) exit 0 ;;
+  rm)   exit 0 ;;
   run)  printf "newcontainer\n"; exit 0 ;;
   *)    exit 1 ;;
 esac"#
             ),
         );
 
+        let r1 = minimal_record("aaa111", "aegis-snap-aaa111-1700000000");
+        let r2 = minimal_record("bbb222", "aegis-snap-bbb222-1700000000");
+        let snapshot_id = format!("{r1}\n{r2}");
+
         plugin(&dir.path().join("docker"))
-            .rollback("aaa111:aegis-snap-aaa111-1700000000\nbbb222:aegis-snap-bbb222-1700000000")
+            .rollback(&snapshot_id)
             .await
             .unwrap();
 
         let calls = fs::read_to_string(&log).unwrap();
         assert!(calls.contains("stop aaa111"));
         assert!(calls.contains("stop bbb222"));
-        assert!(calls.contains("run -d aegis-snap-aaa111"));
-        assert!(calls.contains("run -d aegis-snap-bbb222"));
+        assert!(calls.contains("rm aaa111"));
+        assert!(calls.contains("rm bbb222"));
+        assert!(calls.contains("aegis-snap-aaa111-1700000000"));
+        assert!(calls.contains("aegis-snap-bbb222-1700000000"));
     }
 
     #[tokio::test]
     async fn rollback_fails_on_malformed_snapshot_id() {
-        let result = DockerPlugin::default().rollback("no-colon-here").await;
+        let result = DockerPlugin::default().rollback("not-valid-json").await;
         assert!(
             result.is_err(),
             "malformed snapshot_id must return an error"
         );
+    }
+
+    // ── build_run_args unit tests ───────────────────────────────────────────────
+
+    #[test]
+    fn build_run_args_minimal_config() {
+        let cfg = ContainerConfig {
+            name: String::new(),
+            binds: vec![],
+            port_bindings: vec![],
+            labels: HashMap::new(),
+            network_mode: String::new(),
+            restart_policy: "no".to_string(),
+        };
+        let args = DockerPlugin::build_run_args("my-image", &cfg);
+        assert_eq!(args, vec!["run", "-d", "my-image"]);
+    }
+
+    #[test]
+    fn build_run_args_full_config() {
+        let mut labels = HashMap::new();
+        labels.insert("env".to_string(), "prod".to_string());
+
+        let cfg = ContainerConfig {
+            name: "app".to_string(),
+            binds: vec!["/host:/container".to_string()],
+            port_bindings: vec!["8080:80/tcp".to_string()],
+            labels,
+            network_mode: "custom-net".to_string(),
+            restart_policy: "always".to_string(),
+        };
+        let args = DockerPlugin::build_run_args("snap-image", &cfg);
+
+        // Check structural flags are present (order of labels is not guaranteed).
+        assert!(args.contains(&"run".to_string()));
+        assert!(args.contains(&"-d".to_string()));
+        assert!(args.contains(&"--name".to_string()));
+        assert!(args.contains(&"app".to_string()));
+        assert!(args.contains(&"-v".to_string()));
+        assert!(args.contains(&"/host:/container".to_string()));
+        assert!(args.contains(&"-p".to_string()));
+        assert!(args.contains(&"8080:80/tcp".to_string()));
+        assert!(args.contains(&"--label".to_string()));
+        assert!(args.contains(&"env=prod".to_string()));
+        assert!(args.contains(&"--network".to_string()));
+        assert!(args.contains(&"custom-net".to_string()));
+        assert!(args.contains(&"--restart".to_string()));
+        assert!(args.contains(&"always".to_string()));
+        assert_eq!(args.last().unwrap(), "snap-image");
+    }
+
+    #[test]
+    fn build_run_args_skips_no_restart_policy() {
+        let cfg = ContainerConfig {
+            name: String::new(),
+            binds: vec![],
+            port_bindings: vec![],
+            labels: HashMap::new(),
+            network_mode: String::new(),
+            restart_policy: "no".to_string(),
+        };
+        let args = DockerPlugin::build_run_args("img", &cfg);
+        assert!(!args.contains(&"--restart".to_string()));
     }
 }
