@@ -201,7 +201,7 @@
     - underlying shell failure
   - document these exit codes.
 
-- [ ] Harden shell resolution.
+- [x] Harden shell resolution.
   - Current fallback to `/bin/sh` is pragmatic but should be documented.
   - Add tests for:
     - `SHELL` pointing to Aegis itself
@@ -209,7 +209,7 @@
     - missing `AEGIS_REAL_SHELL`
     - recursive invocation prevention
 
-- [ ] Add non-interactive mode handling.
+- [x] Add non-interactive mode handling.
   - If stdin is not a TTY:
     - define exact behavior for `Warn`, `Danger`, `Block`.
   - Important for CI and agent runners.

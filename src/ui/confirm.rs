@@ -21,9 +21,18 @@ use crate::snapshot::SnapshotRecord;
 ///
 /// Returns `true` if the command should proceed, `false` if it was denied or blocked.
 pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool {
+    use std::io::IsTerminal;
+    // `AEGIS_FORCE_INTERACTIVE=1` lets test harnesses and scripted setups
+    // opt into interactive mode even when stdin is a pipe.  It must never
+    // be set in production CI; it exists solely for integration-test use.
+    let forced = std::env::var_os("AEGIS_FORCE_INTERACTIVE")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let is_interactive = forced || io::stdin().is_terminal();
     show_confirmation_with_input(
         assessment,
         snapshots,
+        is_interactive,
         &mut io::stdin().lock(),
         &mut io::stderr(),
     )
@@ -31,6 +40,17 @@ pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) 
 
 /// Testable inner version — accepts any `BufRead` for input and `Write` for output.
 ///
+/// `is_interactive` must be `true` when stdin is a TTY (the user can type a
+/// response) and `false` in CI pipelines, agent runners, or any other context
+/// where there is no human at the keyboard.
+///
+/// Non-interactive behavior (fail-closed):
+/// - `Block`  → always denied; same as interactive.
+/// - `Danger` → denied immediately; no prompt shown.
+/// - `Warn`   → denied immediately; no prompt shown.
+/// - `Safe`   → auto-approved; same as interactive.
+///
+/// Interactive behavior:
 /// - `Block`  → prints the reason and returns `false` immediately; no prompt shown.
 /// - `Danger` → shows the dialog; user must type `yes` exactly to proceed.
 /// - `Warn`   → shows the dialog; Enter (or any non-`n` input) approves; `n` denies.
@@ -38,12 +58,20 @@ pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) 
 pub fn show_confirmation_with_input<R: BufRead, W: Write>(
     assessment: &Assessment,
     snapshots: &[SnapshotRecord],
+    is_interactive: bool,
     input: &mut R,
     output: &mut W,
 ) -> bool {
     match assessment.risk {
         RiskLevel::Block => {
             render_block(assessment, output);
+            false
+        }
+        // Fail-closed: without a human at the keyboard, deny anything that
+        // would normally require a prompt.  This prevents an AI agent from
+        // running dangerous commands unattended in CI.
+        RiskLevel::Danger | RiskLevel::Warn if !is_interactive => {
+            render_noninteractive_denial(assessment, output);
             false
         }
         RiskLevel::Danger => {
@@ -88,6 +116,38 @@ fn render_block<W: Write>(assessment: &Assessment, out: &mut W) {
             );
         }
     }
+
+    let _ = out.flush();
+}
+
+/// Print a non-interactive denial notice.  Emitted when stdin is not a TTY
+/// and the command would have triggered a prompt in interactive mode.
+///
+/// We use Yellow (not Red) to distinguish from Block, which is truly
+/// catastrophic.  This denial is policy-driven, not a safety absolute.
+fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) {
+    let risk_label = match assessment.risk {
+        RiskLevel::Danger => "dangerous",
+        RiskLevel::Warn => "suspicious",
+        _ => "flagged",
+    };
+
+    let _ = queue!(
+        out,
+        SetForegroundColor(Color::Yellow),
+        SetAttribute(Attribute::Bold),
+        Print(format!(
+            "\n  AEGIS: non-interactive — {risk_label} command denied\n"
+        )),
+        ResetColor,
+    );
+
+    print_command_line(assessment, out);
+
+    let _ = queue!(
+        out,
+        Print("  No TTY detected. To permit this command in CI, add it to the allowlist.\n"),
+    );
 
     let _ = out.flush();
 }
@@ -369,8 +429,13 @@ mod tests {
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         // Even if the user somehow types "yes", Block must return false.
-        let result =
-            show_confirmation_with_input(&assessment, &[], &mut b"yes\n".as_ref(), &mut Vec::new());
+        let result = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"yes\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(!result, "Block must always return false");
     }
 
@@ -386,7 +451,7 @@ mod tests {
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], &mut b"".as_ref(), &mut output);
+        show_confirmation_with_input(&assessment, &[], true, &mut b"".as_ref(), &mut output);
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -401,7 +466,7 @@ mod tests {
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], &mut b"".as_ref(), &mut output);
+        show_confirmation_with_input(&assessment, &[], true, &mut b"".as_ref(), &mut output);
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -423,8 +488,13 @@ mod tests {
         );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
-        let approved =
-            show_confirmation_with_input(&assessment, &[], &mut b"yes\n".as_ref(), &mut Vec::new());
+        let approved = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"yes\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(approved, "'yes' must approve a Danger command");
     }
 
@@ -439,8 +509,13 @@ mod tests {
         );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
-        let denied =
-            show_confirmation_with_input(&assessment, &[], &mut b"y\n".as_ref(), &mut Vec::new());
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"y\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(!denied, "'y' must NOT approve — only 'yes' does");
     }
 
@@ -455,8 +530,13 @@ mod tests {
         );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
-        let denied =
-            show_confirmation_with_input(&assessment, &[], &mut b"\n".as_ref(), &mut Vec::new());
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(!denied, "empty Enter must NOT approve a Danger command");
     }
 
@@ -472,8 +552,13 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         for input in [b"no\n".as_ref(), b"nope\n".as_ref(), b"YES\n".as_ref()] {
-            let denied =
-                show_confirmation_with_input(&assessment, &[], &mut { input }, &mut Vec::new());
+            let denied = show_confirmation_with_input(
+                &assessment,
+                &[],
+                true,
+                &mut { input },
+                &mut Vec::new(),
+            );
             assert!(!denied, "only 'yes' approves; other inputs must deny");
         }
     }
@@ -485,8 +570,13 @@ mod tests {
         let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
-        let approved =
-            show_confirmation_with_input(&assessment, &[], &mut b"\n".as_ref(), &mut Vec::new());
+        let approved = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(approved, "Enter must approve a Warn command");
     }
 
@@ -495,8 +585,13 @@ mod tests {
         let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
-        let denied =
-            show_confirmation_with_input(&assessment, &[], &mut b"n\n".as_ref(), &mut Vec::new());
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"n\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(!denied, "'n' must deny a Warn command");
     }
 
@@ -505,8 +600,13 @@ mod tests {
         let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
-        let denied =
-            show_confirmation_with_input(&assessment, &[], &mut b"no\n".as_ref(), &mut Vec::new());
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(!denied, "'no' must deny a Warn command");
     }
 
@@ -515,8 +615,13 @@ mod tests {
         let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
-        let approved =
-            show_confirmation_with_input(&assessment, &[], &mut b"ok\n".as_ref(), &mut Vec::new());
+        let approved = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"ok\n".as_ref(),
+            &mut Vec::new(),
+        );
         assert!(approved, "non-n input must approve a Warn command");
     }
 
@@ -534,7 +639,7 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -555,7 +660,7 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -584,12 +689,123 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[snap], &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &[snap],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
             text.contains("git") && text.contains("stash@{0}"),
             "dialog must list snapshot records; got:\n{text}"
+        );
+    }
+
+    // ── Non-interactive mode ──────────────────────────────────────────────────
+    //
+    // When stdin is not a TTY (CI, pipes, agent runners) Aegis must fail-closed:
+    // any command that would trigger a prompt is denied without asking.
+    //
+    // Rule table:
+    //   Safe   → auto-approved  (same as interactive)
+    //   Warn   → denied         (no human present to confirm)
+    //   Danger → denied         (no human present to confirm)
+    //   Block  → denied         (same as interactive — always hard-stopped)
+
+    #[test]
+    fn noninteractive_warn_is_denied() {
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+        // Even with an "approving" response on stdin, is_interactive=false must deny.
+        let result = show_confirmation_with_input(
+            &assessment,
+            &[],
+            false,
+            &mut b"\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(!result, "Warn must be denied in non-interactive mode");
+    }
+
+    #[test]
+    fn noninteractive_danger_is_denied() {
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+        let result = show_confirmation_with_input(
+            &assessment,
+            &[],
+            false,
+            &mut b"yes\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(!result, "Danger must be denied in non-interactive mode");
+    }
+
+    #[test]
+    fn noninteractive_block_is_denied() {
+        let p = make_match("PS-006", RiskLevel::Block, "rm", "Root delete", None);
+        let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
+
+        let result = show_confirmation_with_input(
+            &assessment,
+            &[],
+            false,
+            &mut b"yes\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(!result, "Block must be denied in non-interactive mode");
+    }
+
+    #[test]
+    fn noninteractive_output_explains_denial() {
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+        let mut output = Vec::new();
+        show_confirmation_with_input(&assessment, &[], false, &mut b"yes\n".as_ref(), &mut output);
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("non-interactive"),
+            "non-interactive denial must mention 'non-interactive'; got:\n{text}"
+        );
+        assert!(
+            text.contains("allowlist"),
+            "non-interactive denial must mention 'allowlist' as the escape hatch; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn noninteractive_safe_is_still_approved() {
+        // Safe commands must never be blocked regardless of TTY state.
+        let assessment = make_assessment("ls -la", RiskLevel::Safe, vec![]);
+        let result = show_confirmation_with_input(
+            &assessment,
+            &[],
+            false,
+            &mut b"".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(
+            result,
+            "Safe commands must be approved even in non-interactive mode"
         );
     }
 

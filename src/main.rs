@@ -395,18 +395,46 @@ fn exec_command(cmd: &str) -> i32 {
 }
 
 fn resolve_shell() -> PathBuf {
-    if let Some(shell) = env::var_os("AEGIS_REAL_SHELL").filter(|shell| !shell.is_empty()) {
+    let aegis_real_shell = env::var_os("AEGIS_REAL_SHELL");
+    let shell_env = env::var_os("SHELL");
+    let current_exe = env::current_exe().ok();
+    resolve_shell_inner(
+        aegis_real_shell.as_deref(),
+        shell_env.as_deref(),
+        current_exe.as_deref(),
+    )
+}
+
+/// Pure shell-resolution logic — extracted for unit testing.
+///
+/// Resolution order:
+/// 1. `AEGIS_REAL_SHELL` — explicit override set by the install script when
+///    Aegis replaces `$SHELL`.  Always trusted; never loops back to Aegis.
+/// 2. `SHELL` — the user's configured shell, *unless* it resolves to the same
+///    binary as Aegis itself (recursive invocation guard).
+/// 3. `/bin/sh` — POSIX-mandated fallback.  Chosen deliberately over an error
+///    because a safe, functional shell is better than refusing to run any
+///    command.  If even `/bin/sh` is absent the `exec` call will fail with a
+///    clear OS error, which we surface via `EXIT_INTERNAL`.
+fn resolve_shell_inner(
+    aegis_real_shell: Option<&std::ffi::OsStr>,
+    shell_env: Option<&std::ffi::OsStr>,
+    current_exe: Option<&Path>,
+) -> PathBuf {
+    // 1. Explicit override — highest priority.
+    if let Some(shell) = aegis_real_shell.filter(|s| !s.is_empty()) {
         return PathBuf::from(shell);
     }
 
-    let current_exe = env::current_exe().ok();
-    if let Some(shell) = env::var_os("SHELL").filter(|shell| !shell.is_empty()) {
+    // 2. $SHELL — skip if it points back at us (infinite-recursion guard).
+    if let Some(shell) = shell_env.filter(|s| !s.is_empty()) {
         let shell_path = PathBuf::from(shell);
-        if !same_file(&shell_path, current_exe.as_deref()) {
+        if !same_file(&shell_path, current_exe) {
             return shell_path;
         }
     }
 
+    // 3. POSIX fallback — see doc-comment above for rationale.
     PathBuf::from("/bin/sh")
 }
 
@@ -460,6 +488,59 @@ mod tests {
     fn snapshot_runtime_failure_fallback_returns_empty_vec() {
         let fallback: Vec<SnapshotRecord> = Vec::new();
         assert!(fallback.is_empty());
+    }
+
+    // ── Shell resolution — resolve_shell_inner ────────────────────────────────
+    //
+    // All four scenarios are tested against the pure inner function so that no
+    // real environment variables are read or mutated during the test run.
+
+    #[test]
+    fn shell_resolution_aegis_real_shell_takes_priority() {
+        // AEGIS_REAL_SHELL must win even when SHELL is also set.
+        let result = resolve_shell_inner(
+            Some(std::ffi::OsStr::new("/usr/bin/zsh")),
+            Some(std::ffi::OsStr::new("/bin/bash")),
+            None,
+        );
+        assert_eq!(result, PathBuf::from("/usr/bin/zsh"));
+    }
+
+    #[test]
+    fn shell_resolution_missing_aegis_real_shell_falls_through_to_shell() {
+        // When AEGIS_REAL_SHELL is absent, $SHELL is used.
+        let result = resolve_shell_inner(None, Some(std::ffi::OsStr::new("/bin/bash")), None);
+        assert_eq!(result, PathBuf::from("/bin/bash"));
+    }
+
+    #[test]
+    fn shell_resolution_shell_pointing_to_aegis_falls_back_to_posix() {
+        // If $SHELL resolves to the Aegis binary itself, we must NOT exec it
+        // again — that would be infinite recursion.  The fallback is /bin/sh.
+        let aegis_path = PathBuf::from("/usr/local/bin/aegis");
+        let result = resolve_shell_inner(None, Some(aegis_path.as_os_str()), Some(&aegis_path));
+        assert_eq!(
+            result,
+            PathBuf::from("/bin/sh"),
+            "SHELL pointing to Aegis itself must fall back to /bin/sh"
+        );
+    }
+
+    #[test]
+    fn shell_resolution_invalid_shell_path_returned_as_is() {
+        // An invalid/non-existent path in $SHELL is returned without
+        // validation — exec() will fail with a clear OS error.  resolve_shell
+        // is not responsible for path existence checking.
+        let result =
+            resolve_shell_inner(None, Some(std::ffi::OsStr::new("/nonexistent/shell")), None);
+        assert_eq!(result, PathBuf::from("/nonexistent/shell"));
+    }
+
+    #[test]
+    fn shell_resolution_both_missing_falls_back_to_bin_sh() {
+        // Neither AEGIS_REAL_SHELL nor SHELL set → POSIX fallback.
+        let result = resolve_shell_inner(None, None, None);
+        assert_eq!(result, PathBuf::from("/bin/sh"));
     }
 
     // ── Shell resolution helpers ──────────────────────────────────────────────

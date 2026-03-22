@@ -59,8 +59,11 @@ fn dangerous_command_denied_preserves_directory() {
 
     // Use home as CWD (not the project root) so the GitPlugin does not
     // git-stash the developer's uncommitted changes as a "snapshot".
+    // AEGIS_FORCE_INTERACTIVE=1 lets the test pipe "no\n" as if a human
+    // were at the keyboard, so the full interactive dialog is exercised.
     let mut child = base_command(home.path())
         .current_dir(home.path())
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
         .args(["-c", &format!("rm -rf {}", target_dir.display())])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -191,10 +194,13 @@ exit 0
         "destroy -target=module.test.api\n"
     );
 
+    // AEGIS_FORCE_INTERACTIVE=1 lets the test pipe "no\n" to simulate a
+    // human denying the dangerous non-allowlisted command.
     let mut denied_child = base_command(home.path())
         .current_dir(workspace.path())
         .env("PATH", &path)
         .env("AEGIS_TEST_TERRAFORM_LOG", &log_path)
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
         .args(["-c", "terraform destroy -target=module.prod.api"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -446,8 +452,10 @@ fn broken_config_toml_dangerous_command_still_intercepted() {
     )
     .unwrap();
 
+    // AEGIS_FORCE_INTERACTIVE=1 simulates a human typing "no".
     let mut child = base_command(home.path())
         .current_dir(workspace.path())
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
         .args(["-c", "rm -rf /tmp/aegis_cfg_test_dir"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -534,29 +542,41 @@ fn danger_command_with_eof_stdin_is_denied() {
     assert!(target.exists(), "target must still exist after denial");
 }
 
-/// A Warn-level command with stdin closed (EOF) is auto-approved because
-/// empty input means "proceed" in the Warn prompt (`"" != "n"`).
-/// Documents the current behaviour so any change is deliberate.
+/// A Warn-level command with no TTY must be denied automatically (fail-closed).
+///
+/// Previously (before non-interactive mode), empty stdin was treated as
+/// "proceed" by the Warn prompt (`"" != "n"`), so EOF auto-approved.  That
+/// behaviour was unsafe for CI/agent runners: an AI agent could get a
+/// suspicious command approved without any human present.
+///
+/// The new contract: no TTY → non-interactive mode → Warn is denied.
+/// To allow a Warn command in CI, add it to the allowlist.
 #[test]
-fn warn_command_with_eof_stdin_is_auto_approved() {
+fn warn_command_non_interactive_is_denied() {
     let home = TempDir::new().unwrap();
 
     let output = base_command(home.path())
         .args(["-c", "git stash clear"])
-        .stdin(Stdio::null())
+        .stdin(Stdio::null()) // no TTY → non-interactive
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .unwrap();
 
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Warn command must be denied (exit 2) in non-interactive mode"
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("Command cancelled."),
-        "empty stdin must NOT cancel a Warn command; stderr:\n{stderr}"
+        stderr.contains("non-interactive"),
+        "non-interactive denial must say 'non-interactive'; stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("AEGIS INTERCEPTED A SUSPICIOUS COMMAND"),
-        "Warn command must show the interception dialog; stderr:\n{stderr}"
+        stderr.contains("allowlist"),
+        "non-interactive denial must mention 'allowlist' as the escape hatch; stderr:\n{stderr}"
     );
 }
 
