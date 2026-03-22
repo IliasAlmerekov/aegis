@@ -297,11 +297,9 @@ impl SnapshotPlugin for DockerPlugin {
                 image,
                 config,
             };
-            records.push(
-                serde_json::to_string(&record).map_err(|e| {
-                    AegisError::Snapshot(format!("failed to serialize snapshot record: {e}"))
-                })?,
-            );
+            records.push(serde_json::to_string(&record).map_err(|e| {
+                AegisError::Snapshot(format!("failed to serialize snapshot record: {e}"))
+            })?);
         }
 
         Ok(records.join("\n"))
@@ -638,7 +636,10 @@ esac"#
 
         let calls = fs::read_to_string(&log).unwrap();
         assert!(calls.contains("stop abc123"), "must call docker stop");
-        assert!(calls.contains("rm abc123"), "must call docker rm to free the name");
+        assert!(
+            calls.contains("rm abc123"),
+            "must call docker rm to free the name"
+        );
         assert!(
             calls.contains("aegis-snap-abc123-1700000000"),
             "must recreate from snapshot image"
@@ -685,10 +686,19 @@ esac"#
 
         let calls = fs::read_to_string(&log).unwrap();
         assert!(calls.contains("--name web"), "must restore container name");
-        assert!(calls.contains("-p 8080:80/tcp"), "must restore port binding");
-        assert!(calls.contains("-v /data:/app/data"), "must restore bind mount");
+        assert!(
+            calls.contains("-p 8080:80/tcp"),
+            "must restore port binding"
+        );
+        assert!(
+            calls.contains("-v /data:/app/data"),
+            "must restore bind mount"
+        );
         assert!(calls.contains("--network my-net"), "must restore network");
-        assert!(calls.contains("--restart always"), "must restore restart policy");
+        assert!(
+            calls.contains("--restart always"),
+            "must restore restart policy"
+        );
     }
 
     #[tokio::test]

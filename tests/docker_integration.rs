@@ -266,8 +266,7 @@ async fn snapshot_rollback_preserves_container_name() {
         .expect("rollback must succeed");
 
     // `docker inspect --format '{{.Name}}'` returns `/name`.
-    let actual_name =
-        inspect_field(&name, "{{.Name}}").await;
+    let actual_name = inspect_field(&name, "{{.Name}}").await;
     assert_eq!(
         actual_name,
         format!("/{name}"),
@@ -372,10 +371,7 @@ async fn rollback_succeeds_when_original_container_already_removed() {
 
     // The container is accessible by name again.
     let running = inspect_field(&name, "{{.State.Running}}").await;
-    assert_eq!(
-        running, "true",
-        "rolled-back container must be running"
-    );
+    assert_eq!(running, "true", "rolled-back container must be running");
 }
 
 /// A port binding specified at container start must be captured by snapshot
@@ -406,9 +402,11 @@ async fn snapshot_rollback_preserves_port_binding() {
         .expect("rollback must succeed");
 
     // docker inspect: PortBindings["80/tcp"][0].HostPort
-    let host_port =
-        inspect_field(&name, "{{(index (index .HostConfig.PortBindings \"80/tcp\") 0).HostPort}}")
-            .await;
+    let host_port = inspect_field(
+        &name,
+        "{{(index (index .HostConfig.PortBindings \"80/tcp\") 0).HostPort}}",
+    )
+    .await;
     assert_eq!(
         host_port, "41980",
         "rolled-back container must have the original port binding"
