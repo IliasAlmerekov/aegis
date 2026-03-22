@@ -178,7 +178,7 @@
   - Ensure allowlist cannot silently neutralize catastrophic patterns too broadly.
   - Add support for previewing why a command matched allowlist.
 
-- [ ] Add “why matched” diagnostics.
+- [x] Add “why matched” diagnostics.
   - show matched pattern IDs
   - matched substring
   - category
@@ -193,7 +193,7 @@
 
 ## P2 — Reliability and UX
 
-- [ ] Add structured exit-code contract.
+- [x] Add structured exit-code contract.
   - distinguish:
     - command denied
     - command blocked

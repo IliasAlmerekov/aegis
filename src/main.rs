@@ -66,6 +66,31 @@ enum ConfigCommand {
     Show,
 }
 
+// ── Exit-code contract ────────────────────────────────────────────────────────
+//
+// Aegis uses a small set of reserved exit codes so that callers (AI agents,
+// CI pipelines, shell scripts) can distinguish *why* a command did not run
+// from a normal command failure.
+//
+// | Code | Meaning                                                          |
+// |------|------------------------------------------------------------------|
+// |  0   | Success — command was approved and exited 0.                     |
+// | 1-N  | Pass-through — the underlying command ran and returned this code.|
+// |  2   | Denied — user pressed 'n' at the confirmation dialog.           |
+// |  3   | Blocked — command matched a Block-level pattern; no dialog shown.|
+// |  4   | Internal error — Aegis itself could not complete (spawn failed,  |
+// |      |   etc.). The underlying command was never executed.              |
+//
+// Codes 2, 3, and 4 are only returned when Aegis prevents execution; they
+// are never returned by a successfully launched child process.
+
+/// The user explicitly denied the command at the confirmation dialog.
+const EXIT_DENIED: i32 = 2;
+/// The command matched a `Block`-level pattern and was hard-stopped.
+const EXIT_BLOCKED: i32 = 3;
+/// An internal Aegis failure prevented the command from being executed.
+const EXIT_INTERNAL: i32 = 4;
+
 fn main() {
     let Cli {
         command,
@@ -87,7 +112,7 @@ fn main() {
                 }
                 Err(err) => {
                     eprintln!("error: failed to read audit log: {err}");
-                    1
+                    EXIT_INTERNAL
                 }
             }
         }
@@ -133,7 +158,8 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
 
     match decision {
         Decision::Approved | Decision::AutoApproved => exec_command(cmd, verbose),
-        Decision::Denied | Decision::Blocked => 1,
+        Decision::Denied => EXIT_DENIED,
+        Decision::Blocked => EXIT_BLOCKED,
     }
 }
 
@@ -160,12 +186,12 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
                 }
                 Err(err) => {
                     eprintln!("error: failed to initialize config: {err}");
-                    1
+                    EXIT_INTERNAL
                 }
             },
             Err(err) => {
                 eprintln!("error: failed to resolve current directory: {err}");
-                1
+                EXIT_INTERNAL
             }
         },
         ConfigCommand::Show => match Config::load().and_then(|config| config.to_toml_string()) {
@@ -175,7 +201,7 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
             }
             Err(err) => {
                 eprintln!("error: failed to load config: {err}");
-                1
+                EXIT_INTERNAL
             }
         },
     }
@@ -345,11 +371,8 @@ fn exec_command(cmd: &str, verbose: bool) -> i32 {
             .stderr(Stdio::inherit())
             .exec();
 
-        if verbose {
-            eprintln!("error: failed to exec shell {}: {err}", shell.display());
-        }
-
-        1
+        eprintln!("error: failed to exec shell {}: {err}", shell.display());
+        EXIT_INTERNAL
     }
 
     #[cfg(not(unix))]
@@ -362,13 +385,10 @@ fn exec_command(cmd: &str, verbose: bool) -> i32 {
             .stderr(Stdio::inherit())
             .status()
         {
-            Ok(status) => status.code().unwrap_or(1),
+            Ok(status) => status.code().unwrap_or(EXIT_INTERNAL),
             Err(err) => {
-                if verbose {
-                    eprintln!("error: failed to spawn shell {}: {err}", shell.display());
-                }
-
-                1
+                eprintln!("error: failed to spawn shell {}: {err}", shell.display());
+                EXIT_INTERNAL
             }
         }
     }
@@ -461,5 +481,28 @@ mod tests {
             &PathBuf::from("/bin/sh"),
             Some(&PathBuf::from("/usr/bin/bash"))
         ));
+    }
+
+    // ── Exit-code contract ────────────────────────────────────────────────────
+
+    #[test]
+    fn exit_codes_have_expected_values() {
+        assert_eq!(EXIT_DENIED, 2);
+        assert_eq!(EXIT_BLOCKED, 3);
+        assert_eq!(EXIT_INTERNAL, 4);
+    }
+
+    #[test]
+    fn exit_codes_are_distinct() {
+        assert_ne!(EXIT_DENIED, EXIT_BLOCKED);
+        assert_ne!(EXIT_DENIED, EXIT_INTERNAL);
+        assert_ne!(EXIT_BLOCKED, EXIT_INTERNAL);
+    }
+
+    #[test]
+    fn exit_codes_do_not_overlap_with_success() {
+        assert_ne!(EXIT_DENIED, 0);
+        assert_ne!(EXIT_BLOCKED, 0);
+        assert_ne!(EXIT_INTERNAL, 0);
     }
 }

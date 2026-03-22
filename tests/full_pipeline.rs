@@ -72,7 +72,7 @@ fn dangerous_command_denied_preserves_directory() {
 
     let output = child.wait_with_output().unwrap();
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     assert!(
         target_dir.exists(),
         "directory should still exist after denying the command"
@@ -211,7 +211,7 @@ exit 0
 
     let denied_output = denied_child.wait_with_output().unwrap();
 
-    assert_eq!(denied_output.status.code(), Some(1));
+    assert_eq!(denied_output.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&denied_output.stderr)
             .contains("AEGIS INTERCEPTED A DANGEROUS COMMAND")
@@ -265,10 +265,10 @@ fn block_command_is_never_allowlisted() {
         .output()
         .unwrap();
 
-    // Must be blocked (exit 1), never auto-approved.
+    // Must be blocked (exit 3), never auto-approved.
     assert_eq!(
         output.status.code(),
-        Some(1),
+        Some(3),
         "Block command must not be auto-approved even when it matches an allowlist entry"
     );
     assert!(
@@ -458,7 +458,7 @@ fn broken_config_toml_dangerous_command_still_intercepted() {
     child.stdin.as_mut().unwrap().write_all(b"no\n").unwrap();
     let output = child.wait_with_output().unwrap();
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("AEGIS INTERCEPTED"),
         "dangerous command must be intercepted even when config is broken"
@@ -528,7 +528,7 @@ fn danger_command_with_eof_stdin_is_denied() {
 
     assert_eq!(
         output.status.code(),
-        Some(1),
+        Some(2),
         "Danger command must be denied when stdin is closed"
     );
     assert!(target.exists(), "target must still exist after denial");
@@ -597,7 +597,7 @@ fn nonexistent_aegis_real_shell_returns_exit_code_1() {
 
     assert_eq!(
         output.status.code(),
-        Some(1),
-        "unresolvable shell must yield exit code 1, not a panic"
+        Some(4),
+        "unresolvable shell must yield exit code 4 (internal error), not a panic"
     );
 }

@@ -409,6 +409,22 @@ Example entry:
 
 ---
 
+## Exit codes
+
+Aegis uses reserved exit codes so that callers — AI agents, CI pipelines, shell scripts — can distinguish *why* a command did not run from a normal command failure.
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Success — the command was approved and exited 0. |
+| `1`–`N` | Pass-through — the underlying command ran and returned this code. |
+| `2`  | **Denied** — the user pressed 'n' at the confirmation dialog. |
+| `3`  | **Blocked** — the command matched a `Block`-level pattern; no dialog is shown. |
+| `4`  | **Internal error** — Aegis itself could not complete (e.g. failed to spawn the shell). The underlying command was never executed. |
+
+Codes `2`, `3`, and `4` are only returned when Aegis prevents execution; they are never emitted by a successfully launched child process.
+
+---
+
 ## Performance
 
 The scanner is designed to minimise latency on the safe-command hot path:
