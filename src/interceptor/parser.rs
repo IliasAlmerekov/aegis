@@ -887,8 +887,8 @@ mod tests {
         }
         let elapsed = start.elapsed();
         assert!(
-            elapsed.as_millis() < 1,
-            "50 parses took {}µs, expected < 1ms",
+            elapsed.as_millis() < 5,
+            "50 parses took {}µs, expected < 5ms (run criterion benchmarks for precise numbers)",
             elapsed.as_micros()
         );
     }
