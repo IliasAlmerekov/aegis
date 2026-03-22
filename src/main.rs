@@ -180,7 +180,9 @@ fn assess_command(cmd: &str, verbose: bool) -> Assessment {
         Err(err) => {
             // Always print — the operator must know the scanner is broken.
             eprintln!("error: interceptor scan initialization failed: {err}");
-            eprintln!("error: scanner is unhealthy — requiring explicit approval for every command");
+            eprintln!(
+                "error: scanner is unhealthy — requiring explicit approval for every command"
+            );
 
             // Fail-closed: Warn forces the confirmation dialog for every command
             // while the scanner is unhealthy. Safe would auto-approve everything.
