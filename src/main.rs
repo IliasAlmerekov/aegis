@@ -157,7 +157,7 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     );
 
     match decision {
-        Decision::Approved | Decision::AutoApproved => exec_command(cmd, verbose),
+        Decision::Approved | Decision::AutoApproved => exec_command(cmd),
         Decision::Denied => EXIT_DENIED,
         Decision::Blocked => EXIT_BLOCKED,
     }
@@ -356,7 +356,7 @@ fn append_audit_entry(
     }
 }
 
-fn exec_command(cmd: &str, verbose: bool) -> i32 {
+fn exec_command(cmd: &str) -> i32 {
     let shell = resolve_shell();
 
     #[cfg(unix)]
