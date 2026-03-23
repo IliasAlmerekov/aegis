@@ -8,7 +8,8 @@
 - `rtk cargo fmt --check`
 - `rtk cargo clippy -- -D warnings`
 - `rtk cargo test`
-- `rtk cargo test --test full_pipeline custom_pattern_from_config_changes_classification_and_is_labeled_custom`
+- `rtk cargo test --test full_pipeline`
+- `custom_pattern_from_config_changes_classification_and_is_labeled_custom`
 - `rtk cargo bench --bench scanner_bench`
 
 ## Results
@@ -25,7 +26,9 @@
 
 ## Gaps / Failures
 
-- Criterion reported historical-regression deltas versus saved baseline, but benchmark run completed successfully; no per-command hot-path logic changes were introduced in this ticket.
+- Criterion reported historical-regression deltas versus saved baseline,
+  but benchmark run completed successfully.
+  No per-command hot-path logic changes were introduced in this ticket.
 
 ## Next Owner
 

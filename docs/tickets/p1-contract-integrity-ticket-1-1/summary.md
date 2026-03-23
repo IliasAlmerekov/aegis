@@ -24,7 +24,9 @@
 - New/updated tests:
   - unit: merge + duplicate-id checks in `src/interceptor/patterns.rs`
   - unit: custom pattern impacts assessment/decision source in `src/interceptor/scanner.rs`
-  - integration: config custom pattern changes classification and yields `source=custom` in UI/audit (`tests/full_pipeline.rs`)
+  - integration: config custom pattern changes classification
+    and yields `source=custom` in UI/audit
+    (`tests/full_pipeline.rs`)
 - Reviewer stage: PASSED
 - Security reviewer stage: PASSED
 
@@ -34,4 +36,5 @@
 
 ## Follow-Ups
 
-- Optional hardening: replace delimiter-based custom-scanner cache key with structurally unambiguous key type.
+- Optional hardening: replace delimiter-based custom-scanner cache key
+  with structurally unambiguous key type.

@@ -27,7 +27,9 @@
 
 ## Convention Check
 
-Planned changes keep scanner/parser synchronous, preserve fail-closed fallback, and avoid dependency/CI changes per `CONVENTION.md`.
+Planned changes keep scanner/parser synchronous,
+preserve fail-closed fallback,
+and avoid dependency/CI changes per `CONVENTION.md`.
 
 ## Next Owner
 

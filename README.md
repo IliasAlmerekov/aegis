@@ -328,10 +328,14 @@ description = "Internal teardown script — requires explicit approval"
 safe_alt    = "my-nuke-script.sh --dry-run"
 ```
 
-Patterns are [Rust regex](https://docs.rs/regex/latest/regex/) strings. They are matched case-sensitively by default; use `(?i)` for case-insensitive matching.
+Patterns are [Rust regex](https://docs.rs/regex/latest/regex/) strings.
+They are matched case-sensitively by default; use `(?i)` for
+case-insensitive matching.
 
-Runtime merge order is fixed: **built-in patterns first, then custom patterns from config**.  
-Pattern IDs must be unique across both sets — duplicate IDs are rejected as a config error.
+Runtime merge order is fixed:
+**built-in patterns first, then custom patterns from config**.
+Pattern IDs must be unique across both sets —
+duplicate IDs are rejected as a config error.
 
 In confirmation UI and audit logs, custom matches are labeled with `source = custom`.
 

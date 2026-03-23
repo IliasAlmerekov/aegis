@@ -15,12 +15,15 @@
 
 ## Decisions
 
-- Added unified builder `PatternSet::from_sources(&[UserPattern])` with explicit merge order:
+- Added unified builder `PatternSet::from_sources(&[UserPattern])`
+  with explicit merge order:
   1) builtin patterns, 2) config custom patterns.
 - Added conversion `UserPattern -> Pattern` with `PatternSource::Custom`.
 - Enforced strict duplicate pattern-ID rejection across builtin/custom and within custom set.
 - Switched runtime assessment path in CLI to `interceptor::assess_with_custom_patterns(...)`.
-- Extended audit matched pattern payload with optional `source` (`builtin`/`custom`) for source visibility without breaking old logs.
+- Extended audit matched pattern payload with optional `source`
+  (`builtin`/`custom`) for source visibility
+  without breaking old logs.
 
 ## Known Risks
 
