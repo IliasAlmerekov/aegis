@@ -1,5 +1,22 @@
 # CLAUDE.md — Aegis Development Conventions
 
+## Agent Configuration
+
+Before starting any non-trivial task, read `.claude/AGENTS.md` — it defines the lead
+orchestrator identity, sub-agent registry, orchestration rules, human checkpoints, and
+global constraints that apply to all agents working in this repository.
+
+---
+
+## Project Conventions
+
+**Always follow `CONVENTION.md`** — it is the authoritative project-level contract for
+code style, architecture, security invariants, dependency rules, testing requirements,
+and release gates. When `CONVENTION.md` conflicts with any other document, use the
+precedence order defined within it (security invariants → CI-enforced rules → CONVENTION.md → contributor guidance).
+
+---
+
 ## Shell Commands
 
 **Always prefix all shell commands with `rtk`** to reduce noise in the context window:
