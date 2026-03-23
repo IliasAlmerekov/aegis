@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 use crate::config::UserPattern;
 use crate::error::AegisError;
 
-static BUILTIN_SCANNER: LazyLock<Result<scanner::Scanner, String>> = LazyLock::new(|| {
+static BUILTIN_SCANNER: LazyLock<Result<Arc<scanner::Scanner>, String>> = LazyLock::new(|| {
     patterns::PatternSet::load()
         .map(scanner::Scanner::new)
+        .map(Arc::new)
         .map_err(|e| e.to_string())
 });
 static CUSTOM_SCANNER_CACHE: LazyLock<Mutex<HashMap<String, Arc<scanner::Scanner>>>> =
@@ -66,10 +67,7 @@ impl FromStr for RiskLevel {
 
 /// Assess a command with the loaded interceptor rules.
 pub fn assess(cmd: &str) -> Result<scanner::Assessment, AegisError> {
-    match &*BUILTIN_SCANNER {
-        Ok(scanner) => Ok(scanner.assess(cmd)),
-        Err(message) => Err(AegisError::Config(message.clone())),
-    }
+    Ok(builtin_scanner()?.assess(cmd))
 }
 
 /// Assess a command with built-in + user-defined custom patterns from config.
@@ -77,20 +75,35 @@ pub fn assess_with_custom_patterns(
     cmd: &str,
     custom_patterns: &[UserPattern],
 ) -> Result<scanner::Assessment, AegisError> {
-    // Keep the built-in path on the global cached scanner.
+    Ok(scanner_for(custom_patterns)?.assess(cmd))
+}
+
+/// Resolve the effective scanner for the provided custom-pattern set.
+///
+/// The built-in scanner stays cached globally, while custom pattern sets are
+/// cached by their serialized content so runtime wiring can build a single
+/// config-consistent scanner and reuse it across the command flow.
+pub fn scanner_for(custom_patterns: &[UserPattern]) -> Result<Arc<scanner::Scanner>, AegisError> {
     if custom_patterns.is_empty() {
-        return assess(cmd);
+        return builtin_scanner();
     }
 
     let key = custom_pattern_cache_key(custom_patterns);
     if let Some(scanner) = get_cached_custom_scanner(&key)? {
-        return Ok(scanner.assess(cmd));
+        return Ok(scanner);
     }
 
     let scanner =
         Arc::new(patterns::PatternSet::from_sources(custom_patterns).map(scanner::Scanner::new)?);
     cache_custom_scanner(key, Arc::clone(&scanner))?;
-    Ok(scanner.assess(cmd))
+    Ok(scanner)
+}
+
+fn builtin_scanner() -> Result<Arc<scanner::Scanner>, AegisError> {
+    match &*BUILTIN_SCANNER {
+        Ok(scanner) => Ok(Arc::clone(scanner)),
+        Err(message) => Err(AegisError::Config(message.clone())),
+    }
 }
 
 fn get_cached_custom_scanner(key: &str) -> Result<Option<Arc<scanner::Scanner>>, AegisError> {

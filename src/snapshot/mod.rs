@@ -8,6 +8,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
+use crate::config::Config;
 use crate::error::AegisError;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -44,13 +45,26 @@ pub struct SnapshotRegistry {
 
 impl Default for SnapshotRegistry {
     fn default() -> Self {
-        Self {
-            plugins: vec![Box::new(GitPlugin), Box::new(DockerPlugin::new())],
-        }
+        Self::from_config(&Config::default())
     }
 }
 
 impl SnapshotRegistry {
+    /// Build a snapshot registry that honours the effective runtime config.
+    pub fn from_config(config: &Config) -> Self {
+        let mut plugins: Vec<Box<dyn SnapshotPlugin>> = Vec::new();
+
+        if config.auto_snapshot_git {
+            plugins.push(Box::new(GitPlugin));
+        }
+
+        if config.auto_snapshot_docker {
+            plugins.push(Box::new(DockerPlugin::new()));
+        }
+
+        Self { plugins }
+    }
+
     /// Call every applicable plugin and collect snapshot records.
     ///
     /// Plugins that are not applicable for `cwd` are skipped silently.
@@ -179,5 +193,32 @@ mod tests {
         // Only the successful plugin produces a record.
         assert_eq!(records.len(), 1);
         assert_eq!(success_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn from_config_disables_all_plugins_when_snapshots_are_off() {
+        let mut config = Config::default();
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+
+        let registry = SnapshotRegistry::from_config(&config);
+
+        assert!(registry.plugins.is_empty());
+    }
+
+    #[test]
+    fn from_config_enables_only_requested_plugins() {
+        let mut config = Config::default();
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = true;
+
+        let registry = SnapshotRegistry::from_config(&config);
+        let plugin_names: Vec<_> = registry
+            .plugins
+            .iter()
+            .map(|plugin| plugin.name())
+            .collect();
+
+        assert_eq!(plugin_names, vec!["docker"]);
     }
 }

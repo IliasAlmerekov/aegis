@@ -2,15 +2,17 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
-use aegis::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
-use aegis::config::{Allowlist, AllowlistMatch, AuditConfig, CiPolicy, Config};
-use aegis::interceptor;
+use aegis::audit::{AuditEntry, AuditLogger, Decision};
+use aegis::config::{AllowlistMatch, CiPolicy, Config};
 use aegis::interceptor::RiskLevel;
-use aegis::interceptor::parser::Parser as CommandParser;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
-use aegis::snapshot::{SnapshotRecord, SnapshotRegistry};
+use aegis::runtime::RuntimeContext;
+use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::show_confirmation;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[cfg(test)]
+use aegis::interceptor::parser::Parser as CommandParser;
 
 #[derive(Parser)]
 #[command(
@@ -172,39 +174,37 @@ fn format_audit_entries(
 }
 
 fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
-    let config = load_runtime_config(verbose);
-    let allowlist = Allowlist::new(&config.allowlist);
-    let assessment = assess_command(cmd, &config, verbose);
+    let context = RuntimeContext::load(verbose);
+    let assessment = context.assess(cmd);
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let allowlist_match = allowlist.match_reason(cmd);
+    let allowlist_match = context.allowlist_match(cmd);
     let in_ci = is_ci_environment();
 
     if verbose {
         if in_ci {
             eprintln!(
                 "ci: detected CI environment, ci_policy={:?}",
-                config.ci_policy
+                context.config().ci_policy
             );
         }
         log_assessment(&assessment, allowlist_match.as_ref());
     }
 
     let (decision, snapshots) = decide_command(
+        &context,
         &assessment,
         &cwd,
         verbose,
         allowlist_match.as_ref(),
         in_ci,
-        config.ci_policy,
     );
 
-    append_audit_entry(
+    context.append_audit_entry(
         &assessment,
         decision,
         &snapshots,
         allowlist_match.as_ref(),
-        &config.audit,
         verbose,
     );
 
@@ -248,19 +248,6 @@ fn is_ci_environment() -> bool {
     })
 }
 
-fn load_runtime_config(verbose: bool) -> Config {
-    match Config::load() {
-        Ok(config) => config,
-        Err(err) => {
-            if verbose {
-                eprintln!("warning: failed to load config: {err}");
-            }
-
-            Config::default()
-        }
-    }
-}
-
 fn handle_config_command(args: ConfigArgs) -> i32 {
     match args.command {
         ConfigCommand::Init => match env::current_dir() {
@@ -289,28 +276,6 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
                 EXIT_INTERNAL
             }
         },
-    }
-}
-
-fn assess_command(cmd: &str, config: &Config, verbose: bool) -> Assessment {
-    let _ = verbose;
-    match interceptor::assess_with_custom_patterns(cmd, &config.custom_patterns) {
-        Ok(assessment) => assessment,
-        Err(err) => {
-            // Always print — the operator must know the scanner is broken.
-            eprintln!("error: interceptor scan initialization failed: {err}");
-            eprintln!(
-                "error: scanner is unhealthy — requiring explicit approval for every command"
-            );
-
-            // Fail-closed: Warn forces the confirmation dialog for every command
-            // while the scanner is unhealthy. Safe would auto-approve everything.
-            Assessment {
-                risk: RiskLevel::Warn,
-                matched: Vec::new(),
-                command: CommandParser::parse(cmd),
-            }
-        }
     }
 }
 
@@ -350,13 +315,15 @@ fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMat
 }
 
 fn decide_command(
+    context: &RuntimeContext,
     assessment: &Assessment,
     cwd: &Path,
     verbose: bool,
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
-    ci_policy: CiPolicy,
 ) -> (Decision, Vec<SnapshotRecord>) {
+    let ci_policy = context.config().ci_policy;
+
     // ── CI fast-path ─────────────────────────────────────────────────────────
     //
     // When running inside a CI environment with CiPolicy::Block (the default),
@@ -394,7 +361,7 @@ fn decide_command(
 
     if is_allowlisted {
         let snapshots = match assessment.risk {
-            RiskLevel::Danger => create_snapshots(cwd, &assessment.command.raw, verbose),
+            RiskLevel::Danger => context.create_snapshots(cwd, &assessment.command.raw, verbose),
             _ => Vec::new(),
         };
 
@@ -407,7 +374,7 @@ fn decide_command(
             (Decision::Blocked, Vec::new())
         }
         RiskLevel::Danger => {
-            let snapshots = create_snapshots(cwd, &assessment.command.raw, verbose);
+            let snapshots = context.create_snapshots(cwd, &assessment.command.raw, verbose);
             let approved = show_confirmation(assessment, &snapshots);
             let decision = if approved {
                 Decision::Approved
@@ -429,52 +396,6 @@ fn decide_command(
         }
         RiskLevel::Safe => (Decision::AutoApproved, Vec::new()),
         _ => (Decision::AutoApproved, Vec::new()),
-    }
-}
-
-fn create_snapshots(cwd: &Path, cmd: &str, verbose: bool) -> Vec<SnapshotRecord> {
-    match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(runtime) => runtime.block_on(SnapshotRegistry::default().snapshot_all(cwd, cmd)),
-        Err(err) => {
-            if verbose {
-                eprintln!("warning: failed to initialize snapshot runtime: {err}");
-            }
-
-            Vec::new()
-        }
-    }
-}
-
-fn append_audit_entry(
-    assessment: &Assessment,
-    decision: Decision,
-    snapshots: &[SnapshotRecord],
-    allowlist_match: Option<&AllowlistMatch>,
-    audit_config: &AuditConfig,
-    verbose: bool,
-) {
-    let entry = AuditEntry::new(
-        assessment.command.raw.clone(),
-        assessment.risk,
-        assessment.matched.iter().map(Into::into).collect(),
-        decision,
-        snapshots.iter().map(Into::into).collect(),
-        allowlist_match.map(|m| m.pattern.clone()),
-    );
-
-    let logger = if let Some(policy) = AuditRotationPolicy::from_config(audit_config) {
-        AuditLogger::default().with_rotation(policy)
-    } else {
-        AuditLogger::default()
-    };
-
-    if let Err(err) = logger.append(entry)
-        && verbose
-    {
-        eprintln!("warning: failed to append audit log entry: {err}");
     }
 }
 
@@ -719,16 +640,26 @@ mod tests {
         }
     }
 
+    fn context() -> RuntimeContext {
+        RuntimeContext::new(Config::default())
+    }
+
+    fn context_with_ci_policy(ci_policy: CiPolicy) -> RuntimeContext {
+        let mut config = Config::default();
+        config.ci_policy = ci_policy;
+        RuntimeContext::new(config)
+    }
+
     #[test]
     fn ci_policy_block_blocks_warn_in_ci() {
         let assessment = make_assessment(RiskLevel::Warn);
         let (decision, snapshots) = decide_command(
+            &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
             false,
             None,
             true,
-            CiPolicy::Block,
         );
         assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
@@ -738,12 +669,12 @@ mod tests {
     fn ci_policy_block_blocks_danger_in_ci() {
         let assessment = make_assessment(RiskLevel::Danger);
         let (decision, snapshots) = decide_command(
+            &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
             false,
             None,
             true,
-            CiPolicy::Block,
         );
         assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
@@ -753,12 +684,12 @@ mod tests {
     fn ci_policy_block_blocks_block_in_ci() {
         let assessment = make_assessment(RiskLevel::Block);
         let (decision, snapshots) = decide_command(
+            &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
             false,
             None,
             true,
-            CiPolicy::Block,
         );
         assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
@@ -772,12 +703,12 @@ mod tests {
             command: CommandParser::parse("echo hello"),
         };
         let (decision, _) = decide_command(
+            &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
             false,
             None,
             true,
-            CiPolicy::Block,
         );
         assert_eq!(decision, Decision::AutoApproved);
     }
@@ -792,12 +723,12 @@ mod tests {
             command: CommandParser::parse("echo hello"),
         };
         let (decision, _) = decide_command(
+            &context_with_ci_policy(CiPolicy::Allow),
             &assessment,
             Path::new("."),
             false,
             None,
             true,
-            CiPolicy::Allow,
         );
         assert_eq!(decision, Decision::AutoApproved);
     }
@@ -810,14 +741,8 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) = decide_command(
-            &assessment,
-            Path::new("."),
-            false,
-            None,
-            false,
-            CiPolicy::Block,
-        );
+        let (decision, _) =
+            decide_command(&context(), &assessment, Path::new("."), false, None, false);
         assert_eq!(decision, Decision::AutoApproved);
     }
 }
