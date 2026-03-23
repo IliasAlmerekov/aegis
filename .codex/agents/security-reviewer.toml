@@ -1,0 +1,10 @@
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Audit for fail-open behavior, bypass paths, and weakened guarantees.
+Focus on interception, confirmation flow, snapshot/rollback, and append-only audit logging.
+Flag any change that can silently downgrade Block/Warn/Danger handling.
+Require explicit evidence for security claims.
+"""

@@ -1,0 +1,47 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Aegis — Codex project baseline
+# Codex rules for this repository live in:
+# - .codex/AGENTS.md
+# - .codex/agents/guardrails.md
+# - .codex/agents/workflows/*.md
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "live"
+
+# Use project-local codex instructions.
+model_instructions_file = "/home/iliasalmerekov/Projects/aegis/.codex/AGENTS.md"
+
+[features]
+multi_agent = true
+
+[profiles.strict]
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+web_search = "cached"
+
+[profiles.yolo]
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+web_search = "live"
+
+[agents]
+max_threads = 4
+max_depth = 1
+
+[agents.explorer]
+description = "Read-only code explorer for Aegis call paths and contracts."
+config_file = "agents/explorer.toml"
+
+[agents.reviewer]
+description = "Owner-style reviewer for correctness, regressions, and missing tests."
+config_file = "agents/reviewer.toml"
+
+[agents.security_reviewer]
+description = "Security reviewer focused on bypasses, fail-open behavior, and audit/snapshot integrity."
+config_file = "agents/security-reviewer.toml"
+
+[agents.docs_researcher]
+description = "Documentation verifier for APIs, crates, and version-sensitive claims."
+config_file = "agents/docs-researcher.toml"
