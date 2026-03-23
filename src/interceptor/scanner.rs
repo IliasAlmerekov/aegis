@@ -396,6 +396,8 @@ fn find_embedded_literal(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::UserPattern;
+    use crate::interceptor::patterns::Category;
 
     fn scanner() -> Scanner {
         let patterns = PatternSet::load().expect("patterns.toml must load");
@@ -733,6 +735,34 @@ mod tests {
         let a = s.assess("echo hello");
         assert_eq!(a.risk, RiskLevel::Safe);
         assert!(a.matched.is_empty());
+    }
+
+    #[test]
+    fn custom_pattern_changes_assessment_and_marks_custom_source() {
+        let custom = UserPattern {
+            id: "USR-ASS-001".to_string(),
+            category: Category::Process,
+            risk: RiskLevel::Danger,
+            pattern: r"deploy-prod-now".to_string(),
+            description: "Project-specific destructive deploy shortcut".to_string(),
+            safe_alt: Some("deploy-prod-now --dry-run".to_string()),
+        };
+
+        let patterns =
+            PatternSet::from_sources(&[custom]).expect("merged builtin+custom set should load");
+        let scanner = Scanner::new(patterns);
+
+        let assessment = scanner.assess("echo ok && deploy-prod-now");
+        assert_eq!(assessment.risk, RiskLevel::Danger);
+        assert_eq!(assessment.decision_source(), DecisionSource::CustomPattern);
+        assert!(
+            assessment
+                .matched
+                .iter()
+                .any(|m| m.pattern.id.as_ref() == "USR-ASS-001"
+                    && m.pattern.source == PatternSource::Custom),
+            "expected USR-ASS-001 custom match in assessment"
+        );
     }
 
     #[test]

@@ -174,7 +174,7 @@ fn format_audit_entries(
 fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     let config = load_runtime_config(verbose);
     let allowlist = Allowlist::new(&config.allowlist);
-    let assessment = assess_command(cmd, verbose);
+    let assessment = assess_command(cmd, &config, verbose);
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let allowlist_match = allowlist.match_reason(cmd);
@@ -292,9 +292,9 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
     }
 }
 
-fn assess_command(cmd: &str, verbose: bool) -> Assessment {
+fn assess_command(cmd: &str, config: &Config, verbose: bool) -> Assessment {
     let _ = verbose;
-    match interceptor::assess(cmd) {
+    match interceptor::assess_with_custom_patterns(cmd, &config.custom_patterns) {
         Ok(assessment) => assessment,
         Err(err) => {
             // Always print — the operator must know the scanner is broken.
@@ -581,7 +581,7 @@ mod tests {
 
     // ── Scanner init failure ──────────────────────────────────────────────────
     //
-    // Fail-closed: when interceptor::assess() returns Err, assess_command()
+    // Fail-closed: when interceptor assessment returns Err, assess_command()
     // must fall back to RiskLevel::Warn — NOT Safe.  Safe would auto-approve
     // every command (including rm -rf /) while the scanner is broken.
     // Warn forces the confirmation dialog for every command until healthy.

@@ -414,6 +414,54 @@ fn shell_wrapper_preserves_environment_and_working_directory() {
     assert_eq!(entries[0]["risk"], "Safe");
 }
 
+#[test]
+fn custom_pattern_from_config_changes_classification_and_is_labeled_custom() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[[custom_patterns]]
+id = "USR-E2E-001"
+category = "Process"
+risk = "Warn"
+pattern = "echo\\s+hello"
+description = "Treat hello echo as suspicious in this project"
+"#,
+    )
+    .unwrap();
+
+    // AEGIS_FORCE_INTERACTIVE=1 ensures the full dialog is rendered so we can
+    // assert UI diagnostics (`source: custom`).
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
+        .args(["-c", "echo hello"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    child.stdin.as_mut().unwrap().write_all(b"no\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("source: custom"),
+        "interactive UI must label custom-source matches; stderr:\n{stderr}"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["risk"], "Warn");
+    assert_eq!(entries[0]["decision"], "Denied");
+    assert_eq!(entries[0]["matched_patterns"][0]["id"], "USR-E2E-001");
+    assert_eq!(entries[0]["matched_patterns"][0]["source"], "custom");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Regression tests: security-critical failure modes
 // ─────────────────────────────────────────────────────────────────────────────

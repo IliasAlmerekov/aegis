@@ -16,6 +16,7 @@ use crate::config::AuditConfig;
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::Category;
+use crate::interceptor::patterns::PatternSource;
 use crate::interceptor::scanner::MatchResult;
 use crate::snapshot::SnapshotRecord;
 
@@ -141,6 +142,9 @@ pub struct MatchedPattern {
     /// The actual substring of the command that triggered this pattern.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matched_text: Option<String>,
+    /// Origin of this pattern in the runtime set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<PatternSource>,
 }
 
 /// Stable audit representation of one snapshot created before execution.
@@ -224,6 +228,7 @@ impl From<&MatchResult> for MatchedPattern {
             safe_alt: m.pattern.safe_alt.as_ref().map(ToString::to_string),
             category: Some(m.pattern.category),
             matched_text: Some(m.matched_text.clone()),
+            source: Some(m.pattern.source),
         }
     }
 }
@@ -323,7 +328,16 @@ impl AuditLogger {
                 let matched = entry
                     .matched_patterns
                     .iter()
-                    .map(|pattern| format!("{} ({})", pattern.id, pattern.risk))
+                    .map(|pattern| {
+                        let source = pattern
+                            .source
+                            .map(|source| match source {
+                                PatternSource::Builtin => ", source=builtin".to_string(),
+                                PatternSource::Custom => ", source=custom".to_string(),
+                            })
+                            .unwrap_or_default();
+                        format!("{} ({}{})", pattern.id, pattern.risk, source)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 out.push_str(&format!("  matched: {matched}\n"));
@@ -752,6 +766,7 @@ mod tests {
                 safe_alt: Some(format!("safe-{index}")),
                 category: None,
                 matched_text: None,
+                source: None,
             }],
             decision: match index % 4 {
                 0 => Decision::Approved,

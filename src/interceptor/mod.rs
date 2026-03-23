@@ -2,19 +2,23 @@ pub mod parser;
 pub mod patterns;
 pub mod scanner;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::UserPattern;
 use crate::error::AegisError;
 
-static SCANNER: LazyLock<Result<scanner::Scanner, String>> = LazyLock::new(|| {
+static BUILTIN_SCANNER: LazyLock<Result<scanner::Scanner, String>> = LazyLock::new(|| {
     patterns::PatternSet::load()
         .map(scanner::Scanner::new)
         .map_err(|e| e.to_string())
 });
+static CUSTOM_SCANNER_CACHE: LazyLock<Mutex<HashMap<String, Arc<scanner::Scanner>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Classifies the risk level of a shell command.
 ///
@@ -62,10 +66,65 @@ impl FromStr for RiskLevel {
 
 /// Assess a command with the loaded interceptor rules.
 pub fn assess(cmd: &str) -> Result<scanner::Assessment, AegisError> {
-    match &*SCANNER {
+    match &*BUILTIN_SCANNER {
         Ok(scanner) => Ok(scanner.assess(cmd)),
         Err(message) => Err(AegisError::Config(message.clone())),
     }
+}
+
+/// Assess a command with built-in + user-defined custom patterns from config.
+pub fn assess_with_custom_patterns(
+    cmd: &str,
+    custom_patterns: &[UserPattern],
+) -> Result<scanner::Assessment, AegisError> {
+    // Keep the built-in path on the global cached scanner.
+    if custom_patterns.is_empty() {
+        return assess(cmd);
+    }
+
+    let key = custom_pattern_cache_key(custom_patterns);
+    if let Some(scanner) = get_cached_custom_scanner(&key)? {
+        return Ok(scanner.assess(cmd));
+    }
+
+    let scanner =
+        Arc::new(patterns::PatternSet::from_sources(custom_patterns).map(scanner::Scanner::new)?);
+    cache_custom_scanner(key, Arc::clone(&scanner))?;
+    Ok(scanner.assess(cmd))
+}
+
+fn get_cached_custom_scanner(key: &str) -> Result<Option<Arc<scanner::Scanner>>, AegisError> {
+    let cache = CUSTOM_SCANNER_CACHE
+        .lock()
+        .map_err(|_| AegisError::Config("custom scanner cache lock poisoned".to_string()))?;
+    Ok(cache.get(key).cloned())
+}
+
+fn cache_custom_scanner(key: String, scanner: Arc<scanner::Scanner>) -> Result<(), AegisError> {
+    let mut cache = CUSTOM_SCANNER_CACHE
+        .lock()
+        .map_err(|_| AegisError::Config("custom scanner cache lock poisoned".to_string()))?;
+    cache.insert(key, scanner);
+    Ok(())
+}
+
+fn custom_pattern_cache_key(custom_patterns: &[UserPattern]) -> String {
+    let mut key = String::new();
+    for pattern in custom_patterns {
+        key.push_str(&pattern.id);
+        key.push('\u{1f}');
+        key.push_str(&format!("{:?}", pattern.category));
+        key.push('\u{1f}');
+        key.push_str(&pattern.risk.to_string());
+        key.push('\u{1f}');
+        key.push_str(&pattern.pattern);
+        key.push('\u{1f}');
+        key.push_str(&pattern.description);
+        key.push('\u{1f}');
+        key.push_str(pattern.safe_alt.as_deref().unwrap_or(""));
+        key.push('\u{1e}');
+    }
+    key
 }
 
 #[cfg(test)]
