@@ -68,14 +68,14 @@ Inline unit tests live in `#[cfg(test)]` modules within each source file.
 
 ## Naming Conventions
 
-| Scope | Convention | Example |
-|---|---|---|
-| Files/modules | `snake_case` | `scanner.rs`, `audit_logger` |
-| Types, traits, enums | `PascalCase` | `RiskLevel`, `SnapshotPlugin` |
-| Functions, methods, vars | `snake_case` | `assess`, `is_applicable` |
-| Constants | `SCREAMING_SNAKE_CASE` | `EXIT_DENIED`, `MAX_COMMAND_LEN` |
-| Enum variants | `PascalCase` | `RiskLevel::Danger`, `Decision::Approved` |
-| Pattern IDs (data) | uppercase string literals | `"FS-001"`, `"GIT-003"` |
+| Scope                    | Convention                | Example                                   |
+| ------------------------ | ------------------------- | ----------------------------------------- |
+| Files/modules            | `snake_case`              | `scanner.rs`, `audit_logger`              |
+| Types, traits, enums     | `PascalCase`              | `RiskLevel`, `SnapshotPlugin`             |
+| Functions, methods, vars | `snake_case`              | `assess`, `is_applicable`                 |
+| Constants                | `SCREAMING_SNAKE_CASE`    | `EXIT_DENIED`, `MAX_COMMAND_LEN`          |
+| Enum variants            | `PascalCase`              | `RiskLevel::Danger`, `Decision::Approved` |
+| Pattern IDs (data)       | uppercase string literals | `"FS-001"`, `"GIT-003"`                   |
 
 ## Config Search Order
 

@@ -9,12 +9,12 @@
 
 ## Test Locations
 
-| Type | Location | Purpose |
-|---|---|---|
-| Unit | `src/**/*.rs` (`#[cfg(test)]` module) | Pure logic, edge cases |
-| Integration | `tests/full_pipeline.rs` | Full binary subprocess tests |
-| Integration | `tests/docker_integration.rs` | Docker snapshot plugin |
-| Benchmarks | `benches/scanner_bench.rs` | Scanner hot-path latency |
+| Type        | Location                              | Purpose                      |
+| ----------- | ------------------------------------- | ---------------------------- |
+| Unit        | `src/**/*.rs` (`#[cfg(test)]` module) | Pure logic, edge cases       |
+| Integration | `tests/full_pipeline.rs`              | Full binary subprocess tests |
+| Integration | `tests/docker_integration.rs`         | Docker snapshot plugin       |
+| Benchmarks  | `benches/scanner_bench.rs`            | Scanner hot-path latency     |
 
 ## Integration Test Pattern (`tests/full_pipeline.rs`)
 
@@ -35,6 +35,7 @@ fn base_command(home: &Path) -> Command {
 ```
 
 Key conventions:
+
 - `AEGIS_CI=0` to prevent CI host environment from affecting expected exit codes
 - `AEGIS_FORCE_INTERACTIVE=1` to exercise the TUI dialog path even in non-interactive shells
 - `TempDir::new()` for home isolation — each test gets a fresh `~/.aegis/` directory
@@ -42,13 +43,13 @@ Key conventions:
 
 ## Exit Code Contract (tested explicitly)
 
-| Code | Meaning |
-|---|---|
-| 0 | Success — command approved and exited 0 |
-| 1-N | Pass-through from child process |
-| 2 | Denied — user pressed 'n' |
-| 3 | Blocked — Block-level pattern matched |
-| 4 | Internal error — Aegis itself failed |
+| Code | Meaning                                 |
+| ---- | --------------------------------------- |
+| 0    | Success — command approved and exited 0 |
+| 1-N  | Pass-through from child process         |
+| 2    | Denied — user pressed 'n'               |
+| 3    | Blocked — Block-level pattern matched   |
+| 4    | Internal error — Aegis itself failed    |
 
 ## Coverage Requirements
 
@@ -87,6 +88,7 @@ Three benchmark groups:
 3. **`heredoc_worst_case`** — 200-line inline script, dangerous pattern near the end
 
 Run with:
+
 ```bash
 rtk cargo criterion
 ```
@@ -101,6 +103,7 @@ path = "fuzz_targets/scanner.rs"
 ```
 
 Targets required:
+
 - `parser::parse` — shell tokenizer edge cases
 - `scanner::assess` — full pipeline fuzzing
 - Heredoc unwrapping

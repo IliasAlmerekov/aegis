@@ -9,6 +9,7 @@
 ## Error Handling
 
 ### Library modules (`interceptor/`, `snapshot/`, `audit/`, `config/`)
+
 - Use typed errors via `thiserror`; every variant must be explicit
 - No `anyhow` in lib modules
 - Use `?` for propagation; never `.unwrap()` in production paths
@@ -26,6 +27,7 @@ pub enum AegisError {
 ```
 
 ### CLI glue (`main.rs`)
+
 - Use `anyhow` for easy propagation
 
 ## Lazy Statics / Global State
@@ -99,7 +101,7 @@ pub struct Assessment {
 
 ## Documentation & Comments
 
-- Public items get doc-comments explaining the *why*, not just the *what*
+- Public items get doc-comments explaining the _why_, not just the _what_
 - Inline comments for non-obvious logic (see `decide_command` in `main.rs` for the CI fast-path block)
 - `// ── Section Name ──` banners used to group related logic within long files
 
