@@ -860,7 +860,11 @@ exit 0
     let output = child.wait_with_output().unwrap();
 
     // Danger command denied → exit code 2.
-    assert_eq!(output.status.code(), Some(2), "Danger command must be denied (exit 2)");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Danger command must be denied (exit 2)"
+    );
 
     // Git stub must never have been called.
     let git_calls = read_stub_invocations(&git_log);
@@ -935,7 +939,11 @@ exit 0
     let output = child.wait_with_output().unwrap();
 
     // Danger command denied → exit code 2.
-    assert_eq!(output.status.code(), Some(2), "Danger command must be denied (exit 2)");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Danger command must be denied (exit 2)"
+    );
 
     // Docker stub must never have been called.
     let docker_calls = read_stub_invocations(&docker_log);
