@@ -52,6 +52,21 @@ fn write_executable(path: &Path, body: &str) {
     }
 }
 
+/// Read the invocation log written by a PATH-stub executable.
+///
+/// Returns the lines recorded by the stub, or an empty `Vec` when the log
+/// file does not exist (meaning the stub was never called).
+fn read_stub_invocations(log_path: &Path) -> Vec<String> {
+    match fs::read_to_string(log_path) {
+        Ok(contents) => contents
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(str::to_owned)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 #[test]
 fn dangerous_command_denied_preserves_directory() {
     let home = TempDir::new().unwrap();
@@ -778,4 +793,161 @@ fn nonexistent_aegis_real_shell_returns_exit_code_1() {
         Some(4),
         "unresolvable shell must yield exit code 4 (internal error), not a panic"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Snapshot registry config-flag regressions (Ticket 1.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// With `auto_snapshot_git = false` in `.aegis.toml`, the real aegis binary
+/// must never invoke the `git` stub in PATH, and the audit entry must record
+/// an empty `snapshots` array.
+///
+/// This proves the Git plugin was never *registered*, not merely skipped by
+/// `is_applicable` — the stub would catch any `git` invocation regardless of
+/// which code path triggered it.
+#[test]
+fn snapshot_registry_git_flag_false_skips_plugin_and_audit() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let git_log = workspace.path().join("git_stub.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    // Stub git: append arguments to the log file so we can assert it was never
+    // called.  Use AEGIS_TEST_GIT_LOG as the log path so the test controls it.
+    write_executable(
+        &bin_dir.join("git"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_GIT_LOG"
+exit 0
+"#,
+    );
+
+    // Both snapshot flags off: git-off is under test, docker-off isolates the
+    // assertion so a stray docker invocation cannot add noise.
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "auto_snapshot_git = false\nauto_snapshot_docker = false\n",
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    // Use a unique sentinel file in the temp workspace so the rm -rf target
+    // is fully controlled and isolated from the developer's file system.
+    let sentinel = workspace.path().join("sentinel_git_off.txt");
+    fs::write(&sentinel, "git-off test sentinel").unwrap();
+
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_GIT_LOG", &git_log)
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
+        .args(["-c", &format!("rm -rf {}", sentinel.display())])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    child.stdin.as_mut().unwrap().write_all(b"no\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    // Danger command denied → exit code 2.
+    assert_eq!(output.status.code(), Some(2), "Danger command must be denied (exit 2)");
+
+    // Git stub must never have been called.
+    let git_calls = read_stub_invocations(&git_log);
+    assert!(
+        git_calls.is_empty(),
+        "git stub must not be invoked when auto_snapshot_git = false; calls: {git_calls:?}"
+    );
+
+    // Exactly one audit entry, decision Denied, risk Danger, snapshots empty.
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1, "expected exactly one audit entry");
+    assert_eq!(entries[0]["decision"], "Denied");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
+}
+
+/// With `auto_snapshot_docker = false` in `.aegis.toml`, the real aegis binary
+/// must never invoke the `docker` stub in PATH, and the audit entry must record
+/// an empty `snapshots` array.
+///
+/// Both snapshot flags are disabled to keep the assertions fully isolated —
+/// disabling git prevents unrelated git activity from adding noise when the
+/// workspace happens to be near a git checkout.
+#[test]
+fn snapshot_registry_docker_flag_false_skips_plugin_and_audit() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let docker_log = workspace.path().join("docker_stub.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+
+    // Stub docker: append arguments to the log file so we can assert it was
+    // never called.  Use AEGIS_TEST_DOCKER_LOG as the log path.
+    write_executable(
+        &bin_dir.join("docker"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_DOCKER_LOG"
+exit 0
+"#,
+    );
+
+    // Docker-off is under test; git-off isolates assertions from git noise.
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "auto_snapshot_git = false\nauto_snapshot_docker = false\n",
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let sentinel = workspace.path().join("sentinel_docker_off.txt");
+    fs::write(&sentinel, "docker-off test sentinel").unwrap();
+
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_DOCKER_LOG", &docker_log)
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
+        .args(["-c", &format!("rm -rf {}", sentinel.display())])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    child.stdin.as_mut().unwrap().write_all(b"no\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    // Danger command denied → exit code 2.
+    assert_eq!(output.status.code(), Some(2), "Danger command must be denied (exit 2)");
+
+    // Docker stub must never have been called.
+    let docker_calls = read_stub_invocations(&docker_log);
+    assert!(
+        docker_calls.is_empty(),
+        "docker stub must not be invoked when auto_snapshot_docker = false; calls: {docker_calls:?}"
+    );
+
+    // Exactly one audit entry, decision Denied, risk Danger, snapshots empty.
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1, "expected exactly one audit entry");
+    assert_eq!(entries[0]["decision"], "Denied");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
 }
