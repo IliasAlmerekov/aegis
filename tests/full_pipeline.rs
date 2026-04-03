@@ -959,3 +959,49 @@ exit 0
     assert_eq!(entries[0]["risk"], "Danger");
     assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
 }
+
+#[test]
+fn config_show_prints_effective_strict_allowlist_override() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+strict_allowlist_override = true
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("mode = \"Strict\""));
+    assert!(stdout.contains("strict_allowlist_override = true"));
+}
+
+#[test]
+fn config_init_writes_truthful_mode_comments() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "init"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let contents = fs::read_to_string(workspace.path().join(".aegis.toml")).unwrap();
+    assert!(contents.contains("Audit=non-blocking audit-only"));
+    assert!(contents.contains("Strict=block non-safe by default"));
+    assert!(contents.contains("strict_allowlist_override = false"));
+    assert!(!contents.contains("not yet implemented"));
+}

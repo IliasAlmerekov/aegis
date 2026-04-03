@@ -13,10 +13,11 @@ const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
 const GLOBAL_CONFIG_FILE: &str = "config.toml";
 
 const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
-mode = "Protect" # Protect = prompt/block (default). Audit and Strict are not yet implemented.
+mode = "Protect" # Protect=prompt/block, Audit=non-blocking audit-only, Strict=block non-safe by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist = [] # Commands matching these patterns are trusted and may skip prompts in future phases.
+allowlist = [] # Protect allowlists Warn/Danger. Strict ignores allowlist unless strict_allowlist_override=true.
+strict_allowlist_override = false # Strict only: allowlisted Warn/Danger may auto-approve. Block is never bypassed.
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
@@ -84,6 +85,7 @@ pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
     pub allowlist: Vec<String>,
+    pub strict_allowlist_override: bool,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
     pub ci_policy: CiPolicy,
@@ -131,6 +133,7 @@ impl AegisConfig {
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
+            strict_allowlist_override: false,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
             ci_policy: CiPolicy::Block,
@@ -205,6 +208,10 @@ impl AegisConfig {
             mode: project.mode.or(global.mode).unwrap_or(defaults.mode),
             custom_patterns,
             allowlist,
+            strict_allowlist_override: project
+                .strict_allowlist_override
+                .or(global.strict_allowlist_override)
+                .unwrap_or(defaults.strict_allowlist_override),
             auto_snapshot_git: project
                 .auto_snapshot_git
                 .or(global.auto_snapshot_git)
@@ -271,6 +278,7 @@ struct PartialConfig {
     mode: Option<Mode>,
     custom_patterns: Vec<UserPattern>,
     allowlist: Vec<String>,
+    strict_allowlist_override: Option<bool>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
     ci_policy: Option<CiPolicy>,
@@ -559,6 +567,38 @@ retention_files = 0
     }
 
     // --- malformed project config ---
+
+    #[test]
+    fn strict_allowlist_override_defaults_false_and_serializes() {
+        let config = AegisConfig::defaults();
+
+        assert!(!config.strict_allowlist_override);
+
+        let toml = config.to_toml_string().unwrap();
+        assert!(toml.contains("strict_allowlist_override = false"));
+    }
+
+    #[test]
+    fn strict_allowlist_override_project_value_overrides_global() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+        fs::create_dir_all(&global_dir).unwrap();
+
+        fs::write(
+            global_dir.join(GLOBAL_CONFIG_FILE),
+            "strict_allowlist_override = false\n",
+        )
+        .unwrap();
+        fs::write(
+            workspace.path().join(PROJECT_CONFIG_FILE),
+            "strict_allowlist_override = true\n",
+        )
+        .unwrap();
+
+        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        assert!(config.strict_allowlist_override);
+    }
 
     #[test]
     fn malformed_project_config_falls_back_to_global() {
