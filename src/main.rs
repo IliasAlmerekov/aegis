@@ -365,9 +365,10 @@ fn decide_command(
                          or add the command to the allowlist."
                     );
                 }
-                Some(BlockReason::IntrinsicRiskBlock) | None => {
+                Some(BlockReason::IntrinsicRiskBlock) => {
                     show_confirmation(assessment, &[]);
                 }
+                None => unreachable!("PolicyAction::Block always carries a BlockReason"),
                 Some(BlockReason::StrictPolicy) => {
                     show_policy_block(
                         assessment,
