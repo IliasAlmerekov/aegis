@@ -159,20 +159,25 @@ aegis config show      # prints the active config (merged from all sources)
 
 ```toml
 # Operating mode.
-#   Protect  — prompt on Warn/Danger, block on Block (default)
-#   Audit    — log everything but never block or prompt (not yet implemented)
-#   Strict   — same as Protect but with tighter defaults (not yet implemented)
+#   Protect  - prompt on Warn/Danger, block on Block (default)
+#   Audit    - never prompt or block; always log the outcome
+#   Strict   - auto-approve Safe only; block non-safe unless an allowlisted Warn/Danger command is explicitly overridden
 mode = "Protect"
 
-# Create a git stash snapshot before Danger commands when a .git directory exists.
+# Strict only. When true, allowlisted Warn/Danger commands may auto-approve.
+# Block is never bypassed.
+strict_allowlist_override = false
+
+# Create a git stash snapshot before Danger commands when policy allows execution.
 auto_snapshot_git = true
 
 # Snapshot running containers before Danger commands when Docker is available.
-# Disabled by default — enable once you have tested rollback in your environment.
+# Disabled by default - enable once you have tested rollback in your environment.
 auto_snapshot_docker = false
 
-# Commands matching these glob patterns are trusted and bypass the dialog.
-# They are still logged to the audit file.
+# Commands matching these glob patterns are trusted.
+# Protect: allowlisted Warn/Danger auto-approve.
+# Strict: ignored unless strict_allowlist_override = true.
 allowlist = [
     # "terraform destroy -target=module.test.*",
     # "docker system prune --volumes",
@@ -198,13 +203,14 @@ compress_rotated = true
 
 ### Mode quick-reference
 
-| Mode | Warn | Danger | Block |
-|------|------|--------|-------|
-| `Protect` | dialog (default Yes) | snapshot + dialog (default No) | immediate exit 1 |
-| `Audit` *(not yet implemented)* | log only | log only | log only |
-| `Strict` *(not yet implemented)* | dialog (default No) | snapshot + dialog (default No) | immediate exit 1 |
+| Mode | Safe | Warn | Danger | Block | CI interaction |
+|------|------|------|--------|-------|----------------|
+| `Protect` | auto-approve | prompt unless allowlisted | snapshot + prompt unless allowlisted | blocked | `ci_policy` only applies here |
+| `Audit` | auto-approve | auto-approve | auto-approve | auto-approve | never escalates to blocking |
+| `Strict` | auto-approve | blocked by default | blocked by default | blocked | CI cannot weaken strict behavior |
 
-> **Note:** Only `Protect` mode is active in this release. The `mode` field is parsed and stored but not yet consulted at runtime — all commands run with `Protect` semantics regardless of the configured value.
+`Block` is never bypassed in `Protect` or `Strict`, including CI and allowlist flows.
+`Audit` is intentionally dry-run-friendly and non-blocking.
 
 ---
 

@@ -332,7 +332,7 @@ fn decide_command(
         in_ci,
         ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: false,
+        strict_allowlist_override: context.config().strict_allowlist_override,
     });
 
     let snapshots = if plan.should_snapshot {

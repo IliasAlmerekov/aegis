@@ -1005,3 +1005,244 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(contents.contains("strict_allowlist_override = false"));
     assert!(!contents.contains("not yet implemented"));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mode runtime semantics (Ticket 1.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Protect mode + CI policy Block + allowlisted Danger command must
+/// auto-approve (allowlist wins over CI policy in Protect mode).
+#[test]
+fn protect_ci_allowlisted_danger_executes_and_logs_autoapproved() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let log_path = workspace.path().join("terraform.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("terraform"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Protect"
+ci_policy = "Block"
+allowlist = ["terraform destroy -target=module.test.*"]
+auto_snapshot_git = false
+auto_snapshot_docker = false
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_CI", "1")
+        .env("PATH", &path)
+        .env("AEGIS_TEST_TERRAFORM_LOG", &log_path)
+        .args(["-c", "terraform destroy -target=module.test.api"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(&log_path).unwrap(),
+        "destroy -target=module.test.api\n"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Danger");
+}
+
+/// Audit mode must never block or prompt — even Block-level commands in CI
+/// with ci_policy = Block must be auto-approved and executed.
+#[test]
+fn audit_mode_ignores_ci_policy_and_executes_block_command() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let log_path = workspace.path().join("rm.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("rm"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_RM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Audit"
+ci_policy = "Block"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_CI", "1")
+        .env("PATH", &path)
+        .env("AEGIS_TEST_RM_LOG", &log_path)
+        .args(["-c", "rm -rf /"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(&log_path).unwrap(), "-rf /\n");
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Block");
+    assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
+}
+
+/// Strict mode must block Warn commands even when ci_policy = Allow.
+/// CI policy cannot weaken Strict mode's non-safe default.
+#[test]
+fn strict_mode_blocks_warn_even_when_ci_policy_allows() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let log_path = workspace.path().join("git.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("git"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_GIT_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+ci_policy = "Allow"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_CI", "1")
+        .env("PATH", &path)
+        .env("AEGIS_TEST_GIT_LOG", &log_path)
+        .args(["-c", "git stash clear"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(read_stub_invocations(&log_path).is_empty());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "Blocked");
+    assert_eq!(entries[0]["risk"], "Warn");
+}
+
+/// Strict mode with strict_allowlist_override = true and an allowlisted Danger
+/// command must auto-approve and create a git snapshot.
+#[test]
+fn strict_override_allowlisted_danger_executes_and_creates_snapshot() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    // bin_dir and log_path must be outside the workspace so that git stash
+    // (--include-untracked) does not sweep them into the stash and make
+    // terraform un-findable after the snapshot is created.
+    let bin_dir = home.path().join("bin");
+    let log_path = home.path().join("terraform.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("terraform"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+strict_allowlist_override = true
+allowlist = ["terraform destroy -target=module.test.*"]
+auto_snapshot_git = true
+auto_snapshot_docker = false
+"#,
+    )
+    .unwrap();
+
+    Command::new("git")
+        .arg("init")
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@aegis.dev",
+            "-c",
+            "user.name=Aegis Test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ])
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    fs::write(workspace.path().join("dirty.txt"), "needs snapshot\n").unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_TERRAFORM_LOG", &log_path)
+        .args(["-c", "terraform destroy -target=module.test.api"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(&log_path).unwrap(),
+        "destroy -target=module.test.api\n"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert_ne!(entries[0]["snapshots"], serde_json::json!([]));
+}
