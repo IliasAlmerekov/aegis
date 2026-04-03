@@ -3,7 +3,6 @@
 > A terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations.
 
 [![CI](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml)
-[![Crates.io](https://img.shields.io/crates/v/aegis.svg)](https://crates.io/crates/aegis)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](#install)
@@ -27,7 +26,7 @@ The installer detects your platform (`linux`/`macos`, `x86_64`/`aarch64`), downl
 Or install from source with Cargo:
 
 ```bash
-cargo install aegis
+cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 ```
 
 ---
