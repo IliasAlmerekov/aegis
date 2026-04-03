@@ -38,6 +38,12 @@ pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) 
     )
 }
 
+/// Show a focused policy-block message for runtime policy decisions.
+pub fn show_policy_block(assessment: &Assessment, reason: &str) {
+    let mut stderr = io::stderr();
+    render_policy_block(assessment, reason, &mut stderr);
+}
+
 /// Testable inner version — accepts any `BufRead` for input and `Write` for output.
 ///
 /// `is_interactive` must be `true` when stdin is a TTY (the user can type a
@@ -149,6 +155,21 @@ fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) 
         Print("  No TTY detected. To permit this command in CI, add it to the allowlist.\n"),
     );
 
+    let _ = out.flush();
+}
+
+fn render_policy_block<W: Write>(assessment: &Assessment, reason: &str, out: &mut W) {
+    let _ = queue!(
+        out,
+        SetForegroundColor(Color::Yellow),
+        SetAttribute(Attribute::Bold),
+        Print("\n  AEGIS POLICY BLOCKED THIS COMMAND\n\n"),
+        ResetColor,
+    );
+
+    print_command_line(assessment, out);
+
+    let _ = queue!(out, Print(format!("  Reason: {reason}\n")));
     let _ = out.flush();
 }
 
@@ -806,6 +827,28 @@ mod tests {
         assert!(
             result,
             "Safe commands must be approved even in non-interactive mode"
+        );
+    }
+
+    #[test]
+    fn render_policy_block_mentions_reason() {
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![]);
+        let mut output = Vec::new();
+
+        render_policy_block(
+            &assessment,
+            "strict mode blocks warned commands",
+            &mut output,
+        );
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("AEGIS POLICY BLOCKED THIS COMMAND"),
+            "policy block output must contain the headline; got:\n{text}"
+        );
+        assert!(
+            text.contains("Reason: strict mode blocks warned commands"),
+            "policy block output must contain the reason; got:\n{text}"
         );
     }
 

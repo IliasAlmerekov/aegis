@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{AllowlistMatch, CiPolicy, Config};
+use aegis::config::{AllowlistMatch, CiPolicy, Config, Mode};
+use aegis::decision::{DecisionInput, PolicyAction, evaluate_policy};
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::runtime::RuntimeContext;
 use aegis::snapshot::SnapshotRecord;
-use aegis::ui::confirm::show_confirmation;
+use aegis::ui::confirm::{show_confirmation, show_policy_block};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[cfg(test)]
@@ -322,59 +323,27 @@ fn decide_command(
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
 ) -> (Decision, Vec<SnapshotRecord>) {
+    let mode = context.config().mode;
     let ci_policy = context.config().ci_policy;
 
-    // ── CI fast-path ─────────────────────────────────────────────────────────
-    //
-    // When running inside a CI environment with CiPolicy::Block (the default),
-    // any non-safe command is hard-blocked immediately — no dialog, no prompt.
-    // Rationale: CI runners have no interactive TTY; showing a prompt would
-    // hang the pipeline indefinitely.  Failing fast with a clear error message
-    // is far safer than silently auto-approving destructive commands.
-    //
-    // The allowlist is still honoured at Warn and Danger levels (an operator
-    // who explicitly allowlisted a command has already reviewed it), but
-    // Block-level patterns are never bypassed — not even in CI with Allow.
-    if in_ci && ci_policy == CiPolicy::Block && assessment.risk != RiskLevel::Safe {
-        let is_allowlisted = allowlist_match.is_some() && assessment.risk != RiskLevel::Block;
-        if !is_allowlisted {
-            eprintln!(
-                "aegis: CI policy blocked command (risk={:?}): {}",
-                assessment.risk, assessment.command.raw,
-            );
-            eprintln!(
-                "aegis: set ci_policy = \"Allow\" in .aegis.toml to override, \
-                 or add the command to the allowlist."
-            );
-            return (Decision::Blocked, Vec::new());
-        }
-    }
+    let plan = evaluate_policy(DecisionInput {
+        mode,
+        risk: assessment.risk,
+        in_ci,
+        ci_policy,
+        allowlist_match: allowlist_match.is_some(),
+        strict_allowlist_override: false,
+    });
 
-    // ── Normal interactive path ───────────────────────────────────────────────
-    //
-    // Block-level commands are catastrophic and irreversible.  The allowlist
-    // must never silently bypass them — even an explicit allowlist entry is
-    // refused here.  The operator will see the Block dialog and the audit log
-    // will record the allowlist pattern that *would have* matched so they can
-    // review their config.
-    let is_allowlisted = allowlist_match.is_some() && assessment.risk != RiskLevel::Block;
+    let snapshots = if plan.should_snapshot {
+        context.create_snapshots(cwd, &assessment.command.raw, verbose)
+    } else {
+        Vec::new()
+    };
 
-    if is_allowlisted {
-        let snapshots = match assessment.risk {
-            RiskLevel::Danger => context.create_snapshots(cwd, &assessment.command.raw, verbose),
-            _ => Vec::new(),
-        };
-
-        return (Decision::AutoApproved, snapshots);
-    }
-
-    match assessment.risk {
-        RiskLevel::Block => {
-            show_confirmation(assessment, &[]);
-            (Decision::Blocked, Vec::new())
-        }
-        RiskLevel::Danger => {
-            let snapshots = context.create_snapshots(cwd, &assessment.command.raw, verbose);
+    match plan.action {
+        PolicyAction::AutoApprove => (Decision::AutoApproved, snapshots),
+        PolicyAction::Prompt => {
             let approved = show_confirmation(assessment, &snapshots);
             let decision = if approved {
                 Decision::Approved
@@ -384,18 +353,42 @@ fn decide_command(
 
             (decision, snapshots)
         }
-        RiskLevel::Warn => {
-            let approved = show_confirmation(assessment, &[]);
-            let decision = if approved {
-                Decision::Approved
+        PolicyAction::Block => {
+            if mode == Mode::Protect
+                && in_ci
+                && ci_policy == CiPolicy::Block
+                && assessment.risk != RiskLevel::Block
+            {
+                eprintln!(
+                    "aegis: CI policy blocked command (risk={:?}): {}",
+                    assessment.risk, assessment.command.raw,
+                );
+                eprintln!(
+                    "aegis: set ci_policy = \"Allow\" in .aegis.toml to override, \
+                     or add the command to the allowlist."
+                );
+            } else if assessment.risk == RiskLevel::Block {
+                show_confirmation(assessment, &[]);
             } else {
-                Decision::Denied
-            };
+                show_policy_block(assessment, policy_block_reason(mode, assessment.risk));
+            }
 
-            (decision, Vec::new())
+            (Decision::Blocked, snapshots)
         }
-        RiskLevel::Safe => (Decision::AutoApproved, Vec::new()),
-        _ => (Decision::AutoApproved, Vec::new()),
+    }
+}
+
+fn policy_block_reason(mode: Mode, risk: RiskLevel) -> &'static str {
+    match (mode, risk) {
+        (Mode::Strict, RiskLevel::Warn) => {
+            "Strict mode blocks warned commands unless an explicit strict override exists."
+        }
+        (Mode::Strict, RiskLevel::Danger) => {
+            "Strict mode blocks dangerous commands unless an explicit strict override exists."
+        }
+        (_, RiskLevel::Warn) => "Policy blocked this warned command.",
+        (_, RiskLevel::Danger) => "Policy blocked this dangerous command.",
+        _ => "Policy blocked this command.",
     }
 }
 
@@ -499,6 +492,7 @@ fn same_file(path: &Path, other: Option<&Path>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aegis::config::Mode;
 
     // ── Scanner init failure ──────────────────────────────────────────────────
     //
@@ -650,6 +644,12 @@ mod tests {
         RuntimeContext::new(config)
     }
 
+    fn context_with_mode(mode: Mode) -> RuntimeContext {
+        let mut config = Config::default();
+        config.mode = mode;
+        RuntimeContext::new(config)
+    }
+
     #[test]
     fn ci_policy_block_blocks_warn_in_ci() {
         let assessment = make_assessment(RiskLevel::Warn);
@@ -744,5 +744,37 @@ mod tests {
         let (decision, _) =
             decide_command(&context(), &assessment, Path::new("."), false, None, false);
         assert_eq!(decision, Decision::AutoApproved);
+    }
+
+    #[test]
+    fn audit_mode_auto_approves_block_even_in_ci() {
+        let assessment = make_assessment(RiskLevel::Block);
+        let (decision, snapshots) = decide_command(
+            &context_with_mode(Mode::Audit),
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            true,
+        );
+
+        assert_eq!(decision, Decision::AutoApproved);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_blocks_warn_without_prompt_path() {
+        let assessment = make_assessment(RiskLevel::Warn);
+        let (decision, snapshots) = decide_command(
+            &context_with_mode(Mode::Strict),
+            &assessment,
+            Path::new("."),
+            false,
+            None,
+            false,
+        );
+
+        assert_eq!(decision, Decision::Blocked);
+        assert!(snapshots.is_empty());
     }
 }
