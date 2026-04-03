@@ -368,7 +368,6 @@ fn decide_command(
                 Some(BlockReason::IntrinsicRiskBlock) => {
                     show_confirmation(assessment, &[]);
                 }
-                None => unreachable!("PolicyAction::Block always carries a BlockReason"),
                 Some(BlockReason::StrictPolicy) => {
                     show_policy_block(
                         assessment,
@@ -376,6 +375,7 @@ fn decide_command(
                          Warn/Danger command is explicitly overridden",
                     );
                 }
+                None => unreachable!("PolicyAction::Block always carries a BlockReason"),
             }
 
             (Decision::Blocked, snapshots)
