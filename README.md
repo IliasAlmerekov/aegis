@@ -33,10 +33,15 @@ cargo install aegis
 
 ## Demo
 
-<!-- demo GIF goes here — record with: vhs demo.tape or asciinema rec -->
-<!-- Scenario: agent runs `terraform destroy` → Aegis intercepts → user sees dialog → denies -->
-
-*Demo GIF coming soon. To preview locally: `aegis -c 'terraform destroy'`*
+```text
+$ aegis -c 'terraform destroy'
+[aegis] Risk: DANGER
+[aegis] Snapshot created: git:stash@{3}
+[aegis] Command:
+  terraform destroy
+[aegis] Continue? [y/N]: n
+[aegis] Denied by user. Command not executed.
+```
 
 ---
 
