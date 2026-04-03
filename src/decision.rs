@@ -20,6 +20,17 @@ pub enum PolicyAction {
     Block,
 }
 
+/// The reason a command was hard-blocked by policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockReason {
+    /// The command matched a `RiskLevel::Block` pattern — never bypassable.
+    IntrinsicRiskBlock,
+    /// Strict mode blocked a Warn or Danger command without an explicit override.
+    StrictPolicy,
+    /// Protect mode is running in CI and `ci_policy = Block` forced a block.
+    ProtectCiPolicy,
+}
+
 /// The full policy outcome consumed by the runtime layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecisionPlan {
@@ -27,6 +38,7 @@ pub struct DecisionPlan {
     pub prompt_required: bool,
     pub should_snapshot: bool,
     pub allowlist_effective: bool,
+    pub block_reason: Option<BlockReason>,
 }
 
 /// Evaluate the mode policy without performing side effects.
@@ -38,6 +50,7 @@ pub fn evaluate_policy(input: DecisionInput) -> DecisionPlan {
             prompt_required: false,
             should_snapshot: false,
             allowlist_effective: false,
+            block_reason: None,
         },
         Mode::Protect => evaluate_protect(input),
         Mode::Strict => evaluate_strict(input),
@@ -51,7 +64,7 @@ fn evaluate_protect(input: DecisionInput) -> DecisionPlan {
             if input.allowlist_match {
                 auto_approve(false, true)
             } else if input.in_ci && input.ci_policy == CiPolicy::Block {
-                block()
+                block(BlockReason::ProtectCiPolicy)
             } else {
                 prompt(false)
             }
@@ -60,12 +73,12 @@ fn evaluate_protect(input: DecisionInput) -> DecisionPlan {
             if input.allowlist_match {
                 auto_approve(true, true)
             } else if input.in_ci && input.ci_policy == CiPolicy::Block {
-                block()
+                block(BlockReason::ProtectCiPolicy)
             } else {
                 prompt(true)
             }
         }
-        RiskLevel::Block => block(),
+        RiskLevel::Block => block(BlockReason::IntrinsicRiskBlock),
     }
 }
 
@@ -76,17 +89,17 @@ fn evaluate_strict(input: DecisionInput) -> DecisionPlan {
             if input.strict_allowlist_override && input.allowlist_match {
                 auto_approve(false, true)
             } else {
-                block()
+                block(BlockReason::StrictPolicy)
             }
         }
         RiskLevel::Danger => {
             if input.strict_allowlist_override && input.allowlist_match {
                 auto_approve(true, true)
             } else {
-                block()
+                block(BlockReason::StrictPolicy)
             }
         }
-        RiskLevel::Block => block(),
+        RiskLevel::Block => block(BlockReason::IntrinsicRiskBlock),
     }
 }
 
@@ -96,6 +109,7 @@ fn auto_approve(should_snapshot: bool, allowlist_effective: bool) -> DecisionPla
         prompt_required: false,
         should_snapshot,
         allowlist_effective,
+        block_reason: None,
     }
 }
 
@@ -105,21 +119,23 @@ fn prompt(should_snapshot: bool) -> DecisionPlan {
         prompt_required: true,
         should_snapshot,
         allowlist_effective: false,
+        block_reason: None,
     }
 }
 
-fn block() -> DecisionPlan {
+fn block(reason: BlockReason) -> DecisionPlan {
     DecisionPlan {
         action: PolicyAction::Block,
         prompt_required: false,
         should_snapshot: false,
         allowlist_effective: false,
+        block_reason: Some(reason),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{evaluate_policy, DecisionInput, DecisionPlan, PolicyAction};
+    use super::{BlockReason, DecisionInput, DecisionPlan, PolicyAction, evaluate_policy};
     use crate::config::{CiPolicy, Mode};
     use crate::interceptor::RiskLevel;
 
@@ -129,11 +145,13 @@ mod tests {
         prompt_required: bool,
         should_snapshot: bool,
         allowlist_effective: bool,
+        block_reason: Option<BlockReason>,
     ) {
         assert_eq!(plan.action, action);
         assert_eq!(plan.prompt_required, prompt_required);
         assert_eq!(plan.should_snapshot, should_snapshot);
         assert_eq!(plan.allowlist_effective, allowlist_effective);
+        assert_eq!(plan.block_reason, block_reason);
     }
 
     #[test]
@@ -155,8 +173,8 @@ mod tests {
             strict_allowlist_override: false,
         });
 
-        assert_plan(warn, PolicyAction::AutoApprove, false, false, false);
-        assert_plan(danger, PolicyAction::AutoApprove, false, false, false);
+        assert_plan(warn, PolicyAction::AutoApprove, false, false, false, None);
+        assert_plan(danger, PolicyAction::AutoApprove, false, false, false, None);
     }
 
     #[test]
@@ -170,7 +188,7 @@ mod tests {
             strict_allowlist_override: false,
         });
 
-        assert_plan(plan, PolicyAction::AutoApprove, false, true, true);
+        assert_plan(plan, PolicyAction::AutoApprove, false, true, true, None);
     }
 
     #[test]
@@ -184,7 +202,14 @@ mod tests {
             strict_allowlist_override: false,
         });
 
-        assert_plan(plan, PolicyAction::Block, false, false, false);
+        assert_plan(
+            plan,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::StrictPolicy),
+        );
     }
 
     #[test]
@@ -206,8 +231,15 @@ mod tests {
             strict_allowlist_override: true,
         });
 
-        assert_plan(danger, PolicyAction::AutoApprove, false, true, true);
-        assert_plan(block, PolicyAction::Block, false, false, false);
+        assert_plan(danger, PolicyAction::AutoApprove, false, true, true, None);
+        assert_plan(
+            block,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::IntrinsicRiskBlock),
+        );
     }
 
     #[test]
@@ -237,9 +269,23 @@ mod tests {
             strict_allowlist_override: true,
         });
 
-        assert_plan(protect, PolicyAction::Block, false, false, false);
-        assert_plan(strict, PolicyAction::Block, false, false, false);
-        assert_plan(audit, PolicyAction::AutoApprove, false, false, false);
+        assert_plan(
+            protect,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::IntrinsicRiskBlock),
+        );
+        assert_plan(
+            strict,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::IntrinsicRiskBlock),
+        );
+        assert_plan(audit, PolicyAction::AutoApprove, false, false, false, None);
     }
 
     #[test]
@@ -269,9 +315,16 @@ mod tests {
             strict_allowlist_override: false,
         });
 
-        assert_plan(protect, PolicyAction::Prompt, true, true, false);
-        assert_plan(audit, PolicyAction::AutoApprove, false, false, false);
-        assert_plan(strict, PolicyAction::Block, false, false, false);
+        assert_plan(protect, PolicyAction::Prompt, true, true, false, None);
+        assert_plan(audit, PolicyAction::AutoApprove, false, false, false, None);
+        assert_plan(
+            strict,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::StrictPolicy),
+        );
     }
 
     #[test]
@@ -285,6 +338,27 @@ mod tests {
             strict_allowlist_override: false,
         });
 
-        assert_plan(plan, PolicyAction::AutoApprove, false, true, true);
+        assert_plan(plan, PolicyAction::AutoApprove, false, true, true, None);
+    }
+
+    #[test]
+    fn protect_ci_block_sets_ci_block_reason() {
+        let plan = evaluate_policy(DecisionInput {
+            mode: Mode::Protect,
+            risk: RiskLevel::Warn,
+            in_ci: true,
+            ci_policy: CiPolicy::Block,
+            allowlist_match: false,
+            strict_allowlist_override: false,
+        });
+
+        assert_plan(
+            plan,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::ProtectCiPolicy),
+        );
     }
 }

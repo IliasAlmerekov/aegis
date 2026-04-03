@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{AllowlistMatch, CiPolicy, Config, Mode};
-use aegis::decision::{DecisionInput, PolicyAction, evaluate_policy};
+use aegis::config::{AllowlistMatch, Config};
+use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::runtime::RuntimeContext;
@@ -354,41 +354,31 @@ fn decide_command(
             (decision, snapshots)
         }
         PolicyAction::Block => {
-            if mode == Mode::Protect
-                && in_ci
-                && ci_policy == CiPolicy::Block
-                && assessment.risk != RiskLevel::Block
-            {
-                eprintln!(
-                    "aegis: CI policy blocked command (risk={:?}): {}",
-                    assessment.risk, assessment.command.raw,
-                );
-                eprintln!(
-                    "aegis: set ci_policy = \"Allow\" in .aegis.toml to override, \
-                     or add the command to the allowlist."
-                );
-            } else if assessment.risk == RiskLevel::Block {
-                show_confirmation(assessment, &[]);
-            } else {
-                show_policy_block(assessment, policy_block_reason(mode, assessment.risk));
+            match plan.block_reason {
+                Some(BlockReason::ProtectCiPolicy) => {
+                    eprintln!(
+                        "aegis: CI policy blocked command (risk={:?}): {}",
+                        assessment.risk, assessment.command.raw,
+                    );
+                    eprintln!(
+                        "aegis: set ci_policy = \"Allow\" in .aegis.toml to override, \
+                         or add the command to the allowlist."
+                    );
+                }
+                Some(BlockReason::IntrinsicRiskBlock) | None => {
+                    show_confirmation(assessment, &[]);
+                }
+                Some(BlockReason::StrictPolicy) => {
+                    show_policy_block(
+                        assessment,
+                        "strict mode blocks non-safe commands unless an allowlisted \
+                         Warn/Danger command is explicitly overridden",
+                    );
+                }
             }
 
             (Decision::Blocked, snapshots)
         }
-    }
-}
-
-fn policy_block_reason(mode: Mode, risk: RiskLevel) -> &'static str {
-    match (mode, risk) {
-        (Mode::Strict, RiskLevel::Warn) => {
-            "Strict mode blocks warned commands unless an explicit strict override exists."
-        }
-        (Mode::Strict, RiskLevel::Danger) => {
-            "Strict mode blocks dangerous commands unless an explicit strict override exists."
-        }
-        (_, RiskLevel::Warn) => "Policy blocked this warned command.",
-        (_, RiskLevel::Danger) => "Policy blocked this dangerous command.",
-        _ => "Policy blocked this command.",
     }
 }
 
@@ -492,7 +482,7 @@ fn same_file(path: &Path, other: Option<&Path>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aegis::config::Mode;
+    use aegis::config::{CiPolicy, Mode};
 
     // ── Scanner init failure ──────────────────────────────────────────────────
     //
