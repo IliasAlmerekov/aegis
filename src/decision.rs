@@ -66,7 +66,6 @@ fn evaluate_protect(input: DecisionInput) -> DecisionPlan {
             }
         }
         RiskLevel::Block => block(),
-        _ => block(),
     }
 }
 
@@ -88,7 +87,6 @@ fn evaluate_strict(input: DecisionInput) -> DecisionPlan {
             }
         }
         RiskLevel::Block => block(),
-        _ => block(),
     }
 }
 
@@ -121,7 +119,7 @@ fn block() -> DecisionPlan {
 
 #[cfg(test)]
 mod tests {
-    use super::{DecisionInput, DecisionPlan, PolicyAction, evaluate_policy};
+    use super::{evaluate_policy, DecisionInput, DecisionPlan, PolicyAction};
     use crate::config::{CiPolicy, Mode};
     use crate::interceptor::RiskLevel;
 
