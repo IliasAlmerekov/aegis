@@ -36,7 +36,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Watch and intercept shell commands
+    /// Watch mode (not implemented yet)
     Watch,
     /// View the audit log
     Audit(AuditArgs),
