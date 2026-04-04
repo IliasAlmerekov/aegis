@@ -633,6 +633,17 @@ mod tests {
         assert_eq!(exit_code, EXIT_INTERNAL);
     }
 
+    #[test]
+    fn parse_risk_level_accepts_case_insensitive_values() {
+        assert_eq!(parse_risk_level("WARN"), Ok(RiskLevel::Warn));
+    }
+
+    #[test]
+    fn parse_risk_level_rejects_unknown_values() {
+        let error = parse_risk_level("critical").unwrap_err();
+        assert!(error.contains("invalid risk level 'critical'"));
+    }
+
     // ── CI policy ─────────────────────────────────────────────────────────────
 
     fn make_assessment(risk: RiskLevel) -> Assessment {
