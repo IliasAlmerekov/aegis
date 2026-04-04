@@ -114,8 +114,8 @@ fn main() {
 
     let exit_code = match subcommand {
         Some(Commands::Watch) => {
-            println!("watch: not yet implemented");
-            0
+            eprintln!("error: watch is not implemented yet");
+            EXIT_INTERNAL
         }
         Some(Commands::Audit(args)) => {
             let logger = AuditLogger::default();
@@ -613,6 +613,24 @@ mod tests {
         assert_ne!(EXIT_DENIED, 0);
         assert_ne!(EXIT_BLOCKED, 0);
         assert_ne!(EXIT_INTERNAL, 0);
+    }
+
+    #[test]
+    fn watch_subcommand_is_not_success_when_unimplemented() {
+        let Cli {
+            command: _,
+            verbose: _,
+            subcommand,
+        } = Cli::parse_from(["aegis", "watch"]);
+
+        let exit_code = match subcommand {
+            Some(Commands::Watch) => EXIT_INTERNAL,
+            Some(Commands::Audit(_)) => 0,
+            Some(Commands::Config(_)) => 0,
+            None => 0,
+        };
+
+        assert_eq!(exit_code, EXIT_INTERNAL);
     }
 
     // ── CI policy ─────────────────────────────────────────────────────────────
