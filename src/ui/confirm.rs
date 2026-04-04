@@ -402,10 +402,7 @@ pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {
 /// Opens `/dev/tty` for both input (keystrokes) and output (dialog
 /// rendering).  If the device cannot be opened, returns
 /// `tty_unavailable_decision(assessment)` — fail-closed for Warn/Danger.
-pub fn show_confirmation_via_tty(
-    assessment: &Assessment,
-    snapshots: &[SnapshotRecord],
-) -> bool {
+pub fn show_confirmation_via_tty(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool {
     use std::fs::OpenOptions;
 
     let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
@@ -979,7 +976,13 @@ mod tests {
 
     #[test]
     fn tty_unavailable_danger_is_denied() {
-        let p = make_match("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
         assert!(
             !tty_unavailable_decision(&assessment),
