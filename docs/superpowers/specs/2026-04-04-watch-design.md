@@ -22,11 +22,11 @@ exits 0.
 
 The watch mode process has three distinct I/O channels:
 
-| Channel | Role |
-|---|---|
-| **stdin** | Control stream — NDJSON command frames in |
-| **stdout** | Event stream — NDJSON chunk/result frames out |
-| **stderr** | Aegis internal diagnostics only (silent by default) |
+| Channel        | Role                                                         |
+| -------------- | ------------------------------------------------------------ |
+| **stdin**      | Control stream — NDJSON command frames in                    |
+| **stdout**     | Event stream — NDJSON chunk/result frames out                |
+| **stderr**     | Aegis internal diagnostics only (silent by default)          |
 | **`/dev/tty`** | All human-facing UI (dialog, block notices, policy messages) |
 
 stdout is a machine-readable protocol. Nothing human-facing ever goes there.
@@ -42,13 +42,13 @@ stdout is a machine-readable protocol. Nothing human-facing ever goes there.
 {"cmd":"rm -rf /tmp/foo","cwd":"/home/user","source":"claude","id":"2"}
 ```
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `cmd` | string | yes | Shell command to intercept. Non-empty. |
-| `cwd` | string | no | Working directory for execution, policy, snapshots, and audit. |
-| `interactive` | bool | no | Reserved — ignored in v1. |
-| `source` | string | no | Metadata written to audit log (e.g. agent name). |
-| `id` | string | no | Correlation ID echoed on all output frames for this command. |
+| Field         | Type   | Required | Description                                                    |
+| ------------- | ------ | -------- | -------------------------------------------------------------- |
+| `cmd`         | string | yes      | Shell command to intercept. Non-empty.                         |
+| `cwd`         | string | no       | Working directory for execution, policy, snapshots, and audit. |
+| `interactive` | bool   | no       | Reserved — ignored in v1.                                      |
+| `source`      | string | no       | Metadata written to audit log (e.g. agent name).               |
+| `id`          | string | no       | Correlation ID echoed on all output frames for this command.   |
 
 **Frame size limit:** 1 MiB. Enforced with a bounded codec at read time — not
 after allocation. Oversized frames are rejected with an error result frame.
@@ -79,12 +79,12 @@ between stdout and stderr is not guaranteed.
 {"type":"result","decision":"error","exit_code":4,"message":"missing cmd field"}
 ```
 
-| `decision` | `exit_code` | Meaning |
-|---|---|---|
-| `approved` | child exit code | Command executed and completed |
-| `denied` | 2 | User denied at confirmation dialog |
-| `blocked` | 3 | Command matched a Block-level pattern |
-| `error` | 4 | Aegis could not process the frame |
+| `decision` | `exit_code`     | Meaning                               |
+| ---------- | --------------- | ------------------------------------- |
+| `approved` | child exit code | Command executed and completed        |
+| `denied`   | 2               | User denied at confirmation dialog    |
+| `blocked`  | 3               | Command matched a Block-level pattern |
+| `error`    | 4               | Aegis could not process the frame     |
 
 The `id` field is omitted on error frames when the input frame had no `id` or
 was unparseable.
@@ -93,20 +93,36 @@ was unparseable.
 
 ## Error Handling
 
-| Condition | Behavior |
-|---|---|
-| Invalid JSON | Emit error result frame, continue loop |
-| Missing or empty `cmd` | Emit error result frame, continue loop |
-| Frame exceeds 1 MiB | Emit error result frame, continue loop |
-| `cwd` invalid / not a directory | Emit `decision:"error"`, `message:"invalid cwd"`, continue loop |
+| Condition                             | Behavior                                                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Invalid JSON                          | Emit error result frame, continue loop                                                                    |
+| Missing or empty `cmd`                | Emit error result frame, continue loop                                                                    |
+| Frame exceeds 1 MiB                   | Emit error result frame, continue loop                                                                    |
+| `cwd` invalid / not a directory       | Emit `decision:"error"`, `message:"invalid cwd"`, continue loop                                           |
 | `/dev/tty` unavailable, dialog needed | Fail-closed: `Warn`/`Danger` → `denied` (exit 2), `Block` → `blocked` (exit 3); emit correct result frame |
-| Child spawn fails | Emit error result frame, continue loop |
-| Child killed by signal | `exit_code` = 128 + signal number (Unix convention) |
-| **stdout write failure** | **Terminal — end watch mode immediately** (broken control channel) |
-| stdin EOF | Drain any in-flight command, then exit 0 |
+| Child spawn fails                     | Emit error result frame, continue loop                                                                    |
+| Child killed by signal                | `exit_code` = 128 + signal number (Unix convention)                                                       |
+| **stdout write failure**              | **Terminal** — best-effort SIGKILL to in-flight child (do not wait/reap), then `process::exit(4)`         |
+| stdin EOF                             | Drain any in-flight command, then exit 0                                                                  |
+| **Terminal protocol failure**         | **`process::exit(4)`** — same code as `EXIT_INTERNAL` in shell-wrapper mode                               |
 
 **Audit behavior for malformed frames:** malformed/invalid frames are audited
 as watch-mode errors even when no command executes.
+
+**Audit schema additions for watch mode:**
+
+`AuditEntry` gains the following optional fields (all `#[serde(skip_serializing_if = "Option::is_none")]`):
+
+| Field | Type | Description |
+|---|---|---|
+| `source` | `Option<String>` | Agent/caller identity from input frame |
+| `cwd` | `Option<String>` | Working directory from input frame |
+| `id` | `Option<String>` | Correlation ID from input frame |
+| `transport` | `Option<String>` | Set to `"watch"` for watch-mode entries |
+
+Backward compatibility: new fields are optional and omitted when absent. Existing
+JSONL consumers that ignore unknown fields are unaffected. Shell-wrapper entries
+never set `transport`, so old and new entries are distinguishable.
 
 ---
 
