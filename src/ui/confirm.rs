@@ -386,6 +386,70 @@ fn decision_source_label(source: DecisionSource) -> &'static str {
     }
 }
 
+// ── /dev/tty UI helpers (watch mode) ─────────────────────────────────────────
+
+/// The fail-closed decision when `/dev/tty` is unavailable.
+///
+/// Only `Safe` commands are approved without a TTY; everything else is
+/// denied or blocked.  Exported so that callers can emit the correct result
+/// frame without duplicating the policy.
+pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {
+    matches!(assessment.risk, RiskLevel::Safe)
+}
+
+/// Show the confirmation dialog via `/dev/tty`.
+///
+/// Opens `/dev/tty` for both input (keystrokes) and output (dialog
+/// rendering).  If the device cannot be opened, returns
+/// `tty_unavailable_decision(assessment)` — fail-closed for Warn/Danger.
+pub fn show_confirmation_via_tty(
+    assessment: &Assessment,
+    snapshots: &[SnapshotRecord],
+) -> bool {
+    use std::fs::OpenOptions;
+
+    let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
+        Ok(f) => f,
+        Err(_) => return tty_unavailable_decision(assessment),
+    };
+    let tty_write = match tty.try_clone() {
+        Ok(f) => f,
+        Err(_) => return tty_unavailable_decision(assessment),
+    };
+
+    show_confirmation_with_input(
+        assessment,
+        snapshots,
+        true, // /dev/tty is always interactive
+        &mut io::BufReader::new(tty),
+        &mut { tty_write },
+    )
+}
+
+/// Show a policy-block notice via `/dev/tty`.
+///
+/// If `/dev/tty` cannot be opened, does nothing — the caller must still
+/// emit the correct NDJSON result frame.
+pub fn show_policy_block_via_tty(assessment: &Assessment, reason: &str) {
+    use std::fs::OpenOptions;
+
+    if let Ok(mut tty) = OpenOptions::new().write(true).open("/dev/tty") {
+        render_policy_block(assessment, reason, &mut tty);
+    }
+}
+
+/// Show an intrinsic-block notice (RiskLevel::Block pattern) via `/dev/tty`.
+///
+/// Uses the same `render_block` path as the shell-wrapper mode but routes
+/// output to the tty device.  If `/dev/tty` cannot be opened, silent.
+pub fn show_block_via_tty(assessment: &Assessment) {
+    use std::fs::OpenOptions;
+
+    if let Ok(mut tty) = OpenOptions::new().write(true).open("/dev/tty") {
+        render_block(assessment, &mut tty);
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -889,6 +953,47 @@ mod tests {
         assert_eq!(
             opens, 1,
             "overlapping ranges must be merged into one highlight span"
+        );
+    }
+
+    // ── /dev/tty helpers ──────────────────────────────────────────────────────
+
+    #[test]
+    fn tty_unavailable_safe_is_approved() {
+        let assessment = make_assessment("ls -la", RiskLevel::Safe, vec![]);
+        assert!(
+            tty_unavailable_decision(&assessment),
+            "Safe must be approved when /dev/tty is unavailable"
+        );
+    }
+
+    #[test]
+    fn tty_unavailable_warn_is_denied() {
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+        assert!(
+            !tty_unavailable_decision(&assessment),
+            "Warn must be denied when /dev/tty is unavailable"
+        );
+    }
+
+    #[test]
+    fn tty_unavailable_danger_is_denied() {
+        let p = make_match("FS-001", RiskLevel::Danger, r"rm\s+", "Recursive delete", None);
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+        assert!(
+            !tty_unavailable_decision(&assessment),
+            "Danger must be denied when /dev/tty is unavailable"
+        );
+    }
+
+    #[test]
+    fn tty_unavailable_block_is_denied() {
+        let p = make_match("PS-006", RiskLevel::Block, "rm", "Root delete", None);
+        let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
+        assert!(
+            !tty_unavailable_decision(&assessment),
+            "Block must be denied when /dev/tty is unavailable"
         );
     }
 }
