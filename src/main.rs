@@ -36,7 +36,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Watch mode (not implemented yet)
+    /// Read NDJSON command frames from stdin and stream results to stdout
     Watch,
     /// View the audit log
     Audit(AuditArgs),
