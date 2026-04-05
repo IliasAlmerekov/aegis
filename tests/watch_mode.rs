@@ -1,0 +1,137 @@
+//! Integration tests for `aegis watch` — end-to-end via child process.
+
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+fn aegis_watch(input: &[u8]) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aegis"))
+        .arg("watch")
+        .env("AEGIS_REAL_SHELL", "/bin/sh")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn aegis watch");
+
+    child.stdin.as_mut().unwrap().write_all(input).unwrap();
+    drop(child.stdin.take()); // close stdin to send EOF
+
+    child.wait_with_output().expect("failed to wait for aegis watch")
+}
+
+fn parse_frames(stdout: &[u8]) -> Vec<serde_json::Value> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("invalid NDJSON frame"))
+        .collect()
+}
+
+#[test]
+fn safe_command_emits_result_approved() {
+    let output = aegis_watch(b"{\"cmd\":\"echo hello\",\"id\":\"1\"}\n");
+    assert!(output.status.success(), "watch must exit 0 on clean EOF");
+
+    let frames = parse_frames(&output.stdout);
+    let result = frames.iter().find(|f| f["type"] == "result").expect("no result frame");
+
+    assert_eq!(result["decision"], "approved");
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(result["id"], "1");
+}
+
+#[test]
+fn safe_command_stdout_chunk_is_base64() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+
+    let output = aegis_watch(b"{\"cmd\":\"printf 'hello'\"}\n");
+    let frames = parse_frames(&output.stdout);
+
+    let stdout_frame = frames.iter().find(|f| f["type"] == "stdout").expect("no stdout frame");
+    let data_b64 = stdout_frame["data_b64"].as_str().expect("data_b64 must be a string");
+    let decoded = BASE64.decode(data_b64).expect("data_b64 must be valid base64");
+    assert_eq!(decoded, b"hello");
+}
+
+#[test]
+fn invalid_json_emits_error_frame_and_continues() {
+    let input = b"not-json\n{\"cmd\":\"echo ok\"}\n";
+    let output = aegis_watch(input);
+    assert!(output.status.success());
+
+    let frames = parse_frames(&output.stdout);
+    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    assert_eq!(error["exit_code"], 4);
+    assert!(error["message"].as_str().unwrap().contains("invalid JSON"));
+
+    let results: Vec<_> = frames.iter().filter(|f| f["type"] == "result").collect();
+    assert_eq!(results.len(), 1, "second command must produce a result frame");
+    assert_eq!(results[0]["decision"], "approved");
+}
+
+#[test]
+fn missing_cmd_emits_error_frame() {
+    let output = aegis_watch(b"{\"source\":\"test\"}\n");
+    let frames = parse_frames(&output.stdout);
+    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    assert_eq!(error["exit_code"], 4);
+    assert!(error["message"].as_str().unwrap().contains("cmd"));
+}
+
+#[test]
+fn invalid_cwd_emits_error_frame() {
+    let output = aegis_watch(b"{\"cmd\":\"echo x\",\"cwd\":\"/nonexistent/path/xyz\"}\n");
+    let frames = parse_frames(&output.stdout);
+    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    assert_eq!(error["exit_code"], 4);
+    assert_eq!(error["message"], "invalid cwd");
+}
+
+#[test]
+fn oversized_frame_emits_error_frame_and_continues() {
+    let big_cmd = "x".repeat(1_100_000);
+    let big_frame = format!("{{\"cmd\":\"{big_cmd}\"}}\n");
+    let small_frame = b"{\"cmd\":\"echo after\"}\n";
+
+    let mut input = big_frame.into_bytes();
+    input.extend_from_slice(small_frame);
+
+    let output = aegis_watch(&input);
+    assert!(output.status.success());
+
+    let frames = parse_frames(&output.stdout);
+    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    assert!(error["message"].as_str().unwrap().contains("1 MiB"));
+
+    let results: Vec<_> = frames.iter().filter(|f| f["type"] == "result").collect();
+    assert_eq!(results.len(), 1, "command after oversized frame must execute");
+}
+
+#[test]
+fn id_field_is_echoed_on_all_frames() {
+    let output = aegis_watch(b"{\"cmd\":\"printf 'hi'\",\"id\":\"corr-99\"}\n");
+    let frames = parse_frames(&output.stdout);
+
+    for frame in &frames {
+        if frame["type"] != "error" {
+            assert_eq!(
+                frame["id"], "corr-99",
+                "id must be echoed on all non-error frames: {frame}"
+            );
+        }
+    }
+}
+
+#[test]
+fn child_exit_code_is_propagated() {
+    let output = aegis_watch(b"{\"cmd\":\"exit 42\",\"id\":\"ec\"}\n");
+    let frames = parse_frames(&output.stdout);
+    let result = frames.iter().find(|f| f["type"] == "result").unwrap();
+    assert_eq!(result["exit_code"], 42);
+}
+
+#[test]
+fn watch_exits_zero_on_clean_eof() {
+    let output = aegis_watch(b"{\"cmd\":\"echo hi\"}\n");
+    assert_eq!(output.status.code(), Some(0));
+}
