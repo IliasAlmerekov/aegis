@@ -70,12 +70,61 @@ fn invalid_json_emits_error_frame_and_continues() {
 }
 
 #[test]
-fn missing_cmd_emits_error_frame() {
-    let output = aegis_watch(b"{\"source\":\"test\"}\n");
+fn empty_cmd_emits_error_frame() {
+    // Exercises the explicit `cmd.trim().is_empty()` guard in process_frame.
+    let output = aegis_watch(b"{\"cmd\":\"\"}\n");
     let frames = parse_frames(&output.stdout);
     let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
     assert_eq!(error["exit_code"], 4);
     assert!(error["message"].as_str().unwrap().contains("cmd"));
+}
+
+#[test]
+fn missing_cmd_field_emits_error_frame() {
+    // JSON parse failure: `cmd` is required (no #[serde(default)]).
+    let output = aegis_watch(b"{\"source\":\"test\"}\n");
+    let frames = parse_frames(&output.stdout);
+    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    assert_eq!(error["exit_code"], 4);
+    assert!(error["message"].as_str().unwrap().contains("invalid JSON"));
+}
+
+#[test]
+#[ignore = "requires AEGIS_AUDIT_PATH env var support in AuditLogger"]
+fn watch_mode_audit_entry_sets_transport_watch() {
+    use std::fs;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let audit_path = dir.path().join("audit.jsonl");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_aegis"))
+        .arg("watch")
+        .env("AEGIS_REAL_SHELL", "/bin/sh")
+        .env("AEGIS_AUDIT_PATH", &audit_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn");
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"{\"cmd\":\"echo audit\",\"source\":\"test-agent\",\"id\":\"a1\"}\n")
+        .unwrap();
+    drop(child.stdin.take());
+    let _ = child.wait_with_output().unwrap();
+
+    if audit_path.exists() {
+        let contents = fs::read_to_string(&audit_path).unwrap();
+        let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+        assert_eq!(entry["transport"], "watch");
+        assert_eq!(entry["source"], "test-agent");
+        assert_eq!(entry["id"], "a1");
+    }
 }
 
 #[test]
