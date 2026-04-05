@@ -114,8 +114,17 @@ fn main() {
 
     let exit_code = match subcommand {
         Some(Commands::Watch) => {
-            eprintln!("error: watch is not implemented yet");
-            EXIT_INTERNAL
+            let context = RuntimeContext::load(verbose);
+            match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt.block_on(aegis::watch::run(&context)),
+                Err(err) => {
+                    eprintln!("error: failed to build tokio runtime for watch mode: {err}");
+                    EXIT_INTERNAL
+                }
+            }
         }
         Some(Commands::Audit(args)) => {
             let logger = AuditLogger::default();
@@ -615,22 +624,27 @@ mod tests {
         assert_ne!(EXIT_INTERNAL, 0);
     }
 
-    #[test]
-    fn watch_subcommand_is_not_success_when_unimplemented() {
-        let Cli {
-            command: _,
-            verbose: _,
-            subcommand,
-        } = Cli::parse_from(["aegis", "watch"]);
+    // ── Watch mode — stub removed ─────────────────────────────────────────────
+    //
+    // Verify that watch mode participates in the real pipeline by checking
+    // that frame parsing works end-to-end.
+    #[tokio::test]
+    async fn watch_mode_safe_command_emits_result_frame() {
+        use aegis::watch::{InputFrame, MAX_FRAME_BYTES, ReadLineResult, read_bounded_line};
+        use tokio::io::BufReader;
 
-        let exit_code = match subcommand {
-            Some(Commands::Watch) => EXIT_INTERNAL,
-            Some(Commands::Audit(_)) => 0,
-            Some(Commands::Config(_)) => 0,
-            None => 0,
+        let input = b"{\"cmd\":\"echo hello\",\"id\":\"t1\"}\n";
+        let mut reader = BufReader::new(input.as_ref());
+
+        let result = read_bounded_line(&mut reader, MAX_FRAME_BYTES).await.unwrap();
+        let line = match result {
+            ReadLineResult::Line(l) => l,
+            _ => panic!("expected Line"),
         };
 
-        assert_eq!(exit_code, EXIT_INTERNAL);
+        let frame: InputFrame = serde_json::from_str(&line).unwrap();
+        assert_eq!(frame.cmd, "echo hello");
+        assert_eq!(frame.id.as_deref(), Some("t1"));
     }
 
     #[test]
