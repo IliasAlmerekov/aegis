@@ -3,7 +3,6 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
@@ -24,6 +23,7 @@ use crate::ui::confirm::{
 pub const MAX_FRAME_BYTES: usize = 1 << 20;
 
 /// mpsc channel capacity for the stdout/stderr pump tasks.
+#[allow(dead_code)] // used in Task 6 watch loop
 const CHANNEL_CAPACITY: usize = 64;
 
 // ── Input frame ───────────────────────────────────────────────────────────────
@@ -197,7 +197,8 @@ pub fn emit_frame(frame: &OutputFrame) -> std::io::Result<()> {
 
 // Placeholder for Task 6 — the watch loop lives here.
 pub async fn run(_context: &RuntimeContext) -> i32 {
-    unimplemented!("watch loop implemented in Task 6")
+    tracing::error!("watch loop not yet implemented");
+    3
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -205,6 +206,7 @@ pub async fn run(_context: &RuntimeContext) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
     // ── Bounded reader ────────────────────────────────────────────────────────
 
