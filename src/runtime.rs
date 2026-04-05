@@ -115,6 +115,18 @@ impl RuntimeContext {
         }
     }
 
+    /// Async variant of `create_snapshots` — call from within an async runtime.
+    ///
+    /// Calls `snapshot_registry.snapshot_all()` directly without `block_on`,
+    /// which would panic if called from an already-async context.
+    pub async fn create_snapshots_async(
+        &self,
+        cwd: &std::path::Path,
+        cmd: &str,
+    ) -> Vec<crate::snapshot::SnapshotRecord> {
+        self.snapshot_registry.snapshot_all(cwd, cmd).await
+    }
+
     /// Append one audit entry with the context-bound logger configuration.
     pub fn append_audit_entry(
         &self,
@@ -137,6 +149,38 @@ impl RuntimeContext {
             && verbose
         {
             eprintln!("warning: failed to append audit log entry: {err}");
+        }
+    }
+
+    /// Append a watch-mode audit entry with frame correlation fields.
+    ///
+    /// Identical to `append_audit_entry` but attaches `source`, `cwd`, `id`,
+    /// and sets `transport = "watch"` via `AuditEntry::with_watch_context`.
+    pub fn append_watch_audit_entry(
+        &self,
+        assessment: &crate::interceptor::scanner::Assessment,
+        decision: Decision,
+        snapshots: &[crate::snapshot::SnapshotRecord],
+        allowlist_match: Option<&crate::config::AllowlistMatch>,
+        watch_source: Option<String>,
+        watch_cwd: Option<String>,
+        watch_id: Option<String>,
+        verbose: bool,
+    ) {
+        let entry = AuditEntry::new(
+            assessment.command.raw.clone(),
+            assessment.risk,
+            assessment.matched.iter().map(Into::into).collect(),
+            decision,
+            snapshots.iter().map(Into::into).collect(),
+            allowlist_match.map(|m| m.pattern.clone()),
+        )
+        .with_watch_context(watch_source, watch_cwd, watch_id);
+
+        if let Err(err) = self.audit_logger.append(entry)
+            && verbose
+        {
+            eprintln!("warning: failed to append watch audit log entry: {err}");
         }
     }
 }
