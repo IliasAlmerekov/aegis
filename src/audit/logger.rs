@@ -118,6 +118,26 @@ pub struct AuditEntry {
     /// Skipped in JSON output when absent to keep old log entries valid.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_pattern: Option<String>,
+
+    /// The agent/caller identity passed in the watch-mode input frame.
+    /// Absent for shell-wrapper entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
+    /// The working directory from the watch-mode input frame.
+    /// Absent for shell-wrapper entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+
+    /// The correlation ID from the watch-mode input frame, echoed back.
+    /// Absent for shell-wrapper entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
+    /// Set to `"watch"` for entries created in watch mode.
+    /// Absent for shell-wrapper entries, making them distinguishable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
 }
 
 /// User-visible outcome of the interception flow.
@@ -202,7 +222,25 @@ impl AuditEntry {
             decision,
             snapshots,
             allowlist_pattern,
+            source: None,
+            cwd: None,
+            id: None,
+            transport: None,
         }
+    }
+
+    /// Attach watch-mode context fields and set `transport = "watch"`.
+    pub fn with_watch_context(
+        mut self,
+        source: Option<String>,
+        cwd: Option<String>,
+        id: Option<String>,
+    ) -> Self {
+        self.source = source;
+        self.cwd = cwd;
+        self.id = id;
+        self.transport = Some("watch".to_string());
+        self
     }
 }
 
@@ -779,6 +817,10 @@ mod tests {
                 snapshot_id: format!("snap-{index}"),
             }],
             allowlist_pattern: None,
+            source: None,
+            cwd: None,
+            id: None,
+            transport: None,
         }
     }
 
@@ -1044,5 +1086,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["command-1", "command-2", "command-3"]
         );
+    }
+
+    #[test]
+    fn watch_context_fields_round_trip_through_json() {
+        let entry = AuditEntry::new(
+            "git status",
+            RiskLevel::Safe,
+            vec![],
+            Decision::AutoApproved,
+            vec![],
+            None,
+        )
+        .with_watch_context(
+            Some("claude".to_string()),
+            Some("/home/user/project".to_string()),
+            Some("frame-42".to_string()),
+        );
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let back: AuditEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.source.as_deref(), Some("claude"));
+        assert_eq!(back.cwd.as_deref(), Some("/home/user/project"));
+        assert_eq!(back.id.as_deref(), Some("frame-42"));
+        assert_eq!(back.transport.as_deref(), Some("watch"));
+    }
+
+    #[test]
+    fn watch_context_fields_absent_when_not_set() {
+        let entry = AuditEntry::new(
+            "ls",
+            RiskLevel::Safe,
+            vec![],
+            Decision::AutoApproved,
+            vec![],
+            None,
+        );
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("source"), "source must be absent when None");
+        assert!(!json.contains("transport"), "transport must be absent when None");
     }
 }
