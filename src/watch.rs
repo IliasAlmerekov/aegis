@@ -338,7 +338,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         frame.source.clone(),
         frame.cwd.clone(),
         id.clone(),
-        false,
+        true,
     );
 
     // ── 9. Emit result or execute ─────────────────────────────────────────────
@@ -373,7 +373,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
 
 /// Spawn the child command, stream its output as NDJSON frames, and emit
 /// a final result frame.
-async fn execute_and_emit(cmd: &str, cwd: &PathBuf, id: Option<String>) {
+async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) {
     use std::os::unix::process::ExitStatusExt;
     use tokio::process::Command;
 
