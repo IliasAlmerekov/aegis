@@ -158,10 +158,10 @@ impl RuntimeContext {
     /// and sets `transport = "watch"` via `AuditEntry::with_watch_context`.
     pub fn append_watch_audit_entry(
         &self,
-        assessment: &crate::interceptor::scanner::Assessment,
+        assessment: &Assessment,
         decision: Decision,
-        snapshots: &[crate::snapshot::SnapshotRecord],
-        allowlist_match: Option<&crate::config::AllowlistMatch>,
+        snapshots: &[SnapshotRecord],
+        allowlist_match: Option<&AllowlistMatch>,
         watch_source: Option<String>,
         watch_cwd: Option<String>,
         watch_id: Option<String>,
