@@ -156,6 +156,7 @@ impl RuntimeContext {
     ///
     /// Identical to `append_audit_entry` but attaches `source`, `cwd`, `id`,
     /// and sets `transport = "watch"` via `AuditEntry::with_watch_context`.
+    #[allow(clippy::too_many_arguments)]
     pub fn append_watch_audit_entry(
         &self,
         assessment: &Assessment,

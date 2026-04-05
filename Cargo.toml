@@ -21,7 +21,7 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 async-trait = "0.1"
-tokio = { version = "1", features = ["process", "fs", "rt", "rt-multi-thread", "io-util", "sync"] }
+tokio = { version = "1", features = ["process", "fs", "rt", "rt-multi-thread", "io-util", "io-std", "sync"] }
 crossterm = "0.28"
 regex = "1.11"
 aho-corasick = "1.1"

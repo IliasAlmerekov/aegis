@@ -8,13 +8,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
-use crate::config::AllowlistMatch;
-use crate::decision::{BlockReason, DecisionInput, DecisionPlan, PolicyAction, evaluate_policy};
-use crate::interceptor::RiskLevel;
+use crate::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use crate::runtime::RuntimeContext;
 use crate::ui::confirm::{
     show_block_via_tty, show_confirmation_via_tty, show_policy_block_via_tty,
-    tty_unavailable_decision,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -23,7 +20,6 @@ use crate::ui::confirm::{
 pub const MAX_FRAME_BYTES: usize = 1 << 20;
 
 /// mpsc channel capacity for the stdout/stderr pump tasks.
-#[allow(dead_code)] // used in Task 6 watch loop
 const CHANNEL_CAPACITY: usize = 64;
 
 // ── Input frame ───────────────────────────────────────────────────────────────
@@ -187,7 +183,7 @@ where
 /// (broken control channel) and call `std::process::exit(4)`.
 pub fn emit_frame(frame: &OutputFrame) -> std::io::Result<()> {
     let line =
-        serde_json::to_string(frame).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        serde_json::to_string(frame).map_err(std::io::Error::other)?;
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     lock.write_all(line.as_bytes())?;
@@ -195,10 +191,293 @@ pub fn emit_frame(frame: &OutputFrame) -> std::io::Result<()> {
     lock.flush()
 }
 
-// Placeholder for Task 6 — the watch loop lives here.
-pub async fn run(_context: &RuntimeContext) -> i32 {
-    tracing::error!("watch loop not yet implemented");
-    3
+/// Entry point for `aegis watch`.
+///
+/// Reads NDJSON command frames from stdin until EOF, processes each one
+/// through the full Aegis interception pipeline, and emits NDJSON event
+/// frames to stdout.
+///
+/// Returns the process exit code:
+/// - `0` on clean EOF
+/// - `4` on fatal stdout write failure (broken control channel)
+///
+/// Must be called with a multi-thread tokio runtime so that
+/// `tokio::task::block_in_place` is available for TUI dialog rendering.
+pub async fn run(context: &RuntimeContext) -> i32 {
+    let mut reader = TokioBufReader::new(tokio::io::stdin());
+
+    loop {
+        match read_bounded_line(&mut reader, MAX_FRAME_BYTES).await {
+            Err(e) => {
+                eprintln!("aegis: stdin read error: {e}");
+                return 4;
+            }
+            Ok(ReadLineResult::Eof) => return 0,
+            Ok(ReadLineResult::Oversized) => {
+                if emit_frame(&OutputFrame::Error {
+                    id: None,
+                    exit_code: 4,
+                    message: "frame exceeds 1 MiB limit".to_string(),
+                })
+                .is_err()
+                {
+                    std::process::exit(4);
+                }
+                // Not audited — no parseable command. Continue loop.
+            }
+            Ok(ReadLineResult::Line(line)) => {
+                if line.trim().is_empty() {
+                    continue; // skip blank separator lines
+                }
+                process_frame(line, context).await;
+            }
+        }
+    }
+}
+
+/// Process a single input line as a watch-mode frame.
+async fn process_frame(line: String, context: &RuntimeContext) {
+    // ── 1. Parse JSON ─────────────────────────────────────────────────────────
+    let frame: InputFrame = match serde_json::from_str(&line) {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = format!("invalid JSON: {e}");
+            if emit_frame(&OutputFrame::Error { id: None, exit_code: 4, message: msg }).is_err() {
+                std::process::exit(4);
+            }
+            return;
+        }
+    };
+
+    let id = frame.id.clone();
+
+    // ── 2. Validate cmd ───────────────────────────────────────────────────────
+    if frame.cmd.trim().is_empty() {
+        if emit_frame(&OutputFrame::Error {
+            id: id.clone(),
+            exit_code: 4,
+            message: "missing or empty cmd".to_string(),
+        })
+        .is_err()
+        {
+            std::process::exit(4);
+        }
+        return;
+    }
+
+    // ── 3. Validate and resolve cwd ───────────────────────────────────────────
+    let cwd = if let Some(ref cwd_str) = frame.cwd {
+        let p = PathBuf::from(cwd_str);
+        if !p.is_dir() {
+            if emit_frame(&OutputFrame::Error {
+                id: id.clone(),
+                exit_code: 4,
+                message: "invalid cwd".to_string(),
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+            return;
+        }
+        p
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    };
+
+    // ── 4. Assess ─────────────────────────────────────────────────────────────
+    let assessment = context.assess(&frame.cmd);
+    let allowlist_match = context.allowlist_match(&frame.cmd);
+
+    // ── 5. Evaluate policy ────────────────────────────────────────────────────
+    let config = context.config();
+    let plan = evaluate_policy(DecisionInput {
+        mode: config.mode,
+        risk: assessment.risk,
+        in_ci: false, // CI env detection is irrelevant in watch mode
+        ci_policy: config.ci_policy,
+        allowlist_match: allowlist_match.is_some(),
+        strict_allowlist_override: config.strict_allowlist_override,
+    });
+
+    // ── 6. Snapshots ──────────────────────────────────────────────────────────
+    let snapshots = if plan.should_snapshot {
+        context.create_snapshots_async(&cwd, &frame.cmd).await
+    } else {
+        Vec::new()
+    };
+
+    // ── 7. Dialog / decision (blocking — uses /dev/tty) ──────────────────────
+    let decision = match plan.action {
+        PolicyAction::AutoApprove => Decision::AutoApproved,
+        PolicyAction::Prompt => {
+            let approved = tokio::task::block_in_place(|| {
+                show_confirmation_via_tty(&assessment, &snapshots)
+            });
+            if approved { Decision::Approved } else { Decision::Denied }
+        }
+        PolicyAction::Block => {
+            tokio::task::block_in_place(|| match plan.block_reason {
+                Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(&assessment),
+                Some(BlockReason::StrictPolicy) => show_policy_block_via_tty(
+                    &assessment,
+                    "strict mode blocks non-safe commands without an allowlisted override",
+                ),
+                Some(BlockReason::ProtectCiPolicy) | None => {}
+            });
+            Decision::Blocked
+        }
+    };
+
+    // ── 8. Audit ──────────────────────────────────────────────────────────────
+    context.append_watch_audit_entry(
+        &assessment,
+        decision,
+        &snapshots,
+        allowlist_match.as_ref(),
+        frame.source.clone(),
+        frame.cwd.clone(),
+        id.clone(),
+        false,
+    );
+
+    // ── 9. Emit result or execute ─────────────────────────────────────────────
+    match decision {
+        Decision::Denied => {
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Denied,
+                exit_code: 2,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+        Decision::Blocked => {
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Blocked,
+                exit_code: 3,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+        Decision::Approved | Decision::AutoApproved => {
+            execute_and_emit(&frame.cmd, &cwd, id).await;
+        }
+    }
+}
+
+/// Spawn the child command, stream its output as NDJSON frames, and emit
+/// a final result frame.
+async fn execute_and_emit(cmd: &str, cwd: &PathBuf, id: Option<String>) {
+    use std::os::unix::process::ExitStatusExt;
+    use tokio::process::Command;
+
+    let shell = std::env::var_os("AEGIS_REAL_SHELL")
+        .or_else(|| std::env::var_os("SHELL"))
+        .unwrap_or_else(|| "/bin/sh".into());
+
+    let mut child = match Command::new(&shell)
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            if emit_frame(&OutputFrame::Error {
+                id,
+                exit_code: 4,
+                message: format!("failed to spawn child: {e}"),
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+            return;
+        }
+    };
+
+    let child_stdout = child.stdout.take().expect("stdout piped");
+    let child_stderr = child.stderr.take().expect("stderr piped");
+
+    let (tx, mut rx) = mpsc::channel::<WatchEvent>(CHANNEL_CAPACITY);
+
+    // stdout pump task
+    let tx_out = tx.clone();
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 4096];
+        let mut reader = TokioBufReader::new(child_stdout);
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx_out.send(WatchEvent::Stdout(buf[..n].to_vec())).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // stderr pump task — move last sender so channel closes when both tasks drop
+    let tx_err = tx;
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 4096];
+        let mut reader = TokioBufReader::new(child_stderr);
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx_err.send(WatchEvent::Stderr(buf[..n].to_vec())).await.is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    // Drain channel and write frames until both pumps exit.
+    while let Some(event) = rx.recv().await {
+        use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+        let frame = match event {
+            WatchEvent::Stdout(data) => OutputFrame::Stdout {
+                id: id.clone(),
+                data_b64: BASE64.encode(&data),
+            },
+            WatchEvent::Stderr(data) => OutputFrame::Stderr {
+                id: id.clone(),
+                data_b64: BASE64.encode(&data),
+            },
+        };
+        if emit_frame(&frame).is_err() {
+            let _ = child.kill().await;
+            std::process::exit(4);
+        }
+    }
+
+    // Reap the child.
+    let exit_code = match child.wait().await {
+        Ok(status) => status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+        Err(_) => 4,
+    };
+
+    if emit_frame(&OutputFrame::Result {
+        id,
+        decision: OutputDecision::Approved,
+        exit_code,
+    })
+    .is_err()
+    {
+        std::process::exit(4);
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
