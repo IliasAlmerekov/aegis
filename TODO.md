@@ -21,7 +21,7 @@
 
 ---
 
-## Ticket 1.1 — Подключить `custom_patterns` к Scanner
+## Ticket 1.1 — Подключить `custom_patterns` к Scanner (Done)
 
 ### Проблема
 
@@ -61,7 +61,7 @@
 
 ---
 
-## Ticket 1.2 — Ввести единый `RuntimeContext`
+## Ticket 1.2 — Ввести единый `RuntimeContext` (Done)
 
 ### Проблема
 
@@ -108,7 +108,7 @@ struct RuntimeContext {
 
 ---
 
-## Ticket 1.3 — Сделать `SnapshotRegistry` config-aware
+## Ticket 1.3 — Сделать `SnapshotRegistry` config-aware (Done)
 
 ### Проблема
 
@@ -141,7 +141,7 @@ struct RuntimeContext {
 
 ---
 
-## Ticket 1.4 — Реализовать `Mode` полностью
+## Ticket 1.4 — Реализовать `Mode` полностью (Done)
 
 ### Проблема
 
@@ -185,41 +185,9 @@ struct RuntimeContext {
 
 ---
 
-## Ticket 1.5 — Удалить или реализовать `watch`
+## ~~Ticket 1.5 — Удалить или реализовать `watch`~~ ✅ ЗАКРЫТ
 
-### Проблема
-
-Команда `watch` есть в CLI, но не выполняет обещанную функцию. Возврат success-кода при нереализованной функциональности особенно опасен для automation.
-
-### Что нужно сделать
-
-Выбрать один из двух путей:
-
-1. Временно убрать `watch` из публичного CLI.
-2. Или реализовать минимально жизнеспособную версию.
-
-### Предпочтение
-
-Если в ближайшем цикле реализации не планируется полноценный watch-mode, лучше **удалить из публичного интерфейса до готовности**.
-
-### Если реализовывать
-
-- Определить источник команд:
-  - shell hook,
-  - stdin loop,
-  - wrapper mode,
-  - file/socket source.
-- Задать детерминированный lifecycle.
-
-### Acceptance criteria
-
-- Нет subcommand, который заявлен, но не работает.
-- Нереализованная функциональность не возвращает exit code `0`.
-- README/CLI help не расходятся с реальностью.
-
-### Риск, если не сделать
-
-- Проект выглядит незавершённым и ненадёжным в production и при code review.
+`aegis watch` реализован: читает NDJSON-фреймы из stdin, прогоняет через полный pipeline (assess → policy → snapshots → /dev/tty dialog → audit → execute), стримит NDJSON-события обратно в stdout. 287 тестов проходят.
 
 ---
 
