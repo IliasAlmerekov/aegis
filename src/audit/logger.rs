@@ -1126,6 +1126,9 @@ mod tests {
 
         let json = serde_json::to_string(&entry).unwrap();
         assert!(!json.contains("source"), "source must be absent when None");
-        assert!(!json.contains("transport"), "transport must be absent when None");
+        assert!(
+            !json.contains("transport"),
+            "transport must be absent when None"
+        );
     }
 }

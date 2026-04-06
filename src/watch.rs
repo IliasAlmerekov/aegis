@@ -182,8 +182,7 @@ where
 /// Returns `Err` if the write fails — the caller must treat this as terminal
 /// (broken control channel) and call `std::process::exit(4)`.
 pub fn emit_frame(frame: &OutputFrame) -> std::io::Result<()> {
-    let line =
-        serde_json::to_string(frame).map_err(std::io::Error::other)?;
+    let line = serde_json::to_string(frame).map_err(std::io::Error::other)?;
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     lock.write_all(line.as_bytes())?;
@@ -242,7 +241,13 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         Ok(f) => f,
         Err(e) => {
             let msg = format!("invalid JSON: {e}");
-            if emit_frame(&OutputFrame::Error { id: None, exit_code: 4, message: msg }).is_err() {
+            if emit_frame(&OutputFrame::Error {
+                id: None,
+                exit_code: 4,
+                message: msg,
+            })
+            .is_err()
+            {
                 std::process::exit(4);
             }
             return;
@@ -311,10 +316,13 @@ async fn process_frame(line: String, context: &RuntimeContext) {
     let decision = match plan.action {
         PolicyAction::AutoApprove => Decision::AutoApproved,
         PolicyAction::Prompt => {
-            let approved = tokio::task::block_in_place(|| {
-                show_confirmation_via_tty(&assessment, &snapshots)
-            });
-            if approved { Decision::Approved } else { Decision::Denied }
+            let approved =
+                tokio::task::block_in_place(|| show_confirmation_via_tty(&assessment, &snapshots));
+            if approved {
+                Decision::Approved
+            } else {
+                Decision::Denied
+            }
         }
         PolicyAction::Block => {
             tokio::task::block_in_place(|| match plan.block_reason {
@@ -419,7 +427,11 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
             match reader.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if tx_out.send(WatchEvent::Stdout(buf[..n].to_vec())).await.is_err() {
+                    if tx_out
+                        .send(WatchEvent::Stdout(buf[..n].to_vec()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -436,7 +448,11 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
             match reader.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if tx_err.send(WatchEvent::Stderr(buf[..n].to_vec())).await.is_err() {
+                    if tx_err
+                        .send(WatchEvent::Stderr(buf[..n].to_vec()))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -465,7 +481,9 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
 
     // Reap the child.
     let exit_code = match child.wait().await {
-        Ok(status) => status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+        Ok(status) => status
+            .code()
+            .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
         Err(_) => 4,
     };
 

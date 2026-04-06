@@ -16,7 +16,9 @@ fn aegis_watch(input: &[u8]) -> std::process::Output {
     child.stdin.as_mut().unwrap().write_all(input).unwrap();
     drop(child.stdin.take()); // close stdin to send EOF
 
-    child.wait_with_output().expect("failed to wait for aegis watch")
+    child
+        .wait_with_output()
+        .expect("failed to wait for aegis watch")
 }
 
 fn parse_frames(stdout: &[u8]) -> Vec<serde_json::Value> {
@@ -33,7 +35,10 @@ fn safe_command_emits_result_approved() {
     assert!(output.status.success(), "watch must exit 0 on clean EOF");
 
     let frames = parse_frames(&output.stdout);
-    let result = frames.iter().find(|f| f["type"] == "result").expect("no result frame");
+    let result = frames
+        .iter()
+        .find(|f| f["type"] == "result")
+        .expect("no result frame");
 
     assert_eq!(result["decision"], "approved");
     assert_eq!(result["exit_code"], 0);
@@ -47,9 +52,16 @@ fn safe_command_stdout_chunk_is_base64() {
     let output = aegis_watch(b"{\"cmd\":\"printf 'hello'\"}\n");
     let frames = parse_frames(&output.stdout);
 
-    let stdout_frame = frames.iter().find(|f| f["type"] == "stdout").expect("no stdout frame");
-    let data_b64 = stdout_frame["data_b64"].as_str().expect("data_b64 must be a string");
-    let decoded = BASE64.decode(data_b64).expect("data_b64 must be valid base64");
+    let stdout_frame = frames
+        .iter()
+        .find(|f| f["type"] == "stdout")
+        .expect("no stdout frame");
+    let data_b64 = stdout_frame["data_b64"]
+        .as_str()
+        .expect("data_b64 must be a string");
+    let decoded = BASE64
+        .decode(data_b64)
+        .expect("data_b64 must be valid base64");
     assert_eq!(decoded, b"hello");
 }
 
@@ -60,12 +72,19 @@ fn invalid_json_emits_error_frame_and_continues() {
     assert!(output.status.success());
 
     let frames = parse_frames(&output.stdout);
-    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    let error = frames
+        .iter()
+        .find(|f| f["type"] == "error")
+        .expect("no error frame");
     assert_eq!(error["exit_code"], 4);
     assert!(error["message"].as_str().unwrap().contains("invalid JSON"));
 
     let results: Vec<_> = frames.iter().filter(|f| f["type"] == "result").collect();
-    assert_eq!(results.len(), 1, "second command must produce a result frame");
+    assert_eq!(
+        results.len(),
+        1,
+        "second command must produce a result frame"
+    );
     assert_eq!(results[0]["decision"], "approved");
 }
 
@@ -74,7 +93,10 @@ fn empty_cmd_emits_error_frame() {
     // Exercises the explicit `cmd.trim().is_empty()` guard in process_frame.
     let output = aegis_watch(b"{\"cmd\":\"\"}\n");
     let frames = parse_frames(&output.stdout);
-    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    let error = frames
+        .iter()
+        .find(|f| f["type"] == "error")
+        .expect("no error frame");
     assert_eq!(error["exit_code"], 4);
     assert!(error["message"].as_str().unwrap().contains("cmd"));
 }
@@ -84,7 +106,10 @@ fn missing_cmd_field_emits_error_frame() {
     // JSON parse failure: `cmd` is required (no #[serde(default)]).
     let output = aegis_watch(b"{\"source\":\"test\"}\n");
     let frames = parse_frames(&output.stdout);
-    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    let error = frames
+        .iter()
+        .find(|f| f["type"] == "error")
+        .expect("no error frame");
     assert_eq!(error["exit_code"], 4);
     assert!(error["message"].as_str().unwrap().contains("invalid JSON"));
 }
@@ -131,7 +156,10 @@ fn watch_mode_audit_entry_sets_transport_watch() {
 fn invalid_cwd_emits_error_frame() {
     let output = aegis_watch(b"{\"cmd\":\"echo x\",\"cwd\":\"/nonexistent/path/xyz\"}\n");
     let frames = parse_frames(&output.stdout);
-    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    let error = frames
+        .iter()
+        .find(|f| f["type"] == "error")
+        .expect("no error frame");
     assert_eq!(error["exit_code"], 4);
     assert_eq!(error["message"], "invalid cwd");
 }
@@ -149,11 +177,18 @@ fn oversized_frame_emits_error_frame_and_continues() {
     assert!(output.status.success());
 
     let frames = parse_frames(&output.stdout);
-    let error = frames.iter().find(|f| f["type"] == "error").expect("no error frame");
+    let error = frames
+        .iter()
+        .find(|f| f["type"] == "error")
+        .expect("no error frame");
     assert!(error["message"].as_str().unwrap().contains("1 MiB"));
 
     let results: Vec<_> = frames.iter().filter(|f| f["type"] == "result").collect();
-    assert_eq!(results.len(), 1, "command after oversized frame must execute");
+    assert_eq!(
+        results.len(),
+        1,
+        "command after oversized frame must execute"
+    );
 }
 
 #[test]

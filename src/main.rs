@@ -636,7 +636,9 @@ mod tests {
         let input = b"{\"cmd\":\"echo hello\",\"id\":\"t1\"}\n";
         let mut reader = BufReader::new(input.as_ref());
 
-        let result = read_bounded_line(&mut reader, MAX_FRAME_BYTES).await.unwrap();
+        let result = read_bounded_line(&mut reader, MAX_FRAME_BYTES)
+            .await
+            .unwrap();
         let line = match result {
             ReadLineResult::Line(l) => l,
             _ => panic!("expected Line"),
