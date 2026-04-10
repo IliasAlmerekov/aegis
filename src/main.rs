@@ -5,6 +5,7 @@ use std::process::{self, Command, Stdio};
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
 use aegis::config::{AllowlistMatch, Config};
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
+use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::runtime::RuntimeContext;
@@ -279,19 +280,36 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
                 EXIT_INTERNAL
             }
         },
-        ConfigCommand::Show => match Config::load().and_then(|config| config.to_toml_string()) {
-            Ok(toml) => {
-                print!("{toml}");
-                0
-            }
+        ConfigCommand::Show => match Config::load() {
+            Ok(config) => match config.to_toml_string() {
+                Ok(toml) => {
+                    print!("{toml}");
+                    0
+                }
+                Err(err) => {
+                    eprintln!("error: failed to serialize config: {err}");
+                    EXIT_INTERNAL
+                }
+            },
             Err(err) => report_config_load_error(&err),
         },
     }
 }
 
-fn report_config_load_error(err: &dyn std::fmt::Display) -> i32 {
-    eprintln!("error: failed to load config: {err}");
-    eprintln!("error: Fix or remove the invalid config file and try again.");
+fn config_load_error_lines(err: &AegisError) -> Vec<String> {
+    let mut lines = vec![format!("error: failed to load config: {err}")];
+
+    if matches!(err, AegisError::Config(_)) {
+        lines.push("error: Fix or remove the invalid config file and try again.".to_string());
+    }
+
+    lines
+}
+
+fn report_config_load_error(err: &AegisError) -> i32 {
+    for line in config_load_error_lines(err) {
+        eprintln!("{line}");
+    }
     EXIT_INTERNAL
 }
 
@@ -499,6 +517,7 @@ fn same_file(path: &Path, other: Option<&Path>) -> bool {
 mod tests {
     use super::*;
     use aegis::config::{CiPolicy, Mode};
+    use aegis::error::AegisError;
 
     // ── Scanner init failure ──────────────────────────────────────────────────
     //
@@ -630,6 +649,21 @@ mod tests {
         assert_ne!(EXIT_INTERNAL, 0);
     }
 
+    #[test]
+    fn config_load_error_lines_include_fix_hint_only_for_config_errors() {
+        let lines = config_load_error_lines(&AegisError::Config("bad config".to_string()));
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("failed to load config"));
+        assert!(lines[1].contains("Fix or remove the invalid config file"));
+    }
+
+    #[test]
+    fn config_load_error_lines_omit_fix_hint_for_non_config_errors() {
+        let lines = config_load_error_lines(&AegisError::Io(std::io::Error::other("disk")));
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("failed to load config"));
+    }
+
     // ── Watch mode — stub removed ─────────────────────────────────────────────
     //
     // Verify that watch mode participates in the real pipeline by checking
@@ -677,19 +711,19 @@ mod tests {
     }
 
     fn context() -> RuntimeContext {
-        RuntimeContext::new(Config::default())
+        RuntimeContext::new(Config::default()).unwrap()
     }
 
     fn context_with_ci_policy(ci_policy: CiPolicy) -> RuntimeContext {
         let mut config = Config::default();
         config.ci_policy = ci_policy;
-        RuntimeContext::new(config)
+        RuntimeContext::new(config).unwrap()
     }
 
     fn context_with_mode(mode: Mode) -> RuntimeContext {
         let mut config = Config::default();
         config.mode = mode;
-        RuntimeContext::new(config)
+        RuntimeContext::new(config).unwrap()
     }
 
     #[test]

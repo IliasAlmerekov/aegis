@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AegisError;
+use crate::interceptor;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::Category;
 
@@ -173,12 +174,14 @@ impl AegisConfig {
             let global = PartialConfig::from_path(path)?;
             merged = Self::merge_layer(merged, global);
             merged.validate_for_path(path)?;
+            merged.validate_runtime_requirements_for_path(path)?;
         }
 
         if project_path.is_file() {
             let project = PartialConfig::from_path(&project_path)?;
             merged = Self::merge_layer(merged, project);
             merged.validate_for_path(&project_path)?;
+            merged.validate_runtime_requirements_for_path(&project_path)?;
         }
 
         Ok(merged)
@@ -249,6 +252,17 @@ impl AegisConfig {
             }
             other => other,
         })
+    }
+
+    fn validate_runtime_requirements_for_path(&self, path: &Path) -> Result<()> {
+        interceptor::scanner_for(&self.custom_patterns)
+            .map(|_| ())
+            .map_err(|err| match err {
+                AegisError::Config(message) => {
+                    AegisError::Config(format!("invalid config {}: {message}", path.display()))
+                }
+                other => other,
+            })
     }
 }
 
@@ -508,6 +522,38 @@ retention_files = 0
         assert!(
             message.contains("audit.max_file_size_bytes")
                 || message.contains("audit.retention_files")
+        );
+    }
+
+    #[test]
+    fn invalid_custom_pattern_config_is_rejected_with_source_path() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
+
+        fs::write(
+            &config_path,
+            r#"
+[[custom_patterns]]
+id = "FS-001"
+category = "Filesystem"
+risk = "Warn"
+pattern = "echo hello"
+description = "Conflicts with built-in pattern id"
+"#,
+        )
+        .unwrap();
+
+        let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
+        let message = err.to_string();
+
+        assert!(
+            message.contains(&config_path.display().to_string()),
+            "custom pattern error must identify the offending config file: {message}"
+        );
+        assert!(
+            message.contains("duplicate pattern id"),
+            "custom pattern error must preserve scanner validation details: {message}"
         );
     }
 

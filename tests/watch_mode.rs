@@ -238,7 +238,7 @@ fn malformed_project_config_aborts_watch_startup_with_clear_error() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
     let config_path = workspace.path().join(".aegis.toml");
-    fs::write(&config_path, "unknown_key = true\n").unwrap();
+    fs::write(&config_path, "mode = <<<THIS IS NOT VALID TOML\n").unwrap();
 
     let output = aegis_watch_in(home.path(), workspace.path(), b"{\"cmd\":\"echo hi\"}\n");
 
@@ -258,7 +258,7 @@ fn malformed_project_config_aborts_watch_startup_with_clear_error() {
         "stderr must identify the invalid config file: {stderr}"
     );
     assert!(
-        stderr.contains("unknown field"),
+        stderr.contains("failed to parse"),
         "stderr must include the parse/validation detail: {stderr}"
     );
     assert!(

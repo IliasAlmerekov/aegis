@@ -7,8 +7,6 @@ use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
 use crate::config::{Allowlist, AllowlistMatch, Config};
 use crate::error::AegisError;
 use crate::interceptor;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::parser::Parser as CommandParser;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry};
 
@@ -16,15 +14,10 @@ use crate::snapshot::{SnapshotRecord, SnapshotRegistry};
 pub struct RuntimeContext {
     config: Config,
     allowlist: Allowlist,
-    scanner: RuntimeScanner,
+    scanner: Arc<Scanner>,
     snapshot_registry: SnapshotRegistry,
     snapshot_runtime: SnapshotRuntime,
     audit_logger: AuditLogger,
-}
-
-enum RuntimeScanner {
-    Ready(Arc<Scanner>),
-    Unhealthy(String),
 }
 
 enum SnapshotRuntime {
@@ -35,29 +28,26 @@ enum SnapshotRuntime {
 impl RuntimeContext {
     /// Load config, build runtime dependencies once, and keep them consistent.
     pub fn load(_verbose: bool) -> Result<Self, AegisError> {
-        Config::load().map(Self::new)
+        Config::load().and_then(Self::new)
     }
 
     /// Build a runtime context from an already resolved config.
-    pub fn new(config: Config) -> Self {
-        let scanner = match interceptor::scanner_for(&config.custom_patterns) {
-            Ok(scanner) => RuntimeScanner::Ready(scanner),
-            Err(err) => RuntimeScanner::Unhealthy(err.to_string()),
-        };
+    pub fn new(config: Config) -> Result<Self, AegisError> {
+        let scanner = interceptor::scanner_for(&config.custom_patterns)?;
 
         let snapshot_runtime = match Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => SnapshotRuntime::Ready(runtime),
             Err(err) => SnapshotRuntime::Unavailable(err.to_string()),
         };
 
-        Self {
+        Ok(Self {
             allowlist: Allowlist::new(&config.allowlist),
             snapshot_registry: SnapshotRegistry::from_config(&config),
             snapshot_runtime,
             audit_logger: build_audit_logger(&config),
             config,
             scanner,
-        }
+        })
     }
 
     /// Return the effective config used by all runtime subsystems.
@@ -67,21 +57,7 @@ impl RuntimeContext {
 
     /// Assess a command with the context-bound scanner.
     pub fn assess(&self, cmd: &str) -> Assessment {
-        match &self.scanner {
-            RuntimeScanner::Ready(scanner) => scanner.assess(cmd),
-            RuntimeScanner::Unhealthy(err) => {
-                eprintln!("error: interceptor scan initialization failed: {err}");
-                eprintln!(
-                    "error: scanner is unhealthy — requiring explicit approval for every command"
-                );
-
-                Assessment {
-                    risk: RiskLevel::Warn,
-                    matched: Vec::new(),
-                    command: CommandParser::parse(cmd),
-                }
-            }
-        }
+        self.scanner.assess(cmd)
     }
 
     /// Resolve the allowlist rule, if any, that matches `cmd`.
@@ -188,6 +164,7 @@ fn build_audit_logger(config: &Config) -> AuditLogger {
 mod tests {
     use super::*;
     use crate::config::{CiPolicy, UserPattern};
+    use crate::interceptor::RiskLevel;
     use crate::interceptor::patterns::Category;
 
     #[test]
@@ -202,7 +179,7 @@ mod tests {
             safe_alt: None,
         }];
 
-        let context = RuntimeContext::new(config);
+        let context = RuntimeContext::new(config).unwrap();
         let assessment = context.assess("echo hello");
 
         assert_eq!(assessment.risk, RiskLevel::Warn);
@@ -211,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_custom_scanner_fails_closed_inside_context() {
+    fn invalid_custom_scanner_aborts_runtime_context_construction() {
         let mut config = Config::default();
         config.custom_patterns = vec![UserPattern {
             id: "FS-001".to_string(),
@@ -222,11 +199,11 @@ mod tests {
             safe_alt: None,
         }];
 
-        let context = RuntimeContext::new(config);
-        let assessment = context.assess("echo hello");
-
-        assert_eq!(assessment.risk, RiskLevel::Warn);
-        assert!(assessment.matched.is_empty());
+        let err = match RuntimeContext::new(config) {
+            Ok(_) => panic!("invalid custom patterns must abort runtime context construction"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("duplicate pattern id"));
     }
 
     #[test]
@@ -237,7 +214,7 @@ mod tests {
         config.auto_snapshot_docker = false;
         config.ci_policy = CiPolicy::Allow;
 
-        let context = RuntimeContext::new(config.clone());
+        let context = RuntimeContext::new(config.clone()).unwrap();
 
         assert_eq!(context.config(), &config);
         assert_eq!(

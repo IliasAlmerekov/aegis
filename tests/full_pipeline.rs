@@ -489,7 +489,11 @@ fn broken_project_config_aborts_shell_wrapper_with_clear_error() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
-    fs::write(workspace.path().join(".aegis.toml"), "unknown_key = true\n").unwrap();
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "mode = <<<THIS IS NOT VALID TOML\n",
+    )
+    .unwrap();
 
     let output = base_command(home.path())
         .current_dir(workspace.path())
@@ -511,12 +515,60 @@ fn broken_project_config_aborts_shell_wrapper_with_clear_error() {
         "stderr must identify the invalid config file: {stderr}"
     );
     assert!(
-        stderr.contains("unknown field"),
+        stderr.contains("failed to parse"),
         "stderr must include the parse/validation detail: {stderr}"
     );
     assert!(
         stderr.contains("Fix or remove the invalid config file"),
         "stderr must tell the user how to recover: {stderr}"
+    );
+}
+
+/// Invalid custom patterns from config must abort startup instead of degrading to Warn.
+#[test]
+fn invalid_custom_pattern_config_aborts_shell_wrapper() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let config_path = workspace.path().join(".aegis.toml");
+
+    fs::write(
+        &config_path,
+        r#"
+[[custom_patterns]]
+id = "FS-001"
+category = "Filesystem"
+risk = "Warn"
+pattern = "echo hello"
+description = "Conflicts with built-in pattern id"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stdout.is_empty(), "command must not execute");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: failed to load config"),
+        "stderr must explain the startup failure: {stderr}"
+    );
+    assert!(
+        stderr.contains(&config_path.display().to_string()),
+        "stderr must identify the invalid config file: {stderr}"
+    );
+    assert!(
+        stderr.contains("duplicate pattern id"),
+        "stderr must include the custom pattern failure detail: {stderr}"
+    );
+    assert!(
+        stderr.contains("Fix or remove the invalid config file"),
+        "stderr must tell the user how to recover for config errors: {stderr}"
     );
 }
 
