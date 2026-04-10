@@ -10,9 +10,27 @@ use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry};
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RuntimeConfig {
+    pub(crate) mode: crate::config::Mode,
+    pub(crate) ci_policy: crate::config::CiPolicy,
+    pub(crate) strict_allowlist_override: bool,
+}
+
+impl From<&Config> for RuntimeConfig {
+    fn from(config: &Config) -> Self {
+        Self {
+            mode: config.mode,
+            ci_policy: config.ci_policy,
+            strict_allowlist_override: config.allowlist_override_level
+                != crate::config::AllowlistOverrideLevel::Never,
+        }
+    }
+}
+
 /// Shared runtime dependencies built once per CLI invocation.
 pub struct RuntimeContext {
-    config: Config,
+    runtime_config: RuntimeConfig,
     allowlist: Allowlist,
     scanner: Arc<Scanner>,
     snapshot_registry: SnapshotRegistry,
@@ -51,14 +69,14 @@ impl RuntimeContext {
             snapshot_registry: SnapshotRegistry::from_config(&config),
             snapshot_runtime,
             audit_logger: build_audit_logger(&config),
-            config,
+            runtime_config: RuntimeConfig::from(&config),
             scanner,
         })
     }
 
     /// Return the effective config used by all runtime subsystems.
-    pub fn config(&self) -> &Config {
-        &self.config
+    pub(crate) fn config(&self) -> &RuntimeConfig {
+        &self.runtime_config
     }
 
     /// Assess a command with the context-bound scanner.
@@ -230,7 +248,8 @@ mod tests {
 
         let context = RuntimeContext::new(config.clone()).unwrap();
 
-        assert_eq!(context.config(), &config);
+        assert_eq!(context.config().mode, config.mode);
+        assert_eq!(context.config().ci_policy, config.ci_policy);
         assert_eq!(
             context.allowlist_match("echo trusted").map(|m| m.pattern),
             Some("echo trusted".to_string())
@@ -241,5 +260,6 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(context.config().ci_policy, CiPolicy::Allow);
+        assert!(context.config().strict_allowlist_override);
     }
 }

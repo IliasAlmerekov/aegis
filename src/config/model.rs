@@ -149,8 +149,6 @@ pub struct AegisConfig {
     pub custom_patterns: Vec<UserPattern>,
     pub allowlist: Vec<AllowlistRule>,
     pub allowlist_override_level: AllowlistOverrideLevel,
-    #[serde(skip, default)]
-    pub strict_allowlist_override: bool,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
     pub ci_policy: CiPolicy,
@@ -199,7 +197,6 @@ impl AegisConfig {
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
             allowlist_override_level: AllowlistOverrideLevel::Warn,
-            strict_allowlist_override: false,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
             ci_policy: CiPolicy::Block,
@@ -266,7 +263,6 @@ impl AegisConfig {
             allowlist_override_level: overlay
                 .allowlist_override_level
                 .unwrap_or(base.allowlist_override_level),
-            strict_allowlist_override: base.strict_allowlist_override,
             auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
