@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
-use crate::config::{Allowlist, AllowlistMatch, Config};
+use crate::config::{Allowlist, AllowlistMatch, AllowlistOverrideLevel, Config};
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
@@ -14,7 +14,7 @@ use crate::snapshot::{SnapshotRecord, SnapshotRegistry};
 pub(crate) struct RuntimeConfig {
     pub(crate) mode: crate::config::Mode,
     pub(crate) ci_policy: crate::config::CiPolicy,
-    pub(crate) strict_allowlist_override: bool,
+    pub(crate) strict_allowlist_override: AllowlistOverrideLevel,
 }
 
 impl From<&Config> for RuntimeConfig {
@@ -22,8 +22,7 @@ impl From<&Config> for RuntimeConfig {
         Self {
             mode: config.mode,
             ci_policy: config.ci_policy,
-            strict_allowlist_override: config.allowlist_override_level
-                != crate::config::AllowlistOverrideLevel::Never,
+            strict_allowlist_override: config.allowlist_override_level,
         }
     }
 }
@@ -235,6 +234,7 @@ mod tests {
         use crate::config::AllowlistRule;
 
         let mut config = Config::default();
+        config.allowlist_override_level = AllowlistOverrideLevel::Danger;
         config.allowlist = vec![AllowlistRule {
             pattern: "echo trusted".to_string(),
             cwd: None,
@@ -251,6 +251,10 @@ mod tests {
         assert_eq!(context.config().mode, config.mode);
         assert_eq!(context.config().ci_policy, config.ci_policy);
         assert_eq!(
+            context.config().strict_allowlist_override,
+            AllowlistOverrideLevel::Danger
+        );
+        assert_eq!(
             context.allowlist_match("echo trusted").map(|m| m.pattern),
             Some("echo trusted".to_string())
         );
@@ -260,6 +264,9 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(context.config().ci_policy, CiPolicy::Allow);
-        assert!(context.config().strict_allowlist_override);
+        assert_eq!(
+            context.config().strict_allowlist_override,
+            AllowlistOverrideLevel::Danger
+        );
     }
 }
