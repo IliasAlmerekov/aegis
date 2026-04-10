@@ -1118,11 +1118,11 @@ exit 0
         r#"
 mode = "Protect"
 ci_policy = "Block"
+auto_snapshot_git = false
+auto_snapshot_docker = false
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 reason = "protect allowlist"
-auto_snapshot_git = false
-auto_snapshot_docker = false
 "#,
     )
     .unwrap();
@@ -1281,11 +1281,11 @@ exit 0
         r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
+auto_snapshot_git = true
+auto_snapshot_docker = false
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 reason = "strict override allowlist"
-auto_snapshot_git = true
-auto_snapshot_docker = false
 "#,
     )
     .unwrap();
