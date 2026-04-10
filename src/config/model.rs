@@ -28,8 +28,6 @@ allowlist_override_level = "Warn" # Strict override ceiling for allowlisted comm
 # expires_at = "2026-01-01T00:00:00Z"
 # reason = "ephemeral test teardown"
 
-allowlist = [] # Structured allowlist rules; empty by default.
-
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
 
@@ -304,6 +302,17 @@ impl AegisConfig {
             ));
         }
 
+        if let Some(rule) = self
+            .allowlist
+            .iter()
+            .find(|rule| rule.cwd.is_some() || rule.user.is_some())
+        {
+            return Err(AegisError::Config(format!(
+                "allowlist rule '{}' uses unsupported scoped matching fields (cwd/user); task 2 will add this support",
+                rule.pattern
+            )));
+        }
+
         let now = OffsetDateTime::now_utc();
         if let Some(rule) = self
             .allowlist
@@ -420,7 +429,7 @@ reason = "ephemeral test teardown"
         let config = AegisConfig {
             allowlist: vec![AllowlistRule {
                 pattern: "terraform destroy -target=module.test.*".to_string(),
-                cwd: Some("/srv/infra".to_string()),
+                cwd: None,
                 user: None,
                 expires_at: Some(OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).unwrap()),
                 reason: "expired teardown".to_string(),
@@ -430,6 +439,48 @@ reason = "ephemeral test teardown"
 
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn scoped_allowlist_rule_with_cwd_is_invalid_for_runtime() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy -target=module.test.*".to_string(),
+                cwd: Some("/srv/infra".to_string()),
+                user: None,
+                expires_at: None,
+                reason: "scoped teardown".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported scoped matching fields")
+        );
+        assert!(err.to_string().contains("cwd/user"));
+    }
+
+    #[test]
+    fn scoped_allowlist_rule_with_user_is_invalid_for_runtime() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy -target=module.test.*".to_string(),
+                cwd: None,
+                user: Some("ci".to_string()),
+                expires_at: None,
+                reason: "scoped teardown".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported scoped matching fields")
+        );
+        assert!(err.to_string().contains("cwd/user"));
     }
 
     #[test]
@@ -749,6 +800,20 @@ description = "Conflicts with built-in pattern id"
 
         let toml = config.to_toml_string().unwrap();
         assert!(toml.contains("allowlist_override_level = \"Warn\""));
+    }
+
+    #[test]
+    fn init_template_uses_array_of_tables_for_allowlist() {
+        let template = AegisConfig::init_template();
+
+        assert!(
+            !template.contains("allowlist = []"),
+            "template must not define an empty array that conflicts with [[allowlist]] entries"
+        );
+        assert!(
+            template.contains("[[allowlist]]"),
+            "template must show the structured allowlist entry form"
+        );
     }
 
     #[test]

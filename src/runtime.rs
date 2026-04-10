@@ -10,11 +10,19 @@ use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry};
 
+/// Internal runtime view of the effective policy configuration.
+///
+/// This is intentionally separate from the user-facing config model so the
+/// CLI entrypoints can read the values they need without exposing config
+/// serialization details.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct RuntimeConfig {
-    pub(crate) mode: crate::config::Mode,
-    pub(crate) ci_policy: crate::config::CiPolicy,
-    pub(crate) strict_allowlist_override: AllowlistOverrideLevel,
+pub struct RuntimeConfig {
+    /// Effective operating mode.
+    pub mode: crate::config::Mode,
+    /// Effective CI policy.
+    pub ci_policy: crate::config::CiPolicy,
+    /// Effective strict-mode allowlist ceiling.
+    pub strict_allowlist_override: AllowlistOverrideLevel,
 }
 
 impl From<&Config> for RuntimeConfig {
@@ -74,7 +82,7 @@ impl RuntimeContext {
     }
 
     /// Return the effective config used by all runtime subsystems.
-    pub(crate) fn config(&self) -> &RuntimeConfig {
+    pub fn config(&self) -> &RuntimeConfig {
         &self.runtime_config
     }
 
