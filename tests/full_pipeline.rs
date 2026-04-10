@@ -1047,7 +1047,7 @@ exit 0
 }
 
 #[test]
-fn config_show_prints_effective_strict_allowlist_override() {
+fn config_show_prints_effective_allowlist_override_level() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
@@ -1055,7 +1055,7 @@ fn config_show_prints_effective_strict_allowlist_override() {
         workspace.path().join(".aegis.toml"),
         r#"
 mode = "Strict"
-strict_allowlist_override = true
+allowlist_override_level = "Danger"
 "#,
     )
     .unwrap();
@@ -1069,7 +1069,7 @@ strict_allowlist_override = true
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("mode = \"Strict\""));
-    assert!(stdout.contains("strict_allowlist_override = true"));
+    assert!(stdout.contains("allowlist_override_level = \"Danger\""));
 }
 
 #[test]
@@ -1088,7 +1088,7 @@ fn config_init_writes_truthful_mode_comments() {
     let contents = fs::read_to_string(workspace.path().join(".aegis.toml")).unwrap();
     assert!(contents.contains("Audit=non-blocking audit-only"));
     assert!(contents.contains("Strict=block non-safe by default"));
-    assert!(contents.contains("strict_allowlist_override = false"));
+    assert!(contents.contains("allowlist_override_level = \"Warn\""));
     assert!(!contents.contains("not yet implemented"));
 }
 
@@ -1256,8 +1256,8 @@ auto_snapshot_docker = false
     assert_eq!(entries[0]["risk"], "Warn");
 }
 
-/// Strict mode with strict_allowlist_override = true and an allowlisted Danger
-/// command must auto-approve and create a git snapshot.
+/// Strict mode with allowlist_override_level = Danger and an allowlisted
+/// Danger command must auto-approve and create a git snapshot.
 #[test]
 fn strict_override_allowlisted_danger_executes_and_creates_snapshot() {
     let home = TempDir::new().unwrap();
@@ -1280,7 +1280,7 @@ exit 0
         workspace.path().join(".aegis.toml"),
         r#"
 mode = "Strict"
-strict_allowlist_override = true
+allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 reason = "strict override allowlist"

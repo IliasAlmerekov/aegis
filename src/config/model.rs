@@ -29,7 +29,6 @@ allowlist_override_level = "Warn" # Strict override ceiling for allowlisted comm
 # reason = "ephemeral test teardown"
 
 allowlist = [] # Structured allowlist rules; empty by default.
-strict_allowlist_override = false # Legacy compatibility flag for older configs; superseded by allowlist_override_level.
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
@@ -143,12 +142,6 @@ pub struct AllowlistRule {
     pub reason: String,
 }
 
-impl AsRef<str> for AllowlistRule {
-    fn as_ref(&self) -> &str {
-        &self.pattern
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
@@ -156,8 +149,6 @@ pub struct AegisConfig {
     pub custom_patterns: Vec<UserPattern>,
     pub allowlist: Vec<AllowlistRule>,
     pub allowlist_override_level: AllowlistOverrideLevel,
-    #[serde(default)]
-    pub strict_allowlist_override: bool,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
     pub ci_policy: CiPolicy,
@@ -206,7 +197,6 @@ impl AegisConfig {
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
             allowlist_override_level: AllowlistOverrideLevel::Warn,
-            strict_allowlist_override: false,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
             ci_policy: CiPolicy::Block,
@@ -273,9 +263,6 @@ impl AegisConfig {
             allowlist_override_level: overlay
                 .allowlist_override_level
                 .unwrap_or(base.allowlist_override_level),
-            strict_allowlist_override: overlay
-                .strict_allowlist_override
-                .unwrap_or(base.strict_allowlist_override),
             auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
@@ -364,7 +351,6 @@ struct PartialConfig {
     custom_patterns: Vec<UserPattern>,
     allowlist: Vec<AllowlistRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
-    strict_allowlist_override: Option<bool>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
     ci_policy: Option<CiPolicy>,
@@ -766,7 +752,7 @@ description = "Conflicts with built-in pattern id"
     }
 
     #[test]
-    fn strict_allowlist_override_project_value_overrides_global() {
+    fn allowlist_override_level_project_value_overrides_global() {
         let workspace = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -774,17 +760,20 @@ description = "Conflicts with built-in pattern id"
 
         fs::write(
             global_dir.join(GLOBAL_CONFIG_FILE),
-            "strict_allowlist_override = false\n",
+            "allowlist_override_level = \"Never\"\n",
         )
         .unwrap();
         fs::write(
             workspace.path().join(PROJECT_CONFIG_FILE),
-            "strict_allowlist_override = true\n",
+            "allowlist_override_level = \"Danger\"\n",
         )
         .unwrap();
 
         let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert!(config.strict_allowlist_override);
+        assert_eq!(
+            config.allowlist_override_level,
+            AllowlistOverrideLevel::Danger
+        );
     }
 
     #[test]

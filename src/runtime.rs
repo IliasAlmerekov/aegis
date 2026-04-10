@@ -40,8 +40,14 @@ impl RuntimeContext {
             Err(err) => SnapshotRuntime::Unavailable(err.to_string()),
         };
 
+        let allowlist_patterns: Vec<String> = config
+            .allowlist
+            .iter()
+            .map(|rule| rule.pattern.clone())
+            .collect();
+
         Ok(Self {
-            allowlist: Allowlist::new(&config.allowlist),
+            allowlist: Allowlist::new(&allowlist_patterns),
             snapshot_registry: SnapshotRegistry::from_config(&config),
             snapshot_runtime,
             audit_logger: build_audit_logger(&config),
