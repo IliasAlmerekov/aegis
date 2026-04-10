@@ -152,6 +152,7 @@ Aegis merges config from all available sources, in priority order (highest first
 3. Built-in defaults
 
 Project values override global values; global values override defaults. Vec fields (`custom_patterns`, `allowlist`) are concatenated — global entries first, then project entries.
+If any discovered config file is invalid, Aegis fails closed with exit code `4` and tells you which file to fix or remove.
 
 Generate a starter config:
 

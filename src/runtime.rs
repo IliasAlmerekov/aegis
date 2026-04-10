@@ -5,6 +5,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
 use crate::config::{Allowlist, AllowlistMatch, Config};
+use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::parser::Parser as CommandParser;
@@ -33,19 +34,8 @@ enum SnapshotRuntime {
 
 impl RuntimeContext {
     /// Load config, build runtime dependencies once, and keep them consistent.
-    pub fn load(verbose: bool) -> Self {
-        let config = match Config::load() {
-            Ok(config) => config,
-            Err(err) => {
-                if verbose {
-                    eprintln!("warning: failed to load config: {err}");
-                }
-
-                Config::default()
-            }
-        };
-
-        Self::new(config)
+    pub fn load(_verbose: bool) -> Result<Self, AegisError> {
+        Config::load().map(Self::new)
     }
 
     /// Build a runtime context from an already resolved config.

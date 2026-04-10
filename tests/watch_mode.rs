@@ -1,12 +1,25 @@
 //! Integration tests for `aegis watch` — end-to-end via child process.
 
+use std::fs;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
+use tempfile::TempDir;
+
 fn aegis_watch(input: &[u8]) -> std::process::Output {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    aegis_watch_in(home.path(), cwd.path(), input)
+}
+
+fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_aegis"))
         .arg("watch")
         .env("AEGIS_REAL_SHELL", "/bin/sh")
+        .env("AEGIS_CI", "0")
+        .env("HOME", home)
+        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -218,4 +231,38 @@ fn child_exit_code_is_propagated() {
 fn watch_exits_zero_on_clean_eof() {
     let output = aegis_watch(b"{\"cmd\":\"echo hi\"}\n");
     assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn malformed_project_config_aborts_watch_startup_with_clear_error() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let config_path = workspace.path().join(".aegis.toml");
+    fs::write(&config_path, "unknown_key = true\n").unwrap();
+
+    let output = aegis_watch_in(home.path(), workspace.path(), b"{\"cmd\":\"echo hi\"}\n");
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(
+        output.stdout.is_empty(),
+        "watch must not emit frames on startup failure"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: failed to load config"),
+        "stderr must explain the startup failure: {stderr}"
+    );
+    assert!(
+        stderr.contains(&config_path.display().to_string()),
+        "stderr must identify the invalid config file: {stderr}"
+    );
+    assert!(
+        stderr.contains("unknown field"),
+        "stderr must include the parse/validation detail: {stderr}"
+    );
+    assert!(
+        stderr.contains("Fix or remove the invalid config file"),
+        "stderr must tell the user how to recover: {stderr}"
+    );
 }

@@ -113,9 +113,8 @@ fn main() {
     } = Cli::parse();
 
     let exit_code = match subcommand {
-        Some(Commands::Watch) => {
-            let context = RuntimeContext::load(verbose);
-            match tokio::runtime::Builder::new_multi_thread()
+        Some(Commands::Watch) => match RuntimeContext::load(verbose) {
+            Ok(context) => match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
             {
@@ -124,8 +123,9 @@ fn main() {
                     eprintln!("error: failed to build tokio runtime for watch mode: {err}");
                     EXIT_INTERNAL
                 }
-            }
-        }
+            },
+            Err(err) => report_config_load_error(&err),
+        },
         Some(Commands::Audit(args)) => {
             let logger = AuditLogger::default();
             match logger.query(args.last, args.risk) {
@@ -184,7 +184,10 @@ fn format_audit_entries(
 }
 
 fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
-    let context = RuntimeContext::load(verbose);
+    let context = match RuntimeContext::load(verbose) {
+        Ok(context) => context,
+        Err(err) => return report_config_load_error(&err),
+    };
     let assessment = context.assess(cmd);
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -281,12 +284,15 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
                 print!("{toml}");
                 0
             }
-            Err(err) => {
-                eprintln!("error: failed to load config: {err}");
-                EXIT_INTERNAL
-            }
+            Err(err) => report_config_load_error(&err),
         },
     }
+}
+
+fn report_config_load_error(err: &dyn std::fmt::Display) -> i32 {
+    eprintln!("error: failed to load config: {err}");
+    eprintln!("error: Fix or remove the invalid config file and try again.");
+    EXIT_INTERNAL
 }
 
 fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMatch>) {

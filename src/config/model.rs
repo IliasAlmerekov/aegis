@@ -175,17 +175,7 @@ impl AegisConfig {
             .unwrap_or_default();
 
         let project = if project_path.is_file() {
-            match PartialConfig::from_path(&project_path) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!(
-                        path = %project_path.display(),
-                        error = %e,
-                        "project config is malformed — skipping, using global config and defaults"
-                    );
-                    PartialConfig::default()
-                }
-            }
+            PartialConfig::from_path(&project_path)?
         } else {
             PartialConfig::default()
         };
@@ -601,11 +591,7 @@ retention_files = 0
     }
 
     #[test]
-    fn malformed_project_config_falls_back_to_global() {
-        // If the project config cannot be parsed, aegis must not abort — it
-        // should skip the project config, apply the global config, and log a
-        // warning.  This keeps aegis functional even when a developer
-        // introduces a syntax error in their local .aegis.toml.
+    fn malformed_project_config_is_fatal() {
         let workspace = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -622,14 +608,22 @@ retention_files = 0
         )
         .unwrap();
 
-        // Must succeed (not propagate the parse error).
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
+        let message = err.to_string();
 
-        // Global values are applied because the malformed project file was skipped.
-        assert_eq!(config.mode, Mode::Strict);
-        assert!(!config.auto_snapshot_git);
-        // Vec fields are empty because neither file contributed any entries.
-        assert!(config.allowlist.is_empty());
-        assert!(config.custom_patterns.is_empty());
+        assert!(
+            message.contains(
+                &workspace
+                    .path()
+                    .join(PROJECT_CONFIG_FILE)
+                    .display()
+                    .to_string()
+            ),
+            "error must identify the malformed project config file: {message}"
+        );
+        assert!(
+            message.contains("failed to parse"),
+            "error must preserve the parse failure details: {message}"
+        );
     }
 }
