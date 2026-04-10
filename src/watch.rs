@@ -8,7 +8,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
-use crate::config::AllowlistOverrideLevel;
 use crate::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use crate::runtime::RuntimeContext;
 use crate::ui::confirm::{
@@ -303,7 +302,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         in_ci: false, // CI env detection is irrelevant in watch mode
         ci_policy: config.ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: config.allowlist_override_level != AllowlistOverrideLevel::Never,
+        strict_allowlist_override: config.strict_allowlist_override,
     });
 
     // ── 6. Snapshots ──────────────────────────────────────────────────────────

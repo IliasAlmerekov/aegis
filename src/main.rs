@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, Config};
+use aegis::config::{AllowlistMatch, Config};
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
@@ -365,8 +365,7 @@ fn decide_command(
         in_ci,
         ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: context.config().allowlist_override_level
-            != AllowlistOverrideLevel::Never,
+        strict_allowlist_override: context.config().strict_allowlist_override,
     });
 
     let snapshots = if plan.should_snapshot {
