@@ -167,74 +167,59 @@ impl AegisConfig {
         let global_path = home_dir.map(|h| h.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
         let project_path = current_dir.join(PROJECT_CONFIG_FILE);
 
-        let global = global_path
-            .as_deref()
-            .filter(|p| p.is_file())
-            .map(PartialConfig::from_path)
-            .transpose()?
-            .unwrap_or_default();
+        let mut merged = Self::defaults();
 
-        let project = if project_path.is_file() {
-            PartialConfig::from_path(&project_path)?
-        } else {
-            PartialConfig::default()
-        };
+        if let Some(path) = global_path.as_deref().filter(|p| p.is_file()) {
+            let global = PartialConfig::from_path(path)?;
+            merged = Self::merge_layer(merged, global);
+            merged.validate_for_path(path)?;
+        }
 
-        let merged = Self::merge(global, project);
-        merged.validate()?;
+        if project_path.is_file() {
+            let project = PartialConfig::from_path(&project_path)?;
+            merged = Self::merge_layer(merged, project);
+            merged.validate_for_path(&project_path)?;
+        }
+
         Ok(merged)
     }
 
-    fn merge(global: PartialConfig, project: PartialConfig) -> Self {
-        let defaults = Self::defaults();
+    fn merge_layer(base: Self, overlay: PartialConfig) -> Self {
+        let mut custom_patterns = base.custom_patterns;
+        custom_patterns.extend(overlay.custom_patterns);
 
-        let mut custom_patterns = global.custom_patterns;
-        custom_patterns.extend(project.custom_patterns);
-
-        let mut allowlist = global.allowlist;
-        allowlist.extend(project.allowlist);
+        let mut allowlist = base.allowlist;
+        allowlist.extend(overlay.allowlist);
 
         Self {
-            mode: project.mode.or(global.mode).unwrap_or(defaults.mode),
+            mode: overlay.mode.unwrap_or(base.mode),
             custom_patterns,
             allowlist,
-            strict_allowlist_override: project
+            strict_allowlist_override: overlay
                 .strict_allowlist_override
-                .or(global.strict_allowlist_override)
-                .unwrap_or(defaults.strict_allowlist_override),
-            auto_snapshot_git: project
-                .auto_snapshot_git
-                .or(global.auto_snapshot_git)
-                .unwrap_or(defaults.auto_snapshot_git),
-            auto_snapshot_docker: project
+                .unwrap_or(base.strict_allowlist_override),
+            auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
+            auto_snapshot_docker: overlay
                 .auto_snapshot_docker
-                .or(global.auto_snapshot_docker)
-                .unwrap_or(defaults.auto_snapshot_docker),
-            ci_policy: project
-                .ci_policy
-                .or(global.ci_policy)
-                .unwrap_or(defaults.ci_policy),
+                .unwrap_or(base.auto_snapshot_docker),
+            ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
             audit: AuditConfig {
-                rotation_enabled: project
+                rotation_enabled: overlay
                     .audit
                     .rotation_enabled
-                    .or(global.audit.rotation_enabled)
-                    .unwrap_or(defaults.audit.rotation_enabled),
-                max_file_size_bytes: project
+                    .unwrap_or(base.audit.rotation_enabled),
+                max_file_size_bytes: overlay
                     .audit
                     .max_file_size_bytes
-                    .or(global.audit.max_file_size_bytes)
-                    .unwrap_or(defaults.audit.max_file_size_bytes),
-                retention_files: project
+                    .unwrap_or(base.audit.max_file_size_bytes),
+                retention_files: overlay
                     .audit
                     .retention_files
-                    .or(global.audit.retention_files)
-                    .unwrap_or(defaults.audit.retention_files),
-                compress_rotated: project
+                    .unwrap_or(base.audit.retention_files),
+                compress_rotated: overlay
                     .audit
                     .compress_rotated
-                    .or(global.audit.compress_rotated)
-                    .unwrap_or(defaults.audit.compress_rotated),
+                    .unwrap_or(base.audit.compress_rotated),
             },
         }
     }
@@ -255,6 +240,15 @@ impl AegisConfig {
         }
 
         Ok(())
+    }
+
+    fn validate_for_path(&self, path: &Path) -> Result<()> {
+        self.validate().map_err(|err| match err {
+            AegisError::Config(message) => {
+                AegisError::Config(format!("invalid config {}: {message}", path.display()))
+            }
+            other => other,
+        })
     }
 }
 
@@ -492,9 +486,10 @@ compress_rotated = false
     fn invalid_audit_rotation_config_is_rejected() {
         let workspace = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
+        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
 
         fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
+            &config_path,
             r#"
 [audit]
 rotation_enabled = true
@@ -505,9 +500,14 @@ retention_files = 0
         .unwrap();
 
         let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
+        let message = err.to_string();
         assert!(
-            err.to_string().contains("audit.max_file_size_bytes")
-                || err.to_string().contains("audit.retention_files")
+            message.contains(&config_path.display().to_string()),
+            "validation error must identify the offending config file: {message}"
+        );
+        assert!(
+            message.contains("audit.max_file_size_bytes")
+                || message.contains("audit.retention_files")
         );
     }
 

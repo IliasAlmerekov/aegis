@@ -520,6 +520,51 @@ fn broken_project_config_aborts_shell_wrapper_with_clear_error() {
     );
 }
 
+/// A well-formed but invalid `.aegis.toml` must also fail closed and name the file.
+#[test]
+fn invalid_project_config_validation_error_aborts_shell_wrapper_with_clear_error() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    let config_path = workspace.path().join(".aegis.toml");
+    fs::write(
+        &config_path,
+        r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "echo hello"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stdout.is_empty(), "command must not execute");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: failed to load config"),
+        "stderr must explain the startup failure: {stderr}"
+    );
+    assert!(
+        stderr.contains(&config_path.display().to_string()),
+        "stderr must identify the invalid config file: {stderr}"
+    );
+    assert!(
+        stderr.contains("audit.max_file_size_bytes"),
+        "stderr must include the validation detail: {stderr}"
+    );
+    assert!(
+        stderr.contains("Fix or remove the invalid config file"),
+        "stderr must tell the user how to recover: {stderr}"
+    );
+}
+
 // Audit logger failure ─────────────────────────────────────────────────────
 
 /// If `~/.aegis` is a file instead of a directory, audit append fails.
