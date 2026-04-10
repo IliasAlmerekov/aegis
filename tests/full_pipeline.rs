@@ -187,7 +187,10 @@ exit 0
     );
     fs::write(
         &config_path,
-        r#"allowlist = ["terraform destroy -target=module.test.*"]
+        r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "test allowlist"
 "#,
     )
     .unwrap();
@@ -276,7 +279,10 @@ fn block_command_is_never_allowlisted() {
     // Allowlist entry that would match `rm -rf /` if the guard were absent.
     fs::write(
         workspace.path().join(".aegis.toml"),
-        r#"allowlist = ["rm -rf /"]
+        r#"
+[[allowlist]]
+pattern = "rm -rf /"
+reason = "test block allowlist"
 "#,
     )
     .unwrap();
@@ -322,7 +328,10 @@ fn verbose_allowlist_match_prints_rule_name() {
     write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
-        r#"allowlist = ["terraform destroy -target=module.ci.*"]
+        r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.ci.*"
+reason = "verbose allowlist test"
 "#,
     )
     .unwrap();
@@ -1109,7 +1118,9 @@ exit 0
         r#"
 mode = "Protect"
 ci_policy = "Block"
-allowlist = ["terraform destroy -target=module.test.*"]
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "protect allowlist"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 "#,
@@ -1270,7 +1281,9 @@ exit 0
         r#"
 mode = "Strict"
 strict_allowlist_override = true
-allowlist = ["terraform destroy -target=module.test.*"]
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "strict override allowlist"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 "#,

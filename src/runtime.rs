@@ -208,8 +208,16 @@ mod tests {
 
     #[test]
     fn config_is_shared_across_runtime_dependencies() {
+        use crate::config::AllowlistRule;
+
         let mut config = Config::default();
-        config.allowlist = vec!["echo trusted".to_string()];
+        config.allowlist = vec![AllowlistRule {
+            pattern: "echo trusted".to_string(),
+            cwd: None,
+            user: None,
+            expires_at: None,
+            reason: "runtime test".to_string(),
+        }];
         config.auto_snapshot_git = false;
         config.auto_snapshot_docker = false;
         config.ci_policy = CiPolicy::Allow;

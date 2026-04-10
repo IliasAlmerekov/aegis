@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::error::AegisError;
 use crate::interceptor;
@@ -17,8 +18,18 @@ const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
 mode = "Protect" # Protect=prompt/block, Audit=non-blocking audit-only, Strict=block non-safe by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist = [] # Protect allowlists Warn/Danger. Strict ignores allowlist unless strict_allowlist_override=true.
-strict_allowlist_override = false # Strict only: allowlisted Warn/Danger may auto-approve. Block is never bypassed.
+allowlist_override_level = "Warn" # Strict override ceiling for allowlisted commands: Warn, Danger, or Never.
+
+# Add structured allowlist rules as array-of-tables entries.
+# [[allowlist]]
+# pattern = "terraform destroy -target=module.test.*"
+# cwd = "/srv/infra"
+# user = "ci"
+# expires_at = "2026-01-01T00:00:00Z"
+# reason = "ephemeral test teardown"
+
+allowlist = [] # Structured allowlist rules; empty by default.
+strict_allowlist_override = false # Legacy compatibility flag for older configs; superseded by allowlist_override_level.
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
@@ -69,6 +80,16 @@ pub enum CiPolicy {
     Allow,
 }
 
+/// Maximum override level that structured allowlist rules may grant in strict mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum AllowlistOverrideLevel {
+    #[default]
+    Warn,
+    Danger,
+    Never,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserPattern {
@@ -80,12 +101,62 @@ pub struct UserPattern {
     pub safe_alt: Option<String>,
 }
 
+mod offset_datetime_option {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    pub fn serialize<S>(value: &Option<OffsetDateTime>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(value) => serializer
+                .serialize_some(&value.format(&Rfc3339).map_err(serde::ser::Error::custom)?),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<OffsetDateTime>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Option::<String>::deserialize(deserializer)?;
+        value
+            .map(|value| {
+                OffsetDateTime::parse(&value, &Rfc3339).map_err(|error| {
+                    D::Error::custom(format!("invalid RFC 3339 timestamp: {error}"))
+                })
+            })
+            .transpose()
+    }
+}
+
+/// A structured allowlist rule with optional scope, expiry, and rationale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowlistRule {
+    pub pattern: String,
+    pub cwd: Option<String>,
+    pub user: Option<String>,
+    #[serde(with = "offset_datetime_option")]
+    pub expires_at: Option<OffsetDateTime>,
+    pub reason: String,
+}
+
+impl AsRef<str> for AllowlistRule {
+    fn as_ref(&self) -> &str {
+        &self.pattern
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
-    pub allowlist: Vec<String>,
+    pub allowlist: Vec<AllowlistRule>,
+    pub allowlist_override_level: AllowlistOverrideLevel,
+    #[serde(default)]
     pub strict_allowlist_override: bool,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
@@ -134,6 +205,7 @@ impl AegisConfig {
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
             strict_allowlist_override: false,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
@@ -198,6 +270,9 @@ impl AegisConfig {
             mode: overlay.mode.unwrap_or(base.mode),
             custom_patterns,
             allowlist,
+            allowlist_override_level: overlay
+                .allowlist_override_level
+                .unwrap_or(base.allowlist_override_level),
             strict_allowlist_override: overlay
                 .strict_allowlist_override
                 .unwrap_or(base.strict_allowlist_override),
@@ -242,6 +317,18 @@ impl AegisConfig {
             ));
         }
 
+        let now = OffsetDateTime::now_utc();
+        if let Some(rule) = self
+            .allowlist
+            .iter()
+            .find(|rule| rule.expires_at.is_some_and(|expires_at| expires_at <= now))
+        {
+            return Err(AegisError::Config(format!(
+                "allowlist rule '{}' is expired and cannot be used at runtime",
+                rule.pattern
+            )));
+        }
+
         Ok(())
     }
 
@@ -275,7 +362,8 @@ impl AegisConfig {
 struct PartialConfig {
     mode: Option<Mode>,
     custom_patterns: Vec<UserPattern>,
-    allowlist: Vec<String>,
+    allowlist: Vec<AllowlistRule>,
+    allowlist_override_level: Option<AllowlistOverrideLevel>,
     strict_allowlist_override: Option<bool>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
@@ -305,6 +393,58 @@ impl PartialConfig {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    #[test]
+    fn structured_allowlist_rule_deserializes() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+allowlist_override_level = "Warn"
+
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "/srv/infra"
+user = "ci"
+expires_at = "2026-01-01T00:00:00Z"
+reason = "ephemeral test teardown"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.allowlist.len(), 1);
+        assert_eq!(
+            config.allowlist[0].pattern,
+            "terraform destroy -target=module.test.*"
+        );
+        assert_eq!(
+            config.allowlist_override_level,
+            AllowlistOverrideLevel::Warn
+        );
+    }
+
+    #[test]
+    fn legacy_string_allowlist_is_rejected() {
+        let err =
+            toml::from_str::<AegisConfig>(r#"allowlist = ["terraform destroy *"]"#).unwrap_err();
+        assert!(err.to_string().contains("invalid type"));
+    }
+
+    #[test]
+    fn expired_rule_is_invalid_for_runtime() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy -target=module.test.*".to_string(),
+                cwd: Some("/srv/infra".to_string()),
+                user: None,
+                expires_at: Some(OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).unwrap()),
+                reason: "expired teardown".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("expired"));
+    }
 
     #[test]
     fn load_minimal_project_config_without_errors() {
@@ -337,7 +477,13 @@ mod tests {
             global_dir.join(GLOBAL_CONFIG_FILE),
             r#"
 mode = "Strict"
-allowlist = ["terraform destroy -target=module.test.*", "docker system prune --volumes"]
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "global terraform teardown"
+
+[[allowlist]]
+pattern = "docker system prune --volumes"
+reason = "global cleanup"
 auto_snapshot_git = false
 auto_snapshot_docker = true
 
@@ -385,7 +531,9 @@ safe_alt = "terraform plan"
             global_dir.join(GLOBAL_CONFIG_FILE),
             r#"
 mode = "Strict"
-allowlist = ["global-safe-cmd"]
+[[allowlist]]
+pattern = "global-safe-cmd"
+reason = "global command"
 auto_snapshot_git = false
 
 [[custom_patterns]]
@@ -402,7 +550,9 @@ description = "Global cloud nuke rule"
             workspace.path().join(PROJECT_CONFIG_FILE),
             r#"
 mode = "Audit"
-allowlist = ["project-safe-cmd"]
+[[allowlist]]
+pattern = "project-safe-cmd"
+reason = "project command"
 
 [[custom_patterns]]
 id = "PRJ-001"
@@ -421,10 +571,8 @@ description = "Project build dir removal"
         // global wins for auto_snapshot_git (project didn't set it)
         assert!(!config.auto_snapshot_git);
         // allowlists are merged: global first, then project
-        assert_eq!(
-            config.allowlist,
-            vec!["global-safe-cmd", "project-safe-cmd"]
-        );
+        assert_eq!(config.allowlist[0].pattern, "global-safe-cmd");
+        assert_eq!(config.allowlist[1].pattern, "project-safe-cmd");
         // patterns are merged: global first, then project
         assert_eq!(config.custom_patterns.len(), 2);
         assert_eq!(config.custom_patterns[0].id, "GLB-001");
@@ -605,13 +753,16 @@ description = "Conflicts with built-in pattern id"
     // --- malformed project config ---
 
     #[test]
-    fn strict_allowlist_override_defaults_false_and_serializes() {
+    fn allowlist_override_level_defaults_warn_and_serializes() {
         let config = AegisConfig::defaults();
 
-        assert!(!config.strict_allowlist_override);
+        assert_eq!(
+            config.allowlist_override_level,
+            AllowlistOverrideLevel::Warn
+        );
 
         let toml = config.to_toml_string().unwrap();
-        assert!(toml.contains("strict_allowlist_override = false"));
+        assert!(toml.contains("allowlist_override_level = \"Warn\""));
     }
 
     #[test]

@@ -15,10 +15,10 @@ pub struct Allowlist {
 }
 
 impl Allowlist {
-    pub fn new(patterns: &[String]) -> Self {
+    pub fn new<T: AsRef<str>>(patterns: &[T]) -> Self {
         let entries = patterns
             .iter()
-            .filter_map(|pattern| compile_pattern(pattern))
+            .filter_map(|pattern| compile_pattern(pattern.as_ref()))
             .collect();
 
         Self { entries }
