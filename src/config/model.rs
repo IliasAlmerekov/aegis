@@ -23,9 +23,7 @@ allowlist_override_level = "Warn" # Strict override ceiling for allowlisted comm
 # Add structured allowlist rules as array-of-tables entries.
 # [[allowlist]]
 # pattern = "terraform destroy -target=module.test.*"
-# cwd = "/srv/infra"
-# user = "ci"
-# expires_at = "2026-01-01T00:00:00Z"
+# expires_at = "2030-01-01T00:00:00Z"
 # reason = "ephemeral test teardown"
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
@@ -135,7 +133,7 @@ pub struct AllowlistRule {
     pub pattern: String,
     pub cwd: Option<String>,
     pub user: Option<String>,
-    #[serde(with = "offset_datetime_option")]
+    #[serde(default, with = "offset_datetime_option")]
     pub expires_at: Option<OffsetDateTime>,
     pub reason: String,
 }
@@ -400,7 +398,7 @@ allowlist_override_level = "Warn"
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/srv/infra"
 user = "ci"
-expires_at = "2026-01-01T00:00:00Z"
+expires_at = "2030-01-01T00:00:00Z"
 reason = "ephemeral test teardown"
 "#,
         )
@@ -514,15 +512,18 @@ reason = "ephemeral test teardown"
             global_dir.join(GLOBAL_CONFIG_FILE),
             r#"
 mode = "Strict"
+auto_snapshot_git = false
+auto_snapshot_docker = true
+
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 reason = "global terraform teardown"
+expires_at = "2030-01-01T00:00:00Z"
 
 [[allowlist]]
 pattern = "docker system prune --volumes"
 reason = "global cleanup"
-auto_snapshot_git = false
-auto_snapshot_docker = true
+expires_at = "2030-01-01T00:00:00Z"
 
 [[custom_patterns]]
 id = "USR-001"
@@ -568,10 +569,12 @@ safe_alt = "terraform plan"
             global_dir.join(GLOBAL_CONFIG_FILE),
             r#"
 mode = "Strict"
+auto_snapshot_git = false
+
 [[allowlist]]
 pattern = "global-safe-cmd"
 reason = "global command"
-auto_snapshot_git = false
+expires_at = "2030-01-01T00:00:00Z"
 
 [[custom_patterns]]
 id = "GLB-001"
@@ -590,6 +593,7 @@ mode = "Audit"
 [[allowlist]]
 pattern = "project-safe-cmd"
 reason = "project command"
+expires_at = "2030-01-01T00:00:00Z"
 
 [[custom_patterns]]
 id = "PRJ-001"

@@ -71,6 +71,9 @@ impl RuntimeContext {
             .map(|rule| rule.pattern.clone())
             .collect();
 
+        // Scoped matching is intentionally deferred: cwd/user rules are rejected
+        // by config validation in Task 1 until Task 2 implements runtime support.
+
         Ok(Self {
             allowlist: Allowlist::new(&allowlist_patterns),
             snapshot_registry: SnapshotRegistry::from_config(&config),
