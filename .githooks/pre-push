@@ -18,8 +18,8 @@ else
 fi
 
 if cargo deny --help >/dev/null 2>&1; then
-    echo "pre-push: running cargo deny check"
-    cargo deny check
+    echo "pre-push: running cargo deny check bans licenses sources"
+    cargo deny check bans licenses sources
 else
     echo "pre-push: skipping cargo deny check (cargo-deny is not installed)"
 fi
