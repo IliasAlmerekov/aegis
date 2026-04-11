@@ -1,5 +1,6 @@
 pub mod allowlist;
 pub mod model;
+pub mod validate;
 
 pub use allowlist::{
     Allowlist, AllowlistContext, AllowlistMatch, AllowlistSourceLayer, AllowlistWarning,
@@ -7,6 +8,9 @@ pub use allowlist::{
 };
 pub use model::{
     AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, CiPolicy, Mode, UserPattern,
+};
+pub use validate::{
+    ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validation_load_error,
 };
 
 pub type Config = AegisConfig;

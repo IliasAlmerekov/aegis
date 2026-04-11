@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{AllowlistMatch, Config};
+use aegis::config::{
+    AllowlistMatch, Config, ConfigSourceMap, ValidationReport, validate_config,
+    validation_load_error,
+};
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
@@ -79,6 +82,21 @@ enum ConfigCommand {
     Init,
     /// Print the active config after applying search order and defaults
     Show,
+    /// Validate the active config and report errors/warnings
+    Validate(ConfigValidateArgs),
+}
+
+#[derive(Args)]
+struct ConfigValidateArgs {
+    /// Validation output format.
+    #[arg(long, value_enum, default_value_t = ConfigValidateOutput::Text)]
+    output: ConfigValidateOutput,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ConfigValidateOutput {
+    Text,
+    Json,
 }
 
 // ── Exit-code contract ────────────────────────────────────────────────────────
@@ -294,7 +312,74 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
             },
             Err(err) => report_config_load_error(&err),
         },
+        ConfigCommand::Validate(args) => handle_config_validate_command(args),
     }
+}
+
+fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {
+    let report = match Config::load() {
+        Ok(config) => {
+            let source_map = ConfigSourceMap::for_config(&config);
+            validate_config(&config, &source_map)
+        }
+        Err(err) => validation_load_error(&err),
+    };
+
+    let render_result = match args.output {
+        ConfigValidateOutput::Text => {
+            print!("{}", format_validation_report_text(&report));
+            Ok(())
+        }
+        ConfigValidateOutput::Json => serde_json::to_string_pretty(&report)
+            .map(|json| {
+                println!("{json}");
+            })
+            .map_err(|err| err.to_string()),
+    };
+
+    if let Err(err) = render_result {
+        eprintln!("error: failed to serialize validation output: {err}");
+        return EXIT_INTERNAL;
+    }
+
+    if report.errors.is_empty() {
+        0
+    } else {
+        EXIT_INTERNAL
+    }
+}
+
+fn format_validation_report_text(report: &ValidationReport) -> String {
+    if report.errors.is_empty() && report.warnings.is_empty() {
+        return "config is valid\n".to_string();
+    }
+
+    let mut out = String::new();
+
+    if !report.errors.is_empty() {
+        out.push_str("errors:\n");
+        for issue in &report.errors {
+            out.push_str(&format!(
+                "- [{}] {}: {}\n",
+                issue.code, issue.location, issue.message
+            ));
+        }
+    }
+
+    if !report.warnings.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("warnings:\n");
+        for issue in &report.warnings {
+            out.push_str(&format!(
+                "- [{}] {}: {}\n",
+                issue.code, issue.location, issue.message
+            ));
+        }
+    }
+
+    out
 }
 
 fn config_load_error_lines(err: &AegisError) -> Vec<String> {

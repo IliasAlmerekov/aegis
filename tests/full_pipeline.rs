@@ -1092,6 +1092,33 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(!contents.contains("not yet implemented"));
 }
 
+#[test]
+fn config_validate_json_outputs_errors_and_warnings() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json.get("errors").unwrap().is_array());
+    assert!(json.get("warnings").unwrap().is_array());
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Mode runtime semantics (Ticket 1.4)
 // ─────────────────────────────────────────────────────────────────────────────
