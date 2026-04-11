@@ -271,7 +271,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
     }
 
     // ── 3. Validate and resolve cwd ───────────────────────────────────────────
-    let cwd = if let Some(ref cwd_str) = frame.cwd {
+    let resolved_cwd = if let Some(ref cwd_str) = frame.cwd {
         let p = PathBuf::from(cwd_str);
         if !p.is_dir() {
             if emit_frame(&OutputFrame::Error {
@@ -285,14 +285,15 @@ async fn process_frame(line: String, context: &RuntimeContext) {
             }
             return;
         }
-        p
+        Some(p)
     } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        std::env::current_dir().ok()
     };
+    let cwd = resolved_cwd.clone().unwrap_or_else(|| PathBuf::from("."));
 
     // ── 4. Assess ─────────────────────────────────────────────────────────────
     let assessment = context.assess(&frame.cmd);
-    let allowlist_match = context.allowlist_match(&frame.cmd);
+    let allowlist_match = context.allowlist_match_for_command(&frame.cmd, resolved_cwd.as_deref());
 
     // ── 5. Evaluate policy ────────────────────────────────────────────────────
     let config = context.config();
@@ -302,7 +303,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         in_ci: false, // CI env detection is irrelevant in watch mode
         ci_policy: config.ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        allowlist_override_level: config.allowlist_override_level,
+        strict_allowlist_override: config.strict_allowlist_override,
     });
 
     // ── 6. Snapshots ──────────────────────────────────────────────────────────

@@ -9,8 +9,7 @@ pub struct DecisionInput {
     pub in_ci: bool,
     pub ci_policy: CiPolicy,
     pub allowlist_match: bool,
-    /// How much an allowlisted command may override the current policy.
-    pub allowlist_override_level: AllowlistOverrideLevel,
+    pub strict_allowlist_override: AllowlistOverrideLevel,
 }
 
 /// The action Aegis should take after evaluating policy.
@@ -26,7 +25,7 @@ pub enum PolicyAction {
 pub enum BlockReason {
     /// The command matched a `RiskLevel::Block` pattern — never bypassable.
     IntrinsicRiskBlock,
-    /// Strict mode blocked a Warn or Danger command without an allowlist override.
+    /// Strict mode blocked a Warn or Danger command without an explicit override.
     StrictPolicy,
     /// Protect mode is running in CI and `ci_policy = Block` forced a block.
     ProtectCiPolicy,
@@ -62,7 +61,7 @@ fn evaluate_protect(input: DecisionInput) -> DecisionPlan {
     match input.risk {
         RiskLevel::Safe => auto_approve(false, false),
         RiskLevel::Warn => {
-            if allowlist_allows_warn(input.allowlist_match, input.allowlist_override_level) {
+            if input.allowlist_match {
                 auto_approve(false, true)
             } else if input.in_ci && input.ci_policy == CiPolicy::Block {
                 block(BlockReason::ProtectCiPolicy)
@@ -71,7 +70,7 @@ fn evaluate_protect(input: DecisionInput) -> DecisionPlan {
             }
         }
         RiskLevel::Danger => {
-            if allowlist_allows_danger(input.allowlist_match, input.allowlist_override_level) {
+            if input.allowlist_match {
                 auto_approve(true, true)
             } else if input.in_ci && input.ci_policy == CiPolicy::Block {
                 block(BlockReason::ProtectCiPolicy)
@@ -87,14 +86,24 @@ fn evaluate_strict(input: DecisionInput) -> DecisionPlan {
     match input.risk {
         RiskLevel::Safe => auto_approve(false, false),
         RiskLevel::Warn => {
-            if allowlist_allows_warn(input.allowlist_match, input.allowlist_override_level) {
+            if input.allowlist_match
+                && matches!(
+                    input.strict_allowlist_override,
+                    AllowlistOverrideLevel::Warn | AllowlistOverrideLevel::Danger
+                )
+            {
                 auto_approve(false, true)
             } else {
                 block(BlockReason::StrictPolicy)
             }
         }
         RiskLevel::Danger => {
-            if allowlist_allows_danger(input.allowlist_match, input.allowlist_override_level) {
+            if input.allowlist_match
+                && matches!(
+                    input.strict_allowlist_override,
+                    AllowlistOverrideLevel::Danger
+                )
+            {
                 auto_approve(true, true)
             } else {
                 block(BlockReason::StrictPolicy)
@@ -102,24 +111,6 @@ fn evaluate_strict(input: DecisionInput) -> DecisionPlan {
         }
         RiskLevel::Block => block(BlockReason::IntrinsicRiskBlock),
     }
-}
-
-fn allowlist_allows_warn(
-    allowlist_match: bool,
-    allowlist_override_level: AllowlistOverrideLevel,
-) -> bool {
-    allowlist_match
-        && matches!(
-            allowlist_override_level,
-            AllowlistOverrideLevel::Warn | AllowlistOverrideLevel::Danger
-        )
-}
-
-fn allowlist_allows_danger(
-    allowlist_match: bool,
-    allowlist_override_level: AllowlistOverrideLevel,
-) -> bool {
-    allowlist_match && matches!(allowlist_override_level, AllowlistOverrideLevel::Danger)
 }
 
 fn auto_approve(should_snapshot: bool, allowlist_effective: bool) -> DecisionPlan {
@@ -181,7 +172,7 @@ mod tests {
             in_ci: false,
             ci_policy: CiPolicy::Block,
             allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            strict_allowlist_override: AllowlistOverrideLevel::Danger,
         });
         let danger = evaluate_policy(DecisionInput {
             mode: Mode::Audit,
@@ -189,7 +180,7 @@ mod tests {
             in_ci: true,
             ci_policy: CiPolicy::Block,
             allowlist_match: false,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
 
         assert_plan(warn, PolicyAction::AutoApprove, false, false, false, None);
@@ -197,56 +188,28 @@ mod tests {
     }
 
     #[test]
-    fn protect_warn_allowlist_override_level_warn_autoapproves() {
-        let plan = evaluate_policy(DecisionInput {
-            mode: Mode::Protect,
-            risk: RiskLevel::Warn,
-            in_ci: false,
-            ci_policy: CiPolicy::Block,
-            allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
-        });
-
-        assert_plan(plan, PolicyAction::AutoApprove, false, false, true, None);
-    }
-
-    #[test]
-    fn protect_danger_allowlist_override_level_warn_still_prompts() {
+    fn protect_allowlist_keeps_danger_snapshot() {
         let plan = evaluate_policy(DecisionInput {
             mode: Mode::Protect,
             risk: RiskLevel::Danger,
             in_ci: false,
             ci_policy: CiPolicy::Block,
             allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
 
-        assert_plan(plan, PolicyAction::Prompt, true, true, false, None);
+        assert_plan(plan, PolicyAction::AutoApprove, false, true, true, None);
     }
 
     #[test]
-    fn strict_warn_allowlist_override_level_warn_autoapproves() {
+    fn strict_mode_blocks_warn_without_allowlist_ceiling() {
         let plan = evaluate_policy(DecisionInput {
             mode: Mode::Strict,
             risk: RiskLevel::Warn,
-            in_ci: false,
-            ci_policy: CiPolicy::Block,
-            allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
-        });
-
-        assert_plan(plan, PolicyAction::AutoApprove, false, false, true, None);
-    }
-
-    #[test]
-    fn strict_danger_allowlist_override_level_warn_still_blocks() {
-        let plan = evaluate_policy(DecisionInput {
-            mode: Mode::Strict,
-            risk: RiskLevel::Danger,
             in_ci: false,
             ci_policy: CiPolicy::Allow,
             allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
 
         assert_plan(
@@ -260,18 +223,27 @@ mod tests {
     }
 
     #[test]
-    fn strict_warn_allowlist_override_level_never_still_blocks() {
-        let plan = evaluate_policy(DecisionInput {
+    fn strict_allowlist_ceiling_warn_allows_warn_but_blocks_danger() {
+        let warn = evaluate_policy(DecisionInput {
             mode: Mode::Strict,
             risk: RiskLevel::Warn,
             in_ci: false,
-            ci_policy: CiPolicy::Allow,
+            ci_policy: CiPolicy::Block,
             allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Never,
+            strict_allowlist_override: AllowlistOverrideLevel::Warn,
+        });
+        let danger = evaluate_policy(DecisionInput {
+            mode: Mode::Strict,
+            risk: RiskLevel::Danger,
+            in_ci: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_match: true,
+            strict_allowlist_override: AllowlistOverrideLevel::Warn,
         });
 
+        assert_plan(warn, PolicyAction::AutoApprove, false, false, true, None);
         assert_plan(
-            plan,
+            danger,
             PolicyAction::Block,
             false,
             false,
@@ -281,24 +253,100 @@ mod tests {
     }
 
     #[test]
-    fn strict_block_never_bypasses_even_with_danger_override() {
-        let plan = evaluate_policy(DecisionInput {
+    fn strict_allowlist_ceiling_danger_allows_warn_and_danger() {
+        let danger = evaluate_policy(DecisionInput {
+            mode: Mode::Strict,
+            risk: RiskLevel::Danger,
+            in_ci: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_match: true,
+            strict_allowlist_override: AllowlistOverrideLevel::Danger,
+        });
+
+        assert_plan(danger, PolicyAction::AutoApprove, false, true, true, None);
+    }
+
+    #[test]
+    fn strict_allowlist_ceiling_never_blocks_warn_and_danger() {
+        let warn = evaluate_policy(DecisionInput {
+            mode: Mode::Strict,
+            risk: RiskLevel::Warn,
+            in_ci: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_match: true,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
+        });
+        let danger = evaluate_policy(DecisionInput {
+            mode: Mode::Strict,
+            risk: RiskLevel::Danger,
+            in_ci: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_match: true,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
+        });
+
+        assert_plan(
+            warn,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::StrictPolicy),
+        );
+        assert_plan(
+            danger,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::StrictPolicy),
+        );
+    }
+
+    #[test]
+    fn block_is_never_bypassable() {
+        let protect = evaluate_policy(DecisionInput {
+            mode: Mode::Protect,
+            risk: RiskLevel::Block,
+            in_ci: false,
+            ci_policy: CiPolicy::Allow,
+            allowlist_match: true,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
+        });
+        let strict = evaluate_policy(DecisionInput {
             mode: Mode::Strict,
             risk: RiskLevel::Block,
             in_ci: false,
             ci_policy: CiPolicy::Allow,
             allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            strict_allowlist_override: AllowlistOverrideLevel::Danger,
+        });
+        let audit = evaluate_policy(DecisionInput {
+            mode: Mode::Audit,
+            risk: RiskLevel::Block,
+            in_ci: true,
+            ci_policy: CiPolicy::Block,
+            allowlist_match: true,
+            strict_allowlist_override: AllowlistOverrideLevel::Danger,
         });
 
         assert_plan(
-            plan,
+            protect,
             PolicyAction::Block,
             false,
             false,
             false,
             Some(BlockReason::IntrinsicRiskBlock),
         );
+        assert_plan(
+            strict,
+            PolicyAction::Block,
+            false,
+            false,
+            false,
+            Some(BlockReason::IntrinsicRiskBlock),
+        );
+        assert_plan(audit, PolicyAction::AutoApprove, false, false, false, None);
     }
 
     #[test]
@@ -309,7 +357,7 @@ mod tests {
             in_ci: false,
             ci_policy: CiPolicy::Block,
             allowlist_match: false,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
         let audit = evaluate_policy(DecisionInput {
             mode: Mode::Audit,
@@ -317,7 +365,7 @@ mod tests {
             in_ci: false,
             ci_policy: CiPolicy::Block,
             allowlist_match: false,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
         let strict = evaluate_policy(DecisionInput {
             mode: Mode::Strict,
@@ -325,7 +373,7 @@ mod tests {
             in_ci: false,
             ci_policy: CiPolicy::Block,
             allowlist_match: false,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
 
         assert_plan(protect, PolicyAction::Prompt, true, true, false, None);
@@ -341,38 +389,17 @@ mod tests {
     }
 
     #[test]
-    fn protect_ci_block_allowlisted_danger_needs_danger_override() {
+    fn protect_ci_block_still_respects_allowlist_for_danger() {
         let plan = evaluate_policy(DecisionInput {
             mode: Mode::Protect,
             risk: RiskLevel::Danger,
             in_ci: true,
             ci_policy: CiPolicy::Block,
             allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
 
         assert_plan(plan, PolicyAction::AutoApprove, false, true, true, None);
-    }
-
-    #[test]
-    fn protect_ci_block_allowlisted_warn_with_never_still_blocks() {
-        let plan = evaluate_policy(DecisionInput {
-            mode: Mode::Protect,
-            risk: RiskLevel::Warn,
-            in_ci: true,
-            ci_policy: CiPolicy::Block,
-            allowlist_match: true,
-            allowlist_override_level: AllowlistOverrideLevel::Never,
-        });
-
-        assert_plan(
-            plan,
-            PolicyAction::Block,
-            false,
-            false,
-            false,
-            Some(BlockReason::ProtectCiPolicy),
-        );
     }
 
     #[test]
@@ -383,7 +410,7 @@ mod tests {
             in_ci: true,
             ci_policy: CiPolicy::Block,
             allowlist_match: false,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            strict_allowlist_override: AllowlistOverrideLevel::Never,
         });
 
         assert_plan(

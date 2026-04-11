@@ -3,7 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
+use super::allowlist::{Allowlist, AllowlistSourceLayer, LayeredAllowlistRule};
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::RiskLevel;
@@ -17,15 +19,20 @@ const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
 mode = "Protect" # Protect=prompt/block, Audit=non-blocking audit-only, Strict=block non-safe by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist = [] # Protect and Strict consult allowlist_override_level for Warn/Danger commands.
-allowlist_override_level = "Warn" # Allowlisted Warn auto-approves; Danger requires Danger level.
+allowlist_override_level = "Warn" # Strict override ceiling for allowlisted commands: Warn, Danger, or Never.
+
+# Add structured allowlist rules as array-of-tables entries.
+# [[allowlist]]
+# pattern = "terraform destroy -target=module.test.*"
+# expires_at = "2030-01-01T00:00:00Z"
+# reason = "ephemeral test teardown"
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
 
 # CI policy: what to do when aegis detects it is running inside a CI environment.
 # Block (default) — hard-block any non-safe command; no interactive dialog is shown.
-# Allow           — disable the CI-only hard block and fall back to normal policy flow.
+# Allow           — pass-through; commands are executed without prompting (opt-in override).
 ci_policy = "Block"
 
 [audit]
@@ -38,6 +45,12 @@ compress_rotated = true
 "#;
 
 type Result<T> = std::result::Result<T, AegisError>;
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConfigLayerPath {
+    pub source_layer: AllowlistSourceLayer,
+    pub path: PathBuf,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
@@ -54,57 +67,29 @@ pub enum Mode {
 /// prompting would hang the pipeline.  Instead, non-safe commands are
 /// hard-blocked and the pipeline fails fast with a clear error message.
 ///
-/// `Allow` disables the CI-only hard-block and falls back to normal policy
-/// evaluation. Non-safe commands may still prompt or block. Set this only in
-/// `.aegis.toml`, not globally.
+/// `Allow` is an explicit opt-in override for cases where a project has
+/// audited its CI pipeline and is confident that destructive commands are
+/// intentional (e.g., a release script that runs `terraform destroy` in a
+/// tear-down job).  Set this only in `.aegis.toml`, not globally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum CiPolicy {
     /// Hard-block all non-safe commands. No dialog. Pipeline fails fast.
     #[default]
     Block,
-    /// Disable the CI-only hard-block and fall back to normal policy
-    /// evaluation. Non-safe commands may still prompt or block.
+    /// Pass-through: commands run without prompting. Use only when you have
+    /// deliberately reviewed the CI pipeline for destructive commands.
     Allow,
 }
 
-/// How much an allowlisted command may override the current policy.
+/// Maximum override level that structured allowlist rules may grant in strict mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum AllowlistOverrideLevel {
-    /// Allowlisted `Warn` commands may auto-approve; `Danger` still prompts or blocks.
     #[default]
     Warn,
-    /// Allowlisted `Warn` and `Danger` commands may auto-approve.
     Danger,
-    /// Allowlist never changes the approval outcome for non-safe commands.
     Never,
-}
-
-impl AllowlistOverrideLevel {
-    fn from_legacy_strict_allowlist_override(
-        mode: Mode,
-        strict_allowlist_override: bool,
-    ) -> Option<Self> {
-        match mode {
-            Mode::Protect | Mode::Audit => None,
-            Mode::Strict => {
-                if strict_allowlist_override {
-                    Some(Self::Danger)
-                } else {
-                    Some(Self::Never)
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AllowlistOverrideLevelOrigin {
-    Default,
-    Explicit,
-    LegacyAlias,
-    LegacyStrictDefault,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,12 +103,62 @@ pub struct UserPattern {
     pub safe_alt: Option<String>,
 }
 
+mod offset_datetime_option {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    pub fn serialize<S>(value: &Option<OffsetDateTime>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(value) => serializer
+                .serialize_some(&value.format(&Rfc3339).map_err(serde::ser::Error::custom)?),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<OffsetDateTime>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Option::<String>::deserialize(deserializer)?;
+        value
+            .map(|value| {
+                OffsetDateTime::parse(&value, &Rfc3339).map_err(|error| {
+                    D::Error::custom(format!("invalid RFC 3339 timestamp: {error}"))
+                })
+            })
+            .transpose()
+    }
+}
+
+/// A structured allowlist rule with optional scope, expiry, and rationale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowlistRule {
+    pub pattern: String,
+    pub cwd: Option<String>,
+    pub user: Option<String>,
+    #[serde(default, with = "offset_datetime_option")]
+    pub expires_at: Option<OffsetDateTime>,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
-    pub allowlist: Vec<String>,
+    #[serde(skip)]
+    pub(crate) custom_pattern_layers: Vec<AllowlistSourceLayer>,
+    pub allowlist: Vec<AllowlistRule>,
+    #[serde(skip)]
+    pub(crate) allowlist_layers: Vec<AllowlistSourceLayer>,
+    #[serde(skip)]
+    pub(crate) audit_max_file_size_bytes_source: Option<AllowlistSourceLayer>,
+    #[serde(skip)]
+    pub(crate) audit_retention_files_source: Option<AllowlistSourceLayer>,
     pub allowlist_override_level: AllowlistOverrideLevel,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
@@ -171,7 +206,11 @@ impl AegisConfig {
         Self {
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
+            custom_pattern_layers: Vec::new(),
             allowlist: Vec::new(),
+            allowlist_layers: Vec::new(),
+            audit_max_file_size_bytes_source: None,
+            audit_retention_files_source: None,
             allowlist_override_level: AllowlistOverrideLevel::Warn,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
@@ -202,26 +241,79 @@ impl AegisConfig {
         Ok(path)
     }
 
+    /// Validate config invariants required before constructing runtime state.
+    ///
+    /// This covers semantic config checks plus scanner and allowlist
+    /// compilation so direct `RuntimeContext::new` callers get the same
+    /// fail-closed guarantees as file-loaded configs.
+    pub(crate) fn validate_runtime_requirements(&self) -> Result<()> {
+        self.validate()?;
+        interceptor::scanner_for(&self.custom_patterns).map(|_| ())?;
+        Allowlist::new(&self.layered_allowlist_rules()).map(|_| ())?;
+        Ok(())
+    }
+
     pub(crate) fn load_for(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
+        Self::load_for_internal(current_dir, home_dir, true)
+    }
+
+    pub(crate) fn layer_paths_for(
+        current_dir: &Path,
+        home_dir: Option<&Path>,
+    ) -> Vec<ConfigLayerPath> {
+        let global_path = home_dir.map(|h| h.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
+        let project_path = current_dir.join(PROJECT_CONFIG_FILE);
+        let mut layers = Vec::new();
+
+        if let Some(path) = global_path.filter(|path| path.is_file()) {
+            layers.push(ConfigLayerPath {
+                source_layer: AllowlistSourceLayer::Global,
+                path,
+            });
+        }
+
+        if project_path.is_file() {
+            layers.push(ConfigLayerPath {
+                source_layer: AllowlistSourceLayer::Project,
+                path: project_path,
+            });
+        }
+
+        layers
+    }
+
+    pub(crate) fn merge_layer_path_unvalidated(
+        base: Self,
+        layer: &ConfigLayerPath,
+    ) -> Result<Self> {
+        let overlay = PartialConfig::from_path(&layer.path)?;
+        Ok(Self::merge_layer(base, overlay, layer.source_layer))
+    }
+
+    fn load_for_internal(
+        current_dir: &Path,
+        home_dir: Option<&Path>,
+        validate_runtime_requirements: bool,
+    ) -> Result<Self> {
         let global_path = home_dir.map(|h| h.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
         let project_path = current_dir.join(PROJECT_CONFIG_FILE);
 
         let mut merged = Self::defaults();
-        let mut allowlist_override_level_origin = AllowlistOverrideLevelOrigin::Default;
 
         if let Some(path) = global_path.as_deref().filter(|p| p.is_file()) {
             let global = PartialConfig::from_path(path)?;
-            (merged, allowlist_override_level_origin) =
-                Self::merge_layer(merged, allowlist_override_level_origin, global);
-            merged.validate_for_path(path)?;
-            merged.validate_runtime_requirements_for_path(path)?;
+            merged = Self::merge_layer(merged, global, AllowlistSourceLayer::Global);
+            if validate_runtime_requirements {
+                merged.validate_runtime_requirements_for_path(path)?;
+            }
         }
 
         if project_path.is_file() {
             let project = PartialConfig::from_path(&project_path)?;
-            (merged, _) = Self::merge_layer(merged, allowlist_override_level_origin, project);
-            merged.validate_for_path(&project_path)?;
-            merged.validate_runtime_requirements_for_path(&project_path)?;
+            merged = Self::merge_layer(merged, project, AllowlistSourceLayer::Project);
+            if validate_runtime_requirements {
+                merged.validate_runtime_requirements_for_path(&project_path)?;
+            }
         }
 
         Ok(merged)
@@ -229,106 +321,66 @@ impl AegisConfig {
 
     fn merge_layer(
         base: Self,
-        base_allowlist_override_level_origin: AllowlistOverrideLevelOrigin,
         overlay: PartialConfig,
-    ) -> (Self, AllowlistOverrideLevelOrigin) {
+        allowlist_layer: AllowlistSourceLayer,
+    ) -> Self {
         let mut custom_patterns = base.custom_patterns;
+        let custom_pattern_count = overlay.custom_patterns.len();
         custom_patterns.extend(overlay.custom_patterns);
 
+        let mut custom_pattern_layers = base.custom_pattern_layers;
+        custom_pattern_layers.extend(std::iter::repeat_n(allowlist_layer, custom_pattern_count));
+
         let mut allowlist = base.allowlist;
+        let allowlist_count = overlay.allowlist.len();
         allowlist.extend(overlay.allowlist);
 
-        let mode = overlay.mode.unwrap_or(base.mode);
-        let (allowlist_override_level, allowlist_override_level_origin) =
-            if let Some(level) = overlay.allowlist_override_level {
-                (level, AllowlistOverrideLevelOrigin::Explicit)
-            } else if let Some(strict_allowlist_override) = overlay.strict_allowlist_override {
-                match AllowlistOverrideLevel::from_legacy_strict_allowlist_override(
-                    mode,
-                    strict_allowlist_override,
-                ) {
-                    Some(level) => (level, AllowlistOverrideLevelOrigin::LegacyAlias),
-                    None => match overlay.mode {
-                        Some(Mode::Protect | Mode::Audit)
-                            if matches!(
-                                base_allowlist_override_level_origin,
-                                AllowlistOverrideLevelOrigin::LegacyAlias
-                                    | AllowlistOverrideLevelOrigin::LegacyStrictDefault
-                            ) =>
-                        {
-                            (
-                                AllowlistOverrideLevel::Warn,
-                                AllowlistOverrideLevelOrigin::Default,
-                            )
-                        }
-                        _ => (
-                            base.allowlist_override_level,
-                            base_allowlist_override_level_origin,
-                        ),
-                    },
-                }
-            } else {
-                match overlay.mode {
-                    Some(Mode::Strict)
-                        if base_allowlist_override_level_origin
-                            == AllowlistOverrideLevelOrigin::Default =>
-                    {
-                        (
-                            AllowlistOverrideLevel::Never,
-                            AllowlistOverrideLevelOrigin::LegacyStrictDefault,
-                        )
-                    }
-                    Some(Mode::Protect | Mode::Audit)
-                        if matches!(
-                            base_allowlist_override_level_origin,
-                            AllowlistOverrideLevelOrigin::LegacyAlias
-                                | AllowlistOverrideLevelOrigin::LegacyStrictDefault
-                        ) =>
-                    {
-                        (
-                            AllowlistOverrideLevel::Warn,
-                            AllowlistOverrideLevelOrigin::Default,
-                        )
-                    }
-                    _ => (
-                        base.allowlist_override_level,
-                        base_allowlist_override_level_origin,
-                    ),
-                }
-            };
+        let mut allowlist_layers = base.allowlist_layers;
+        allowlist_layers.extend(std::iter::repeat_n(allowlist_layer, allowlist_count));
 
-        (
-            Self {
-                mode,
-                custom_patterns,
-                allowlist,
-                allowlist_override_level,
-                auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
-                auto_snapshot_docker: overlay
-                    .auto_snapshot_docker
-                    .unwrap_or(base.auto_snapshot_docker),
-                ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
-                audit: AuditConfig {
-                    rotation_enabled: overlay
-                        .audit
-                        .rotation_enabled
-                        .unwrap_or(base.audit.rotation_enabled),
-                    max_file_size_bytes: overlay
-                        .audit
-                        .max_file_size_bytes
-                        .unwrap_or(base.audit.max_file_size_bytes),
-                    retention_files: overlay
-                        .audit
-                        .retention_files
-                        .unwrap_or(base.audit.retention_files),
-                    compress_rotated: overlay
-                        .audit
-                        .compress_rotated
-                        .unwrap_or(base.audit.compress_rotated),
-                },
+        Self {
+            mode: overlay.mode.unwrap_or(base.mode),
+            custom_patterns,
+            custom_pattern_layers,
+            allowlist,
+            allowlist_layers,
+            audit_max_file_size_bytes_source: if overlay.audit.max_file_size_bytes.is_some() {
+                Some(allowlist_layer)
+            } else {
+                base.audit_max_file_size_bytes_source
             },
-            allowlist_override_level_origin,
-        )
+            audit_retention_files_source: if overlay.audit.retention_files.is_some() {
+                Some(allowlist_layer)
+            } else {
+                base.audit_retention_files_source
+            },
+            allowlist_override_level: overlay
+                .allowlist_override_level
+                .unwrap_or(base.allowlist_override_level),
+            auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
+            auto_snapshot_docker: overlay
+                .auto_snapshot_docker
+                .unwrap_or(base.auto_snapshot_docker),
+            ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
+            audit: AuditConfig {
+                rotation_enabled: overlay
+                    .audit
+                    .rotation_enabled
+                    .unwrap_or(base.audit.rotation_enabled),
+                max_file_size_bytes: overlay
+                    .audit
+                    .max_file_size_bytes
+                    .unwrap_or(base.audit.max_file_size_bytes),
+                retention_files: overlay
+                    .audit
+                    .retention_files
+                    .unwrap_or(base.audit.retention_files),
+                compress_rotated: overlay
+                    .audit
+                    .compress_rotated
+                    .unwrap_or(base.audit.compress_rotated),
+            },
+        }
     }
 
     fn validate(&self) -> Result<()> {
@@ -346,27 +398,46 @@ impl AegisConfig {
             ));
         }
 
+        let now = OffsetDateTime::now_utc();
+        if let Some(rule) = self
+            .allowlist
+            .iter()
+            .find(|rule| rule.expires_at.is_some_and(|expires_at| expires_at <= now))
+        {
+            return Err(AegisError::Config(format!(
+                "allowlist rule '{}' is expired and cannot be used at runtime",
+                rule.pattern
+            )));
+        }
+
         Ok(())
     }
 
-    fn validate_for_path(&self, path: &Path) -> Result<()> {
-        self.validate().map_err(|err| match err {
-            AegisError::Config(message) => {
-                AegisError::Config(format!("invalid config {}: {message}", path.display()))
-            }
-            other => other,
-        })
-    }
-
     fn validate_runtime_requirements_for_path(&self, path: &Path) -> Result<()> {
-        interceptor::scanner_for(&self.custom_patterns)
-            .map(|_| ())
+        self.validate_runtime_requirements()
             .map_err(|err| match err {
                 AegisError::Config(message) => {
                     AegisError::Config(format!("invalid config {}: {message}", path.display()))
                 }
                 other => other,
             })
+    }
+
+    pub(crate) fn layered_allowlist_rules(&self) -> Vec<LayeredAllowlistRule> {
+        self.allowlist
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, rule)| {
+                let source_layer = self
+                    .allowlist_layers
+                    .get(index)
+                    .copied()
+                    .unwrap_or(AllowlistSourceLayer::Project);
+
+                LayeredAllowlistRule { rule, source_layer }
+            })
+            .collect()
     }
 }
 
@@ -379,9 +450,8 @@ impl AegisConfig {
 struct PartialConfig {
     mode: Option<Mode>,
     custom_patterns: Vec<UserPattern>,
-    allowlist: Vec<String>,
+    allowlist: Vec<AllowlistRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
-    strict_allowlist_override: Option<bool>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
     ci_policy: Option<CiPolicy>,
@@ -410,6 +480,90 @@ impl PartialConfig {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    #[test]
+    fn structured_allowlist_rule_deserializes() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+allowlist_override_level = "Warn"
+
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "/srv/infra"
+user = "ci"
+expires_at = "2030-01-01T00:00:00Z"
+reason = "ephemeral test teardown"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.allowlist.len(), 1);
+        assert_eq!(
+            config.allowlist[0].pattern,
+            "terraform destroy -target=module.test.*"
+        );
+        assert_eq!(
+            config.allowlist_override_level,
+            AllowlistOverrideLevel::Warn
+        );
+    }
+
+    #[test]
+    fn legacy_string_allowlist_is_rejected() {
+        let err =
+            toml::from_str::<AegisConfig>(r#"allowlist = ["terraform destroy *"]"#).unwrap_err();
+        assert!(err.to_string().contains("invalid type"));
+    }
+
+    #[test]
+    fn expired_rule_is_invalid_for_runtime() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy -target=module.test.*".to_string(),
+                cwd: None,
+                user: None,
+                expires_at: Some(OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).unwrap()),
+                reason: "expired teardown".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn scoped_allowlist_rule_with_cwd_is_valid_for_runtime() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy -target=module.test.*".to_string(),
+                cwd: Some("/srv/infra".to_string()),
+                user: None,
+                expires_at: None,
+                reason: "scoped teardown".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn scoped_allowlist_rule_with_user_is_valid_for_runtime() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy -target=module.test.*".to_string(),
+                cwd: None,
+                user: Some("ci".to_string()),
+                expires_at: None,
+                reason: "scoped teardown".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        assert!(config.validate().is_ok());
+    }
 
     #[test]
     fn load_minimal_project_config_without_errors() {
@@ -442,9 +596,18 @@ mod tests {
             global_dir.join(GLOBAL_CONFIG_FILE),
             r#"
 mode = "Strict"
-allowlist = ["terraform destroy -target=module.test.*", "docker system prune --volumes"]
 auto_snapshot_git = false
 auto_snapshot_docker = true
+
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "global terraform teardown"
+expires_at = "2030-01-01T00:00:00Z"
+
+[[allowlist]]
+pattern = "docker system prune --volumes"
+reason = "global cleanup"
+expires_at = "2030-01-01T00:00:00Z"
 
 [[custom_patterns]]
 id = "USR-001"
@@ -490,8 +653,12 @@ safe_alt = "terraform plan"
             global_dir.join(GLOBAL_CONFIG_FILE),
             r#"
 mode = "Strict"
-allowlist = ["global-safe-cmd"]
 auto_snapshot_git = false
+
+[[allowlist]]
+pattern = "global-safe-cmd"
+reason = "global command"
+expires_at = "2030-01-01T00:00:00Z"
 
 [[custom_patterns]]
 id = "GLB-001"
@@ -507,7 +674,10 @@ description = "Global cloud nuke rule"
             workspace.path().join(PROJECT_CONFIG_FILE),
             r#"
 mode = "Audit"
-allowlist = ["project-safe-cmd"]
+[[allowlist]]
+pattern = "project-safe-cmd"
+reason = "project command"
+expires_at = "2030-01-01T00:00:00Z"
 
 [[custom_patterns]]
 id = "PRJ-001"
@@ -526,10 +696,8 @@ description = "Project build dir removal"
         // global wins for auto_snapshot_git (project didn't set it)
         assert!(!config.auto_snapshot_git);
         // allowlists are merged: global first, then project
-        assert_eq!(
-            config.allowlist,
-            vec!["global-safe-cmd", "project-safe-cmd"]
-        );
+        assert_eq!(config.allowlist[0].pattern, "global-safe-cmd");
+        assert_eq!(config.allowlist[1].pattern, "project-safe-cmd");
         // patterns are merged: global first, then project
         assert_eq!(config.custom_patterns.len(), 2);
         assert_eq!(config.custom_patterns[0].id, "GLB-001");
@@ -663,6 +831,74 @@ description = "Conflicts with built-in pattern id"
     }
 
     #[test]
+    fn load_for_rejects_malformed_allowlist_fields_with_source_path() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
+
+        let cases = [
+            (
+                "pattern",
+                r#"
+[[allowlist]]
+pattern = "   "
+reason = "valid reason"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "pattern must not be empty",
+            ),
+            (
+                "reason",
+                r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "   "
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "reason must not be empty",
+            ),
+            (
+                "cwd",
+                r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "   "
+reason = "valid reason"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "cwd must not be empty",
+            ),
+            (
+                "user",
+                r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+user = "   "
+reason = "valid reason"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "user must not be empty",
+            ),
+        ];
+
+        for (field, contents, expected_message) in cases {
+            fs::write(&config_path, contents).unwrap();
+
+            let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
+            let message = err.to_string();
+
+            assert!(
+                message.contains(&config_path.display().to_string()),
+                "{field} validation error must identify the offending config file: {message}"
+            );
+            assert!(
+                message.contains(expected_message),
+                "{field} validation message mismatch: {message}"
+            );
+        }
+    }
+
+    #[test]
     fn project_false_wins_over_global_true_for_bool_scalar() {
         // When both files set the same bool field, the project value must win
         // even when it is `false` (so it can't be confused with "not set").
@@ -723,6 +959,20 @@ description = "Conflicts with built-in pattern id"
     }
 
     #[test]
+    fn init_template_uses_array_of_tables_for_allowlist() {
+        let template = AegisConfig::init_template();
+
+        assert!(
+            !template.contains("allowlist = []"),
+            "template must not define an empty array that conflicts with [[allowlist]] entries"
+        );
+        assert!(
+            template.contains("[[allowlist]]"),
+            "template must show the structured allowlist entry form"
+        );
+    }
+
+    #[test]
     fn allowlist_override_level_project_value_overrides_global() {
         let workspace = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
@@ -731,7 +981,7 @@ description = "Conflicts with built-in pattern id"
 
         fs::write(
             global_dir.join(GLOBAL_CONFIG_FILE),
-            "allowlist_override_level = \"Warn\"\n",
+            "allowlist_override_level = \"Never\"\n",
         )
         .unwrap();
         fs::write(
@@ -744,162 +994,6 @@ description = "Conflicts with built-in pattern id"
         assert_eq!(
             config.allowlist_override_level,
             AllowlistOverrideLevel::Danger
-        );
-    }
-
-    #[test]
-    fn legacy_strict_allowlist_override_is_accepted_as_alias() {
-        let workspace = TempDir::new().unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Strict\"\nstrict_allowlist_override = true\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), None).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Danger
-        );
-    }
-
-    #[test]
-    fn legacy_strict_allowlist_override_false_maps_to_never_in_strict_mode() {
-        let workspace = TempDir::new().unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Strict\"\nstrict_allowlist_override = false\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), None).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Never
-        );
-    }
-
-    #[test]
-    fn legacy_strict_allowlist_override_is_ignored_in_protect_mode() {
-        let workspace = TempDir::new().unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Protect\"\nstrict_allowlist_override = false\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), None).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Warn
-        );
-    }
-
-    #[test]
-    fn strict_mode_without_override_level_preserves_legacy_blocking_default() {
-        let workspace = TempDir::new().unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Strict\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), None).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Never
-        );
-    }
-
-    #[test]
-    fn explicit_global_override_level_survives_project_strict_mode_without_override() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "allowlist_override_level = \"Warn\"\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Strict\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Warn
-        );
-    }
-
-    #[test]
-    fn global_strict_default_does_not_leak_into_project_protect_mode() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(global_dir.join(GLOBAL_CONFIG_FILE), "mode = \"Strict\"\n").unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Protect\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Warn
-        );
-    }
-
-    #[test]
-    fn ignored_non_strict_legacy_alias_does_not_weaken_project_strict_mode() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "mode = \"Protect\"\nstrict_allowlist_override = false\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Strict\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Never
-        );
-    }
-
-    #[test]
-    fn ignored_project_legacy_alias_does_not_preserve_global_strict_semantics() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(global_dir.join(GLOBAL_CONFIG_FILE), "mode = \"Strict\"\n").unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Protect\"\nstrict_allowlist_override = false\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Warn
         );
     }
 

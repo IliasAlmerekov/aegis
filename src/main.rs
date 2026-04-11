@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{AllowlistMatch, Config};
+use aegis::config::{
+    AllowlistMatch, AllowlistSourceLayer, Config, ValidationReport, validate_config_layers,
+};
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
@@ -79,6 +81,21 @@ enum ConfigCommand {
     Init,
     /// Print the active config after applying search order and defaults
     Show,
+    /// Validate the active config and report errors/warnings
+    Validate(ConfigValidateArgs),
+}
+
+#[derive(Args)]
+struct ConfigValidateArgs {
+    /// Validation output format.
+    #[arg(long, value_enum, default_value_t = ConfigValidateOutput::Text)]
+    output: ConfigValidateOutput,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ConfigValidateOutput {
+    Text,
+    Json,
 }
 
 // ── Exit-code contract ────────────────────────────────────────────────────────
@@ -93,8 +110,8 @@ enum ConfigCommand {
 // | 1-N  | Pass-through — the underlying command ran and returned this code.|
 // |  2   | Denied — user pressed 'n' at the confirmation dialog.           |
 // |  3   | Blocked — command matched a Block-level pattern; no dialog shown.|
-// |  4   | Internal error — Aegis itself could not complete (spawn failed,  |
-// |      |   etc.). The underlying command was never executed.              |
+// |  4   | Aegis/config error — internal failure or config validation failed |
+// |      |   (e.g. `aegis config validate` found hard errors).              |
 //
 // Codes 2, 3, and 4 are only returned when Aegis prevents execution; they
 // are never returned by a successfully launched child process.
@@ -103,7 +120,7 @@ enum ConfigCommand {
 const EXIT_DENIED: i32 = 2;
 /// The command matched a `Block`-level pattern and was hard-stopped.
 const EXIT_BLOCKED: i32 = 3;
-/// An internal Aegis failure prevented the command from being executed.
+/// Aegis/config failure prevented execution or validation from succeeding.
 const EXIT_INTERNAL: i32 = 4;
 
 fn main() {
@@ -191,8 +208,9 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     };
     let assessment = context.assess(cmd);
 
-    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let allowlist_match = context.allowlist_match(cmd);
+    let resolved_cwd = env::current_dir().ok();
+    let cwd = resolved_cwd.clone().unwrap_or_else(|| PathBuf::from("."));
+    let allowlist_match = context.allowlist_match_for_command(cmd, resolved_cwd.as_deref());
     let in_ci = is_ci_environment();
 
     if verbose {
@@ -293,7 +311,78 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
             },
             Err(err) => report_config_load_error(&err),
         },
+        ConfigCommand::Validate(args) => handle_config_validate_command(args),
     }
+}
+
+fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {
+    let current_dir = match env::current_dir() {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("error: failed to resolve current directory: {err}");
+            return EXIT_INTERNAL;
+        }
+    };
+    let home_dir = env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let report = validate_config_layers(&current_dir, home_dir.as_deref());
+
+    let render_result = match args.output {
+        ConfigValidateOutput::Text => {
+            print!("{}", format_validation_report_text(&report));
+            Ok(())
+        }
+        ConfigValidateOutput::Json => serde_json::to_string_pretty(&report)
+            .map(|json| {
+                println!("{json}");
+            })
+            .map_err(|err| err.to_string()),
+    };
+
+    if let Err(err) = render_result {
+        eprintln!("error: failed to serialize validation output: {err}");
+        return EXIT_INTERNAL;
+    }
+
+    if report.errors.is_empty() {
+        0
+    } else {
+        EXIT_INTERNAL
+    }
+}
+
+fn format_validation_report_text(report: &ValidationReport) -> String {
+    if report.errors.is_empty() && report.warnings.is_empty() {
+        return "config is valid\n".to_string();
+    }
+
+    let mut out = String::new();
+
+    if !report.errors.is_empty() {
+        out.push_str("errors:\n");
+        for issue in &report.errors {
+            out.push_str(&format!(
+                "- [{}] {}: {}\n",
+                issue.code, issue.location, issue.message
+            ));
+        }
+    }
+
+    if !report.warnings.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("warnings:\n");
+        for issue in &report.warnings {
+            out.push_str(&format!(
+                "- [{}] {}: {}\n",
+                issue.code, issue.location, issue.message
+            ));
+        }
+    }
+
+    out
 }
 
 fn config_load_error_lines(err: &AegisError) -> Vec<String> {
@@ -361,7 +450,7 @@ fn decide_command(
         in_ci,
         ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        allowlist_override_level: context.config().allowlist_override_level,
+        strict_allowlist_override: context.config().strict_allowlist_override,
     });
 
     let snapshots = if plan.should_snapshot {
@@ -868,6 +957,8 @@ mod tests {
         let assessment = make_assessment(RiskLevel::Danger);
         let allowlist_match = AllowlistMatch {
             pattern: "terraform destroy -target=module.test.*".to_string(),
+            reason: "test allowlist".to_string(),
+            source_layer: AllowlistSourceLayer::Project,
         };
 
         let (decision, snapshots) = decide_command(
@@ -888,6 +979,8 @@ mod tests {
         let assessment = make_assessment(RiskLevel::Warn);
         let allowlist_match = AllowlistMatch {
             pattern: "git stash clear".to_string(),
+            reason: "test allowlist".to_string(),
+            source_layer: AllowlistSourceLayer::Project,
         };
 
         let (decision, snapshots) = decide_command(
@@ -908,6 +1001,8 @@ mod tests {
         let assessment = make_assessment(RiskLevel::Warn);
         let allowlist_match = AllowlistMatch {
             pattern: "git stash clear".to_string(),
+            reason: "test allowlist".to_string(),
+            source_layer: AllowlistSourceLayer::Project,
         };
 
         let (decision, snapshots) = decide_command(
