@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
-use crate::config::{Allowlist, AllowlistMatch, AllowlistOverrideLevel, Config};
+use crate::config::{Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config};
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
@@ -39,6 +39,7 @@ impl From<&Config> for RuntimeConfig {
 pub struct RuntimeContext {
     runtime_config: RuntimeConfig,
     allowlist: Allowlist,
+    current_user: String,
     scanner: Arc<Scanner>,
     snapshot_registry: SnapshotRegistry,
     snapshot_runtime: SnapshotRuntime,
@@ -60,26 +61,19 @@ impl RuntimeContext {
     pub fn new(config: Config) -> Result<Self, AegisError> {
         config.validate_runtime_requirements()?;
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
+        let current_user = detect_effective_user().unwrap_or_default();
 
         let snapshot_runtime = match Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => SnapshotRuntime::Ready(runtime),
             Err(err) => SnapshotRuntime::Unavailable(err.to_string()),
         };
 
-        let allowlist_patterns: Vec<String> = config
-            .allowlist
-            .iter()
-            .map(|rule| rule.pattern.clone())
-            .collect();
-
-        // Scoped matching is intentionally deferred: cwd/user rules are rejected
-        // by config validation in Task 1 until Task 2 implements runtime support.
-
         Ok(Self {
-            allowlist: Allowlist::new(&allowlist_patterns),
+            allowlist: Allowlist::new(&config.layered_allowlist_rules())?,
             snapshot_registry: SnapshotRegistry::from_config(&config),
             snapshot_runtime,
             audit_logger: build_audit_logger(&config),
+            current_user,
             runtime_config: RuntimeConfig::from(&config),
             scanner,
         })
@@ -95,9 +89,14 @@ impl RuntimeContext {
         self.scanner.assess(cmd)
     }
 
-    /// Resolve the allowlist rule, if any, that matches `cmd`.
-    pub fn allowlist_match(&self, cmd: &str) -> Option<AllowlistMatch> {
-        self.allowlist.match_reason(cmd)
+    /// Return the effective user identity captured for this runtime context.
+    pub fn current_user(&self) -> &str {
+        &self.current_user
+    }
+
+    /// Resolve the allowlist rule, if any, that matches the runtime context.
+    pub fn allowlist_match(&self, context: &AllowlistContext<'_>) -> Option<AllowlistMatch> {
+        self.allowlist.match_reason(context)
     }
 
     /// Create best-effort snapshots using the context-bound registry/runtime.
@@ -195,12 +194,33 @@ fn build_audit_logger(config: &Config) -> AuditLogger {
     }
 }
 
+fn detect_effective_user() -> Option<String> {
+    #[cfg(not(windows))]
+    {
+        if let Ok(output) = std::process::Command::new("id").arg("-un").output()
+            && output.status.success()
+        {
+            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !user.is_empty() {
+                return Some(user);
+            }
+        }
+    }
+
+    std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("USERNAME").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{CiPolicy, UserPattern};
     use crate::interceptor::RiskLevel;
     use crate::interceptor::patterns::Category;
+    use time::OffsetDateTime;
 
     #[test]
     fn custom_patterns_are_built_once_into_runtime_scanner() {
@@ -266,8 +286,14 @@ mod tests {
             context.config().strict_allowlist_override,
             AllowlistOverrideLevel::Danger
         );
+        let allowlist_ctx = AllowlistContext::new(
+            "echo trusted",
+            Path::new("."),
+            context.current_user(),
+            now_utc(),
+        );
         assert_eq!(
-            context.allowlist_match("echo trusted").map(|m| m.pattern),
+            context.allowlist_match(&allowlist_ctx).map(|m| m.pattern),
             Some("echo trusted".to_string())
         );
         assert!(
@@ -305,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_context_rejects_scoped_allowlist_rules() {
+    fn runtime_context_accepts_scoped_allowlist_rules() {
         use crate::config::AllowlistRule;
 
         let mut config = Config::default();
@@ -317,38 +343,43 @@ mod tests {
             reason: "scoped teardown".to_string(),
         }];
 
-        let err = match RuntimeContext::new(config) {
-            Ok(_) => panic!("scoped allowlist rules must be rejected before runtime setup"),
-            Err(err) => err,
-        };
-
-        assert!(
-            err.to_string()
-                .contains("unsupported scoped matching fields")
+        let context = RuntimeContext::new(config).unwrap();
+        let allowlist_ctx = AllowlistContext::new(
+            "terraform destroy -target=module.test.api",
+            Path::new("/srv/infra"),
+            context.current_user(),
+            now_utc(),
         );
+
+        assert!(context.allowlist_match(&allowlist_ctx).is_some());
     }
 
     #[test]
-    fn runtime_context_rejects_user_scoped_allowlist_rules() {
+    fn runtime_context_accepts_user_scoped_allowlist_rules() {
         use crate::config::AllowlistRule;
 
         let mut config = Config::default();
+        let current_user = detect_effective_user().unwrap_or_else(|| "unknown".to_string());
         config.allowlist = vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: None,
-            user: Some("ci".to_string()),
+            user: Some(current_user.clone()),
             expires_at: None,
             reason: "scoped teardown".to_string(),
         }];
 
-        let err = match RuntimeContext::new(config) {
-            Ok(_) => panic!("scoped allowlist rules must be rejected before runtime setup"),
-            Err(err) => err,
-        };
-
-        assert!(
-            err.to_string()
-                .contains("unsupported scoped matching fields")
+        let context = RuntimeContext::new(config).unwrap();
+        let allowlist_ctx = AllowlistContext::new(
+            "terraform destroy -target=module.test.api",
+            Path::new("/srv/infra"),
+            &current_user,
+            now_utc(),
         );
+
+        assert!(context.allowlist_match(&allowlist_ctx).is_some());
+    }
+
+    fn now_utc() -> OffsetDateTime {
+        OffsetDateTime::now_utc()
     }
 }

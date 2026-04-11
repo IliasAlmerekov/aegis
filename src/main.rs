@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{AllowlistMatch, Config};
+use aegis::config::{AllowlistContext, AllowlistMatch, Config};
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
@@ -12,6 +12,7 @@ use aegis::runtime::RuntimeContext;
 use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use time::OffsetDateTime;
 
 #[cfg(test)]
 use aegis::interceptor::parser::Parser as CommandParser;
@@ -192,7 +193,9 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
     let assessment = context.assess(cmd);
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let allowlist_match = context.allowlist_match(cmd);
+    let allowlist_ctx =
+        AllowlistContext::new(cmd, &cwd, context.current_user(), OffsetDateTime::now_utc());
+    let allowlist_match = context.allowlist_match(&allowlist_ctx);
     let in_ci = is_ci_environment();
 
     if verbose {

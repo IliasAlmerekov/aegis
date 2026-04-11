@@ -4,10 +4,12 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
+use crate::config::AllowlistContext;
 use crate::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use crate::runtime::RuntimeContext;
 use crate::ui::confirm::{
@@ -292,7 +294,13 @@ async fn process_frame(line: String, context: &RuntimeContext) {
 
     // ── 4. Assess ─────────────────────────────────────────────────────────────
     let assessment = context.assess(&frame.cmd);
-    let allowlist_match = context.allowlist_match(&frame.cmd);
+    let allowlist_ctx = AllowlistContext::new(
+        &frame.cmd,
+        &cwd,
+        context.current_user(),
+        OffsetDateTime::now_utc(),
+    );
+    let allowlist_match = context.allowlist_match(&allowlist_ctx);
 
     // ── 5. Evaluate policy ────────────────────────────────────────────────────
     let config = context.config();

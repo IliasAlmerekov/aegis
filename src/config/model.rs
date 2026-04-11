@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use super::allowlist::{AllowlistSourceLayer, LayeredAllowlistRule};
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::RiskLevel;
@@ -144,6 +145,8 @@ pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
     pub allowlist: Vec<AllowlistRule>,
+    #[serde(skip)]
+    pub(crate) allowlist_layers: Vec<AllowlistSourceLayer>,
     pub allowlist_override_level: AllowlistOverrideLevel,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
@@ -192,6 +195,7 @@ impl AegisConfig {
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
+            allowlist_layers: Vec::new(),
             allowlist_override_level: AllowlistOverrideLevel::Warn,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
@@ -239,14 +243,14 @@ impl AegisConfig {
 
         if let Some(path) = global_path.as_deref().filter(|p| p.is_file()) {
             let global = PartialConfig::from_path(path)?;
-            merged = Self::merge_layer(merged, global);
+            merged = Self::merge_layer(merged, global, AllowlistSourceLayer::Global);
             merged.validate_for_path(path)?;
             merged.validate_runtime_requirements_for_path(path)?;
         }
 
         if project_path.is_file() {
             let project = PartialConfig::from_path(&project_path)?;
-            merged = Self::merge_layer(merged, project);
+            merged = Self::merge_layer(merged, project, AllowlistSourceLayer::Project);
             merged.validate_for_path(&project_path)?;
             merged.validate_runtime_requirements_for_path(&project_path)?;
         }
@@ -254,17 +258,26 @@ impl AegisConfig {
         Ok(merged)
     }
 
-    fn merge_layer(base: Self, overlay: PartialConfig) -> Self {
+    fn merge_layer(
+        base: Self,
+        overlay: PartialConfig,
+        allowlist_layer: AllowlistSourceLayer,
+    ) -> Self {
         let mut custom_patterns = base.custom_patterns;
         custom_patterns.extend(overlay.custom_patterns);
 
         let mut allowlist = base.allowlist;
+        let allowlist_count = overlay.allowlist.len();
         allowlist.extend(overlay.allowlist);
+
+        let mut allowlist_layers = base.allowlist_layers;
+        allowlist_layers.extend(std::iter::repeat_n(allowlist_layer, allowlist_count));
 
         Self {
             mode: overlay.mode.unwrap_or(base.mode),
             custom_patterns,
             allowlist,
+            allowlist_layers,
             allowlist_override_level: overlay
                 .allowlist_override_level
                 .unwrap_or(base.allowlist_override_level),
@@ -309,17 +322,6 @@ impl AegisConfig {
             ));
         }
 
-        if let Some(rule) = self
-            .allowlist
-            .iter()
-            .find(|rule| rule.cwd.is_some() || rule.user.is_some())
-        {
-            return Err(AegisError::Config(format!(
-                "allowlist rule '{}' uses unsupported scoped matching fields (cwd/user); task 2 will add this support",
-                rule.pattern
-            )));
-        }
-
         let now = OffsetDateTime::now_utc();
         if let Some(rule) = self
             .allowlist
@@ -353,6 +355,23 @@ impl AegisConfig {
                 }
                 other => other,
             })
+    }
+
+    pub(crate) fn layered_allowlist_rules(&self) -> Vec<LayeredAllowlistRule> {
+        self.allowlist
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, rule)| {
+                let source_layer = self
+                    .allowlist_layers
+                    .get(index)
+                    .copied()
+                    .unwrap_or(AllowlistSourceLayer::Project);
+
+                LayeredAllowlistRule { rule, source_layer }
+            })
+            .collect()
     }
 }
 
@@ -449,7 +468,7 @@ reason = "ephemeral test teardown"
     }
 
     #[test]
-    fn scoped_allowlist_rule_with_cwd_is_invalid_for_runtime() {
+    fn scoped_allowlist_rule_with_cwd_is_valid_for_runtime() {
         let config = AegisConfig {
             allowlist: vec![AllowlistRule {
                 pattern: "terraform destroy -target=module.test.*".to_string(),
@@ -461,16 +480,11 @@ reason = "ephemeral test teardown"
             ..AegisConfig::defaults()
         };
 
-        let err = config.validate().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unsupported scoped matching fields")
-        );
-        assert!(err.to_string().contains("cwd/user"));
+        assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn scoped_allowlist_rule_with_user_is_invalid_for_runtime() {
+    fn scoped_allowlist_rule_with_user_is_valid_for_runtime() {
         let config = AegisConfig {
             allowlist: vec![AllowlistRule {
                 pattern: "terraform destroy -target=module.test.*".to_string(),
@@ -482,12 +496,7 @@ reason = "ephemeral test teardown"
             ..AegisConfig::defaults()
         };
 
-        let err = config.validate().unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("unsupported scoped matching fields")
-        );
-        assert!(err.to_string().contains("cwd/user"));
+        assert!(config.validate().is_ok());
     }
 
     #[test]
