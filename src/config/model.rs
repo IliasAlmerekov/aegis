@@ -46,6 +46,12 @@ compress_rotated = true
 
 type Result<T> = std::result::Result<T, AegisError>;
 
+#[derive(Debug, Clone)]
+pub(crate) struct ConfigLayerPath {
+    pub source_layer: AllowlistSourceLayer,
+    pub path: PathBuf,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum Mode {
@@ -196,6 +202,11 @@ impl AegisConfig {
         Self::load_for(&current_dir, home_dir.as_deref())
     }
 
+    /// Load and merge config layers without runtime validation checkpoints.
+    ///
+    /// This exists for `aegis config validate`, which must inspect merged config
+    /// state and report structured issues. Runtime command execution must keep
+    /// using `load()` / `load_for()` for fail-closed behavior.
     pub fn load_unvalidated() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
@@ -265,6 +276,39 @@ impl AegisConfig {
         home_dir: Option<&Path>,
     ) -> Result<Self> {
         Self::load_for_internal(current_dir, home_dir, false)
+    }
+
+    pub(crate) fn layer_paths_for(
+        current_dir: &Path,
+        home_dir: Option<&Path>,
+    ) -> Vec<ConfigLayerPath> {
+        let global_path = home_dir.map(|h| h.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
+        let project_path = current_dir.join(PROJECT_CONFIG_FILE);
+        let mut layers = Vec::new();
+
+        if let Some(path) = global_path.filter(|path| path.is_file()) {
+            layers.push(ConfigLayerPath {
+                source_layer: AllowlistSourceLayer::Global,
+                path,
+            });
+        }
+
+        if project_path.is_file() {
+            layers.push(ConfigLayerPath {
+                source_layer: AllowlistSourceLayer::Project,
+                path: project_path,
+            });
+        }
+
+        layers
+    }
+
+    pub(crate) fn merge_layer_path_unvalidated(
+        base: Self,
+        layer: &ConfigLayerPath,
+    ) -> Result<Self> {
+        let overlay = PartialConfig::from_path(&layer.path)?;
+        Ok(Self::merge_layer(base, overlay, layer.source_layer))
     }
 
     fn load_for_internal(

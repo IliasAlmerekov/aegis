@@ -10,7 +10,8 @@ pub use model::{
     AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, CiPolicy, Mode, UserPattern,
 };
 pub use validate::{
-    ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validation_load_error,
+    ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validate_config_layers,
+    validation_load_error,
 };
 
 pub type Config = AegisConfig;

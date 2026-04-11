@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::Serialize;
 use time::OffsetDateTime;
 
@@ -5,7 +7,6 @@ use crate::config::Config;
 use crate::config::allowlist::{Allowlist, AllowlistSourceLayer, analyze_allowlist_rule};
 use crate::error::AegisError;
 use crate::interceptor;
-use std::path::Path;
 
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
@@ -58,38 +59,21 @@ impl ConfigSourceMap {
         let global_path =
             home_dir.map(|home| home.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
 
-        let allowlist_locations = config
-            .allowlist
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let layer = config
-                    .allowlist_layers
-                    .get(index)
-                    .copied()
-                    .unwrap_or(AllowlistSourceLayer::Project);
-                let layer_name =
-                    layer_location(layer, project_path.as_deref(), global_path.as_deref());
+        let allowlist_locations = vector_locations(
+            config.allowlist.len(),
+            &config.allowlist_layers,
+            "allowlist",
+            project_path.as_deref(),
+            global_path.as_deref(),
+        );
 
-                format!("{layer_name}:allowlist[{index}]")
-            })
-            .collect();
-
-        let custom_pattern_locations = config
-            .custom_patterns
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                let layer = config
-                    .custom_pattern_layers
-                    .get(index)
-                    .copied()
-                    .unwrap_or(AllowlistSourceLayer::Project);
-                let layer_name =
-                    layer_location(layer, project_path.as_deref(), global_path.as_deref());
-                format!("{layer_name}:custom_patterns[{index}]")
-            })
-            .collect();
+        let custom_pattern_locations = vector_locations(
+            config.custom_patterns.len(),
+            &config.custom_pattern_layers,
+            "custom_patterns",
+            project_path.as_deref(),
+            global_path.as_deref(),
+        );
 
         let audit_max_file_size_bytes_location = scalar_field_location(
             config.audit_max_file_size_bytes_source,
@@ -119,6 +103,13 @@ impl ConfigSourceMap {
             .unwrap_or_else(|| format!("allowlist[{index}]"))
     }
 
+    fn custom_pattern_location(&self, index: usize) -> String {
+        self.custom_pattern_locations
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| format!("custom_patterns[{index}]"))
+    }
+
     fn audit_max_file_size_bytes_location(&self) -> String {
         self.audit_max_file_size_bytes_location.clone()
     }
@@ -126,22 +117,51 @@ impl ConfigSourceMap {
     fn audit_retention_files_location(&self) -> String {
         self.audit_retention_files_location.clone()
     }
+}
 
-    fn custom_patterns_location(&self) -> String {
-        if self.custom_pattern_locations.is_empty() {
-            return "custom_patterns".to_string();
-        }
+/// Validate file-backed config using the same layer-by-layer checkpoints as runtime loading.
+pub fn validate_config_layers(current_dir: &Path, home_dir: Option<&Path>) -> ValidationReport {
+    let mut report = ValidationReport {
+        valid: true,
+        errors: Vec::new(),
+        warnings: Vec::new(),
+    };
 
-        self.custom_pattern_locations.join(", ")
+    let layer_paths = Config::layer_paths_for(current_dir, home_dir);
+    let mut merged = Config::defaults();
+
+    if layer_paths.is_empty() {
+        let source_map =
+            ConfigSourceMap::for_config_with_paths(&merged, Some(current_dir), home_dir);
+        merge_report(&mut report, validate_config(&merged, &source_map));
+        return report;
     }
 
-    fn all_allowlist_locations(&self) -> String {
-        if self.allowlist_locations.is_empty() {
-            return "allowlist".to_string();
+    for layer in layer_paths {
+        match Config::merge_layer_path_unvalidated(merged, &layer) {
+            Ok(next) => {
+                merged = next;
+                let source_map =
+                    ConfigSourceMap::for_config_with_paths(&merged, Some(current_dir), home_dir);
+                merge_report(&mut report, validate_config(&merged, &source_map));
+            }
+            Err(err) => {
+                push_unique_issue(
+                    &mut report.errors,
+                    ValidationIssue {
+                        code: config_load_error_code(&err),
+                        message: err.to_string(),
+                        location: layer.path.to_string_lossy().into_owned(),
+                    },
+                );
+                report.valid = false;
+                return report;
+            }
         }
-
-        self.allowlist_locations.join(", ")
     }
+
+    report.valid = report.errors.is_empty();
+    report
 }
 
 /// Validate an effective config.
@@ -192,20 +212,12 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
         }
     }
 
-    if let Err(err) = interceptor::scanner_for(&config.custom_patterns) {
-        errors.push(ValidationIssue {
-            code: "invalid_custom_pattern",
-            message: err.to_string(),
-            location: source_map.custom_patterns_location(),
-        });
+    if let Some(issue) = first_invalid_custom_pattern_issue(config, source_map) {
+        errors.push(issue);
     }
 
-    if let Err(err) = Allowlist::new(&config.layered_allowlist_rules()) {
-        errors.push(ValidationIssue {
-            code: "invalid_allowlist_rule",
-            message: err.to_string(),
-            location: source_map.all_allowlist_locations(),
-        });
+    if let Some(issue) = first_invalid_allowlist_issue(config, source_map) {
+        errors.push(issue);
     }
 
     ValidationReport {
@@ -215,78 +227,121 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
     }
 }
 
-/// Convert a load failure into a structured report.
+/// Convert a non-file validation failure into a structured report.
 pub fn validation_load_error(err: &AegisError) -> ValidationReport {
-    let code = config_error_code(err);
-    let location = config_error_location(err).unwrap_or_else(|| "config".to_string());
     ValidationReport {
         valid: false,
         errors: vec![ValidationIssue {
-            code,
+            code: config_load_error_code(err),
             message: err.to_string(),
-            location,
+            location: "config".to_string(),
         }],
         warnings: Vec::new(),
     }
 }
 
-fn config_error_location(err: &AegisError) -> Option<String> {
-    let AegisError::Config(message) = err else {
-        return None;
-    };
-
-    let invalid_prefix = "invalid config ";
-    if let Some(value) = message.strip_prefix(invalid_prefix) {
-        return value
-            .split_once(':')
-            .map(|(path, _)| path.trim().to_string())
-            .filter(|path| !path.is_empty());
-    }
-
-    let parse_prefix = "failed to parse ";
-    if let Some(value) = message.strip_prefix(parse_prefix) {
-        return value
-            .split_once(':')
-            .map(|(path, _)| path.trim().to_string())
-            .filter(|path| !path.is_empty());
+fn first_invalid_custom_pattern_issue(
+    config: &Config,
+    source_map: &ConfigSourceMap,
+) -> Option<ValidationIssue> {
+    for index in 0..config.custom_patterns.len() {
+        if let Err(err) = interceptor::scanner_for(&config.custom_patterns[..=index]) {
+            return Some(ValidationIssue {
+                code: "invalid_custom_pattern",
+                message: err.to_string(),
+                location: source_map.custom_pattern_location(index),
+            });
+        }
     }
 
     None
 }
 
-fn config_error_code(err: &AegisError) -> &'static str {
-    let AegisError::Config(message) = err else {
-        return "config_load_error";
-    };
-
-    if message.contains("is expired") {
-        return "expired_rule";
+fn first_invalid_allowlist_issue(
+    config: &Config,
+    source_map: &ConfigSourceMap,
+) -> Option<ValidationIssue> {
+    let layered_rules = config.layered_allowlist_rules();
+    for index in 0..layered_rules.len() {
+        if let Err(err) = Allowlist::new(&layered_rules[..=index]) {
+            return Some(ValidationIssue {
+                code: "invalid_allowlist_rule",
+                message: err.to_string(),
+                location: source_map.allowlist_location(index),
+            });
+        }
     }
 
-    if message.contains("audit.max_file_size_bytes") {
-        return "audit_max_file_size";
-    }
-
-    if message.contains("audit.retention_files") {
-        return "audit_retention_files";
-    }
-
-    if message.contains("duplicate pattern id") {
-        return "invalid_custom_pattern";
-    }
-
-    if message.contains("invalid allowlist rule")
-        || message.contains("allowlist rule pattern")
-        || message.contains("allowlist rule pattern must not be empty")
-    {
-        return "invalid_allowlist_rule";
-    }
-
-    "config_load_error"
+    None
 }
 
-fn path_string(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+fn merge_report(target: &mut ValidationReport, incoming: ValidationReport) {
+    for issue in incoming.errors {
+        push_unique_issue(&mut target.errors, issue);
+    }
+    for issue in incoming.warnings {
+        push_unique_issue(&mut target.warnings, issue);
+    }
+    target.valid = target.errors.is_empty();
+}
+
+fn push_unique_issue(issues: &mut Vec<ValidationIssue>, issue: ValidationIssue) {
+    if issues.iter().any(|existing| {
+        existing.code == issue.code
+            && existing.location == issue.location
+            && existing.message == issue.message
+    }) {
+        return;
+    }
+
+    issues.push(issue);
+}
+
+fn config_load_error_code(err: &AegisError) -> &'static str {
+    match err {
+        AegisError::Config(message) if message.starts_with("failed to parse ") => {
+            "config_parse_error"
+        }
+        AegisError::Config(_) => "config_load_error",
+        _ => "config_load_error",
+    }
+}
+
+fn vector_locations(
+    item_count: usize,
+    layers: &[AllowlistSourceLayer],
+    field: &str,
+    project_path: Option<&Path>,
+    global_path: Option<&Path>,
+) -> Vec<String> {
+    let mut global_index = 0usize;
+    let mut project_index = 0usize;
+
+    (0..item_count)
+        .map(|index| {
+            let layer = layers
+                .get(index)
+                .copied()
+                .unwrap_or(AllowlistSourceLayer::Project);
+            let local_index = match layer {
+                AllowlistSourceLayer::Global => {
+                    let current = global_index;
+                    global_index += 1;
+                    current
+                }
+                AllowlistSourceLayer::Project => {
+                    let current = project_index;
+                    project_index += 1;
+                    current
+                }
+            };
+
+            format!(
+                "{}:{field}[{local_index}]",
+                layer_location(layer, project_path, global_path)
+            )
+        })
+        .collect()
 }
 
 fn layer_location(
@@ -319,9 +374,13 @@ fn scalar_field_location(
     }
 }
 
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ConfigSourceMap, validate_config};
+    use super::{ConfigSourceMap, validate_config, validate_config_layers};
     use crate::config::{AllowlistRule, Config};
     use crate::error::AegisError;
     use tempfile::TempDir;
@@ -404,13 +463,7 @@ reason = "wide"
         )
         .unwrap();
 
-        let config = Config::load_for_unvalidated(workspace.path(), Some(home.path())).unwrap();
-        let source_map = ConfigSourceMap::for_config_with_paths(
-            &config,
-            Some(workspace.path()),
-            Some(home.path()),
-        );
-        let report = validate_config(&config, &source_map);
+        let report = validate_config_layers(workspace.path(), Some(home.path()));
 
         let config_path = config_path.to_string_lossy();
         assert!(
@@ -428,9 +481,10 @@ reason = "wide"
     }
 
     #[test]
-    fn validation_load_error_extracts_config_path() {
-        let err = AegisError::Config("invalid config /tmp/work/.aegis.toml: bad value".to_string());
+    fn validation_load_error_returns_structured_generic_code() {
+        let err = AegisError::Config("invalid config".to_string());
         let report = super::validation_load_error(&err);
-        assert_eq!(report.errors[0].location, "/tmp/work/.aegis.toml");
+        assert_eq!(report.errors[0].location, "config");
+        assert_eq!(report.errors[0].code, "config_load_error");
     }
 }

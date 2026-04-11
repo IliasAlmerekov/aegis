@@ -1216,11 +1216,139 @@ retention_files = 0
 }
 
 #[test]
-fn config_validate_invalid_custom_pattern_includes_real_config_path() {
+fn config_validate_reports_global_stage_error_even_if_project_overrides_value() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
+    let global_dir = home.path().join(".config/aegis");
+    let global_path = global_dir.join("config.toml");
     let project_path = workspace.path().join(".aegis.toml");
 
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        &global_path,
+        r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &project_path,
+        r#"
+[audit]
+max_file_size_bytes = 1024
+"#,
+    )
+    .unwrap();
+
+    let validate_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(validate_output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&validate_output.stdout).unwrap();
+    let error = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["code"] == "audit_max_file_size")
+        .unwrap();
+
+    assert!(
+        error["location"]
+            .as_str()
+            .is_some_and(|location| location.contains(global_path.to_string_lossy().as_ref())),
+        "audit_max_file_size should reference global config path: {error:?}"
+    );
+
+    let runtime_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "printf ok"])
+        .output()
+        .unwrap();
+    assert_eq!(runtime_output.status.code(), Some(4));
+    assert!(
+        runtime_output.stdout.is_empty(),
+        "runtime must fail closed and not execute shell command"
+    );
+}
+
+#[test]
+fn config_validate_project_rule_uses_file_local_index_in_location() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let global_dir = home.path().join(".config/aegis");
+    let global_path = global_dir.join("config.toml");
+    let project_path = workspace.path().join(".aegis.toml");
+
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        &global_path,
+        r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.global.api"
+cwd = "/srv/global"
+user = "ci"
+reason = "scoped global"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &project_path,
+        r#"
+[[allowlist]]
+pattern = "terraform destroy *"
+reason = "broad project"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let warning = json["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["code"] == "missing_scope")
+        .unwrap();
+    let location = warning["location"].as_str().unwrap();
+    assert!(
+        location.contains(project_path.to_string_lossy().as_ref())
+            && location.contains("allowlist[0]"),
+        "project rule location should use project-local index 0: {warning:?}"
+    );
+}
+
+#[test]
+fn config_validate_invalid_custom_pattern_reports_offending_entry_only() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let global_dir = home.path().join(".config/aegis");
+    let global_path = global_dir.join("config.toml");
+    let project_path = workspace.path().join(".aegis.toml");
+
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        &global_path,
+        r#"
+[[custom_patterns]]
+id = "USR-GLOBAL-001"
+category = "Filesystem"
+risk = "Warn"
+pattern = "echo global"
+description = "global custom pattern"
+"#,
+    )
+    .unwrap();
     fs::write(
         &project_path,
         r#"
@@ -1228,8 +1356,15 @@ fn config_validate_invalid_custom_pattern_includes_real_config_path() {
 id = "FS-001"
 category = "Filesystem"
 risk = "Warn"
-pattern = "echo hello"
-description = "duplicate id"
+pattern = "echo bad"
+description = "duplicate built-in id"
+
+[[custom_patterns]]
+id = "USR-PROJ-002"
+category = "Filesystem"
+risk = "Warn"
+pattern = "echo later"
+description = "would be valid"
 "#,
     )
     .unwrap();
@@ -1249,26 +1384,46 @@ description = "duplicate id"
         .find(|e| e["code"] == "invalid_custom_pattern")
         .unwrap();
 
+    let location = error["location"].as_str().unwrap();
     assert!(
-        error["location"]
-            .as_str()
-            .is_some_and(|location| location.contains(project_path.to_string_lossy().as_ref())),
-        "custom pattern error should include project path: {error:?}"
+        location.contains(project_path.to_string_lossy().as_ref())
+            && location.contains("custom_patterns[0]"),
+        "custom pattern error should point to first offending project entry: {error:?}"
+    );
+    assert!(
+        !location.contains(global_path.to_string_lossy().as_ref()),
+        "custom pattern error should not be attributed to unrelated global entries: {error:?}"
     );
 }
 
 #[test]
-fn config_validate_invalid_allowlist_includes_real_config_path() {
+fn config_validate_invalid_allowlist_reports_offending_entry_only() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
+    let global_dir = home.path().join(".config/aegis");
+    let global_path = global_dir.join("config.toml");
     let project_path = workspace.path().join(".aegis.toml");
 
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        &global_path,
+        r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.global.api"
+reason = "global valid"
+"#,
+    )
+    .unwrap();
     fs::write(
         &project_path,
         r#"
 [[allowlist]]
 pattern = ""
-reason = "invalid rule"
+reason = "invalid project rule"
+
+[[allowlist]]
+pattern = "terraform destroy -target=module.project.api"
+reason = "never reached"
 "#,
     )
     .unwrap();
@@ -1288,12 +1443,44 @@ reason = "invalid rule"
         .find(|e| e["code"] == "invalid_allowlist_rule")
         .unwrap();
 
+    let location = error["location"].as_str().unwrap();
     assert!(
-        error["location"]
-            .as_str()
-            .is_some_and(|location| location.contains(project_path.to_string_lossy().as_ref())),
-        "allowlist error should include project path: {error:?}"
+        location.contains(project_path.to_string_lossy().as_ref())
+            && location.contains("allowlist[0]"),
+        "allowlist error should point to first offending project entry: {error:?}"
     );
+    assert!(
+        !location.contains(global_path.to_string_lossy().as_ref()),
+        "allowlist error should not be attributed to unrelated global entries: {error:?}"
+    );
+}
+
+#[test]
+fn config_validate_warnings_only_exits_zero_and_prints_text_report() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[[allowlist]]
+pattern = "terraform destroy *"
+reason = "broad warning only"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("warnings:"));
+    assert!(stdout.contains("[missing_scope]"));
+    assert!(!stdout.contains("errors:"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
