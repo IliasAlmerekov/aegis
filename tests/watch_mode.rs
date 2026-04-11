@@ -1,7 +1,7 @@
 //! Integration tests for `aegis watch` — end-to-end via child process.
 
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -26,7 +26,11 @@ fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output
         .spawn()
         .expect("failed to spawn aegis watch");
 
-    child.stdin.as_mut().unwrap().write_all(input).unwrap();
+    if let Err(err) = child.stdin.as_mut().unwrap().write_all(input) {
+        if err.kind() != ErrorKind::BrokenPipe {
+            panic!("failed to write to aegis watch stdin: {err}");
+        }
+    }
     drop(child.stdin.take()); // close stdin to send EOF
 
     child
