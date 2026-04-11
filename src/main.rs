@@ -4,7 +4,7 @@ use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
 use aegis::config::{
-    AllowlistMatch, AllowlistSourceLayer, Config, ValidationReport, validate_config_layers,
+    AllowlistMatch, Config, ValidationReport, validate_config_layers,
 };
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::error::AegisError;
@@ -603,7 +603,9 @@ fn same_file(path: &Path, other: Option<&Path>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, CiPolicy, Mode};
+    use aegis::config::{
+        AllowlistMatch, AllowlistOverrideLevel, AllowlistSourceLayer, CiPolicy, Mode,
+    };
     use aegis::error::AegisError;
 
     // ── Scanner init failure ──────────────────────────────────────────────────
