@@ -462,6 +462,75 @@ Example entry:
 
 ---
 
+## Policy evaluation JSON
+
+For automation and agent integrations, Aegis can evaluate policy without executing the command:
+
+```bash
+aegis -c 'rm -rf /tmp' --output json
+```
+
+`--output json` changes shell-wrapper mode into **evaluation-only** mode:
+
+- the command is **not executed**
+- no snapshots are created
+- no audit entry is appended
+- exactly one stable JSON object is written to `stdout`
+- the process exits with the Aegis decision code:
+  - `0` → `auto_approve`
+  - `2` → `prompt`
+  - `3` → `block`
+
+Schema version `1`:
+
+```json
+{
+  "schema_version": 1,
+  "command": "rm -rf /tmp",
+  "risk": "danger",
+  "decision": "prompt",
+  "exit_code": 2,
+  "mode": "protect",
+  "ci_state": {
+    "detected": false,
+    "policy": "block"
+  },
+  "matched_patterns": [
+    {
+      "id": "FS-001",
+      "category": "filesystem",
+      "risk": "danger",
+      "matched_text": "rm -rf /tmp",
+      "description": "Recursive delete",
+      "safe_alternative": "rm -i <path>",
+      "source": "builtin"
+    }
+  ],
+  "allowlist_match": {
+    "matched": false,
+    "effective": false
+  },
+  "snapshots_created": [],
+  "snapshot_plan": {
+    "requested": true,
+    "applicable_plugins": []
+  },
+  "execution": {
+    "mode": "evaluation_only",
+    "will_execute": false
+  },
+  "decision_source": "builtin_pattern"
+}
+```
+
+Notes:
+
+- `matched_patterns`, `snapshots_created`, and `snapshot_plan.applicable_plugins` are always arrays.
+- `allowlist_match.pattern` and `allowlist_match.reason` appear only when a rule matched.
+- `block_reason` appears only when `decision = "block"`.
+
+---
+
 ## Exit codes
 
 Aegis uses reserved exit codes so that callers — AI agents, CI pipelines, shell scripts — can distinguish *why* a command did not run from a normal command failure.
@@ -470,7 +539,7 @@ Aegis uses reserved exit codes so that callers — AI agents, CI pipelines, shel
 |------|---------|
 | `0`  | Success — the command was approved and exited 0. |
 | `1`–`N` | Pass-through — the underlying command ran and returned this code. |
-| `2`  | **Denied** — the user pressed 'n' at the confirmation dialog. |
+| `2`  | **Denied / Prompt required** — interactive mode: the user pressed 'n' at the confirmation dialog; `--output json`: policy requires explicit approval. |
 | `3`  | **Blocked** — the command matched a `Block`-level pattern; no dialog is shown. |
 | `4`  | **Internal error** — Aegis itself could not complete (e.g. failed to spawn the shell). The underlying command was never executed. |
 

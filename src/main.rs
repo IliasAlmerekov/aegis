@@ -17,6 +17,7 @@ use tokio::runtime::Handle;
 #[cfg(test)]
 use aegis::interceptor::parser::Parser as CommandParser;
 
+mod policy_output;
 mod rollback;
 
 #[derive(Parser)]
@@ -29,6 +30,10 @@ struct Cli {
     /// Command to intercept (shell wrapper mode)
     #[arg(short = 'c', long = "command")]
     command: Option<String>,
+
+    /// Shell-wrapper output format: text (default) or evaluation-only json.
+    #[arg(long, value_enum, default_value_t = CommandOutputFormat::Text)]
+    output: CommandOutputFormat,
 
     /// Enable verbose/debug output
     #[arg(short = 'v', long = "verbose")]
@@ -48,6 +53,12 @@ enum Commands {
     Rollback(RollbackArgs),
     /// Manage aegis configuration
     Config(ConfigArgs),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CommandOutputFormat {
+    Text,
+    Json,
 }
 
 #[derive(Args)]
@@ -135,6 +146,7 @@ const EXIT_INTERNAL: i32 = 4;
 fn main() {
     let Cli {
         command,
+        output,
         verbose,
         subcommand,
     } = Cli::parse();
@@ -180,7 +192,7 @@ fn main() {
         Some(Commands::Config(args)) => handle_config_command(args),
         None => {
             if let Some(cmd) = command {
-                run_shell_wrapper(&cmd, verbose, handle)
+                run_shell_wrapper(&cmd, output, verbose, handle)
             } else {
                 0
             }
@@ -215,7 +227,7 @@ fn format_audit_entries(
     }
 }
 
-fn run_shell_wrapper(cmd: &str, verbose: bool, handle: Handle) -> i32 {
+fn run_shell_wrapper(cmd: &str, output: CommandOutputFormat, verbose: bool, handle: Handle) -> i32 {
     let context = match RuntimeContext::load(verbose, handle) {
         Ok(context) => context,
         Err(err) => return report_config_load_error(&err),
@@ -227,7 +239,7 @@ fn run_shell_wrapper(cmd: &str, verbose: bool, handle: Handle) -> i32 {
     let allowlist_match = context.allowlist_match_for_command(cmd, resolved_cwd.as_deref());
     let in_ci = is_ci_environment();
 
-    if verbose {
+    if verbose && matches!(output, CommandOutputFormat::Text) {
         if in_ci {
             eprintln!(
                 "ci: detected CI environment, ci_policy={:?}",
@@ -235,6 +247,18 @@ fn run_shell_wrapper(cmd: &str, verbose: bool, handle: Handle) -> i32 {
             );
         }
         log_assessment(&assessment, allowlist_match.as_ref());
+    }
+
+    if matches!(output, CommandOutputFormat::Json) {
+        let plan = evaluate_decision_plan(&context, &assessment, allowlist_match.as_ref(), in_ci);
+        return emit_policy_evaluation_json(
+            &context,
+            &assessment,
+            &cwd,
+            plan,
+            allowlist_match.as_ref(),
+            in_ci,
+        );
     }
 
     let (decision, snapshots, allowlist_effective) = decide_command(
@@ -472,18 +496,17 @@ fn decide_command(
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
 ) -> (Decision, Vec<SnapshotRecord>, bool) {
-    let mode = context.config().mode;
-    let ci_policy = context.config().ci_policy;
+    let plan = evaluate_decision_plan(context, assessment, allowlist_match, in_ci);
+    execute_decision_plan(context, assessment, cwd, plan, verbose)
+}
 
-    let plan = evaluate_policy(DecisionInput {
-        mode,
-        risk: assessment.risk,
-        in_ci,
-        ci_policy,
-        allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: context.config().strict_allowlist_override,
-    });
-
+fn execute_decision_plan(
+    context: &RuntimeContext,
+    assessment: &Assessment,
+    cwd: &Path,
+    plan: aegis::decision::DecisionPlan,
+    verbose: bool,
+) -> (Decision, Vec<SnapshotRecord>, bool) {
     let snapshots = if plan.should_snapshot {
         context.create_snapshots(cwd, &assessment.command.raw, verbose)
     } else {
@@ -530,6 +553,56 @@ fn decide_command(
             }
 
             (Decision::Blocked, snapshots, plan.allowlist_effective)
+        }
+    }
+}
+
+fn evaluate_decision_plan(
+    context: &RuntimeContext,
+    assessment: &Assessment,
+    allowlist_match: Option<&AllowlistMatch>,
+    in_ci: bool,
+) -> aegis::decision::DecisionPlan {
+    evaluate_policy(DecisionInput {
+        mode: context.config().mode,
+        risk: assessment.risk,
+        in_ci,
+        ci_policy: context.config().ci_policy,
+        allowlist_match: allowlist_match.is_some(),
+        strict_allowlist_override: context.config().strict_allowlist_override,
+    })
+}
+
+fn emit_policy_evaluation_json(
+    context: &RuntimeContext,
+    assessment: &Assessment,
+    cwd: &Path,
+    plan: aegis::decision::DecisionPlan,
+    allowlist_match: Option<&AllowlistMatch>,
+    in_ci: bool,
+) -> i32 {
+    let applicable_snapshot_plugins = if plan.should_snapshot {
+        context.applicable_snapshot_plugins(cwd)
+    } else {
+        Vec::new()
+    };
+
+    match policy_output::render(
+        assessment,
+        plan,
+        allowlist_match,
+        context.config().mode,
+        in_ci,
+        context.config().ci_policy,
+        applicable_snapshot_plugins,
+    ) {
+        Ok(json) => {
+            println!("{json}");
+            policy_output::exit_code_for(plan.action)
+        }
+        Err(err) => {
+            eprintln!("error: failed to serialize policy evaluation output: {err}");
+            EXIT_INTERNAL
         }
     }
 }

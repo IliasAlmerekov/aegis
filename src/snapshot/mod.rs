@@ -113,6 +113,16 @@ impl SnapshotRegistry {
         records
     }
 
+    /// Return the names of snapshot plugins applicable to `cwd` without
+    /// creating any snapshots.
+    pub fn applicable_plugins(&self, cwd: &Path) -> Vec<&'static str> {
+        self.plugins
+            .iter()
+            .filter(|plugin| plugin.is_applicable(cwd))
+            .map(|plugin| plugin.name())
+            .collect()
+    }
+
     /// Roll back one snapshot using the named plugin.
     pub async fn rollback(&self, plugin_name: &str, snapshot_id: &str) -> Result<()> {
         let plugin = self
@@ -238,6 +248,27 @@ mod tests {
         // Only the successful plugin produces a record.
         assert_eq!(records.len(), 1);
         assert_eq!(success_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn applicable_plugins_reports_only_applicable_plugin_names() {
+        let registry = SnapshotRegistry {
+            plugins: vec![
+                Box::new(MockPlugin {
+                    name: "git",
+                    applicable: true,
+                    call_count: Arc::new(AtomicUsize::new(0)),
+                }),
+                Box::new(MockPlugin {
+                    name: "docker",
+                    applicable: false,
+                    call_count: Arc::new(AtomicUsize::new(0)),
+                }),
+            ],
+        };
+
+        let names = registry.applicable_plugins(std::path::Path::new("/tmp"));
+        assert_eq!(names, vec!["git"]);
     }
 
     #[tokio::test]

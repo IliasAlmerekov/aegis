@@ -111,6 +111,12 @@ impl RuntimeContext {
             .block_on(self.snapshot_registry.snapshot_all(cwd, cmd))
     }
 
+    /// Return the names of snapshot plugins that would be eligible for `cwd`
+    /// without creating any snapshots.
+    pub fn applicable_snapshot_plugins(&self, cwd: &Path) -> Vec<&'static str> {
+        self.snapshot_registry.applicable_plugins(cwd)
+    }
+
     /// Return a reference to the persistent async handle.
     pub fn async_handle(&self) -> &Handle {
         &self.async_handle
