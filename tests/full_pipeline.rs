@@ -1155,6 +1155,147 @@ reason = "broad rule"
     );
 }
 
+#[test]
+fn config_validate_layered_scalar_errors_point_to_actual_source_files() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let global_dir = home.path().join(".config/aegis");
+    let global_path = global_dir.join("config.toml");
+    let project_path = workspace.path().join(".aegis.toml");
+
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        &global_path,
+        r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &project_path,
+        r#"
+[audit]
+retention_files = 0
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let errors = json["errors"].as_array().unwrap();
+
+    let max_error = errors
+        .iter()
+        .find(|e| e["code"] == "audit_max_file_size")
+        .unwrap();
+    let retention_error = errors
+        .iter()
+        .find(|e| e["code"] == "audit_retention_files")
+        .unwrap();
+
+    assert!(
+        max_error["location"]
+            .as_str()
+            .is_some_and(|location| location.contains(global_path.to_string_lossy().as_ref())),
+        "max_file_size location should reference global config path: {max_error:?}"
+    );
+    assert!(
+        retention_error["location"]
+            .as_str()
+            .is_some_and(|location| location.contains(project_path.to_string_lossy().as_ref())),
+        "retention_files location should reference project config path: {retention_error:?}"
+    );
+}
+
+#[test]
+fn config_validate_invalid_custom_pattern_includes_real_config_path() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let project_path = workspace.path().join(".aegis.toml");
+
+    fs::write(
+        &project_path,
+        r#"
+[[custom_patterns]]
+id = "FS-001"
+category = "Filesystem"
+risk = "Warn"
+pattern = "echo hello"
+description = "duplicate id"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let error = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["code"] == "invalid_custom_pattern")
+        .unwrap();
+
+    assert!(
+        error["location"]
+            .as_str()
+            .is_some_and(|location| location.contains(project_path.to_string_lossy().as_ref())),
+        "custom pattern error should include project path: {error:?}"
+    );
+}
+
+#[test]
+fn config_validate_invalid_allowlist_includes_real_config_path() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let project_path = workspace.path().join(".aegis.toml");
+
+    fs::write(
+        &project_path,
+        r#"
+[[allowlist]]
+pattern = ""
+reason = "invalid rule"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let error = json["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["code"] == "invalid_allowlist_rule")
+        .unwrap();
+
+    assert!(
+        error["location"]
+            .as_str()
+            .is_some_and(|location| location.contains(project_path.to_string_lossy().as_ref())),
+        "allowlist error should include project path: {error:?}"
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Mode runtime semantics (Ticket 1.4)
 // ─────────────────────────────────────────────────────────────────────────────

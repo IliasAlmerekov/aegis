@@ -37,7 +37,9 @@ pub struct ValidationReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigSourceMap {
     allowlist_locations: Vec<String>,
-    scalar_source_path: String,
+    custom_pattern_locations: Vec<String>,
+    audit_max_file_size_bytes_location: String,
+    audit_retention_files_location: String,
 }
 
 impl ConfigSourceMap {
@@ -56,13 +58,6 @@ impl ConfigSourceMap {
         let global_path =
             home_dir.map(|home| home.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
 
-        let scalar_source_path = project_path
-            .as_deref()
-            .filter(|path| path.is_file())
-            .or_else(|| global_path.as_deref().filter(|path| path.is_file()))
-            .map(path_string)
-            .unwrap_or_else(|| "defaults".to_string());
-
         let allowlist_locations = config
             .allowlist
             .iter()
@@ -73,24 +68,47 @@ impl ConfigSourceMap {
                     .get(index)
                     .copied()
                     .unwrap_or(AllowlistSourceLayer::Project);
-                let layer_name = match layer {
-                    AllowlistSourceLayer::Global => global_path
-                        .as_deref()
-                        .map(path_string)
-                        .unwrap_or_else(|| "global".to_string()),
-                    AllowlistSourceLayer::Project => project_path
-                        .as_deref()
-                        .map(path_string)
-                        .unwrap_or_else(|| "project".to_string()),
-                };
+                let layer_name =
+                    layer_location(layer, project_path.as_deref(), global_path.as_deref());
 
                 format!("{layer_name}:allowlist[{index}]")
             })
             .collect();
 
+        let custom_pattern_locations = config
+            .custom_patterns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let layer = config
+                    .custom_pattern_layers
+                    .get(index)
+                    .copied()
+                    .unwrap_or(AllowlistSourceLayer::Project);
+                let layer_name =
+                    layer_location(layer, project_path.as_deref(), global_path.as_deref());
+                format!("{layer_name}:custom_patterns[{index}]")
+            })
+            .collect();
+
+        let audit_max_file_size_bytes_location = scalar_field_location(
+            config.audit_max_file_size_bytes_source,
+            "audit.max_file_size_bytes",
+            project_path.as_deref(),
+            global_path.as_deref(),
+        );
+        let audit_retention_files_location = scalar_field_location(
+            config.audit_retention_files_source,
+            "audit.retention_files",
+            project_path.as_deref(),
+            global_path.as_deref(),
+        );
+
         Self {
             allowlist_locations,
-            scalar_source_path,
+            custom_pattern_locations,
+            audit_max_file_size_bytes_location,
+            audit_retention_files_location,
         }
     }
 
@@ -101,8 +119,28 @@ impl ConfigSourceMap {
             .unwrap_or_else(|| format!("allowlist[{index}]"))
     }
 
-    fn scalar_location(&self, field: &str) -> String {
-        format!("{}:{field}", self.scalar_source_path)
+    fn audit_max_file_size_bytes_location(&self) -> String {
+        self.audit_max_file_size_bytes_location.clone()
+    }
+
+    fn audit_retention_files_location(&self) -> String {
+        self.audit_retention_files_location.clone()
+    }
+
+    fn custom_patterns_location(&self) -> String {
+        if self.custom_pattern_locations.is_empty() {
+            return "custom_patterns".to_string();
+        }
+
+        self.custom_pattern_locations.join(", ")
+    }
+
+    fn all_allowlist_locations(&self) -> String {
+        if self.allowlist_locations.is_empty() {
+            return "allowlist".to_string();
+        }
+
+        self.allowlist_locations.join(", ")
     }
 }
 
@@ -117,7 +155,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
             message:
                 "audit.max_file_size_bytes must be greater than 0 when audit rotation is enabled"
                     .to_string(),
-            location: source_map.scalar_location("audit.max_file_size_bytes"),
+            location: source_map.audit_max_file_size_bytes_location(),
         });
     }
 
@@ -126,7 +164,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
             code: "audit_retention_files",
             message: "audit.retention_files must be greater than 0 when audit rotation is enabled"
                 .to_string(),
-            location: source_map.scalar_location("audit.retention_files"),
+            location: source_map.audit_retention_files_location(),
         });
     }
 
@@ -158,7 +196,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
         errors.push(ValidationIssue {
             code: "invalid_custom_pattern",
             message: err.to_string(),
-            location: "custom_patterns".to_string(),
+            location: source_map.custom_patterns_location(),
         });
     }
 
@@ -166,7 +204,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
         errors.push(ValidationIssue {
             code: "invalid_allowlist_rule",
             message: err.to_string(),
-            location: "allowlist".to_string(),
+            location: source_map.all_allowlist_locations(),
         });
     }
 
@@ -249,6 +287,36 @@ fn config_error_code(err: &AegisError) -> &'static str {
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+fn layer_location(
+    layer: AllowlistSourceLayer,
+    project_path: Option<&Path>,
+    global_path: Option<&Path>,
+) -> String {
+    match layer {
+        AllowlistSourceLayer::Global => global_path
+            .map(path_string)
+            .unwrap_or_else(|| "global".to_string()),
+        AllowlistSourceLayer::Project => project_path
+            .map(path_string)
+            .unwrap_or_else(|| "project".to_string()),
+    }
+}
+
+fn scalar_field_location(
+    source_layer: Option<AllowlistSourceLayer>,
+    field: &str,
+    project_path: Option<&Path>,
+    global_path: Option<&Path>,
+) -> String {
+    match source_layer {
+        Some(layer) => format!(
+            "{}:{field}",
+            layer_location(layer, project_path, global_path)
+        ),
+        None => format!("defaults:{field}"),
+    }
 }
 
 #[cfg(test)]

@@ -144,9 +144,15 @@ pub struct AllowlistRule {
 pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
+    #[serde(skip)]
+    pub(crate) custom_pattern_layers: Vec<AllowlistSourceLayer>,
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
     pub(crate) allowlist_layers: Vec<AllowlistSourceLayer>,
+    #[serde(skip)]
+    pub(crate) audit_max_file_size_bytes_source: Option<AllowlistSourceLayer>,
+    #[serde(skip)]
+    pub(crate) audit_retention_files_source: Option<AllowlistSourceLayer>,
     pub allowlist_override_level: AllowlistOverrideLevel,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
@@ -203,8 +209,11 @@ impl AegisConfig {
         Self {
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
+            custom_pattern_layers: Vec::new(),
             allowlist: Vec::new(),
             allowlist_layers: Vec::new(),
+            audit_max_file_size_bytes_source: None,
+            audit_retention_files_source: None,
             allowlist_override_level: AllowlistOverrideLevel::Warn,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
@@ -293,7 +302,11 @@ impl AegisConfig {
         allowlist_layer: AllowlistSourceLayer,
     ) -> Self {
         let mut custom_patterns = base.custom_patterns;
+        let custom_pattern_count = overlay.custom_patterns.len();
         custom_patterns.extend(overlay.custom_patterns);
+
+        let mut custom_pattern_layers = base.custom_pattern_layers;
+        custom_pattern_layers.extend(std::iter::repeat_n(allowlist_layer, custom_pattern_count));
 
         let mut allowlist = base.allowlist;
         let allowlist_count = overlay.allowlist.len();
@@ -305,8 +318,19 @@ impl AegisConfig {
         Self {
             mode: overlay.mode.unwrap_or(base.mode),
             custom_patterns,
+            custom_pattern_layers,
             allowlist,
             allowlist_layers,
+            audit_max_file_size_bytes_source: if overlay.audit.max_file_size_bytes.is_some() {
+                Some(allowlist_layer)
+            } else {
+                base.audit_max_file_size_bytes_source
+            },
+            audit_retention_files_source: if overlay.audit.retention_files.is_some() {
+                Some(allowlist_layer)
+            } else {
+                base.audit_retention_files_source
+            },
             allowlist_override_level: overlay
                 .allowlist_override_level
                 .unwrap_or(base.allowlist_override_level),
