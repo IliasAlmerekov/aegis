@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
-use aegis::config::{
-    AllowlistMatch, Config, ValidationReport, validate_config_layers,
-};
+use aegis::config::{AllowlistMatch, Config, ValidationReport, validate_config_layers};
 use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
