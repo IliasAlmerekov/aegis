@@ -212,7 +212,7 @@ fn build_audit_logger(config: &Config) -> AuditLogger {
 fn detect_effective_user() -> Option<String> {
     #[cfg(not(windows))]
     {
-        return detect_effective_user_from_id_command(Path::new("/usr/bin/id"));
+        detect_effective_user_from_id_command(Path::new("/usr/bin/id"))
     }
 
     #[cfg(windows)]
