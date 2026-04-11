@@ -9,10 +9,10 @@ use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::runtime::RuntimeContext;
-use tokio::runtime::Handle;
 use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use tokio::runtime::Handle;
 
 #[cfg(test)]
 use aegis::interceptor::parser::Parser as CommandParser;
