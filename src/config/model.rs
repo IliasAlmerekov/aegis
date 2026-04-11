@@ -16,7 +16,7 @@ const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
 const GLOBAL_CONFIG_FILE: &str = "config.toml";
 
 const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
-mode = "Protect" # Protect prompts on Warn/Danger, Audit is non-blocking audit-only, Strict blocks non-safe by default.
+mode = "Protect" # Protect prompts on Warn/Danger, Audit is non-blocking audit-only, Strict blocks non-safe and indirect execution forms by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
 allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Danger | Never.

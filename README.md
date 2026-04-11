@@ -171,7 +171,7 @@ aegis config show      # prints the active config (merged from all sources)
 # Operating mode.
 #   Protect  - prompt on Warn/Danger, block on Block (default)
 #   Audit    - never prompt or block; always log the outcome
-#   Strict   - auto-approve Safe only; block non-safe unless allowlist_override_level permits it
+#   Strict   - auto-approve Safe only; block non-safe and indirect execution forms unless allowlist_override_level permits it
 mode = "Protect"
 
 # Protect/Strict allowlist ceiling.
@@ -225,11 +225,27 @@ compress_rotated = true
 `Block` is never bypassed in `Protect` or `Strict`, including CI and allowlist flows.
 `Audit` is intentionally dry-run-friendly and non-blocking.
 
+### Strict policy profile
+
+`Strict` is intended to be a separate security policy profile, not just a more
+annoying confirmation mode. In addition to blocking any `Warn` / `Danger`
+assessment by default, the built-in execution profile marks the following forms
+as non-safe so `Strict` denies them unless an explicit allowlist override
+permits execution:
+
+- remote fetch-and-exec chains such as `curl|sh`, `wget|sh`, `bash <(curl ...)`
+- `eval`-based execution, including variable-driven `eval`
+- inline interpreters such as `python -c`, `python -`, `node -e`, `perl -e`,
+  `ruby -e`, `php -r`, and `lua -e`
+- nested shell command strings such as `bash -c`, `zsh -c`, and similar shell
+  `-c` wrappers
+- shell process-substitution execution such as `sh <(...)` and `source <(...)`
+
 ---
 
 ## Pattern reference
 
-Aegis ships with 54 built-in patterns across 7 categories. Every pattern has an ID, a risk level, a description, and (where applicable) a safer alternative.
+Aegis ships with 60 built-in patterns across 7 categories. Every pattern has an ID, a risk level, a description, and (where applicable) a safer alternative.
 
 ### Risk levels
 

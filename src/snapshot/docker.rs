@@ -418,6 +418,7 @@ impl SnapshotPlugin for DockerPlugin {
 mod tests {
     use super::*;
     use std::fs;
+    use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
     /// Write a shell script to `dir/docker` and make it executable.
@@ -430,6 +431,18 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
         path
+    }
+
+    #[test]
+    fn write_mock_docker_rewrite_keeps_executable_and_updates_contents() {
+        let dir = TempDir::new().unwrap();
+        let path = write_mock_docker(dir.path(), "sleep 1\n");
+
+        write_mock_docker(dir.path(), "printf 'updated\\n'\n");
+
+        let output = StdCommand::new(&path).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "updated\n");
     }
 
     /// Helper that creates a plugin with `All` scope — no filtering.

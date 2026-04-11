@@ -1307,7 +1307,7 @@ fn config_init_writes_truthful_mode_comments() {
     let contents = fs::read_to_string(workspace.path().join(".aegis.toml")).unwrap();
     assert!(contents.contains("Protect prompts on Warn/Danger"));
     assert!(contents.contains("Audit is non-blocking audit-only"));
-    assert!(contents.contains("Strict blocks non-safe by default"));
+    assert!(contents.contains("Strict blocks non-safe and indirect execution forms by default"));
     assert!(contents.contains("allowlist_override_level = \"Warn\""));
     assert!(contents.contains("[[allowlist]]"));
     assert!(contents.contains("Protect/Strict allowlist ceiling"));
@@ -2103,6 +2103,44 @@ auto_snapshot_docker = false
     assert!(read_stub_invocations(&log_path).is_empty());
 
     let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "Blocked");
+    assert_eq!(entries[0]["risk"], "Warn");
+}
+
+/// Strict mode must treat indirect execution wrappers as blocked-by-default
+/// policy forms even when their payload looks otherwise safe.
+#[test]
+fn strict_mode_blocks_nested_shell_execution_profile() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let marker_path = workspace.path().join("strict-indirect-exec.txt");
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+"#,
+    )
+    .unwrap();
+
+    let indirect = format!("bash -c 'touch {}'", marker_path.display());
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", &indirect])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        !marker_path.exists(),
+        "strict mode must block nested shell execution before it touches the filesystem"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["decision"], "Blocked");
     assert_eq!(entries[0]["risk"], "Warn");
 }

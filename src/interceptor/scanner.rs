@@ -943,8 +943,9 @@ mod tests {
     // EXEC-002: python -c          (inline Python interpreter)
     // EXEC-003: node -e            (inline Node.js interpreter)
     // EXEC-004: perl -e            (inline Perl interpreter)
-    // EXEC-005: eval "$VAR"        (eval with unexpandable variable)
-    // EXEC-006: cmd <(...)         (process substitution as shell input)
+    // EXEC-005: eval ...           (runtime shell evaluation)
+    // EXEC-006: shell -c ...       (nested shell command strings)
+    // EXEC-008: cmd <(...)         (process substitution as shell input)
 
     #[test]
     fn assess_indirect_execution_forms() {
@@ -954,19 +955,28 @@ mod tests {
             // ── EXEC-001: echo payload | sh ──────────────────────────────────
             ("echo 'ls /tmp' | sh", RiskLevel::Danger),
             ("echo malicious_payload | bash", RiskLevel::Danger),
+            // ── EXEC-001A: shell -c / nested shell string execution ─────────
+            ("bash -c 'echo hello'", RiskLevel::Warn),
+            ("zsh -c 'echo hello'", RiskLevel::Warn),
             // ── EXEC-002: python -c ──────────────────────────────────────────
             ("python -c 'import sys'", RiskLevel::Warn),
             ("python3 -c \"print('hi')\"", RiskLevel::Warn),
             ("python2 -ic \"import os\"", RiskLevel::Warn),
+            ("python3 - <<'PY'\nprint('hi')\nPY", RiskLevel::Warn),
             // ── EXEC-003: node -e ────────────────────────────────────────────
             ("node -e 'console.log(1)'", RiskLevel::Warn),
             ("nodejs -e 'process.version'", RiskLevel::Warn),
             // ── EXEC-004: perl -e ────────────────────────────────────────────
             ("perl -e 'print 42'", RiskLevel::Warn),
             // ── EXEC-005: eval with variable ─────────────────────────────────
+            ("eval \"printf hi\"", RiskLevel::Warn),
             ("eval \"$DEPLOY_CMD\"", RiskLevel::Warn),
             ("eval $INIT_SCRIPT", RiskLevel::Warn),
             ("eval \"${MY_BOOTSTRAP_SCRIPT}\"", RiskLevel::Warn),
+            // ── EXEC-005A: additional inline interpreters ───────────────────
+            ("ruby -e 'puts 42'", RiskLevel::Warn),
+            ("php -r 'echo 42;'", RiskLevel::Warn),
+            ("lua -e 'print(42)'", RiskLevel::Warn),
             // ── EXEC-006: sh/bash <(...) ─────────────────────────────────────
             ("sh <(generate_config.sh)", RiskLevel::Warn),
             ("bash <(cat bootstrap.sh)", RiskLevel::Warn),
@@ -998,6 +1008,8 @@ mod tests {
             "echo hello | grep foo",
             "source ~/.bashrc",
             ". ~/.profile",
+            "printf 'eval is just text'",
+            "echo bash -c is documented here",
         ] {
             let assessment = s.assess(cmd);
             assert_eq!(

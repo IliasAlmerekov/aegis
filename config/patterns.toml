@@ -492,12 +492,28 @@ safe_alt = "Write the code to a .pl file and run it: 'perl script.pl'"
 id = "EXEC-005"
 category = "Process"
 risk = "Warn"
+pattern = '^eval\b'
+description = "eval ... — executes shell code assembled at runtime; the final command may not be visible at intercept time"
+safe_alt = "Avoid eval; pass explicit arguments or run a reviewed script file instead"
+
+[[patterns]]
+id = "EXEC-006"
+category = "Process"
+risk = "Warn"
+pattern = '^bash\s+(?:--[a-z-]+\s+)*-[a-zA-Z]*c\b|^sh\s+(?:--[a-z-]+\s+)*-[a-zA-Z]*c\b|^dash\s+(?:--[a-z-]+\s+)*-[a-zA-Z]*c\b|^zsh\s+(?:--[a-z-]+\s+)*-[a-zA-Z]*c\b|^ksh\s+(?:--[a-z-]+\s+)*-[a-zA-Z]*c\b|^fish\s+(?:--[a-z-]+\s+)*-[a-zA-Z]*c\b'
+description = "shell -c ... — executes a nested shell command string whose final behavior may differ from the visible outer command"
+safe_alt = "Write the command to a reviewed script file or run the intended command directly without shell indirection"
+
+[[patterns]]
+id = "EXEC-007"
+category = "Process"
+risk = "Warn"
 pattern = 'eval\s+"?\$'
 description = "eval \"$VAR\" — evaluates a variable's contents as shell code; the variable value cannot be scanned at intercept time"
 safe_alt = "Avoid eval with variables; pass data as arguments or via a temporary script file"
 
 [[patterns]]
-id = "EXEC-006"
+id = "EXEC-008"
 category = "Process"
 risk = "Warn"
 pattern = '(ba)?sh\s+<\('
@@ -505,9 +521,41 @@ description = "sh/bash <(...) — executes command output via process substituti
 safe_alt = "Redirect the output to a file, inspect it, then execute: 'cmd > script.sh && bash script.sh'"
 
 [[patterns]]
-id = "EXEC-007"
+id = "EXEC-009"
 category = "Process"
 risk = "Warn"
 pattern = 'source\s+<\('
 description = "source <(...) — sources the output of a command directly into the shell without a file on disk"
 safe_alt = "Redirect the output to a temp file, inspect it, then source explicitly: 'cmd > /tmp/init.sh && source /tmp/init.sh'"
+
+[[patterns]]
+id = "EXEC-010"
+category = "Process"
+risk = "Warn"
+pattern = '^ruby\s+-e\b'
+description = "ruby -e — executes an inline Ruby snippet; dangerous code inside may evade shell-level pattern scanning"
+safe_alt = "Write the code to a .rb file and run it explicitly"
+
+[[patterns]]
+id = "EXEC-011"
+category = "Process"
+risk = "Warn"
+pattern = '^php\s+-[a-zA-Z]*r\b'
+description = "php -r — executes inline PHP code; dangerous behavior may be hidden inside the evaluated snippet"
+safe_alt = "Write the code to a .php file and run it explicitly"
+
+[[patterns]]
+id = "EXEC-012"
+category = "Process"
+risk = "Warn"
+pattern = '^lua\s+-e\b|^luajit\s+-e\b'
+description = "lua -e / luajit -e — executes inline Lua code that can hide filesystem or process actions"
+safe_alt = "Write the code to a .lua file and run it explicitly"
+
+[[patterns]]
+id = "EXEC-013"
+category = "Process"
+risk = "Warn"
+pattern = '^python[23]?\s+-($|\s)'
+description = "python - — executes Python read from stdin or a heredoc, which hides the final payload from a quick shell-level review"
+safe_alt = "Write the code to a .py file, inspect it, then execute it explicitly"
