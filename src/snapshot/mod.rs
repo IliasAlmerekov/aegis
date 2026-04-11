@@ -63,12 +63,16 @@ impl SnapshotRegistry {
                     plugins.push(Box::new(GitPlugin));
                 }
                 if config.auto_snapshot_docker {
-                    plugins.push(Box::new(DockerPlugin::new()));
+                    plugins.push(Box::new(
+                        DockerPlugin::new().with_scope(config.docker_scope.clone()),
+                    ));
                 }
             }
             SnapshotPolicy::Full => {
                 plugins.push(Box::new(GitPlugin));
-                plugins.push(Box::new(DockerPlugin::new()));
+                plugins.push(Box::new(
+                    DockerPlugin::new().with_scope(config.docker_scope.clone()),
+                ));
             }
         }
 

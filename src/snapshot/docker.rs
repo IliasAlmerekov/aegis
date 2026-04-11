@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
+use crate::config::{DockerScope, DockerScopeMode};
 use crate::error::AegisError;
 use crate::snapshot::SnapshotPlugin;
 
@@ -16,12 +17,15 @@ const NO_CONTAINERS: &str = "none";
 pub struct DockerPlugin {
     /// Path to the docker executable. Defaults to `"docker"` (resolved from PATH).
     docker_bin: String,
+    /// Scoping rules controlling which containers are eligible for snapshot.
+    scope: DockerScope,
 }
 
 impl Default for DockerPlugin {
     fn default() -> Self {
         Self {
             docker_bin: "docker".to_string(),
+            scope: DockerScope::default(),
         }
     }
 }
@@ -29,6 +33,34 @@ impl Default for DockerPlugin {
 impl DockerPlugin {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_scope(mut self, scope: DockerScope) -> Self {
+        self.scope = scope;
+        self
+    }
+
+    /// Build the argument list for `docker ps -q` honouring the configured scope.
+    ///
+    /// - `Labeled` → `["ps", "-q", "--filter", "label=<key>=true"]`
+    /// - `All`     → `["ps", "-q"]`
+    /// - `Names`   → `["ps", "-q", "--filter", "name=<pat>", ...]`
+    fn build_ps_args(&self) -> Vec<String> {
+        let mut args = vec!["ps".to_string(), "-q".to_string()];
+        match self.scope.mode {
+            DockerScopeMode::Labeled => {
+                args.push("--filter".to_string());
+                args.push(format!("label={}=true", self.scope.label));
+            }
+            DockerScopeMode::All => { /* no filters */ }
+            DockerScopeMode::Names => {
+                for pat in &self.scope.name_patterns {
+                    args.push("--filter".to_string());
+                    args.push(format!("name={pat}"));
+                }
+            }
+        }
+        args
     }
 }
 
@@ -203,8 +235,9 @@ impl SnapshotPlugin for DockerPlugin {
     /// exits 0 with no output when docker is up but idle,
     /// exits non-zero or errors when docker is unavailable.
     fn is_applicable(&self, _cwd: &Path) -> bool {
+        let ps_args = self.build_ps_args();
         let output = std::process::Command::new(&self.docker_bin)
-            .args(["ps", "-q"])
+            .args(&ps_args)
             .output();
 
         match output {
@@ -245,8 +278,9 @@ impl SnapshotPlugin for DockerPlugin {
     /// - **Env / CMD / ENTRYPOINT**: these are baked into the committed image by
     ///   `docker commit` and do not need to be replayed separately.
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
+        let ps_args = self.build_ps_args();
         let ps_out = Command::new(&self.docker_bin)
-            .args(["ps", "-q"])
+            .args(&ps_args)
             .output()
             .await
             .map_err(|e| AegisError::Snapshot(format!("failed to run docker ps: {e}")))?;
@@ -398,9 +432,22 @@ mod tests {
         path
     }
 
+    /// Helper that creates a plugin with `All` scope — no filtering.
+    /// Use `plugin_with_scope` to test specific scope behaviour.
     fn plugin(bin: &std::path::Path) -> DockerPlugin {
         DockerPlugin {
             docker_bin: bin.to_string_lossy().into_owned(),
+            scope: DockerScope {
+                mode: DockerScopeMode::All,
+                ..DockerScope::default()
+            },
+        }
+    }
+
+    fn plugin_with_scope(bin: &std::path::Path, scope: DockerScope) -> DockerPlugin {
+        DockerPlugin {
+            docker_bin: bin.to_string_lossy().into_owned(),
+            scope,
         }
     }
 
@@ -433,6 +480,7 @@ mod tests {
     fn is_applicable_no_docker_cli() {
         let p = DockerPlugin {
             docker_bin: "/nonexistent/bin/docker".to_string(),
+            scope: DockerScope::default(),
         };
         assert!(!p.is_applicable(Path::new("/")));
     }
@@ -867,5 +915,150 @@ esac"#
         };
         let args = DockerPlugin::build_run_args("img", &cfg);
         assert!(!args.contains(&"--restart".to_string()));
+    }
+
+    // ── build_ps_args (scope filtering) ────────────────────────────────────────
+
+    #[test]
+    fn build_ps_args_labeled_scope_adds_label_filter() {
+        let p = DockerPlugin {
+            docker_bin: "docker".to_string(),
+            scope: DockerScope::default(), // Labeled, label = "aegis.snapshot"
+        };
+        let args = p.build_ps_args();
+        assert_eq!(
+            args,
+            vec!["ps", "-q", "--filter", "label=aegis.snapshot=true"],
+            "Labeled scope must filter by label"
+        );
+    }
+
+    #[test]
+    fn build_ps_args_all_scope_no_filters() {
+        let p = DockerPlugin {
+            docker_bin: "docker".to_string(),
+            scope: DockerScope {
+                mode: DockerScopeMode::All,
+                ..DockerScope::default()
+            },
+        };
+        let args = p.build_ps_args();
+        assert_eq!(args, vec!["ps", "-q"], "All scope must not add any filters");
+    }
+
+    #[test]
+    fn build_ps_args_names_scope_adds_name_filters() {
+        let p = DockerPlugin {
+            docker_bin: "docker".to_string(),
+            scope: DockerScope {
+                mode: DockerScopeMode::Names,
+                name_patterns: vec!["web-.*".to_string(), "api".to_string()],
+                ..DockerScope::default()
+            },
+        };
+        let args = p.build_ps_args();
+        assert_eq!(
+            args,
+            vec![
+                "ps",
+                "-q",
+                "--filter",
+                "name=web-.*",
+                "--filter",
+                "name=api"
+            ],
+            "Names scope must add --filter name=<pat> for each pattern"
+        );
+    }
+
+    #[test]
+    fn build_ps_args_labeled_scope_custom_label() {
+        let p = DockerPlugin {
+            docker_bin: "docker".to_string(),
+            scope: DockerScope {
+                mode: DockerScopeMode::Labeled,
+                label: "com.myorg.backup".to_string(),
+                name_patterns: vec![],
+            },
+        };
+        let args = p.build_ps_args();
+        assert_eq!(
+            args,
+            vec!["ps", "-q", "--filter", "label=com.myorg.backup=true"],
+            "Custom label must be used in filter"
+        );
+    }
+
+    // ── snapshot with scope (integration) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn snapshot_with_labeled_scope_passes_filter_to_docker_ps() {
+        let dir = TempDir::new().unwrap();
+        let log = dir.path().join("calls.log");
+        let log_path = log.to_string_lossy().into_owned();
+        let inspect_json = MINIMAL_INSPECT;
+
+        write_mock_docker(
+            dir.path(),
+            &format!(
+                r#"printf "%s\n" "$*" >> {log_path}
+case "$1" in
+  ps)      printf "abc123\n"; exit 0 ;;
+  inspect) printf '{inspect_json}'; exit 0 ;;
+  commit)  printf "sha256:mockhash\n"; exit 0 ;;
+  *)       exit 1 ;;
+esac"#
+            ),
+        );
+
+        let scope = DockerScope::default(); // Labeled
+        let p = plugin_with_scope(&dir.path().join("docker"), scope);
+        let _id = p.snapshot(Path::new("/"), "rm -rf /").await.unwrap();
+
+        let calls = fs::read_to_string(&log).unwrap();
+        assert!(
+            calls.contains("--filter"),
+            "Labeled scope must pass --filter to docker ps, got: {calls}"
+        );
+        assert!(
+            calls.contains("label=aegis.snapshot=true"),
+            "Labeled scope must filter by aegis.snapshot label, got: {calls}"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_with_all_scope_does_not_filter() {
+        let dir = TempDir::new().unwrap();
+        let log = dir.path().join("calls.log");
+        let log_path = log.to_string_lossy().into_owned();
+        let inspect_json = MINIMAL_INSPECT;
+
+        write_mock_docker(
+            dir.path(),
+            &format!(
+                r#"printf "%s\n" "$*" >> {log_path}
+case "$1" in
+  ps)      printf "abc123\n"; exit 0 ;;
+  inspect) printf '{inspect_json}'; exit 0 ;;
+  commit)  printf "sha256:mockhash\n"; exit 0 ;;
+  *)       exit 1 ;;
+esac"#
+            ),
+        );
+
+        let scope = DockerScope {
+            mode: DockerScopeMode::All,
+            ..DockerScope::default()
+        };
+        let p = plugin_with_scope(&dir.path().join("docker"), scope);
+        let _id = p.snapshot(Path::new("/"), "rm -rf /").await.unwrap();
+
+        let calls = fs::read_to_string(&log).unwrap();
+        // First line should be just "ps -q" without --filter
+        let first_call = calls.lines().next().unwrap();
+        assert!(
+            !first_call.contains("--filter"),
+            "All scope must NOT pass --filter to docker ps, got: {first_call}"
+        );
     }
 }

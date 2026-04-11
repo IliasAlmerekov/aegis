@@ -37,6 +37,13 @@ snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin fl
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
 auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
 
+# Which Docker containers to include in snapshots.
+# mode: Labeled (default) = only containers with opt-in label, All = every running container, Names = match by name pattern.
+[docker_scope]
+mode = "Labeled"
+label = "aegis.snapshot" # Container must carry this label with value "true".
+name_patterns = []       # Name patterns for Names mode (Docker regex, ORed).
+
 # CI policy: what to do when aegis detects it is running inside a CI environment.
 # Block (default) — hard-block any non-safe command; no interactive dialog is shown.
 # Allow           — pass-through; commands are executed without prompting (opt-in override).
@@ -87,6 +94,49 @@ pub enum CiPolicy {
     /// Pass-through: commands run without prompting. Use only when you have
     /// deliberately reviewed the CI pipeline for destructive commands.
     Allow,
+}
+
+/// Which Docker containers to include in snapshots.
+///
+/// - `Labeled` (default) — only containers with a specific label.
+/// - `All`               — every running container (legacy blanket behaviour).
+/// - `Names`             — containers whose name matches one of the given patterns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum DockerScopeMode {
+    /// Only snapshot containers carrying the opt-in label (default).
+    #[default]
+    Labeled,
+    /// Snapshot every running container — use with care on busy hosts.
+    All,
+    /// Snapshot containers whose name matches at least one pattern.
+    Names,
+}
+
+/// Scoping rules that decide *which* Docker containers are eligible for snapshot.
+///
+/// Stored under `[docker_scope]` in `aegis.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DockerScope {
+    /// Selection strategy.
+    pub mode: DockerScopeMode,
+    /// Label selector for `Labeled` mode.  The container must carry this label
+    /// with value `"true"` to be eligible (e.g. `aegis.snapshot=true`).
+    pub label: String,
+    /// Name patterns for `Names` mode.  Each pattern is passed as a separate
+    /// `--filter name=<pat>` argument to `docker ps` (Docker ORs them).
+    pub name_patterns: Vec<String>,
+}
+
+impl Default for DockerScope {
+    fn default() -> Self {
+        Self {
+            mode: DockerScopeMode::Labeled,
+            label: "aegis.snapshot".to_string(),
+            name_patterns: Vec::new(),
+        }
+    }
 }
 
 /// Controls when and how snapshot plugins run before dangerous commands.
@@ -188,6 +238,7 @@ pub struct AegisConfig {
     pub snapshot_policy: SnapshotPolicy,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
+    pub docker_scope: DockerScope,
     pub ci_policy: CiPolicy,
     pub audit: AuditConfig,
 }
@@ -241,6 +292,7 @@ impl AegisConfig {
             snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
+            docker_scope: DockerScope::default(),
             ci_policy: CiPolicy::Block,
             audit: AuditConfig::default(),
         }
@@ -389,6 +441,7 @@ impl AegisConfig {
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
                 .unwrap_or(base.auto_snapshot_docker),
+            docker_scope: overlay.docker_scope.unwrap_or(base.docker_scope),
             ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
             audit: AuditConfig {
                 rotation_enabled: overlay
@@ -483,6 +536,7 @@ struct PartialConfig {
     snapshot_policy: Option<SnapshotPolicy>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
+    docker_scope: Option<DockerScope>,
     ci_policy: Option<CiPolicy>,
     audit: PartialAuditConfig,
 }
