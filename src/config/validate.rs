@@ -226,4 +226,26 @@ mod tests {
         assert!(!report.errors.is_empty());
         assert!(report.errors.iter().any(|e| e.code == "expired_rule"));
     }
+
+    #[test]
+    fn validate_reports_multiple_audit_errors() {
+        let mut config = Config::defaults();
+        config.audit.rotation_enabled = true;
+        config.audit.max_file_size_bytes = 0;
+        config.audit.retention_files = 0;
+
+        let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.code == "audit_max_file_size")
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.code == "audit_retention_files")
+        );
+    }
 }

@@ -317,7 +317,7 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
 }
 
 fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {
-    let report = match Config::load() {
+    let report = match Config::load_unvalidated() {
         Ok(config) => {
             let source_map = ConfigSourceMap::for_config(&config);
             validate_config(&config, &source_map)

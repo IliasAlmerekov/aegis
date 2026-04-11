@@ -190,6 +190,15 @@ impl AegisConfig {
         Self::load_for(&current_dir, home_dir.as_deref())
     }
 
+    pub fn load_unvalidated() -> Result<Self> {
+        let current_dir = env::current_dir()?;
+        let home_dir = env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+
+        Self::load_for_unvalidated(&current_dir, home_dir.as_deref())
+    }
+
     pub fn defaults() -> Self {
         Self {
             mode: Mode::Protect,
@@ -239,6 +248,21 @@ impl AegisConfig {
     }
 
     pub(crate) fn load_for(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
+        Self::load_for_internal(current_dir, home_dir, true)
+    }
+
+    pub(crate) fn load_for_unvalidated(
+        current_dir: &Path,
+        home_dir: Option<&Path>,
+    ) -> Result<Self> {
+        Self::load_for_internal(current_dir, home_dir, false)
+    }
+
+    fn load_for_internal(
+        current_dir: &Path,
+        home_dir: Option<&Path>,
+        validate_runtime_requirements: bool,
+    ) -> Result<Self> {
         let global_path = home_dir.map(|h| h.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
         let project_path = current_dir.join(PROJECT_CONFIG_FILE);
 
@@ -247,13 +271,17 @@ impl AegisConfig {
         if let Some(path) = global_path.as_deref().filter(|p| p.is_file()) {
             let global = PartialConfig::from_path(path)?;
             merged = Self::merge_layer(merged, global, AllowlistSourceLayer::Global);
-            merged.validate_runtime_requirements_for_path(path)?;
+            if validate_runtime_requirements {
+                merged.validate_runtime_requirements_for_path(path)?;
+            }
         }
 
         if project_path.is_file() {
             let project = PartialConfig::from_path(&project_path)?;
             merged = Self::merge_layer(merged, project, AllowlistSourceLayer::Project);
-            merged.validate_runtime_requirements_for_path(&project_path)?;
+            if validate_runtime_requirements {
+                merged.validate_runtime_requirements_for_path(&project_path)?;
+            }
         }
 
         Ok(merged)

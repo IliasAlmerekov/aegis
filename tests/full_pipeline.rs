@@ -1103,6 +1103,11 @@ fn config_validate_json_outputs_errors_and_warnings() {
 [audit]
 rotation_enabled = true
 max_file_size_bytes = 0
+retention_files = 0
+
+[[allowlist]]
+pattern = "terraform destroy *"
+reason = "broad rule"
 "#,
     )
     .unwrap();
@@ -1115,8 +1120,21 @@ max_file_size_bytes = 0
 
     assert_eq!(output.status.code(), Some(4));
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(json.get("errors").unwrap().is_array());
-    assert!(json.get("warnings").unwrap().is_array());
+    let errors = json.get("errors").unwrap().as_array().unwrap();
+    let warnings = json.get("warnings").unwrap().as_array().unwrap();
+
+    assert!(
+        errors.iter().any(|e| e["code"] == "audit_max_file_size"),
+        "missing audit_max_file_size error: {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e["code"] == "audit_retention_files"),
+        "missing audit_retention_files error: {errors:?}"
+    );
+    assert!(
+        warnings.iter().any(|w| w["code"] == "missing_scope"),
+        "missing missing_scope warning: {warnings:?}"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
