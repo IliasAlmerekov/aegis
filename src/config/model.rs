@@ -384,9 +384,7 @@ impl AegisConfig {
             allowlist_override_level: overlay
                 .allowlist_override_level
                 .unwrap_or(base.allowlist_override_level),
-            snapshot_policy: overlay
-                .snapshot_policy
-                .unwrap_or(base.snapshot_policy),
+            snapshot_policy: overlay.snapshot_policy.unwrap_or(base.snapshot_policy),
             auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
@@ -1083,22 +1081,19 @@ expires_at = "2030-01-01T00:00:00Z"
 
     #[test]
     fn snapshot_policy_none_deserializes() {
-        let config: AegisConfig =
-            toml::from_str(r#"snapshot_policy = "None""#).unwrap();
+        let config: AegisConfig = toml::from_str(r#"snapshot_policy = "None""#).unwrap();
         assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
     }
 
     #[test]
     fn snapshot_policy_selective_deserializes() {
-        let config: AegisConfig =
-            toml::from_str(r#"snapshot_policy = "Selective""#).unwrap();
+        let config: AegisConfig = toml::from_str(r#"snapshot_policy = "Selective""#).unwrap();
         assert_eq!(config.snapshot_policy, SnapshotPolicy::Selective);
     }
 
     #[test]
     fn snapshot_policy_full_deserializes() {
-        let config: AegisConfig =
-            toml::from_str(r#"snapshot_policy = "Full""#).unwrap();
+        let config: AegisConfig = toml::from_str(r#"snapshot_policy = "Full""#).unwrap();
         assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
     }
 
@@ -1146,8 +1141,7 @@ auto_snapshot_docker = false
         )
         .unwrap();
 
-        let config =
-            AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
         // Project layer overrides global.
         assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
     }
@@ -1171,8 +1165,7 @@ auto_snapshot_docker = false
         )
         .unwrap();
 
-        let config =
-            AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
         assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
     }
 }
