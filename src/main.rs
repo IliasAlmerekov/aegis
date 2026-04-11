@@ -317,9 +317,18 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
 }
 
 fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {
+    let current_dir = env::current_dir().ok();
+    let home_dir = env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+
     let report = match Config::load_unvalidated() {
         Ok(config) => {
-            let source_map = ConfigSourceMap::for_config(&config);
+            let source_map = ConfigSourceMap::for_config_with_paths(
+                &config,
+                current_dir.as_deref(),
+                home_dir.as_deref(),
+            );
             validate_config(&config, &source_map)
         }
         Err(err) => validation_load_error(&err),

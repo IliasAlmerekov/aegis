@@ -5,6 +5,11 @@ use crate::config::Config;
 use crate::config::allowlist::{Allowlist, AllowlistSourceLayer, analyze_allowlist_rule};
 use crate::error::AegisError;
 use crate::interceptor;
+use std::path::Path;
+
+const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
+const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
+const GLOBAL_CONFIG_FILE: &str = "config.toml";
 
 /// A single config validation issue.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -32,11 +37,32 @@ pub struct ValidationReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigSourceMap {
     allowlist_locations: Vec<String>,
+    scalar_source_path: String,
 }
 
 impl ConfigSourceMap {
     /// Build a source map for the effective config.
     pub fn for_config(config: &Config) -> Self {
+        Self::for_config_with_paths(config, None, None)
+    }
+
+    /// Build a source map for the effective config using resolved config paths.
+    pub fn for_config_with_paths(
+        config: &Config,
+        current_dir: Option<&Path>,
+        home_dir: Option<&Path>,
+    ) -> Self {
+        let project_path = current_dir.map(|dir| dir.join(PROJECT_CONFIG_FILE));
+        let global_path =
+            home_dir.map(|home| home.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
+
+        let scalar_source_path = project_path
+            .as_deref()
+            .filter(|path| path.is_file())
+            .or_else(|| global_path.as_deref().filter(|path| path.is_file()))
+            .map(path_string)
+            .unwrap_or_else(|| "defaults".to_string());
+
         let allowlist_locations = config
             .allowlist
             .iter()
@@ -48,16 +74,23 @@ impl ConfigSourceMap {
                     .copied()
                     .unwrap_or(AllowlistSourceLayer::Project);
                 let layer_name = match layer {
-                    AllowlistSourceLayer::Global => "global",
-                    AllowlistSourceLayer::Project => "project",
+                    AllowlistSourceLayer::Global => global_path
+                        .as_deref()
+                        .map(path_string)
+                        .unwrap_or_else(|| "global".to_string()),
+                    AllowlistSourceLayer::Project => project_path
+                        .as_deref()
+                        .map(path_string)
+                        .unwrap_or_else(|| "project".to_string()),
                 };
 
-                format!("{layer_name}.allowlist[{index}]")
+                format!("{layer_name}:allowlist[{index}]")
             })
             .collect();
 
         Self {
             allowlist_locations,
+            scalar_source_path,
         }
     }
 
@@ -66,6 +99,10 @@ impl ConfigSourceMap {
             .get(index)
             .cloned()
             .unwrap_or_else(|| format!("allowlist[{index}]"))
+    }
+
+    fn scalar_location(&self, field: &str) -> String {
+        format!("{}:{field}", self.scalar_source_path)
     }
 }
 
@@ -80,7 +117,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
             message:
                 "audit.max_file_size_bytes must be greater than 0 when audit rotation is enabled"
                     .to_string(),
-            location: "audit.max_file_size_bytes".to_string(),
+            location: source_map.scalar_location("audit.max_file_size_bytes"),
         });
     }
 
@@ -89,7 +126,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
             code: "audit_retention_files",
             message: "audit.retention_files must be greater than 0 when audit rotation is enabled"
                 .to_string(),
-            location: "audit.retention_files".to_string(),
+            location: source_map.scalar_location("audit.retention_files"),
         });
     }
 
@@ -143,15 +180,40 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
 /// Convert a load failure into a structured report.
 pub fn validation_load_error(err: &AegisError) -> ValidationReport {
     let code = config_error_code(err);
+    let location = config_error_location(err).unwrap_or_else(|| "config".to_string());
     ValidationReport {
         valid: false,
         errors: vec![ValidationIssue {
             code,
             message: err.to_string(),
-            location: "config".to_string(),
+            location,
         }],
         warnings: Vec::new(),
     }
+}
+
+fn config_error_location(err: &AegisError) -> Option<String> {
+    let AegisError::Config(message) = err else {
+        return None;
+    };
+
+    let invalid_prefix = "invalid config ";
+    if let Some(value) = message.strip_prefix(invalid_prefix) {
+        return value
+            .split_once(':')
+            .map(|(path, _)| path.trim().to_string())
+            .filter(|path| !path.is_empty());
+    }
+
+    let parse_prefix = "failed to parse ";
+    if let Some(value) = message.strip_prefix(parse_prefix) {
+        return value
+            .split_once(':')
+            .map(|(path, _)| path.trim().to_string())
+            .filter(|path| !path.is_empty());
+    }
+
+    None
 }
 
 fn config_error_code(err: &AegisError) -> &'static str {
@@ -185,10 +247,16 @@ fn config_error_code(err: &AegisError) -> &'static str {
     "config_load_error"
 }
 
+fn path_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ConfigSourceMap, validate_config};
     use crate::config::{AllowlistRule, Config};
+    use crate::error::AegisError;
+    use tempfile::TempDir;
     use time::{Duration, OffsetDateTime};
 
     #[test]
@@ -247,5 +315,54 @@ mod tests {
                 .iter()
                 .any(|e| e.code == "audit_retention_files")
         );
+    }
+
+    #[test]
+    fn validate_uses_real_file_path_in_locations() {
+        let home = TempDir::new().unwrap();
+        let workspace = TempDir::new().unwrap();
+        let config_path = workspace.path().join(".aegis.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+retention_files = 0
+[[allowlist]]
+pattern = "terraform destroy *"
+reason = "wide"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load_for_unvalidated(workspace.path(), Some(home.path())).unwrap();
+        let source_map = ConfigSourceMap::for_config_with_paths(
+            &config,
+            Some(workspace.path()),
+            Some(home.path()),
+        );
+        let report = validate_config(&config, &source_map);
+
+        let config_path = config_path.to_string_lossy();
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.location.contains(config_path.as_ref()))
+        );
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.location.contains(config_path.as_ref()))
+        );
+    }
+
+    #[test]
+    fn validation_load_error_extracts_config_path() {
+        let err = AegisError::Config("invalid config /tmp/work/.aegis.toml: bad value".to_string());
+        let report = super::validation_load_error(&err);
+        assert_eq!(report.errors[0].location, "/tmp/work/.aegis.toml");
     }
 }

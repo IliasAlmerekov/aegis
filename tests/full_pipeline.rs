@@ -1096,9 +1096,10 @@ fn config_init_writes_truthful_mode_comments() {
 fn config_validate_json_outputs_errors_and_warnings() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
+    let config_path = workspace.path().join(".aegis.toml");
 
     fs::write(
-        workspace.path().join(".aegis.toml"),
+        &config_path,
         r#"
 [audit]
 rotation_enabled = true
@@ -1134,6 +1135,23 @@ reason = "broad rule"
     assert!(
         warnings.iter().any(|w| w["code"] == "missing_scope"),
         "missing missing_scope warning: {warnings:?}"
+    );
+    let config_path = config_path.to_string_lossy();
+    assert!(
+        errors.iter().any(|e| {
+            e["location"]
+                .as_str()
+                .is_some_and(|location| location.contains(config_path.as_ref()))
+        }),
+        "expected at least one error location to contain config path {config_path}; errors: {errors:?}"
+    );
+    assert!(
+        warnings.iter().any(|w| {
+            w["location"]
+                .as_str()
+                .is_some_and(|location| location.contains(config_path.as_ref()))
+        }),
+        "expected at least one warning location to contain config path {config_path}; warnings: {warnings:?}"
     );
 }
 
