@@ -8,7 +8,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
-use crate::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
+use crate::decision::{
+    BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
+    PolicyConfigFlags, PolicyExecutionContext, PolicyInput, evaluate_policy,
+};
 use crate::runtime::RuntimeContext;
 use crate::ui::confirm::{
     show_block_via_tty, show_confirmation_via_tty, show_policy_block_via_tty,
@@ -297,24 +300,34 @@ async fn process_frame(line: String, context: &RuntimeContext) {
 
     // ── 5. Evaluate policy ────────────────────────────────────────────────────
     let config = context.config();
-    let plan = evaluate_policy(DecisionInput {
+    let applicable_snapshot_plugins = context.applicable_snapshot_plugins(&cwd);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
         mode: config.mode,
-        risk: assessment.risk,
-        in_ci: false, // CI env detection is irrelevant in watch mode
-        ci_policy: config.ci_policy,
-        allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: config.strict_allowlist_override,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult {
+            matched: allowlist_match.is_some(),
+        },
+        config_flags: PolicyConfigFlags {
+            ci_policy: config.ci_policy,
+            allowlist_override_level: config.strict_allowlist_override,
+            snapshot_policy: config.snapshot_policy,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Watch,
+            applicable_snapshot_plugins: applicable_snapshot_plugins.as_slice(),
+        },
     });
 
     // ── 6. Snapshots ──────────────────────────────────────────────────────────
-    let snapshots = if plan.should_snapshot {
+    let snapshots = if decision.snapshots_required {
         context.create_snapshots_async(&cwd, &frame.cmd).await
     } else {
         Vec::new()
     };
 
     // ── 7. Dialog / decision (blocking — uses /dev/tty) ──────────────────────
-    let decision = match plan.action {
+    let runtime_decision = match decision.decision {
         PolicyAction::AutoApprove => Decision::AutoApproved,
         PolicyAction::Prompt => {
             let approved =
@@ -326,7 +339,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
             }
         }
         PolicyAction::Block => {
-            tokio::task::block_in_place(|| match plan.block_reason {
+            tokio::task::block_in_place(|| match decision.block_reason() {
                 Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(&assessment),
                 Some(BlockReason::StrictPolicy) => show_policy_block_via_tty(
                     &assessment,
@@ -342,10 +355,10 @@ async fn process_frame(line: String, context: &RuntimeContext) {
     // ── 8. Audit ──────────────────────────────────────────────────────────────
     context.append_watch_audit_entry(
         &assessment,
-        decision,
+        runtime_decision,
         &snapshots,
         allowlist_match.as_ref(),
-        plan.allowlist_effective,
+        decision.allowlist_effective,
         frame.source.clone(),
         frame.cwd.clone(),
         id.clone(),
@@ -353,7 +366,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
     );
 
     // ── 9. Emit result or execute ─────────────────────────────────────────────
-    match decision {
+    match runtime_decision {
         Decision::Denied => {
             if emit_frame(&OutputFrame::Result {
                 id,

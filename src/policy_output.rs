@@ -1,5 +1,5 @@
 use aegis::config::{AllowlistMatch, CiPolicy, Mode};
-use aegis::decision::{BlockReason, DecisionPlan, PolicyAction};
+use aegis::decision::{BlockReason, PolicyAction, PolicyDecision};
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use serde::Serialize;
 
@@ -70,20 +70,20 @@ struct ExecutionOutput {
 
 pub(crate) fn render(
     assessment: &Assessment,
-    plan: DecisionPlan,
+    decision: PolicyDecision,
     allowlist_match: Option<&AllowlistMatch>,
     mode: Mode,
     ci_detected: bool,
     ci_policy: CiPolicy,
     applicable_snapshot_plugins: Vec<&'static str>,
 ) -> Result<String, serde_json::Error> {
-    let decision = decision_string(plan.action);
-    let exit_code = exit_code_for(plan.action);
+    let decision_label = decision_string(decision.decision);
+    let exit_code = exit_code_for(decision.decision);
     let output = PolicyEvaluationOutput {
         schema_version: 1,
         command: assessment.command.raw.clone(),
         risk: assessment.risk.to_string(),
-        decision: decision.to_string(),
+        decision: decision_label.to_string(),
         exit_code,
         mode: mode_string(mode).to_string(),
         ci_state: CiState {
@@ -105,13 +105,13 @@ pub(crate) fn render(
             .collect(),
         allowlist_match: AllowlistMatchOutput {
             matched: allowlist_match.is_some(),
-            effective: plan.allowlist_effective,
+            effective: decision.allowlist_effective,
             pattern: allowlist_match.map(|matched| matched.pattern.clone()),
             reason: allowlist_match.map(|matched| matched.reason.clone()),
         },
         snapshots_created: Vec::new(),
         snapshot_plan: SnapshotPlanOutput {
-            requested: plan.should_snapshot,
+            requested: decision.snapshots_required,
             applicable_plugins: applicable_snapshot_plugins
                 .into_iter()
                 .map(str::to_string)
@@ -121,8 +121,8 @@ pub(crate) fn render(
             mode: "evaluation_only",
             will_execute: false,
         },
-        block_reason: plan
-            .block_reason
+        block_reason: decision
+            .block_reason()
             .map(|reason| block_reason_string(reason).to_string()),
         decision_source: decision_source_string(assessment.decision_source()).to_string(),
     };

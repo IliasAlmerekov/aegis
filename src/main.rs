@@ -4,7 +4,10 @@ use std::process::{self, Command, Stdio};
 
 use aegis::audit::{AuditEntry, AuditLogger, Decision};
 use aegis::config::{AllowlistMatch, Config, ValidationReport, validate_config_layers};
-use aegis::decision::{BlockReason, DecisionInput, PolicyAction, evaluate_policy};
+use aegis::decision::{
+    BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
+    PolicyConfigFlags, PolicyDecision, PolicyExecutionContext, PolicyInput, evaluate_policy,
+};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
@@ -250,14 +253,26 @@ fn run_shell_wrapper(cmd: &str, output: CommandOutputFormat, verbose: bool, hand
     }
 
     if matches!(output, CommandOutputFormat::Json) {
-        let plan = evaluate_decision_plan(&context, &assessment, allowlist_match.as_ref(), in_ci);
-        return emit_policy_evaluation_json(
+        let (decision, applicable_snapshot_plugins) = evaluate_policy_decision(
             &context,
             &assessment,
             &cwd,
-            plan,
             allowlist_match.as_ref(),
             in_ci,
+            ExecutionTransport::Evaluation,
+        );
+        return emit_policy_evaluation_json(
+            &assessment,
+            decision,
+            allowlist_match.as_ref(),
+            context.config().mode,
+            in_ci,
+            context.config().ci_policy,
+            if decision.snapshots_required {
+                applicable_snapshot_plugins
+            } else {
+                Vec::new()
+            },
         );
     }
 
@@ -496,25 +511,36 @@ fn decide_command(
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
 ) -> (Decision, Vec<SnapshotRecord>, bool) {
-    let plan = evaluate_decision_plan(context, assessment, allowlist_match, in_ci);
-    execute_decision_plan(context, assessment, cwd, plan, verbose)
+    let (policy_decision, _) = evaluate_policy_decision(
+        context,
+        assessment,
+        cwd,
+        allowlist_match,
+        in_ci,
+        ExecutionTransport::Shell,
+    );
+    execute_policy_decision(context, assessment, cwd, policy_decision, verbose)
 }
 
-fn execute_decision_plan(
+fn execute_policy_decision(
     context: &RuntimeContext,
     assessment: &Assessment,
     cwd: &Path,
-    plan: aegis::decision::DecisionPlan,
+    policy_decision: PolicyDecision,
     verbose: bool,
 ) -> (Decision, Vec<SnapshotRecord>, bool) {
-    let snapshots = if plan.should_snapshot {
+    let snapshots = if policy_decision.snapshots_required {
         context.create_snapshots(cwd, &assessment.command.raw, verbose)
     } else {
         Vec::new()
     };
 
-    match plan.action {
-        PolicyAction::AutoApprove => (Decision::AutoApproved, snapshots, plan.allowlist_effective),
+    match policy_decision.decision {
+        PolicyAction::AutoApprove => (
+            Decision::AutoApproved,
+            snapshots,
+            policy_decision.allowlist_effective,
+        ),
         PolicyAction::Prompt => {
             let approved = show_confirmation(assessment, &snapshots);
             let decision = if approved {
@@ -523,10 +549,10 @@ fn execute_decision_plan(
                 Decision::Denied
             };
 
-            (decision, snapshots, plan.allowlist_effective)
+            (decision, snapshots, policy_decision.allowlist_effective)
         }
         PolicyAction::Block => {
-            match plan.block_reason {
+            match policy_decision.block_reason() {
                 Some(BlockReason::ProtectCiPolicy) => {
                     eprintln!(
                         "aegis: CI policy blocked command (risk={:?}): {}",
@@ -552,53 +578,66 @@ fn execute_decision_plan(
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
             }
 
-            (Decision::Blocked, snapshots, plan.allowlist_effective)
+            (
+                Decision::Blocked,
+                snapshots,
+                policy_decision.allowlist_effective,
+            )
         }
     }
 }
 
-fn evaluate_decision_plan(
-    context: &RuntimeContext,
-    assessment: &Assessment,
-    allowlist_match: Option<&AllowlistMatch>,
-    in_ci: bool,
-) -> aegis::decision::DecisionPlan {
-    evaluate_policy(DecisionInput {
-        mode: context.config().mode,
-        risk: assessment.risk,
-        in_ci,
-        ci_policy: context.config().ci_policy,
-        allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: context.config().strict_allowlist_override,
-    })
-}
-
-fn emit_policy_evaluation_json(
+fn evaluate_policy_decision(
     context: &RuntimeContext,
     assessment: &Assessment,
     cwd: &Path,
-    plan: aegis::decision::DecisionPlan,
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
-) -> i32 {
-    let applicable_snapshot_plugins = if plan.should_snapshot {
-        context.applicable_snapshot_plugins(cwd)
-    } else {
-        Vec::new()
-    };
+    transport: ExecutionTransport,
+) -> (PolicyDecision, Vec<&'static str>) {
+    let applicable_snapshot_plugins = context.applicable_snapshot_plugins(cwd);
+    let decision = evaluate_policy(PolicyInput {
+        assessment,
+        mode: context.config().mode,
+        ci_state: PolicyCiState { detected: in_ci },
+        allowlist: PolicyAllowlistResult {
+            matched: allowlist_match.is_some(),
+        },
+        config_flags: PolicyConfigFlags {
+            ci_policy: context.config().ci_policy,
+            allowlist_override_level: context.config().strict_allowlist_override,
+            snapshot_policy: context.config().snapshot_policy,
+        },
+        execution_context: PolicyExecutionContext {
+            transport,
+            applicable_snapshot_plugins: applicable_snapshot_plugins.as_slice(),
+        },
+    });
 
+    (decision, applicable_snapshot_plugins)
+}
+
+fn emit_policy_evaluation_json(
+    assessment: &Assessment,
+    decision: PolicyDecision,
+    allowlist_match: Option<&AllowlistMatch>,
+    mode: aegis::config::Mode,
+    in_ci: bool,
+    ci_policy: aegis::config::CiPolicy,
+    applicable_snapshot_plugins: Vec<&'static str>,
+) -> i32 {
     match policy_output::render(
         assessment,
-        plan,
+        decision,
         allowlist_match,
-        context.config().mode,
+        mode,
         in_ci,
-        context.config().ci_policy,
+        ci_policy,
         applicable_snapshot_plugins,
     ) {
         Ok(json) => {
             println!("{json}");
-            policy_output::exit_code_for(plan.action)
+            policy_output::exit_code_for(decision.decision)
         }
         Err(err) => {
             eprintln!("error: failed to serialize policy evaluation output: {err}");

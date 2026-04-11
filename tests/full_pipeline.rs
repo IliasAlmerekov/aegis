@@ -252,6 +252,45 @@ fn json_output_danger_command_returns_prompt_decision_without_stderr_or_audit() 
 }
 
 #[test]
+fn json_output_snapshot_policy_none_disables_snapshot_request_for_danger() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+snapshot_policy = "None"
+auto_snapshot_git = true
+auto_snapshot_docker = true
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args([
+            "-c",
+            "terraform destroy -target=module.prod.api",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "danger");
+    assert_eq!(json["decision"], "prompt");
+    assert_eq!(json["snapshot_plan"]["requested"], false);
+    assert_eq!(
+        json["snapshot_plan"]["applicable_plugins"],
+        serde_json::json!([])
+    );
+}
+
+#[test]
 fn json_output_allowlisted_danger_reports_effective_allowlist_and_snapshot_plan_without_exec() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();

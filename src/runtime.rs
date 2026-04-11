@@ -7,7 +7,9 @@ use time::OffsetDateTime;
 use tokio::runtime::Handle;
 
 use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
-use crate::config::{Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config};
+use crate::config::{
+    Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config, SnapshotPolicy,
+};
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
@@ -26,6 +28,8 @@ pub struct RuntimeConfig {
     pub ci_policy: crate::config::CiPolicy,
     /// Effective Protect/Strict allowlist ceiling for non-safe commands.
     pub strict_allowlist_override: AllowlistOverrideLevel,
+    /// Effective snapshot policy.
+    pub snapshot_policy: SnapshotPolicy,
 }
 
 impl From<&Config> for RuntimeConfig {
@@ -34,6 +38,7 @@ impl From<&Config> for RuntimeConfig {
             mode: config.mode,
             ci_policy: config.ci_policy,
             strict_allowlist_override: config.allowlist_override_level,
+            snapshot_policy: config.snapshot_policy,
         }
     }
 }
@@ -333,6 +338,7 @@ mod tests {
             context.config().strict_allowlist_override,
             AllowlistOverrideLevel::Danger
         );
+        assert_eq!(context.config().snapshot_policy, config.snapshot_policy);
         let Some(current_user) = context.current_user() else {
             panic!("test requires a resolvable user");
         };
@@ -352,6 +358,7 @@ mod tests {
             context.config().strict_allowlist_override,
             AllowlistOverrideLevel::Danger
         );
+        assert_eq!(context.config().snapshot_policy, config.snapshot_policy);
     }
 
     #[test]
