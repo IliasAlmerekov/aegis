@@ -1169,7 +1169,7 @@ fn config_validate_layered_scalar_errors_point_to_actual_source_files() {
         r#"
 [audit]
 rotation_enabled = true
-max_file_size_bytes = 0
+max_file_size_bytes = 1024
 "#,
     )
     .unwrap();
@@ -1192,26 +1192,28 @@ retention_files = 0
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     let errors = json["errors"].as_array().unwrap();
 
-    let max_error = errors
-        .iter()
-        .find(|e| e["code"] == "audit_max_file_size")
-        .unwrap();
     let retention_error = errors
         .iter()
         .find(|e| e["code"] == "audit_retention_files")
         .unwrap();
 
     assert!(
-        max_error["location"]
-            .as_str()
-            .is_some_and(|location| location.contains(global_path.to_string_lossy().as_ref())),
-        "max_file_size location should reference global config path: {max_error:?}"
-    );
-    assert!(
         retention_error["location"]
             .as_str()
             .is_some_and(|location| location.contains(project_path.to_string_lossy().as_ref())),
         "retention_files location should reference project config path: {retention_error:?}"
+    );
+    assert!(
+        errors.iter().all(|e| e["code"] != "audit_max_file_size"),
+        "max_file_size error should not be present when global layer is valid: {errors:?}"
+    );
+    assert!(
+        errors.iter().all(|e| {
+            !e["location"]
+                .as_str()
+                .is_some_and(|location| location.contains(global_path.to_string_lossy().as_ref()))
+        }),
+        "no error should be attributed to global layer in this scenario: {errors:?}"
     );
 }
 
@@ -1273,6 +1275,55 @@ max_file_size_bytes = 1024
     assert!(
         runtime_output.stdout.is_empty(),
         "runtime must fail closed and not execute shell command"
+    );
+}
+
+#[test]
+fn config_validate_stops_after_global_hard_failure() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let global_dir = home.path().join(".config/aegis");
+    let global_path = global_dir.join("config.toml");
+    let project_path = workspace.path().join(".aegis.toml");
+
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        &global_path,
+        r#"
+[audit]
+rotation_enabled = true
+max_file_size_bytes = 0
+"#,
+    )
+    .unwrap();
+    fs::write(
+        &project_path,
+        r#"
+[[allowlist]]
+pattern = "terraform destroy *"
+reason = "would warn if reached"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let errors = json["errors"].as_array().unwrap();
+    let warnings = json["warnings"].as_array().unwrap();
+
+    assert!(
+        errors.iter().any(|e| e["code"] == "audit_max_file_size"),
+        "expected global audit error; got {errors:?}"
+    );
+    assert!(
+        warnings.is_empty(),
+        "project warnings should be absent because global hard failure stops processing: {warnings:?}"
     );
 }
 

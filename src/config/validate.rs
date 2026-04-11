@@ -143,7 +143,12 @@ pub fn validate_config_layers(current_dir: &Path, home_dir: Option<&Path>) -> Va
                 merged = next;
                 let source_map =
                     ConfigSourceMap::for_config_with_paths(&merged, Some(current_dir), home_dir);
-                merge_report(&mut report, validate_config(&merged, &source_map));
+                let checkpoint = validate_config(&merged, &source_map);
+                let checkpoint_has_errors = !checkpoint.errors.is_empty();
+                merge_report(&mut report, checkpoint);
+                if checkpoint_has_errors {
+                    return report;
+                }
             }
             Err(err) => {
                 push_unique_issue(
@@ -212,7 +217,7 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
         }
     }
 
-    if let Some(issue) = first_invalid_custom_pattern_issue(config, source_map) {
+    if let Some(issue) = custom_pattern_validation_issue(config, source_map) {
         errors.push(issue);
     }
 
@@ -240,10 +245,22 @@ pub fn validation_load_error(err: &AegisError) -> ValidationReport {
     }
 }
 
-fn first_invalid_custom_pattern_issue(
+fn custom_pattern_validation_issue(
     config: &Config,
     source_map: &ConfigSourceMap,
 ) -> Option<ValidationIssue> {
+    if let Err(err) = interceptor::scanner_for(&config.custom_patterns) {
+        if config.custom_patterns.is_empty() {
+            return Some(ValidationIssue {
+                code: "scanner_init_error",
+                message: err.to_string(),
+                location: "builtin_scanner".to_string(),
+            });
+        }
+    } else {
+        return None;
+    }
+
     for index in 0..config.custom_patterns.len() {
         if let Err(err) = interceptor::scanner_for(&config.custom_patterns[..=index]) {
             return Some(ValidationIssue {
@@ -486,5 +503,18 @@ reason = "wide"
         let report = super::validation_load_error(&err);
         assert_eq!(report.errors[0].location, "config");
         assert_eq!(report.errors[0].code, "config_load_error");
+    }
+
+    #[test]
+    fn validate_scanner_path_runs_when_no_custom_patterns() {
+        let config = Config::defaults();
+        let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
+        assert!(
+            !report
+                .errors
+                .iter()
+                .any(|e| e.code == "invalid_custom_pattern")
+        );
+        assert!(!report.errors.iter().any(|e| e.code == "scanner_init_error"));
     }
 }

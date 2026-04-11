@@ -202,20 +202,6 @@ impl AegisConfig {
         Self::load_for(&current_dir, home_dir.as_deref())
     }
 
-    /// Load and merge config layers without runtime validation checkpoints.
-    ///
-    /// This exists for `aegis config validate`, which must inspect merged config
-    /// state and report structured issues. Runtime command execution must keep
-    /// using `load()` / `load_for()` for fail-closed behavior.
-    pub fn load_unvalidated() -> Result<Self> {
-        let current_dir = env::current_dir()?;
-        let home_dir = env::var_os("HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
-
-        Self::load_for_unvalidated(&current_dir, home_dir.as_deref())
-    }
-
     pub fn defaults() -> Self {
         Self {
             mode: Mode::Protect,
@@ -269,13 +255,6 @@ impl AegisConfig {
 
     pub(crate) fn load_for(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
         Self::load_for_internal(current_dir, home_dir, true)
-    }
-
-    pub(crate) fn load_for_unvalidated(
-        current_dir: &Path,
-        home_dir: Option<&Path>,
-    ) -> Result<Self> {
-        Self::load_for_internal(current_dir, home_dir, false)
     }
 
     pub(crate) fn layer_paths_for(

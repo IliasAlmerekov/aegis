@@ -108,8 +108,8 @@ enum ConfigValidateOutput {
 // | 1-N  | Pass-through — the underlying command ran and returned this code.|
 // |  2   | Denied — user pressed 'n' at the confirmation dialog.           |
 // |  3   | Blocked — command matched a Block-level pattern; no dialog shown.|
-// |  4   | Internal error — Aegis itself could not complete (spawn failed,  |
-// |      |   etc.). The underlying command was never executed.              |
+// |  4   | Aegis/config error — internal failure or config validation failed |
+// |      |   (e.g. `aegis config validate` found hard errors).              |
 //
 // Codes 2, 3, and 4 are only returned when Aegis prevents execution; they
 // are never returned by a successfully launched child process.
@@ -118,7 +118,7 @@ enum ConfigValidateOutput {
 const EXIT_DENIED: i32 = 2;
 /// The command matched a `Block`-level pattern and was hard-stopped.
 const EXIT_BLOCKED: i32 = 3;
-/// An internal Aegis failure prevented the command from being executed.
+/// Aegis/config failure prevented execution or validation from succeeding.
 const EXIT_INTERNAL: i32 = 4;
 
 fn main() {
