@@ -58,8 +58,8 @@ pub fn show_policy_block(assessment: &Assessment, reason: &str) {
 ///
 /// Interactive behavior:
 /// - `Block`  → prints the reason and returns `false` immediately; no prompt shown.
-/// - `Danger` → shows the dialog; user must type `yes` exactly to proceed.
-/// - `Warn`   → shows the dialog; Enter (or any non-`n` input) approves; `n` denies.
+/// - `Danger` → shows the dialog; user must type `y`/`yes` to proceed.
+/// - `Warn`   → shows the dialog; user must type `y`/`yes` to proceed.
 /// - `Safe`   → auto-approves without rendering anything (should not normally reach here).
 pub fn show_confirmation_with_input<R: BufRead, W: Write>(
     assessment: &Assessment,
@@ -107,8 +107,15 @@ fn render_block<W: Write>(assessment: &Assessment, out: &mut W) {
 
     print_command_line(assessment, out);
 
+    let _ = queue!(
+        out,
+        Print("  Reason: blocked by an explicit danger/block pattern.\n"),
+        Print("  Hint: review the matched patterns below.\n"),
+        Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
+    );
+
     if !assessment.matched.is_empty() {
-        let _ = queue!(out, Print("\n  Reason:\n"));
+        let _ = queue!(out, Print("\n  Matched patterns:\n"));
         for m in &assessment.matched {
             let source_label = pattern_source_label(m.pattern.source);
             let _ = queue!(
@@ -143,7 +150,7 @@ fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) 
         SetForegroundColor(Color::Yellow),
         SetAttribute(Attribute::Bold),
         Print(format!(
-            "\n  AEGIS: non-interactive — {risk_label} command denied\n"
+            "\n  AEGIS: non-interactive mode — {risk_label} command denied\n"
         )),
         ResetColor,
     );
@@ -152,7 +159,8 @@ fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) 
 
     let _ = queue!(
         out,
-        Print("  No TTY detected. To permit this command in CI, add it to the allowlist.\n"),
+        Print("  Hint: add the command to the allowlist for CI use.\n"),
+        Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
     );
 
     let _ = out.flush();
@@ -169,7 +177,12 @@ fn render_policy_block<W: Write>(assessment: &Assessment, reason: &str, out: &mu
 
     print_command_line(assessment, out);
 
-    let _ = queue!(out, Print(format!("  Reason: {reason}\n")));
+    let _ = queue!(
+        out,
+        Print(format!("  Reason: {reason}\n")),
+        Print("  Hint: inspect the allowlist or run aegis config validate.\n"),
+        Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
+    );
     let _ = out.flush();
 }
 
@@ -190,6 +203,10 @@ fn render_dialog<W: Write>(assessment: &Assessment, snapshots: &[SnapshotRecord]
     );
 
     print_command_line(assessment, out);
+
+    if assessment.risk == RiskLevel::Danger {
+        print_dangerous_action(assessment, out);
+    }
 
     // Matched patterns + safe alternatives + diagnostics
     if !assessment.matched.is_empty() {
@@ -256,15 +273,22 @@ fn print_command_line<W: Write>(assessment: &Assessment, out: &mut W) {
     let _ = queue!(out, Print("\n"));
 }
 
+fn print_dangerous_action<W: Write>(assessment: &Assessment, out: &mut W) {
+    let action = dangerous_action_text(assessment);
+    let _ = queue!(out, Print("  Dangerous action:\n    "));
+    let _ = queue!(out, Print(action));
+    let _ = queue!(out, Print("\n"));
+}
+
 // ── Prompts ───────────────────────────────────────────────────────────────────
 
-/// Danger prompt: the user must type `yes` exactly to proceed.
+/// Danger prompt: the user must type `y`/`yes` to proceed.
 fn prompt_danger<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
     let _ = queue!(
         out,
         SetForegroundColor(Color::Red),
         SetAttribute(Attribute::Bold),
-        Print("\n  Type 'yes' to proceed, anything else cancels: "),
+        Print("\n  Execute dangerous command? [y/N]: "),
         ResetColor,
     );
     let _ = out.flush();
@@ -274,7 +298,8 @@ fn prompt_danger<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
         return false;
     }
 
-    if line.trim() == "yes" {
+    let answer = line.trim().to_ascii_lowercase();
+    if answer == "y" || answer == "yes" {
         true
     } else {
         let _ = queue!(
@@ -288,23 +313,32 @@ fn prompt_danger<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
     }
 }
 
-/// Warn prompt: Enter (or any non-`n` response) approves; `n` or `no` denies.
+/// Warn prompt: the user must type `y`/`yes` to proceed.
 fn prompt_warn<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
     let _ = queue!(
         out,
         SetForegroundColor(Color::Yellow),
-        Print("\n  Press Enter to continue, 'n' to cancel: "),
+        Print("\n  Execute suspicious command? [y/N]: "),
         ResetColor,
     );
     let _ = out.flush();
 
     let mut line = String::new();
     if input.read_line(&mut line).is_err() {
+        let _ = queue!(
+            out,
+            SetForegroundColor(Color::Yellow),
+            Print("  Command cancelled.\n"),
+            ResetColor,
+        );
+        let _ = out.flush();
         return false;
     }
 
     let answer = line.trim().to_ascii_lowercase();
-    if answer == "n" || answer == "no" {
+    if answer == "y" || answer == "yes" {
+        true
+    } else {
         let _ = queue!(
             out,
             SetForegroundColor(Color::Yellow),
@@ -313,8 +347,6 @@ fn prompt_warn<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
         );
         let _ = out.flush();
         false
-    } else {
-        true
     }
 }
 
@@ -367,6 +399,26 @@ fn build_highlighted_command(cmd: &str, matches: &[MatchResult]) -> String {
         result.push_str(&cmd[pos..]);
     }
     result
+}
+
+fn dangerous_action_text(assessment: &Assessment) -> String {
+    let Some(fragment) = assessment
+        .matched
+        .iter()
+        .filter_map(|m| {
+            let trimmed = m.matched_text.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .max_by_key(|fragment| fragment.len())
+    else {
+        return build_highlighted_command(&assessment.command.raw, &assessment.matched);
+    };
+
+    format!("\x1b[1;31m{fragment}\x1b[0m")
 }
 
 // ── Label helpers ─────────────────────────────────────────────────────────────
@@ -483,6 +535,27 @@ mod tests {
         }
     }
 
+    fn make_match_with_text(
+        id: &'static str,
+        risk: RiskLevel,
+        pattern: &'static str,
+        description: &'static str,
+        matched_text: &'static str,
+    ) -> MatchResult {
+        MatchResult {
+            pattern: Arc::new(Pattern {
+                id: Cow::Borrowed(id),
+                category: Category::Filesystem,
+                risk,
+                pattern: Cow::Borrowed(pattern),
+                description: Cow::Borrowed(description),
+                safe_alt: None,
+                source: PatternSource::Builtin,
+            }),
+            matched_text: matched_text.to_string(),
+        }
+    }
+
     fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) -> Assessment {
         Assessment {
             risk,
@@ -581,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn danger_y_does_not_approve() {
+    fn danger_y_approves() {
         let p = make_match(
             "FS-001",
             RiskLevel::Danger,
@@ -598,7 +671,28 @@ mod tests {
             &mut b"y\n".as_ref(),
             &mut Vec::new(),
         );
-        assert!(!denied, "'y' must NOT approve — only 'yes' does");
+        assert!(denied, "'y' must approve a Danger command");
+    }
+
+    #[test]
+    fn danger_uppercase_y_approves() {
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+        let approved = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"Y\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(approved, "'Y' must approve a Danger command");
     }
 
     #[test]
@@ -633,7 +727,7 @@ mod tests {
         );
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
-        for input in [b"no\n".as_ref(), b"nope\n".as_ref(), b"YES\n".as_ref()] {
+        for input in [b"nope\n".as_ref(), b"ok\n".as_ref(), b"cancel\n".as_ref()] {
             let denied = show_confirmation_with_input(
                 &assessment,
                 &[],
@@ -645,10 +739,67 @@ mod tests {
         }
     }
 
+    #[test]
+    fn danger_no_denies() {
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(!denied, "'no' must deny a Danger command");
+    }
+
+    #[test]
+    fn danger_uppercase_no_denies() {
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"NO\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(!denied, "'NO' must deny a Danger command");
+    }
+
     // ── Warn ──────────────────────────────────────────────────────────────────
 
     #[test]
-    fn warn_enter_approves() {
+    fn warn_enter_denies() {
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(!denied, "Enter must deny a Warn command");
+    }
+
+    #[test]
+    fn warn_y_approves() {
         let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
@@ -656,10 +807,40 @@ mod tests {
             &assessment,
             &[],
             true,
-            &mut b"\n".as_ref(),
+            &mut b"y\n".as_ref(),
             &mut Vec::new(),
         );
-        assert!(approved, "Enter must approve a Warn command");
+        assert!(approved, "'y' must approve a Warn command");
+    }
+
+    #[test]
+    fn warn_uppercase_y_approves() {
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+        let approved = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b"Y\n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(approved, "'Y' must approve a Warn command");
+    }
+
+    #[test]
+    fn warn_yes_approves_after_trim() {
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+        let approved = show_confirmation_with_input(
+            &assessment,
+            &[],
+            true,
+            &mut b" yes \n".as_ref(),
+            &mut Vec::new(),
+        );
+        assert!(approved, "' yes ' must approve a Warn command");
     }
 
     #[test]
@@ -693,18 +874,35 @@ mod tests {
     }
 
     #[test]
-    fn warn_any_other_input_approves() {
+    fn warn_any_other_input_denies() {
         let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
-        let approved = show_confirmation_with_input(
-            &assessment,
-            &[],
-            true,
-            &mut b"ok\n".as_ref(),
-            &mut Vec::new(),
+        for input in [b"maybe\n".as_ref(), b"1\n".as_ref(), b"ok\n".as_ref()] {
+            let denied = show_confirmation_with_input(
+                &assessment,
+                &[],
+                true,
+                &mut { input },
+                &mut Vec::new(),
+            );
+            assert!(!denied, "unexpected input must deny a Warn command");
+        }
+    }
+
+    #[test]
+    fn warn_output_contains_explicit_yes_no_prompt() {
+        let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+        let mut output = Vec::new();
+        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("Execute suspicious command? [y/N]:"),
+            "Warn dialog must use the explicit yes/no prompt; got:\n{text}"
         );
-        assert!(approved, "non-n input must approve a Warn command");
     }
 
     // ── Dialog content ────────────────────────────────────────────────────────
@@ -752,6 +950,52 @@ mod tests {
         assert!(
             text.contains("git clean -fd"),
             "dialog must show safe_alt suggestion; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn danger_output_contains_dangerous_action_section() {
+        let p = make_match_with_text(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+-rf\s+/var/tmp/cache",
+            "Recursive force delete",
+            "rm -rf /var/tmp/cache",
+        );
+        let assessment = make_assessment("sudo rm -rf /var/tmp/cache", RiskLevel::Danger, vec![p]);
+
+        let mut output = Vec::new();
+        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("Dangerous action:"),
+            "dialog must show a dedicated dangerous action section; got:\n{text}"
+        );
+        assert!(
+            text.contains("rm -rf /var/tmp/cache"),
+            "dialog must show the dangerous action fragment; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn danger_output_contains_explicit_yes_no_prompt() {
+        let p = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+        let mut output = Vec::new();
+        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("Execute dangerous command? [y/N]:"),
+            "dialog must use the explicit yes/no prompt; got:\n{text}"
         );
     }
 

@@ -36,10 +36,16 @@ impl AuditTimestamp {
         Self(OffsetDateTime::now_utc())
     }
 
-    fn from_unix_seconds(seconds: i64) -> std::result::Result<Self, String> {
+    pub fn from_unix_seconds(seconds: i64) -> std::result::Result<Self, String> {
         OffsetDateTime::from_unix_timestamp(seconds)
             .map(Self)
             .map_err(|err| format!("invalid unix timestamp {seconds}: {err}"))
+    }
+
+    pub fn parse_rfc3339(value: &str) -> std::result::Result<Self, String> {
+        OffsetDateTime::parse(value, &Rfc3339)
+            .map(Self)
+            .map_err(|err| format!("invalid RFC 3339 timestamp {value:?}: {err}"))
     }
 
     fn format_rfc3339(&self) -> String {
@@ -153,6 +159,46 @@ pub enum Decision {
     Blocked,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AuditQuery {
+    pub last: Option<usize>,
+    pub risk: Option<RiskLevel>,
+    pub decision: Option<Decision>,
+    pub since: Option<AuditTimestamp>,
+    pub until: Option<AuditTimestamp>,
+    pub command_contains: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AuditSummary {
+    pub total_entries: usize,
+    pub decision_counts: DecisionCounts,
+    pub risk_counts: RiskCounts,
+    pub top_patterns: Vec<PatternCount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct DecisionCounts {
+    pub approved: usize,
+    pub denied: usize,
+    pub auto_approved: usize,
+    pub blocked: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+pub struct RiskCounts {
+    pub safe: usize,
+    pub warn: usize,
+    pub danger: usize,
+    pub block: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PatternCount {
+    pub id: String,
+    pub count: usize,
+}
+
 /// Stable audit representation of a matched scanner pattern.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchedPattern {
@@ -263,6 +309,22 @@ impl std::fmt::Display for Decision {
     }
 }
 
+impl std::str::FromStr for Decision {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "approved" => Ok(Self::Approved),
+            "denied" => Ok(Self::Denied),
+            "auto-approved" => Ok(Self::AutoApproved),
+            "blocked" => Ok(Self::Blocked),
+            other => Err(format!(
+                "invalid decision '{other}', expected one of: approved, denied, auto-approved, blocked"
+            )),
+        }
+    }
+}
+
 impl From<&MatchResult> for MatchedPattern {
     fn from(m: &MatchResult) -> Self {
         Self {
@@ -340,12 +402,20 @@ impl AuditLogger {
         Ok(entries)
     }
 
-    pub fn query(&self, last: Option<usize>, risk: Option<RiskLevel>) -> Result<Vec<AuditEntry>> {
-        match (last, risk) {
-            (Some(last), risk) => self.read_last_matching(last, risk),
-            (None, Some(risk)) => self.read_matching(risk),
-            (None, None) => self.read_all(),
+    pub fn query(&self, query: AuditQuery) -> Result<Vec<AuditEntry>> {
+        let mut entries = self.read_all()?;
+        entries.retain(|entry| entry_matches_query(entry, &query));
+
+        if let Some(last) = query.last {
+            if last == 0 {
+                entries.clear();
+            } else if entries.len() > last {
+                let keep_from = entries.len() - last;
+                entries = entries.split_off(keep_from);
+            }
         }
+
+        Ok(entries)
     }
 
     pub fn format_entries(entries: &[AuditEntry]) -> String {
@@ -354,17 +424,13 @@ impl AuditLogger {
         }
 
         let mut out = String::new();
+        out.push_str("timestamp                 decision       risk    command\n");
 
         for entry in entries {
-            out.push_str(&format!("[{}]", entry.timestamp));
-            if entry.sequence > 0 {
-                out.push_str(&format!(" seq={}", entry.sequence));
-            }
             out.push_str(&format!(
-                " risk={} decision={}\n",
-                entry.risk, entry.decision
+                "{:<25} {:<14} {:<7} {}\n",
+                entry.timestamp, entry.decision, entry.risk, entry.command
             ));
-            out.push_str(&format!("  command: {}\n", entry.command));
 
             if entry.matched_patterns.is_empty() {
                 out.push_str("  matched: none\n");
@@ -408,6 +474,86 @@ impl AuditLogger {
                         out.push_str(&format!("  allowlisted by: {pattern}\n"));
                     }
                 }
+            }
+        }
+
+        out
+    }
+
+    pub fn summarize_entries(entries: &[AuditEntry]) -> AuditSummary {
+        let mut summary = AuditSummary {
+            total_entries: entries.len(),
+            decision_counts: DecisionCounts::default(),
+            risk_counts: RiskCounts::default(),
+            top_patterns: Vec::new(),
+        };
+        let mut pattern_counts = std::collections::BTreeMap::<String, usize>::new();
+
+        for entry in entries {
+            match entry.decision {
+                Decision::Approved => summary.decision_counts.approved += 1,
+                Decision::Denied => summary.decision_counts.denied += 1,
+                Decision::AutoApproved => summary.decision_counts.auto_approved += 1,
+                Decision::Blocked => summary.decision_counts.blocked += 1,
+            }
+
+            match entry.risk {
+                RiskLevel::Safe => summary.risk_counts.safe += 1,
+                RiskLevel::Warn => summary.risk_counts.warn += 1,
+                RiskLevel::Danger => summary.risk_counts.danger += 1,
+                RiskLevel::Block => summary.risk_counts.block += 1,
+            }
+
+            for pattern in &entry.matched_patterns {
+                *pattern_counts.entry(pattern.id.clone()).or_default() += 1;
+            }
+        }
+
+        let mut top_patterns = pattern_counts
+            .into_iter()
+            .map(|(id, count)| PatternCount { id, count })
+            .collect::<Vec<_>>();
+        top_patterns.sort_by(|left, right| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        summary.top_patterns = top_patterns;
+        summary
+    }
+
+    pub fn format_summary(summary: &AuditSummary) -> String {
+        if summary.total_entries == 0 {
+            return "No audit entries matched.\n".to_string();
+        }
+
+        let mut out = String::new();
+        out.push_str("Audit summary\n");
+        out.push_str(&format!("  total entries: {}\n", summary.total_entries));
+        out.push_str("  decisions:\n");
+        out.push_str(&format!(
+            "    approved={} denied={} auto-approved={} blocked={}\n",
+            summary.decision_counts.approved,
+            summary.decision_counts.denied,
+            summary.decision_counts.auto_approved,
+            summary.decision_counts.blocked
+        ));
+        out.push_str("  risks:\n");
+        out.push_str(&format!(
+            "    safe={} warn={} danger={} block={}\n",
+            summary.risk_counts.safe,
+            summary.risk_counts.warn,
+            summary.risk_counts.danger,
+            summary.risk_counts.block
+        ));
+        out.push_str("  Top matched patterns:\n");
+
+        if summary.top_patterns.is_empty() {
+            out.push_str("    none\n");
+        } else {
+            for pattern in &summary.top_patterns {
+                out.push_str(&format!("    {} ({})\n", pattern.id, pattern.count));
             }
         }
 
@@ -795,6 +941,37 @@ fn current_timestamp() -> AuditTimestamp {
     AuditTimestamp::now()
 }
 
+fn entry_matches_query(entry: &AuditEntry, query: &AuditQuery) -> bool {
+    if query.risk.is_some_and(|risk| entry.risk != risk) {
+        return false;
+    }
+
+    if query
+        .decision
+        .is_some_and(|decision| entry.decision != decision)
+    {
+        return false;
+    }
+
+    if query.since.is_some_and(|since| entry.timestamp < since) {
+        return false;
+    }
+
+    if query.until.is_some_and(|until| entry.timestamp > until) {
+        return false;
+    }
+
+    if query
+        .command_contains
+        .as_ref()
+        .is_some_and(|needle| !entry.command.contains(needle))
+    {
+        return false;
+    }
+
+    true
+}
+
 fn next_sequence() -> u64 {
     AUDIT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
 }
@@ -924,7 +1101,12 @@ mod tests {
             logger.append(entry(index, risk)).unwrap();
         }
 
-        let entries = logger.query(None, Some(RiskLevel::Warn)).unwrap();
+        let entries = logger
+            .query(AuditQuery {
+                risk: Some(RiskLevel::Warn),
+                ..AuditQuery::default()
+            })
+            .unwrap();
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|entry| entry.risk == RiskLevel::Warn));
     }
@@ -938,7 +1120,12 @@ mod tests {
             logger.append(entry(index, RiskLevel::Warn)).unwrap();
         }
 
-        let entries = logger.query(Some(2), None).unwrap();
+        let entries = logger
+            .query(AuditQuery {
+                last: Some(2),
+                ..AuditQuery::default()
+            })
+            .unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "command-3");
         assert_eq!(entries[1].command, "command-4");
@@ -963,10 +1150,123 @@ mod tests {
             logger.append(entry(index, risk)).unwrap();
         }
 
-        let entries = logger.query(Some(2), Some(RiskLevel::Warn)).unwrap();
+        let entries = logger
+            .query(AuditQuery {
+                last: Some(2),
+                risk: Some(RiskLevel::Warn),
+                ..AuditQuery::default()
+            })
+            .unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "command-3");
         assert_eq!(entries[1].command, "command-5");
+    }
+
+    #[test]
+    fn query_filters_by_decision() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+
+        for index in 0..6 {
+            logger.append(entry(index, RiskLevel::Warn)).unwrap();
+        }
+
+        let entries = logger
+            .query(AuditQuery {
+                decision: Some(Decision::Blocked),
+                ..AuditQuery::default()
+            })
+            .unwrap();
+
+        assert!(!entries.is_empty());
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.decision == Decision::Blocked)
+        );
+    }
+
+    #[test]
+    fn query_filters_by_command_substring_case_sensitively() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+
+        logger.append(entry(0, RiskLevel::Safe)).unwrap();
+        logger.append(entry(1, RiskLevel::Warn)).unwrap();
+        logger
+            .append(AuditEntry {
+                command: "git stash clear".to_string(),
+                ..entry(2, RiskLevel::Warn)
+            })
+            .unwrap();
+
+        let entries = logger
+            .query(AuditQuery {
+                command_contains: Some("stash".to_string()),
+                ..AuditQuery::default()
+            })
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "git stash clear");
+
+        let no_match = logger
+            .query(AuditQuery {
+                command_contains: Some("Stash".to_string()),
+                ..AuditQuery::default()
+            })
+            .unwrap();
+        assert!(
+            no_match.is_empty(),
+            "substring filter must be case-sensitive"
+        );
+    }
+
+    #[test]
+    fn query_filters_by_inclusive_time_range() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+
+        for index in 0..4 {
+            logger.append(entry(index, RiskLevel::Warn)).unwrap();
+        }
+
+        let entries = logger
+            .query(AuditQuery {
+                since: Some(AuditTimestamp::from_unix_seconds(1_700_000_001).unwrap()),
+                until: Some(AuditTimestamp::from_unix_seconds(1_700_000_002).unwrap()),
+                ..AuditQuery::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.command.as_str())
+                .collect::<Vec<_>>(),
+            vec!["command-1", "command-2"]
+        );
+    }
+
+    #[test]
+    fn query_applies_last_after_other_filters() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+
+        for index in 0..6 {
+            logger.append(entry(index, RiskLevel::Warn)).unwrap();
+        }
+
+        let entries = logger
+            .query(AuditQuery {
+                decision: Some(Decision::Denied),
+                last: Some(1),
+                ..AuditQuery::default()
+            })
+            .unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, "command-5");
+        assert_eq!(entries[0].decision, Decision::Denied);
     }
 
     #[test]
@@ -985,7 +1285,12 @@ mod tests {
 
         fs::write(logger.path(), lines).unwrap();
 
-        let entries = logger.query(Some(2), None).unwrap();
+        let entries = logger
+            .query(AuditQuery {
+                last: Some(2),
+                ..AuditQuery::default()
+            })
+            .unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].command, "command-1");
         assert_eq!(entries[1].command, "command-2");
@@ -1041,7 +1346,12 @@ mod tests {
             vec!["command-0", "command-1", "command-2",]
         );
 
-        let last = logger.query(Some(2), None).unwrap();
+        let last = logger
+            .query(AuditQuery {
+                last: Some(2),
+                ..AuditQuery::default()
+            })
+            .unwrap();
         assert_eq!(
             last.iter()
                 .map(|entry| entry.command.as_str())

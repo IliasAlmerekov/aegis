@@ -552,6 +552,19 @@ reason = "test block allowlist"
         String::from_utf8_lossy(&output.stderr).contains("AEGIS BLOCKED"),
         "Block dialog must still be shown"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("blocked by an explicit danger/block pattern"),
+        "explicit block must explain the reason precisely; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("matched patterns"),
+        "explicit block must point operators to matched patterns; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--output json"),
+        "explicit block must mention JSON output for machine-readable details; stderr:\n{stderr}"
+    );
 
     let entries = read_audit_entries(home.path());
     assert_eq!(entries.len(), 1);
@@ -594,6 +607,94 @@ reason = "verbose allowlist test"
         .current_dir(workspace.path())
         .env("PATH", &path)
         .args(["-v", "-c", "terraform destroy -target=module.ci.api"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("allowlist"),
+        "verbose output must mention 'allowlist'; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("terraform destroy -target=module.ci.*"),
+        "verbose output must include the matched rule; stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn quiet_allowlist_match_suppresses_aegis_diagnostics() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+allowlist_override_level = "Danger"
+[[allowlist]]
+pattern = "terraform destroy -target=module.ci.*"
+reason = "quiet allowlist test"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .args(["--quiet", "-c", "terraform destroy -target=module.ci.api"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "quiet mode must suppress Aegis diagnostics on stderr"
+    );
+}
+
+#[test]
+fn verbosity_verbose_allowlist_match_prints_rule_name() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+allowlist_override_level = "Danger"
+[[allowlist]]
+pattern = "terraform destroy -target=module.ci.*"
+reason = "verbosity verbose test"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .args([
+            "--verbosity",
+            "verbose",
+            "-c",
+            "terraform destroy -target=module.ci.api",
+        ])
         .output()
         .unwrap();
 
@@ -914,6 +1015,32 @@ fn audit_logger_failure_verbose_prints_warning() {
 }
 
 #[test]
+fn json_output_verbose_keeps_stderr_empty() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args([
+            "--verbose",
+            "-c",
+            "terraform destroy -target=module.prod.api",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stderr.is_empty(),
+        "json mode must keep stderr empty even when verbose is requested"
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "danger");
+    assert_eq!(json["decision"], "prompt");
+}
+
+#[test]
 fn audit_rotation_config_rotates_and_audit_command_reads_archives() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
@@ -951,9 +1078,10 @@ compress_rotated = false
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("command: printf one"));
-    assert!(stdout.contains("command: printf two"));
-    assert!(stdout.contains("command: printf three"));
+    assert!(stdout.contains("timestamp"));
+    assert!(stdout.contains("printf one"));
+    assert!(stdout.contains("printf two"));
+    assert!(stdout.contains("printf three"));
 }
 
 #[test]
@@ -1017,6 +1145,114 @@ fn audit_command_can_export_ndjson_with_filters() {
     let entry: Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(entry["command"], "git stash clear");
     assert_eq!(entry["risk"], "Warn");
+}
+
+#[test]
+fn audit_command_filters_by_decision_in_text_mode() {
+    let home = TempDir::new().unwrap();
+
+    for command in ["printf one", "git stash clear", "printf two"] {
+        let output = base_command(home.path())
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        if command == "git stash clear" {
+            assert_eq!(output.status.code(), Some(2));
+        } else {
+            assert!(output.status.success());
+        }
+    }
+
+    let output = base_command(home.path())
+        .args(["audit", "--decision", "denied"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("git stash clear"));
+    assert!(!stdout.contains("printf one"));
+    assert!(!stdout.contains("printf two"));
+}
+
+#[test]
+fn audit_command_filters_by_command_substring_in_json_mode() {
+    let home = TempDir::new().unwrap();
+
+    for command in ["printf alpha", "git stash clear", "printf beta"] {
+        let output = base_command(home.path())
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        if command == "git stash clear" {
+            assert_eq!(output.status.code(), Some(2));
+        } else {
+            assert!(output.status.success());
+        }
+    }
+
+    let output = base_command(home.path())
+        .args(["audit", "--format", "json", "--command-contains", "stash"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let entries: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["command"], "git stash clear");
+}
+
+#[test]
+fn audit_command_summary_reports_top_pattern_ids() {
+    let home = TempDir::new().unwrap();
+
+    for command in ["git stash clear", "git stash clear", "printf done"] {
+        let output = base_command(home.path())
+            .args(["-c", command])
+            .output()
+            .unwrap();
+        if command == "git stash clear" {
+            assert_eq!(output.status.code(), Some(2));
+        } else {
+            assert!(output.status.success());
+        }
+    }
+
+    let output = base_command(home.path())
+        .args(["audit", "--summary"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let entries = read_audit_entries(home.path());
+    let top_pattern_id = entries
+        .iter()
+        .find_map(|entry| {
+            entry["matched_patterns"]
+                .as_array()
+                .and_then(|patterns| patterns.first())
+                .and_then(|pattern| pattern["id"].as_str())
+        })
+        .expect("expected at least one matched pattern id in audit log");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Top matched patterns"));
+    assert!(stdout.contains(top_pattern_id));
+}
+
+#[test]
+fn audit_command_rejects_summary_with_ndjson_format() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["audit", "--summary", "--format", "ndjson"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be used with"));
+    assert!(stderr.contains("--summary"));
+    assert!(stderr.contains("ndjson"));
 }
 
 // Confirmation UI failure (stdin EOF) ────────────────────────────────────
@@ -1084,6 +1320,14 @@ fn warn_command_non_interactive_is_denied() {
     assert!(
         stderr.contains("allowlist"),
         "non-interactive denial must mention 'allowlist' as the escape hatch; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("command denied"),
+        "non-interactive denial must explicitly say the command was denied; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--output json"),
+        "non-interactive denial must mention JSON output for automation; stderr:\n{stderr}"
     );
 }
 
@@ -2140,10 +2384,90 @@ auto_snapshot_docker = false
 
     assert_eq!(output.status.code(), Some(3));
     assert!(read_stub_invocations(&log_path).is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("blocked by strict mode"),
+        "strict mode block must name strict mode; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("allowlist"),
+        "strict mode block must mention allowlist guidance; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("config validate"),
+        "strict mode block must mention config validation; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--output json"),
+        "strict mode block must mention JSON output; stderr:\n{stderr}"
+    );
 
     let entries = read_audit_entries(home.path());
     assert_eq!(entries[0]["decision"], "Blocked");
     assert_eq!(entries[0]["risk"], "Warn");
+}
+
+#[test]
+fn protect_ci_policy_block_message_is_actionable() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let log_path = workspace.path().join("git.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("git"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_GIT_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Protect"
+ci_policy = "Block"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_CI", "1")
+        .env("PATH", &path)
+        .env("AEGIS_TEST_GIT_LOG", &log_path)
+        .args(["-c", "git stash clear"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(read_stub_invocations(&log_path).is_empty());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("blocked by CI policy"),
+        "CI policy block must name CI policy explicitly; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("allowlist"),
+        "CI policy block must mention allowlist guidance; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("config validate"),
+        "CI policy block must mention config validation; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--output json"),
+        "CI policy block must mention JSON output; stderr:\n{stderr}"
+    );
 }
 
 /// Strict mode must treat indirect execution wrappers as blocked-by-default

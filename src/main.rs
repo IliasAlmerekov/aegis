@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
-use aegis::audit::{AuditEntry, AuditLogger, Decision};
+use aegis::audit::{AuditEntry, AuditLogger, AuditQuery, AuditTimestamp, Decision};
 use aegis::config::{AllowlistMatch, Config, ValidationReport, validate_config_layers};
 use aegis::decision::{
     BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
@@ -38,8 +38,21 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = CommandOutputFormat::Text)]
     output: CommandOutputFormat,
 
-    /// Enable verbose/debug output
-    #[arg(short = 'v', long = "verbose")]
+    /// Control Aegis text output detail: quiet, standard, or verbose.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = OutputVerbosity::Standard,
+        conflicts_with_all = ["quiet", "verbose"]
+    )]
+    verbosity: OutputVerbosity,
+
+    /// Shorthand for `--verbosity quiet`.
+    #[arg(long, conflicts_with = "verbose")]
+    quiet: bool,
+
+    /// Shorthand for `--verbosity verbose`.
+    #[arg(short = 'v', long = "verbose", conflicts_with = "quiet")]
     verbose: bool,
 
     #[command(subcommand)]
@@ -64,6 +77,29 @@ enum CommandOutputFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum OutputVerbosity {
+    Quiet,
+    Standard,
+    Verbose,
+}
+
+impl OutputVerbosity {
+    fn from_cli(verbosity: Self, quiet: bool, verbose: bool) -> Self {
+        if quiet {
+            Self::Quiet
+        } else if verbose {
+            Self::Verbose
+        } else {
+            verbosity
+        }
+    }
+
+    fn is_verbose(self) -> bool {
+        matches!(self, Self::Verbose)
+    }
+}
+
 #[derive(Args)]
 struct AuditArgs {
     /// Show only the last N audit entries.
@@ -74,9 +110,29 @@ struct AuditArgs {
     #[arg(long, value_parser = parse_risk_level)]
     risk: Option<RiskLevel>,
 
+    /// Show only entries at or after this RFC 3339 timestamp.
+    #[arg(long, value_parser = parse_audit_timestamp)]
+    since: Option<AuditTimestamp>,
+
+    /// Show only entries at or before this RFC 3339 timestamp.
+    #[arg(long, value_parser = parse_audit_timestamp)]
+    until: Option<AuditTimestamp>,
+
+    /// Filter to commands containing this case-sensitive substring.
+    #[arg(long)]
+    command_contains: Option<String>,
+
+    /// Filter entries by decision: approved, denied, auto-approved, blocked.
+    #[arg(long, value_parser = parse_decision)]
+    decision: Option<Decision>,
+
     /// Output format: text (default), json, ndjson.
     #[arg(long, value_enum, default_value_t = AuditOutputFormat::Text)]
     format: AuditOutputFormat,
+
+    /// Show an aggregated summary instead of individual entries.
+    #[arg(long)]
+    summary: bool,
 }
 
 #[derive(Args)]
@@ -150,9 +206,12 @@ fn main() {
     let Cli {
         command,
         output,
+        verbosity,
+        quiet,
         verbose,
         subcommand,
     } = Cli::parse();
+    let verbosity = OutputVerbosity::from_cli(verbosity, quiet, verbose);
 
     // Build one Tokio runtime for the entire process lifetime.
     let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -168,26 +227,43 @@ fn main() {
     let handle = rt.handle().clone();
 
     let exit_code = match subcommand {
-        Some(Commands::Watch) => match RuntimeContext::load(verbose, handle) {
+        Some(Commands::Watch) => match RuntimeContext::load(verbosity.is_verbose(), handle) {
             Ok(context) => rt.block_on(aegis::watch::run(&context)),
             Err(err) => report_config_load_error(&err),
         },
         Some(Commands::Audit(args)) => {
-            let logger = AuditLogger::default();
-            match logger.query(args.last, args.risk) {
-                Ok(entries) => match format_audit_entries(&entries, args.format) {
-                    Ok(output) => {
-                        print!("{output}");
-                        0
-                    }
+            if args.summary && matches!(args.format, AuditOutputFormat::Ndjson) {
+                eprintln!("error: --summary cannot be used with --format ndjson");
+                EXIT_DENIED
+            } else {
+                let logger = AuditLogger::default();
+                let query = AuditQuery {
+                    last: args.last,
+                    risk: args.risk,
+                    decision: args.decision,
+                    since: args.since,
+                    until: args.until,
+                    command_contains: args.command_contains.clone(),
+                };
+                match logger.query(query) {
+                    Ok(entries) => match if args.summary {
+                        format_audit_summary(&entries, args.format)
+                    } else {
+                        format_audit_entries(&entries, args.format)
+                    } {
+                        Ok(output) => {
+                            print!("{output}");
+                            0
+                        }
+                        Err(err) => {
+                            eprintln!("error: failed to serialize audit output: {err}");
+                            EXIT_INTERNAL
+                        }
+                    },
                     Err(err) => {
-                        eprintln!("error: failed to serialize audit output: {err}");
+                        eprintln!("error: failed to read audit log: {err}");
                         EXIT_INTERNAL
                     }
-                },
-                Err(err) => {
-                    eprintln!("error: failed to read audit log: {err}");
-                    EXIT_INTERNAL
                 }
             }
         }
@@ -195,7 +271,7 @@ fn main() {
         Some(Commands::Config(args)) => handle_config_command(args),
         None => {
             if let Some(cmd) = command {
-                run_shell_wrapper(&cmd, output, verbose, handle)
+                run_shell_wrapper(&cmd, output, verbosity, handle)
             } else {
                 0
             }
@@ -206,6 +282,14 @@ fn main() {
 }
 
 fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
+    value.parse()
+}
+
+fn parse_audit_timestamp(value: &str) -> Result<AuditTimestamp, String> {
+    AuditTimestamp::parse_rfc3339(value)
+}
+
+fn parse_decision(value: &str) -> Result<Decision, String> {
     value.parse()
 }
 
@@ -230,8 +314,30 @@ fn format_audit_entries(
     }
 }
 
-fn run_shell_wrapper(cmd: &str, output: CommandOutputFormat, verbose: bool, handle: Handle) -> i32 {
-    let context = match RuntimeContext::load(verbose, handle) {
+fn format_audit_summary(
+    entries: &[AuditEntry],
+    format: AuditOutputFormat,
+) -> Result<String, String> {
+    let summary = AuditLogger::summarize_entries(entries);
+
+    match format {
+        AuditOutputFormat::Text => Ok(AuditLogger::format_summary(&summary)),
+        AuditOutputFormat::Json => {
+            serde_json::to_string_pretty(&summary).map_err(|err| err.to_string())
+        }
+        AuditOutputFormat::Ndjson => {
+            Err("--summary cannot be used with --format ndjson".to_string())
+        }
+    }
+}
+
+fn run_shell_wrapper(
+    cmd: &str,
+    output: CommandOutputFormat,
+    verbosity: OutputVerbosity,
+    handle: Handle,
+) -> i32 {
+    let context = match RuntimeContext::load(verbosity.is_verbose(), handle) {
         Ok(context) => context,
         Err(err) => return report_config_load_error(&err),
     };
@@ -242,7 +348,7 @@ fn run_shell_wrapper(cmd: &str, output: CommandOutputFormat, verbose: bool, hand
     let allowlist_match = context.allowlist_match_for_command(cmd, resolved_cwd.as_deref());
     let in_ci = is_ci_environment();
 
-    if verbose && matches!(output, CommandOutputFormat::Text) {
+    if verbosity.is_verbose() && matches!(output, CommandOutputFormat::Text) {
         if in_ci {
             eprintln!(
                 "ci: detected CI environment, ci_policy={:?}",
@@ -280,7 +386,7 @@ fn run_shell_wrapper(cmd: &str, output: CommandOutputFormat, verbose: bool, hand
         &context,
         &assessment,
         &cwd,
-        verbose,
+        verbosity.is_verbose(),
         allowlist_match.as_ref(),
         in_ci,
     );
@@ -291,7 +397,7 @@ fn run_shell_wrapper(cmd: &str, output: CommandOutputFormat, verbose: bool, hand
         &snapshots,
         allowlist_match.as_ref(),
         allowlist_effective,
-        verbose,
+        verbosity.is_verbose(),
     );
 
     match decision {
@@ -555,14 +661,12 @@ fn execute_policy_decision(
             match policy_decision.block_reason() {
                 Some(BlockReason::ProtectCiPolicy) => {
                     eprintln!(
-                        "aegis: CI policy blocked command (risk={:?}): {}",
-                        assessment.risk, assessment.command.raw,
+                        "aegis: blocked by CI policy (Protect mode + ci_policy=Block): {}",
+                        assessment.command.raw,
                     );
+                    eprintln!("hint: inspect the allowlist or run aegis config validate.");
                     eprintln!(
-                        "aegis: set ci_policy = \"Allow\" in .aegis.toml to disable the \
-                         CI-only hard block and use normal policy evaluation. \
-                         For allowlisted Danger commands, also set \
-                         allowlist_override_level = \"Danger\"."
+                        "hint: rerun with --output json for machine-readable policy details."
                     );
                 }
                 Some(BlockReason::IntrinsicRiskBlock) => {
@@ -571,8 +675,7 @@ fn execute_policy_decision(
                 Some(BlockReason::StrictPolicy) => {
                     show_policy_block(
                         assessment,
-                        "strict mode blocks non-safe commands unless the command \
-                         matches the allowlist and the override level permits it",
+                        "blocked by strict mode (non-safe commands require an allowlist override)",
                     );
                 }
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
@@ -930,6 +1033,44 @@ mod tests {
     fn parse_risk_level_rejects_unknown_values() {
         let error = parse_risk_level("critical").unwrap_err();
         assert!(error.contains("invalid risk level 'critical'"));
+    }
+
+    #[test]
+    fn cli_rejects_quiet_and_verbose_together() {
+        let error = Cli::try_parse_from(["aegis", "--quiet", "--verbose", "-c", "echo hello"])
+            .err()
+            .expect("quiet and verbose must conflict");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn cli_rejects_verbosity_with_quiet() {
+        let error = Cli::try_parse_from([
+            "aegis",
+            "--verbosity",
+            "verbose",
+            "--quiet",
+            "-c",
+            "echo hello",
+        ])
+        .err()
+        .expect("verbosity and quiet must conflict");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn cli_rejects_verbosity_with_verbose() {
+        let error = Cli::try_parse_from([
+            "aegis",
+            "--verbosity",
+            "quiet",
+            "--verbose",
+            "-c",
+            "echo hello",
+        ])
+        .err()
+        .expect("verbosity and verbose must conflict");
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     // ── CI policy ─────────────────────────────────────────────────────────────
