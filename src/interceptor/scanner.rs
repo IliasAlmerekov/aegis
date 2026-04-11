@@ -174,31 +174,15 @@ impl Scanner {
             };
         }
 
-        let mut matched = self.full_scan(cmd);
+        let mut matched = Vec::new();
 
-        // Per-segment scan: required for patterns that use end-of-string anchors (`$`).
-        //
-        // Running regexes against the full raw string misses cases where a separator
-        // immediately follows the dangerous token with no intervening whitespace, e.g.:
-        //   `rm -rf /;echo done`  →  `/` is followed by `;`, not `\s` or `$`
-        //   → PS-006 pattern `…/(\s|$)` would NOT match the raw string.
-        //
-        // Scanning each logical segment independently reconstructs the end-of-string
-        // context for every sub-command, so the pattern correctly fires on `rm -rf /`.
-        for segment in logical_segments(cmd) {
-            for p in self.full_scan(&segment) {
-                if !matched.iter().any(|m| m.pattern.id == p.pattern.id) {
-                    matched.push(p);
-                }
-            }
-        }
-
-        // Also scan any inline scripts (python -c "...", node -e "...", etc.)
-        // so that dangerous code embedded inside an interpreter call is caught.
-        for script in &command.inline_scripts {
-            for p in self.full_scan(&script.body) {
-                if !matched.iter().any(|m| m.pattern.id == p.pattern.id) {
-                    matched.push(p);
+        for target in scan_targets(cmd, &command) {
+            for pattern in self.full_scan(&target) {
+                if !matched
+                    .iter()
+                    .any(|existing: &MatchResult| existing.pattern.id == pattern.pattern.id)
+                {
+                    matched.push(pattern);
                 }
             }
         }
@@ -214,6 +198,26 @@ impl Scanner {
             matched,
             command,
         }
+    }
+}
+
+fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> Vec<String> {
+    let mut targets = vec![cmd.to_string()];
+
+    for segment in logical_segments(cmd) {
+        push_unique_target(&mut targets, segment);
+    }
+
+    for script in &parsed.inline_scripts {
+        push_unique_target(&mut targets, script.body.clone());
+    }
+
+    targets
+}
+
+fn push_unique_target(targets: &mut Vec<String>, target: String) {
+    if !target.is_empty() && !targets.iter().any(|existing| existing == &target) {
+        targets.push(target);
     }
 }
 
@@ -896,10 +900,10 @@ mod tests {
                 "false || kubectl delete namespace staging",
                 RiskLevel::Danger,
             ),
-            // command substitution: `/` followed by `)` → PS-006 does not match → Danger
-            ("echo $(rm -rf /)", RiskLevel::Danger),
-            // subshell grouping: same trailing `)` → Danger
-            ("(rm -rf /)", RiskLevel::Danger),
+            // command substitution: normalized inner command restores end-of-command semantics
+            ("echo $(rm -rf /)", RiskLevel::Block),
+            // subshell grouping: normalized inner command restores end-of-command semantics
+            ("(rm -rf /)", RiskLevel::Block),
             // python -c inline script: body scanned separately, trailing `'` → Danger
             (
                 r#"python3 -c "import os; os.system('rm -rf /')""#,
