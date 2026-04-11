@@ -311,9 +311,10 @@ reason = "test block allowlist"
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["decision"], "Blocked");
     assert_eq!(entries[0]["risk"], "Block");
-    // The allowlist_pattern is still recorded in the audit log so the operator
-    // can see that their allowlist entry was evaluated (and refused for Block).
-    assert_eq!(entries[0]["allowlist_pattern"], "rm -rf /");
+    // Blocked commands must not be annotated as allowlisted, even if they
+    // matched a rule before the hard block decision.
+    assert!(entries[0].get("allowlist_pattern").is_none());
+    assert!(entries[0].get("allowlist_reason").is_none());
 }
 
 /// When verbose mode is on and a command matches the allowlist, stderr must
@@ -1056,6 +1057,9 @@ fn config_show_prints_effective_allowlist_override_level() {
         r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "ephemeral test teardown"
 "#,
     )
     .unwrap();
@@ -1070,6 +1074,13 @@ allowlist_override_level = "Danger"
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("mode = \"Strict\""));
     assert!(stdout.contains("allowlist_override_level = \"Danger\""));
+    assert!(stdout.contains("[[allowlist]]"));
+    assert!(stdout.contains("pattern = \"terraform destroy -target=module.test.*\""));
+    assert!(stdout.contains("reason = \"ephemeral test teardown\""));
+    assert!(
+        !stdout.contains("allowlist = ["),
+        "config show must emit structured allowlist entries, not legacy string-array syntax"
+    );
 }
 
 #[test]
@@ -1086,9 +1097,20 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(output.status.success());
 
     let contents = fs::read_to_string(workspace.path().join(".aegis.toml")).unwrap();
-    assert!(contents.contains("Audit=non-blocking audit-only"));
-    assert!(contents.contains("Strict=block non-safe by default"));
+    assert!(contents.contains("Protect prompts on Warn/Danger"));
+    assert!(contents.contains("Audit is non-blocking audit-only"));
+    assert!(contents.contains("Strict blocks non-safe by default"));
     assert!(contents.contains("allowlist_override_level = \"Warn\""));
+    assert!(contents.contains("[[allowlist]]"));
+    assert!(contents.contains("Strict-mode allowlist ceiling"));
+    assert!(contents.contains("Strict-mode allowlisted warnings auto-approve"));
+    assert!(contents.contains("Strict-mode allowlisted destructive commands"));
+    assert!(contents.contains("Strict-mode allowlist auto-approval"));
+    assert!(contents.contains("Block never bypasses in Protect/Strict"));
+    assert!(
+        !contents.contains("allowlist = ["),
+        "init template must not fall back to legacy string-array syntax"
+    );
     assert!(!contents.contains("not yet implemented"));
 }
 
@@ -1595,10 +1617,182 @@ reason = "protect allowlist"
     assert_eq!(entries[0]["risk"], "Danger");
 }
 
+#[test]
+fn structured_allowlist_warn_override_autoapproves_warn_but_not_danger() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let git_log = workspace.path().join("git.log");
+    let terraform_log = workspace.path().join("terraform.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("git"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_GIT_LOG"
+exit 0
+"#,
+    );
+    write_executable(
+        &bin_dir.join("terraform"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+allowlist_override_level = "Warn"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+[[allowlist]]
+pattern = "*"
+reason = "structured ceiling test"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let allowed_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_GIT_LOG", &git_log)
+        .args(["-c", "git stash clear"])
+        .output()
+        .unwrap();
+
+    assert!(allowed_output.status.success());
+    assert_eq!(fs::read_to_string(&git_log).unwrap(), "stash clear\n");
+
+    let denied_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_TERRAFORM_LOG", &terraform_log)
+        .stdin(Stdio::null())
+        .args(["-c", "terraform destroy -target=module.test.api"])
+        .output()
+        .unwrap();
+
+    assert!(
+        !denied_output.status.success(),
+        "Warn ceiling must not auto-approve Danger commands"
+    );
+    assert!(
+        !terraform_log.exists(),
+        "Warn ceiling must not auto-approve Danger commands"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Warn");
+    assert_eq!(entries[0]["allowlist_pattern"], "*");
+    assert_eq!(entries[1]["decision"], "Blocked");
+    assert_eq!(entries[1]["risk"], "Danger");
+    assert!(entries[1].get("allowlist_pattern").is_none());
+    assert!(entries[1].get("allowlist_reason").is_none());
+}
+
+#[test]
+fn structured_allowlist_danger_override_autoapproves_danger_and_logs_rule_reason() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let log_path = workspace.path().join("terraform.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("terraform"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+allowlist_override_level = "Danger"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "ephemeral test teardown"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_TERRAFORM_LOG", &log_path)
+        .args(["-c", "terraform destroy -target=module.test.api"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(&log_path).unwrap(),
+        "destroy -target=module.test.api\n"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert_eq!(
+        entries[0]["allowlist_pattern"],
+        "terraform destroy -target=module.test.*"
+    );
+    assert_eq!(entries[0]["allowlist_reason"], "ephemeral test teardown");
+}
+
+#[test]
+fn legacy_allowlist_schema_fails_config_load() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Strict"
+allowlist = ["terraform destroy *"]
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stdout.is_empty(), "config load must fail closed");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error: failed to load config"));
+    assert!(stderr.contains(&workspace.path().join(".aegis.toml").display().to_string()));
+    assert!(stderr.contains("invalid type"));
+}
+
 /// Audit mode must never block or prompt — even Block-level commands in CI
 /// with ci_policy = Block must be auto-approved and executed.
 #[test]
-fn audit_mode_ignores_ci_policy_and_executes_block_command() {
+fn audit_mode_stays_non_blocking_for_block_classification() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
     let bin_dir = workspace.path().join("bin");
@@ -1619,6 +1813,9 @@ mode = "Audit"
 ci_policy = "Block"
 auto_snapshot_git = false
 auto_snapshot_docker = false
+[[allowlist]]
+pattern = "rm -rf /"
+reason = "audit mode should not attribute allowlist authorization"
 "#,
     )
     .unwrap();
@@ -1642,9 +1839,12 @@ auto_snapshot_docker = false
     assert_eq!(fs::read_to_string(&log_path).unwrap(), "-rf /\n");
 
     let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["decision"], "AutoApproved");
     assert_eq!(entries[0]["risk"], "Block");
     assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
+    assert!(entries[0].get("allowlist_pattern").is_none());
+    assert!(entries[0].get("allowlist_reason").is_none());
 }
 
 /// Strict mode must block Warn commands even when ci_policy = Allow.

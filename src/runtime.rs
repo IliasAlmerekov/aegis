@@ -149,15 +149,24 @@ impl RuntimeContext {
         decision: Decision,
         snapshots: &[SnapshotRecord],
         allowlist_match: Option<&AllowlistMatch>,
+        allowlist_effective: bool,
         verbose: bool,
     ) {
+        let allowlist_pattern = (allowlist_effective)
+            .then(|| allowlist_match.map(|m| m.pattern.clone()))
+            .flatten();
+        let allowlist_reason = (allowlist_effective)
+            .then(|| allowlist_match.map(|m| m.reason.clone()))
+            .flatten();
+
         let entry = AuditEntry::new(
             assessment.command.raw.clone(),
             assessment.risk,
             assessment.matched.iter().map(Into::into).collect(),
             decision,
             snapshots.iter().map(Into::into).collect(),
-            allowlist_match.map(|m| m.pattern.clone()),
+            allowlist_pattern,
+            allowlist_reason,
         );
 
         if let Err(err) = self.audit_logger.append(entry)
@@ -178,18 +187,27 @@ impl RuntimeContext {
         decision: Decision,
         snapshots: &[SnapshotRecord],
         allowlist_match: Option<&AllowlistMatch>,
+        allowlist_effective: bool,
         watch_source: Option<String>,
         watch_cwd: Option<String>,
         watch_id: Option<String>,
         verbose: bool,
     ) {
+        let allowlist_pattern = (allowlist_effective)
+            .then(|| allowlist_match.map(|m| m.pattern.clone()))
+            .flatten();
+        let allowlist_reason = (allowlist_effective)
+            .then(|| allowlist_match.map(|m| m.reason.clone()))
+            .flatten();
+
         let entry = AuditEntry::new(
             assessment.command.raw.clone(),
             assessment.risk,
             assessment.matched.iter().map(Into::into).collect(),
             decision,
             snapshots.iter().map(Into::into).collect(),
-            allowlist_match.map(|m| m.pattern.clone()),
+            allowlist_pattern,
+            allowlist_reason,
         )
         .with_watch_context(watch_source, watch_cwd, watch_id);
 

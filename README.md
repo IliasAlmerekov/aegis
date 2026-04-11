@@ -170,19 +170,11 @@ aegis config show      # prints the active config (merged from all sources)
 #   Strict   - auto-approve Safe only; block non-safe unless allowlist_override_level permits it
 mode = "Protect"
 
-# Allowlist override power:
-#   Warn    - allowlisted Warn auto-approves; Danger still prompts or blocks
-#   Danger  - allowlisted Warn and Danger auto-approve
-#   Never   - allowlist never changes the outcome for non-safe commands
-# Block is never bypassed.
+# Strict-mode allowlist ceiling.
+#   Warn   - in Strict mode, allowlisted warnings may auto-approve.
+#   Danger - in Strict mode, allowlisted Warn and Danger commands may auto-approve.
+#   Never  - in Strict mode, allowlisted commands never auto-approve.
 allowlist_override_level = "Warn"
-
-# Migration note: older Protect-mode configs auto-approved allowlisted Danger
-# commands by default. To keep that behavior after upgrading, set
-# allowlist_override_level = "Danger" explicitly.
-# Existing Strict-mode configs without an override setting keep the old
-# blocking default. Set `allowlist_override_level = "Warn"` or `"Danger"` to
-# opt into the new allowlist auto-approve behavior there.
 
 # Create a git stash snapshot before Danger commands when policy allows execution.
 auto_snapshot_git = true
@@ -191,13 +183,14 @@ auto_snapshot_git = true
 # Disabled by default - enable once you have tested rollback in your environment.
 auto_snapshot_docker = false
 
-# Commands matching these glob patterns are trusted.
-# Protect: allowlisted Warn auto-approves at Warn/Danger; Danger auto-approves only at Danger.
-# Strict: the same override levels apply, but non-allowed non-safe commands block.
-allowlist = [
-    # "terraform destroy -target=module.test.*",
-    # "docker system prune --volumes",
-]
+# Structured allowlist rules use array-of-tables entries.
+# Protect: allowlisted Warn/Danger auto-approve.
+# Strict: allowlisted Warn auto-approves; Danger depends on allowlist_override_level.
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "/srv/infra"
+user = "ci"
+reason = "ephemeral test teardown"
 
 # Extra patterns loaded on top of the built-in set.
 # Fields: id, category, risk, pattern (regex), description, safe_alt (optional).
@@ -361,12 +354,16 @@ duplicate IDs are rejected as a config error.
 
 In confirmation UI and audit logs, custom matches are labeled with `source = custom`.
 
-The `allowlist` field accepts glob patterns:
+Structured allowlist rules are written as TOML array-of-tables entries:
 
 ```toml
-allowlist = [
-    "terraform destroy -target=module.staging.*",
-]
+allowlist_override_level = "Warn"
+
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "/srv/infra"
+user = "ci"
+reason = "ephemeral test teardown"
 ```
 
 Allowlisted commands are still logged to the audit file.

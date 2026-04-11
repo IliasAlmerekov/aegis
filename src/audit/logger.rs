@@ -119,6 +119,10 @@ pub struct AuditEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_pattern: Option<String>,
 
+    /// The operator rationale attached to the allowlist rule, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist_reason: Option<String>,
+
     /// The agent/caller identity passed in the watch-mode input frame.
     /// Absent for shell-wrapper entries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,6 +216,7 @@ impl AuditEntry {
         decision: Decision,
         snapshots: Vec<AuditSnapshot>,
         allowlist_pattern: Option<String>,
+        allowlist_reason: Option<String>,
     ) -> Self {
         Self {
             timestamp: current_timestamp(),
@@ -222,6 +227,7 @@ impl AuditEntry {
             decision,
             snapshots,
             allowlist_pattern,
+            allowlist_reason,
             source: None,
             cwd: None,
             id: None,
@@ -394,7 +400,14 @@ impl AuditLogger {
             }
 
             if let Some(pattern) = &entry.allowlist_pattern {
-                out.push_str(&format!("  allowlisted by: {pattern}\n"));
+                match &entry.allowlist_reason {
+                    Some(reason) => {
+                        out.push_str(&format!("  allowlisted by: {pattern} ({reason})\n"));
+                    }
+                    None => {
+                        out.push_str(&format!("  allowlisted by: {pattern}\n"));
+                    }
+                }
             }
         }
 
@@ -817,6 +830,7 @@ mod tests {
                 snapshot_id: format!("snap-{index}"),
             }],
             allowlist_pattern: None,
+            allowlist_reason: None,
             source: None,
             cwd: None,
             id: None,
@@ -1097,6 +1111,7 @@ mod tests {
             Decision::AutoApproved,
             vec![],
             None,
+            None,
         )
         .with_watch_context(
             Some("claude".to_string()),
@@ -1121,6 +1136,7 @@ mod tests {
             vec![],
             Decision::AutoApproved,
             vec![],
+            None,
             None,
         );
 

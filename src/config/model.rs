@@ -16,14 +16,20 @@ const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
 const GLOBAL_CONFIG_FILE: &str = "config.toml";
 
 const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
-mode = "Protect" # Protect=prompt/block, Audit=non-blocking audit-only, Strict=block non-safe by default.
+mode = "Protect" # Protect prompts on Warn/Danger, Audit is non-blocking audit-only, Strict blocks non-safe by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist_override_level = "Warn" # Strict override ceiling for allowlisted commands: Warn, Danger, or Never.
+allowlist_override_level = "Warn" # Strict-mode allowlist ceiling: Warn | Danger | Never.
+# Warn keeps Strict-mode allowlisted warnings auto-approve.
+# Danger extends Strict-mode allowlisted destructive commands.
+# Never disables Strict-mode allowlist auto-approval.
+# Block never bypasses in Protect/Strict.
 
-# Add structured allowlist rules as array-of-tables entries.
+# Structured allowlist rules use array-of-tables entries.
 # [[allowlist]]
 # pattern = "terraform destroy -target=module.test.*"
+# cwd = "/srv/infra"
+# user = "ci"
 # expires_at = "2030-01-01T00:00:00Z"
 # reason = "ephemeral test teardown"
 
@@ -969,6 +975,14 @@ expires_at = "2030-01-01T00:00:00Z"
         assert!(
             template.contains("[[allowlist]]"),
             "template must show the structured allowlist entry form"
+        );
+        assert!(
+            template.contains("Warn | Danger | Never"),
+            "template must document the structured allowlist ceiling"
+        );
+        assert!(
+            template.contains("Block never bypasses in Protect/Strict"),
+            "template must state that Block cannot be bypassed"
         );
     }
 

@@ -345,6 +345,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         decision,
         &snapshots,
         allowlist_match.as_ref(),
+        plan.allowlist_effective,
         frame.source.clone(),
         frame.cwd.clone(),
         id.clone(),

@@ -221,7 +221,7 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
         log_assessment(&assessment, allowlist_match.as_ref());
     }
 
-    let (decision, snapshots) = decide_command(
+    let (decision, snapshots, allowlist_effective) = decide_command(
         &context,
         &assessment,
         &cwd,
@@ -235,6 +235,7 @@ fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
         decision,
         &snapshots,
         allowlist_match.as_ref(),
+        allowlist_effective,
         verbose,
     );
 
@@ -438,7 +439,7 @@ fn decide_command(
     verbose: bool,
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
-) -> (Decision, Vec<SnapshotRecord>) {
+) -> (Decision, Vec<SnapshotRecord>, bool) {
     let mode = context.config().mode;
     let ci_policy = context.config().ci_policy;
 
@@ -458,7 +459,7 @@ fn decide_command(
     };
 
     match plan.action {
-        PolicyAction::AutoApprove => (Decision::AutoApproved, snapshots),
+        PolicyAction::AutoApprove => (Decision::AutoApproved, snapshots, plan.allowlist_effective),
         PolicyAction::Prompt => {
             let approved = show_confirmation(assessment, &snapshots);
             let decision = if approved {
@@ -467,7 +468,7 @@ fn decide_command(
                 Decision::Denied
             };
 
-            (decision, snapshots)
+            (decision, snapshots, plan.allowlist_effective)
         }
         PolicyAction::Block => {
             match plan.block_reason {
@@ -496,7 +497,7 @@ fn decide_command(
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
             }
 
-            (Decision::Blocked, snapshots)
+            (Decision::Blocked, snapshots, plan.allowlist_effective)
         }
     }
 }
@@ -827,7 +828,7 @@ mod tests {
     #[test]
     fn ci_policy_block_blocks_warn_in_ci() {
         let assessment = make_assessment(RiskLevel::Warn);
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
@@ -842,7 +843,7 @@ mod tests {
     #[test]
     fn ci_policy_block_blocks_danger_in_ci() {
         let assessment = make_assessment(RiskLevel::Danger);
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
@@ -857,7 +858,7 @@ mod tests {
     #[test]
     fn ci_policy_block_blocks_block_in_ci() {
         let assessment = make_assessment(RiskLevel::Block);
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
@@ -876,7 +877,7 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) = decide_command(
+        let (decision, _, _) = decide_command(
             &context_with_ci_policy(CiPolicy::Block),
             &assessment,
             Path::new("."),
@@ -896,7 +897,7 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) = decide_command(
+        let (decision, _, _) = decide_command(
             &context_with_ci_policy(CiPolicy::Allow),
             &assessment,
             Path::new("."),
@@ -915,7 +916,7 @@ mod tests {
             matched: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
-        let (decision, _) =
+        let (decision, _, _) =
             decide_command(&context(), &assessment, Path::new("."), false, None, false);
         assert_eq!(decision, Decision::AutoApproved);
     }
@@ -923,7 +924,7 @@ mod tests {
     #[test]
     fn audit_mode_auto_approves_block_even_in_ci() {
         let assessment = make_assessment(RiskLevel::Block);
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_mode(Mode::Audit),
             &assessment,
             Path::new("."),
@@ -939,7 +940,7 @@ mod tests {
     #[test]
     fn strict_mode_blocks_warn_without_prompt_path() {
         let assessment = make_assessment(RiskLevel::Warn);
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_mode(Mode::Strict),
             &assessment,
             Path::new("."),
@@ -961,7 +962,7 @@ mod tests {
             source_layer: AllowlistSourceLayer::Project,
         };
 
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_allowlist_override_level(AllowlistOverrideLevel::Danger),
             &assessment,
             Path::new("."),
@@ -983,7 +984,7 @@ mod tests {
             source_layer: AllowlistSourceLayer::Project,
         };
 
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_allowlist_override_level(AllowlistOverrideLevel::Warn),
             &assessment,
             Path::new("."),
@@ -1005,7 +1006,7 @@ mod tests {
             source_layer: AllowlistSourceLayer::Project,
         };
 
-        let (decision, snapshots) = decide_command(
+        let (decision, snapshots, _) = decide_command(
             &context_with_allowlist_override_level(AllowlistOverrideLevel::Never),
             &assessment,
             Path::new("."),
