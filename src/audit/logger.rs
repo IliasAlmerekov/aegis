@@ -1,21 +1,19 @@
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-
-#[cfg(test)]
-use std::io::Read;
 
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::config::AuditConfig;
+use crate::config::{AuditConfig, AuditIntegrityMode, Mode};
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::Category;
@@ -25,6 +23,7 @@ use crate::snapshot::SnapshotRecord;
 
 type Result<T> = std::result::Result<T, AegisError>;
 static AUDIT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const CHAIN_ALG_SHA256: &str = "sha256";
 
 /// RFC 3339 timestamp stored in the audit log.
 ///
@@ -119,8 +118,33 @@ pub struct AuditEntry {
     pub command: String,
     pub risk: RiskLevel,
     pub matched_patterns: Vec<MatchedPattern>,
+    /// Top-level projection of `matched_patterns[].id` for easier indexing in
+    /// log aggregation systems.
+    #[serde(default)]
+    pub pattern_ids: Vec<String>,
     pub decision: Decision,
     pub snapshots: Vec<AuditSnapshot>,
+    /// Effective Aegis operating mode for this policy decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<Mode>,
+    /// Whether Aegis detected a CI environment while evaluating the command.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci_detected: Option<bool>,
+    /// Whether any allowlist rule matched the command/context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist_matched: Option<bool>,
+    /// Whether the matched allowlist rule affected the final decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowlist_effective: Option<bool>,
+    /// Hash chain algorithm used for this entry, when integrity mode is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_alg: Option<String>,
+    /// Previous chained entry hash, or `None` for the first chained entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_hash: Option<String>,
+    /// Hash of the canonical payload for this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_hash: Option<String>,
     /// The allowlist glob pattern that caused this command to be auto-approved,
     /// if any.  `None` when the command was not allowlisted.
     ///
@@ -251,10 +275,30 @@ struct ArchiveSegment {
     index: usize,
 }
 
+struct AuditLock {
+    file: File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditIntegrityReport {
+    pub status: AuditIntegrityStatus,
+    pub checked_entries: usize,
+    pub chained_entries: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditIntegrityStatus {
+    Verified,
+    NoIntegrityData,
+    Corrupt,
+}
+
 /// Append-only JSONL audit log stored under `~/.aegis/audit.jsonl`.
 pub struct AuditLogger {
     path: PathBuf,
     rotation: Option<AuditRotationPolicy>,
+    integrity_mode: AuditIntegrityMode,
 }
 
 impl AuditEntry {
@@ -272,9 +316,20 @@ impl AuditEntry {
             sequence: next_sequence(),
             command: command.into(),
             risk,
+            pattern_ids: matched_patterns
+                .iter()
+                .map(|pattern| pattern.id.clone())
+                .collect(),
             matched_patterns,
             decision,
             snapshots,
+            mode: None,
+            ci_detected: None,
+            allowlist_matched: Some(false),
+            allowlist_effective: Some(false),
+            chain_alg: None,
+            prev_hash: None,
+            entry_hash: None,
             allowlist_pattern,
             allowlist_reason,
             source: None,
@@ -295,6 +350,48 @@ impl AuditEntry {
         self.cwd = cwd;
         self.id = id;
         self.transport = Some("watch".to_string());
+        self
+    }
+
+    /// Attach the evaluated policy context captured at runtime.
+    pub fn with_policy_context(
+        mut self,
+        mode: Mode,
+        ci_detected: bool,
+        allowlist_matched: bool,
+        allowlist_effective: bool,
+    ) -> Self {
+        self.mode = Some(mode);
+        self.ci_detected = Some(ci_detected);
+        self.allowlist_matched = Some(allowlist_matched);
+        self.allowlist_effective = Some(allowlist_effective);
+        self
+    }
+
+    fn normalize_legacy_fields(mut self) -> Self {
+        if self.pattern_ids.is_empty() {
+            self.pattern_ids = self
+                .matched_patterns
+                .iter()
+                .map(|pattern| pattern.id.clone())
+                .collect();
+        }
+
+        let allowlist_present = self.allowlist_pattern.is_some();
+        if self.allowlist_matched.is_none() {
+            self.allowlist_matched = Some(allowlist_present);
+        }
+        if self.allowlist_effective.is_none() {
+            self.allowlist_effective = Some(allowlist_present);
+        }
+
+        self
+    }
+
+    fn with_integrity_chain(mut self, prev_hash: Option<String>, entry_hash: String) -> Self {
+        self.chain_alg = Some(CHAIN_ALG_SHA256.to_string());
+        self.prev_hash = prev_hash;
+        self.entry_hash = Some(entry_hash);
         self
     }
 }
@@ -357,17 +454,52 @@ impl Default for AuditLogger {
     }
 }
 
+impl AuditLock {
+    fn exclusive(path: &Path) -> Result<Self> {
+        let file = open_lock_file(path, true)?;
+        file.lock()?;
+        Ok(Self { file })
+    }
+
+    fn shared(path: &Path) -> Result<Self> {
+        let file = open_lock_file(path, false)?;
+        file.lock_shared()?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for AuditLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
 impl AuditLogger {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
             rotation: None,
+            integrity_mode: AuditIntegrityMode::Off,
         }
     }
 
     pub fn with_rotation(mut self, policy: AuditRotationPolicy) -> Self {
         self.rotation = Some(policy);
         self
+    }
+
+    pub fn with_integrity_mode(mut self, mode: AuditIntegrityMode) -> Self {
+        self.integrity_mode = mode;
+        self
+    }
+
+    pub fn from_audit_config(config: &AuditConfig) -> Self {
+        let logger = Self::default().with_integrity_mode(config.integrity_mode);
+        if let Some(policy) = AuditRotationPolicy::from_config(config) {
+            logger.with_rotation(policy)
+        } else {
+            logger
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -378,7 +510,12 @@ impl AuditLogger {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let _lock = AuditLock::exclusive(&self.lock_path())?;
 
+        let prev_hash = self.latest_chained_hash()?;
+        let entry = self
+            .apply_integrity(entry.normalize_legacy_fields(), prev_hash)?
+            .normalize_legacy_fields();
         let mut serialized =
             serde_json::to_vec(&entry).map_err(|e| AegisError::Io(std::io::Error::other(e)))?;
         serialized.push(b'\n');
@@ -398,6 +535,7 @@ impl AuditLogger {
     }
 
     pub fn read_all(&self) -> Result<Vec<AuditEntry>> {
+        let _lock = self.acquire_shared_lock()?;
         let mut entries = Vec::new();
         for segment in self.segments_oldest_to_newest()? {
             self.extend_entries_from_segment(&segment, None, &mut entries)?;
@@ -419,6 +557,11 @@ impl AuditLogger {
         }
 
         Ok(entries)
+    }
+
+    pub fn verify_integrity(&self) -> Result<AuditIntegrityReport> {
+        let entries = self.read_all()?;
+        Ok(verify_integrity_entries(&entries))
     }
 
     pub fn format_entries(entries: &[AuditEntry]) -> String {
@@ -563,6 +706,95 @@ impl AuditLogger {
         out
     }
 
+    fn lock_path(&self) -> PathBuf {
+        let mut file_name = self
+            .path
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or_else(|| "audit.jsonl".into());
+        file_name.push(".lock");
+
+        match self.path.parent() {
+            Some(parent) => parent.join(file_name),
+            None => PathBuf::from(file_name),
+        }
+    }
+
+    fn acquire_shared_lock(&self) -> Result<Option<AuditLock>> {
+        let lock_path = self.lock_path();
+        if lock_path.parent().is_some_and(|parent| !parent.exists()) {
+            return Ok(None);
+        }
+
+        AuditLock::shared(&lock_path).map(Some)
+    }
+
+    fn apply_integrity(&self, entry: AuditEntry, prev_hash: Option<String>) -> Result<AuditEntry> {
+        match self.integrity_mode {
+            AuditIntegrityMode::Off => Ok(entry),
+            AuditIntegrityMode::ChainSha256 => {
+                let entry_hash = compute_entry_hash(&entry, prev_hash.as_deref())?;
+                Ok(entry.with_integrity_chain(prev_hash, entry_hash))
+            }
+        }
+    }
+
+    fn latest_chained_hash(&self) -> Result<Option<String>> {
+        if let Some(entry) = self.read_last_entry_from_plain_file(&self.path)? {
+            return Ok(entry.entry_hash);
+        }
+
+        if let Some(path) = self.existing_archive_path(1) {
+            let compressed = path.extension().and_then(|ext| ext.to_str()) == Some("gz");
+            let segment = ArchiveSegment {
+                path,
+                compressed,
+                index: 1,
+            };
+            let entries = self.read_entries_from_segment(&segment, None)?;
+            return Ok(entries.last().and_then(|entry| entry.entry_hash.clone()));
+        }
+
+        Ok(None)
+    }
+
+    fn read_last_entry_from_plain_file(&self, path: &Path) -> Result<Option<AuditEntry>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let mut file = File::open(path)?;
+        let file_len = file.metadata()?.len();
+        if file_len == 0 {
+            return Ok(None);
+        }
+
+        let mut pos = file_len;
+        let mut tail = Vec::new();
+
+        loop {
+            let read_start = pos.saturating_sub(8192);
+            let read_len = (pos - read_start) as usize;
+            let mut chunk = vec![0; read_len];
+            file.seek(SeekFrom::Start(read_start))?;
+            file.read_exact(&mut chunk)?;
+            chunk.extend_from_slice(&tail);
+            tail = chunk;
+
+            if let Some(line) = tail.split(|byte| *byte == b'\n').rev().find(|line| {
+                !line.is_empty() && !line.iter().all(|byte| byte.is_ascii_whitespace())
+            }) {
+                return self.parse_entry_line(line, path, None);
+            }
+
+            if read_start == 0 {
+                return Ok(None);
+            }
+
+            pos = read_start;
+        }
+    }
+
     fn parse_entry_line(
         &self,
         line: &[u8],
@@ -574,6 +806,7 @@ impl AuditLogger {
         }
 
         serde_json::from_slice::<AuditEntry>(line)
+            .map(AuditEntry::normalize_legacy_fields)
             .map(Some)
             .map_err(|err| match line_number {
                 Some(index) => AegisError::Config(format!(
@@ -815,6 +1048,196 @@ fn default_audit_path() -> PathBuf {
     PathBuf::from(home).join(".aegis").join("audit.jsonl")
 }
 
+fn open_lock_file(path: &Path, create_parent: bool) -> Result<File> {
+    if create_parent && let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(Into::into)
+}
+
+#[derive(Serialize)]
+struct AuditIntegrityPayload<'a> {
+    timestamp: AuditTimestamp,
+    sequence: u64,
+    command: &'a str,
+    risk: RiskLevel,
+    matched_patterns: &'a [MatchedPattern],
+    pattern_ids: &'a [String],
+    decision: Decision,
+    snapshots: &'a [AuditSnapshot],
+    mode: Option<Mode>,
+    ci_detected: Option<bool>,
+    allowlist_matched: Option<bool>,
+    allowlist_effective: Option<bool>,
+    chain_alg: &'a str,
+    prev_hash: Option<&'a str>,
+    allowlist_pattern: Option<&'a String>,
+    allowlist_reason: Option<&'a String>,
+    source: Option<&'a String>,
+    cwd: Option<&'a String>,
+    id: Option<&'a String>,
+    transport: Option<&'a String>,
+}
+
+fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) -> Result<String> {
+    let payload = AuditIntegrityPayload {
+        timestamp: entry.timestamp,
+        sequence: entry.sequence,
+        command: &entry.command,
+        risk: entry.risk,
+        matched_patterns: &entry.matched_patterns,
+        pattern_ids: &entry.pattern_ids,
+        decision: entry.decision,
+        snapshots: &entry.snapshots,
+        mode: entry.mode,
+        ci_detected: entry.ci_detected,
+        allowlist_matched: entry.allowlist_matched,
+        allowlist_effective: entry.allowlist_effective,
+        chain_alg: CHAIN_ALG_SHA256,
+        prev_hash,
+        allowlist_pattern: entry.allowlist_pattern.as_ref(),
+        allowlist_reason: entry.allowlist_reason.as_ref(),
+        source: entry.source.as_ref(),
+        cwd: entry.cwd.as_ref(),
+        id: entry.id.as_ref(),
+        transport: entry.transport.as_ref(),
+    };
+
+    let canonical = serde_json::to_vec(&payload).map_err(|err| {
+        AegisError::Config(format!(
+            "failed to serialize audit integrity payload: {err}"
+        ))
+    })?;
+    let digest = Sha256::digest(canonical);
+    Ok(hex_encode(&digest))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+fn verify_integrity_entries(entries: &[AuditEntry]) -> AuditIntegrityReport {
+    let mut chained_entries = 0usize;
+    let mut previous_hash: Option<String> = None;
+    let mut seen_chain = false;
+
+    for (index, entry) in entries.iter().enumerate() {
+        let is_chained =
+            entry.entry_hash.is_some() || entry.prev_hash.is_some() || entry.chain_alg.is_some();
+
+        if !is_chained {
+            if seen_chain {
+                return AuditIntegrityReport {
+                    status: AuditIntegrityStatus::Corrupt,
+                    checked_entries: entries.len(),
+                    chained_entries,
+                    message: format!(
+                        "audit integrity failure at entry {}: encountered an unchained entry after the chain started",
+                        index + 1
+                    ),
+                };
+            }
+            continue;
+        }
+
+        seen_chain = true;
+        chained_entries += 1;
+
+        if entry.chain_alg.as_deref() != Some(CHAIN_ALG_SHA256) {
+            return AuditIntegrityReport {
+                status: AuditIntegrityStatus::Corrupt,
+                checked_entries: entries.len(),
+                chained_entries,
+                message: format!(
+                    "audit integrity failure at entry {}: unsupported or missing chain algorithm",
+                    index + 1
+                ),
+            };
+        }
+
+        let Some(entry_hash) = entry.entry_hash.as_deref() else {
+            return AuditIntegrityReport {
+                status: AuditIntegrityStatus::Corrupt,
+                checked_entries: entries.len(),
+                chained_entries,
+                message: format!(
+                    "audit integrity failure at entry {}: missing entry hash",
+                    index + 1
+                ),
+            };
+        };
+
+        if entry.prev_hash.as_deref() != previous_hash.as_deref() {
+            return AuditIntegrityReport {
+                status: AuditIntegrityStatus::Corrupt,
+                checked_entries: entries.len(),
+                chained_entries,
+                message: format!(
+                    "audit integrity failure at entry {}: chain link mismatch",
+                    index + 1
+                ),
+            };
+        }
+
+        let expected_hash = match compute_entry_hash(entry, entry.prev_hash.as_deref()) {
+            Ok(hash) => hash,
+            Err(err) => {
+                return AuditIntegrityReport {
+                    status: AuditIntegrityStatus::Corrupt,
+                    checked_entries: entries.len(),
+                    chained_entries,
+                    message: format!("audit integrity failure at entry {}: {err}", index + 1),
+                };
+            }
+        };
+
+        if entry_hash != expected_hash {
+            return AuditIntegrityReport {
+                status: AuditIntegrityStatus::Corrupt,
+                checked_entries: entries.len(),
+                chained_entries,
+                message: format!(
+                    "audit integrity failure at entry {}: entry hash mismatch",
+                    index + 1
+                ),
+            };
+        }
+
+        previous_hash = Some(entry_hash.to_string());
+    }
+
+    if chained_entries == 0 {
+        AuditIntegrityReport {
+            status: AuditIntegrityStatus::NoIntegrityData,
+            checked_entries: entries.len(),
+            chained_entries: 0,
+            message: "no integrity data found in the audit log".to_string(),
+        }
+    } else {
+        AuditIntegrityReport {
+            status: AuditIntegrityStatus::Verified,
+            checked_entries: entries.len(),
+            chained_entries,
+            message: format!(
+                "audit integrity verified: {} chained entries checked",
+                chained_entries
+            ),
+        }
+    }
+}
+
 fn current_timestamp() -> AuditTimestamp {
     AuditTimestamp::now()
 }
@@ -874,6 +1297,7 @@ mod tests {
                 matched_text: None,
                 source: None,
             }],
+            pattern_ids: vec![format!("PAT-{index:03}")],
             decision: match index % 4 {
                 0 => Decision::Approved,
                 1 => Decision::Denied,
@@ -884,6 +1308,13 @@ mod tests {
                 plugin: "git".to_string(),
                 snapshot_id: format!("snap-{index}"),
             }],
+            mode: None,
+            ci_detected: None,
+            allowlist_matched: Some(false),
+            allowlist_effective: Some(false),
+            chain_alg: None,
+            prev_hash: None,
+            entry_hash: None,
             allowlist_pattern: None,
             allowlist_reason: None,
             source: None,
@@ -1189,6 +1620,93 @@ mod tests {
     }
 
     #[test]
+    fn append_serializes_pattern_ids_and_allowlist_flags() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+
+        logger.append(entry(0, RiskLevel::Warn)).unwrap();
+
+        let written = fs::read_to_string(logger.path()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(written.trim()).unwrap();
+
+        assert_eq!(json["pattern_ids"], serde_json::json!(["PAT-000"]));
+        assert_eq!(json["allowlist_matched"], serde_json::json!(false));
+        assert_eq!(json["allowlist_effective"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn append_with_chain_sha256_populates_hash_fields() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"))
+            .with_integrity_mode(AuditIntegrityMode::ChainSha256);
+
+        logger.append(entry(0, RiskLevel::Safe)).unwrap();
+        logger.append(entry(1, RiskLevel::Warn)).unwrap();
+
+        let entries = logger.read_all().unwrap();
+        assert_eq!(entries[0].chain_alg.as_deref(), Some("sha256"));
+        assert!(entries[0].entry_hash.is_some());
+        assert!(entries[0].prev_hash.is_none());
+        assert_eq!(entries[1].chain_alg.as_deref(), Some("sha256"));
+        assert_eq!(entries[1].prev_hash, entries[0].entry_hash);
+    }
+
+    #[test]
+    fn verify_integrity_reports_no_data_for_legacy_entries() {
+        let report =
+            verify_integrity_entries(&[entry(0, RiskLevel::Safe), entry(1, RiskLevel::Warn)]);
+
+        assert_eq!(report.status, AuditIntegrityStatus::NoIntegrityData);
+    }
+
+    #[test]
+    fn verify_integrity_detects_reordered_entries() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"))
+            .with_integrity_mode(AuditIntegrityMode::ChainSha256);
+
+        logger.append(entry(0, RiskLevel::Safe)).unwrap();
+        logger.append(entry(1, RiskLevel::Warn)).unwrap();
+        logger.append(entry(2, RiskLevel::Danger)).unwrap();
+
+        let mut entries = logger.read_all().unwrap();
+        entries.swap(1, 2);
+
+        let report = verify_integrity_entries(&entries);
+        assert_eq!(report.status, AuditIntegrityStatus::Corrupt);
+        assert!(report.message.contains("chain link mismatch"));
+    }
+
+    #[test]
+    fn append_creates_companion_lock_file() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+
+        logger.append(entry(0, RiskLevel::Safe)).unwrap();
+
+        assert!(
+            dir.path().join("audit.jsonl.lock").exists(),
+            "append path must create a companion lock file"
+        );
+    }
+
+    #[test]
+    fn read_all_creates_companion_lock_file_when_log_exists() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+        logger.append(entry(0, RiskLevel::Safe)).unwrap();
+        fs::remove_file(dir.path().join("audit.jsonl.lock")).unwrap();
+
+        let entries = logger.read_all().unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert!(
+            dir.path().join("audit.jsonl.lock").exists(),
+            "read path must use the companion lock file too"
+        );
+    }
+
+    #[test]
     fn read_all_accepts_legacy_unix_seconds_timestamp() {
         let dir = TempDir::new().unwrap();
         let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
@@ -1200,6 +1718,21 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].timestamp.to_string(), "2023-11-14T22:13:20Z");
         assert_eq!(entries[0].sequence, 0);
+    }
+
+    #[test]
+    fn read_all_backfills_pattern_ids_for_legacy_entries() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+        let legacy_entry = r#"{"timestamp":"2023-11-14T22:13:20Z","command":"legacy","risk":"Warn","matched_patterns":[{"id":"FS-001","risk":"Warn","description":"recursive delete","safe_alt":"rm -ri"}],"decision":"Denied","snapshots":[]}"#;
+
+        fs::write(logger.path(), format!("{legacy_entry}\n")).unwrap();
+
+        let entries = logger.read_all().unwrap();
+        let json = serde_json::to_value(&entries[0]).unwrap();
+        assert_eq!(json["pattern_ids"], serde_json::json!(["FS-001"]));
+        assert_eq!(json["allowlist_matched"], serde_json::json!(false));
+        assert_eq!(json["allowlist_effective"], serde_json::json!(false));
     }
 
     #[test]

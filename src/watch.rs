@@ -362,6 +362,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         frame.source.clone(),
         frame.cwd.clone(),
         id.clone(),
+        false,
         true,
     );
 

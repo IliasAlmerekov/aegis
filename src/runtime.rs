@@ -6,7 +6,7 @@ use std::sync::Arc;
 use time::OffsetDateTime;
 use tokio::runtime::Handle;
 
-use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
+use crate::audit::{AuditEntry, AuditLogger, Decision};
 use crate::config::{
     Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config, SnapshotPolicy,
 };
@@ -52,6 +52,13 @@ pub struct RuntimeContext {
     snapshot_registry: SnapshotRegistry,
     async_handle: Handle,
     audit_logger: AuditLogger,
+}
+
+pub struct AuditWriteOptions<'a> {
+    pub allowlist_match: Option<&'a AllowlistMatch>,
+    pub allowlist_effective: bool,
+    pub ci_detected: bool,
+    pub verbose: bool,
 }
 
 impl RuntimeContext {
@@ -145,15 +152,13 @@ impl RuntimeContext {
         assessment: &Assessment,
         decision: Decision,
         snapshots: &[SnapshotRecord],
-        allowlist_match: Option<&AllowlistMatch>,
-        allowlist_effective: bool,
-        verbose: bool,
+        options: AuditWriteOptions<'_>,
     ) {
-        let allowlist_pattern = (allowlist_effective)
-            .then(|| allowlist_match.map(|m| m.pattern.clone()))
+        let allowlist_pattern = (options.allowlist_effective)
+            .then(|| options.allowlist_match.map(|m| m.pattern.clone()))
             .flatten();
-        let allowlist_reason = (allowlist_effective)
-            .then(|| allowlist_match.map(|m| m.reason.clone()))
+        let allowlist_reason = (options.allowlist_effective)
+            .then(|| options.allowlist_match.map(|m| m.reason.clone()))
             .flatten();
 
         let entry = AuditEntry::new(
@@ -164,10 +169,16 @@ impl RuntimeContext {
             snapshots.iter().map(Into::into).collect(),
             allowlist_pattern,
             allowlist_reason,
+        )
+        .with_policy_context(
+            self.runtime_config.mode,
+            options.ci_detected,
+            options.allowlist_match.is_some(),
+            options.allowlist_effective,
         );
 
         if let Err(err) = self.audit_logger.append(entry)
-            && verbose
+            && options.verbose
         {
             eprintln!("warning: failed to append audit log entry: {err}");
         }
@@ -188,6 +199,7 @@ impl RuntimeContext {
         watch_source: Option<String>,
         watch_cwd: Option<String>,
         watch_id: Option<String>,
+        ci_detected: bool,
         verbose: bool,
     ) {
         let allowlist_pattern = (allowlist_effective)
@@ -206,6 +218,12 @@ impl RuntimeContext {
             allowlist_pattern,
             allowlist_reason,
         )
+        .with_policy_context(
+            self.runtime_config.mode,
+            ci_detected,
+            allowlist_match.is_some(),
+            allowlist_effective,
+        )
         .with_watch_context(watch_source, watch_cwd, watch_id);
 
         if let Err(err) = self.audit_logger.append(entry)
@@ -217,11 +235,7 @@ impl RuntimeContext {
 }
 
 fn build_audit_logger(config: &Config) -> AuditLogger {
-    if let Some(policy) = AuditRotationPolicy::from_config(&config.audit) {
-        AuditLogger::default().with_rotation(policy)
-    } else {
-        AuditLogger::default()
-    }
+    AuditLogger::from_audit_config(&config.audit)
 }
 
 fn detect_effective_user() -> Option<String> {

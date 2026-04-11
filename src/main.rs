@@ -2,7 +2,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
-use aegis::audit::{AuditEntry, AuditLogger, AuditQuery, AuditTimestamp, Decision};
+use aegis::audit::{
+    AuditEntry, AuditIntegrityStatus, AuditLogger, AuditQuery, AuditTimestamp, Decision,
+};
 use aegis::config::{AllowlistMatch, Config, ValidationReport, validate_config_layers};
 use aegis::decision::{
     BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
@@ -11,6 +13,7 @@ use aegis::decision::{
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
+use aegis::runtime::AuditWriteOptions;
 use aegis::runtime::RuntimeContext;
 use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
@@ -133,6 +136,10 @@ struct AuditArgs {
     /// Show an aggregated summary instead of individual entries.
     #[arg(long)]
     summary: bool,
+
+    /// Verify tamper-evident hash chaining across all audit segments.
+    #[arg(long)]
+    verify_integrity: bool,
 }
 
 #[derive(Args)]
@@ -235,6 +242,37 @@ fn main() {
             if args.summary && matches!(args.format, AuditOutputFormat::Ndjson) {
                 eprintln!("error: --summary cannot be used with --format ndjson");
                 EXIT_DENIED
+            } else if args.verify_integrity {
+                if args.summary
+                    || args.last.is_some()
+                    || args.risk.is_some()
+                    || args.since.is_some()
+                    || args.until.is_some()
+                    || args.command_contains.is_some()
+                    || args.decision.is_some()
+                    || !matches!(args.format, AuditOutputFormat::Text)
+                {
+                    eprintln!(
+                        "error: --verify-integrity cannot be combined with filters, --summary, or non-text formats"
+                    );
+                    EXIT_DENIED
+                } else {
+                    let logger = AuditLogger::default();
+                    match logger.verify_integrity() {
+                        Ok(report) => {
+                            println!("{}", report.message);
+                            match report.status {
+                                AuditIntegrityStatus::Verified => 0,
+                                AuditIntegrityStatus::NoIntegrityData
+                                | AuditIntegrityStatus::Corrupt => EXIT_INTERNAL,
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("error: failed to verify audit integrity: {err}");
+                            EXIT_INTERNAL
+                        }
+                    }
+                }
             } else {
                 let logger = AuditLogger::default();
                 let query = AuditQuery {
@@ -395,9 +433,12 @@ fn run_shell_wrapper(
         &assessment,
         decision,
         &snapshots,
-        allowlist_match.as_ref(),
-        allowlist_effective,
-        verbosity.is_verbose(),
+        AuditWriteOptions {
+            allowlist_match: allowlist_match.as_ref(),
+            allowlist_effective,
+            ci_detected: in_ci,
+            verbose: verbosity.is_verbose(),
+        },
     );
 
     match decision {

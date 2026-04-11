@@ -56,6 +56,7 @@ rotation_enabled = false
 max_file_size_bytes = 10485760
 retention_files = 5
 compress_rotated = true
+integrity_mode = "Off" # Off = no chain hashes, ChainSha256 = tamper-evident chained SHA-256.
 "#;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -94,6 +95,14 @@ pub enum CiPolicy {
     /// Pass-through: commands run without prompting. Use only when you have
     /// deliberately reviewed the CI pipeline for destructive commands.
     Allow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum AuditIntegrityMode {
+    #[default]
+    Off,
+    ChainSha256,
 }
 
 /// Which Docker containers to include in snapshots.
@@ -250,6 +259,7 @@ pub struct AuditConfig {
     pub max_file_size_bytes: u64,
     pub retention_files: usize,
     pub compress_rotated: bool,
+    pub integrity_mode: AuditIntegrityMode,
 }
 
 impl Default for AuditConfig {
@@ -259,6 +269,7 @@ impl Default for AuditConfig {
             max_file_size_bytes: 10 * 1024 * 1024,
             retention_files: 5,
             compress_rotated: true,
+            integrity_mode: AuditIntegrityMode::Off,
         }
     }
 }
@@ -460,6 +471,10 @@ impl AegisConfig {
                     .audit
                     .compress_rotated
                     .unwrap_or(base.audit.compress_rotated),
+                integrity_mode: overlay
+                    .audit
+                    .integrity_mode
+                    .unwrap_or(base.audit.integrity_mode),
             },
         }
     }
@@ -548,6 +563,7 @@ struct PartialAuditConfig {
     max_file_size_bytes: Option<u64>,
     retention_files: Option<usize>,
     compress_rotated: Option<bool>,
+    integrity_mode: Option<AuditIntegrityMode>,
 }
 
 impl PartialConfig {

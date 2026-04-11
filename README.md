@@ -212,6 +212,7 @@ rotation_enabled = false
 max_file_size_bytes = 10485760
 retention_files = 5
 compress_rotated = true
+integrity_mode = "Off" # Off | ChainSha256
 ```
 
 ### Mode quick-reference
@@ -446,14 +447,30 @@ impl aegis::snapshot::SnapshotPlugin for MyPlugin {
 Every interception — approved, denied, blocked, or auto-approved — is appended to `~/.aegis/audit.jsonl` as a single JSON object.
 New entries use RFC 3339 / ISO 8601 timestamps with an explicit timezone. Older logs that stored Unix seconds are still readable.
 When `[audit].rotation_enabled = true`, Aegis rotates by size, keeps `retention_files` archives (`audit.jsonl.1`, `.2`, ...), and can gzip rotated segments as `.gz`. `aegis audit` reads both the active file and rotated archives.
+This append-only audit stream is the canonical structured ops record for executed policy events. Evaluation-only `--output json` does **not** append an audit entry.
 
 ```bash
 aegis audit --last 20           # show last 20 entries
 aegis audit --risk Danger       # filter by risk level
 aegis audit --format json       # export as JSON array
 aegis audit --format ndjson     # export as newline-delimited JSON
+aegis audit --verify-integrity  # verify chained hashes across archives + active log
 aegis rollback '<snapshot-id>'  # restore a recorded snapshot
 ```
+
+Optional tamper-evident mode:
+
+- set `[audit].integrity_mode = "ChainSha256"` to attach chained SHA-256 hashes
+  to new audit entries
+- `aegis audit --verify-integrity` walks the entire audit history in order:
+  oldest archive → newest archive → active log
+- verification can detect modified, deleted, reordered, or otherwise broken
+  chained entries
+
+This mode is **tamper-evident**, not tamper-proof. If an attacker fully controls
+the host and can rewrite the entire log plus recompute the chain, Aegis cannot
+prevent that. Signing / remote attestation are future hardening layers and are
+not part of the current contract.
 
 Example entry:
 
@@ -463,6 +480,7 @@ Example entry:
   "sequence": 17,
   "command": "terraform destroy -auto-approve",
   "risk": "Danger",
+  "pattern_ids": ["CL-001"],
   "matched_patterns": [
     {
       "id": "CL-001",
@@ -471,6 +489,13 @@ Example entry:
       "safe_alt": "terraform plan"
     }
   ],
+  "mode": "Protect",
+  "ci_detected": false,
+  "allowlist_matched": false,
+  "allowlist_effective": false,
+  "chain_alg": "sha256",
+  "prev_hash": "9d6e5f3d8f7a0d14d96f0ec5d53a7b8b8d6a88ff1a85e2d18b44b56ed2f7a8f1",
+  "entry_hash": "48e7400c5fa8bc5b9798b7af1f8f7ff71d42db4ad133c8bbf7fa0a15eb2d6f4e",
   "decision": "Denied",
   "snapshots": [{"plugin": "git", "snapshot_id": "/srv/infra\t6f2c4b1d0e9a8f76543210fedcba9876543210ab"}]
 }

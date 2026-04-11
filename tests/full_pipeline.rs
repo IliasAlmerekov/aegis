@@ -129,6 +129,11 @@ fn safe_command_passthroughs_stdout_and_exit_code() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["decision"], "AutoApproved");
     assert_eq!(entries[0]["risk"], "Safe");
+    assert_eq!(entries[0]["pattern_ids"], serde_json::json!([]));
+    assert_eq!(entries[0]["mode"], "Protect");
+    assert_eq!(entries[0]["ci_detected"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_matched"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_effective"], serde_json::json!(false));
 }
 
 #[test]
@@ -441,6 +446,11 @@ reason = "test allowlist"
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0]["decision"], "AutoApproved");
     assert_eq!(entries[0]["risk"], "Danger");
+    assert!(entries[0]["pattern_ids"].as_array().is_some());
+    assert_eq!(entries[0]["mode"], "Protect");
+    assert_eq!(entries[0]["ci_detected"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_matched"], serde_json::json!(true));
+    assert_eq!(entries[0]["allowlist_effective"], serde_json::json!(true));
     // The audit log must record which allowlist rule fired so operators can
     // trace auto-approvals back to their config.
     assert_eq!(
@@ -449,6 +459,11 @@ reason = "test allowlist"
     );
     assert_eq!(entries[1]["decision"], "Denied");
     assert_eq!(entries[1]["risk"], "Danger");
+    assert!(entries[1]["pattern_ids"].as_array().is_some());
+    assert_eq!(entries[1]["mode"], "Protect");
+    assert_eq!(entries[1]["ci_detected"], serde_json::json!(false));
+    assert_eq!(entries[1]["allowlist_matched"], serde_json::json!(false));
+    assert_eq!(entries[1]["allowlist_effective"], serde_json::json!(false));
     // Non-matching command — allowlist_pattern field must be absent from JSON.
     assert!(entries[1].get("allowlist_pattern").is_none());
 }
@@ -1112,6 +1127,11 @@ fn audit_command_can_export_json_array() {
     assert_eq!(entries[1]["command"], "git stash clear");
     assert_eq!(entries[0]["decision"], "AutoApproved");
     assert_eq!(entries[1]["risk"], "Warn");
+    assert_eq!(entries[0]["pattern_ids"], serde_json::json!([]));
+    assert_eq!(entries[0]["mode"], "Protect");
+    assert_eq!(entries[0]["ci_detected"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_matched"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_effective"], serde_json::json!(false));
 }
 
 #[test]
