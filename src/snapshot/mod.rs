@@ -79,6 +79,17 @@ impl SnapshotRegistry {
         Self { plugins }
     }
 
+    /// Build a registry that can roll back any built-in snapshot type.
+    ///
+    /// This intentionally ignores per-plugin snapshot flags: operators must be
+    /// able to restore previously recorded snapshots even if snapshot creation
+    /// is disabled in the current config.
+    pub fn for_rollback() -> Self {
+        Self {
+            plugins: vec![Box::new(GitPlugin), Box::new(DockerPlugin::new())],
+        }
+    }
+
     /// Call every applicable plugin and collect snapshot records.
     ///
     /// Plugins that are not applicable for `cwd` are skipped silently.
@@ -101,6 +112,21 @@ impl SnapshotRegistry {
         }
         records
     }
+
+    /// Roll back one snapshot using the named plugin.
+    pub async fn rollback(&self, plugin_name: &str, snapshot_id: &str) -> Result<()> {
+        let plugin = self
+            .plugins
+            .iter()
+            .find(|plugin| plugin.name() == plugin_name)
+            .ok_or_else(|| {
+                AegisError::Snapshot(format!(
+                    "snapshot plugin {plugin_name:?} is not available for rollback"
+                ))
+            })?;
+
+        plugin.rollback(snapshot_id).await
+    }
 }
 
 #[cfg(test)]
@@ -110,6 +136,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockPlugin {
+        name: &'static str,
         applicable: bool,
         call_count: Arc<AtomicUsize>,
     }
@@ -117,7 +144,7 @@ mod tests {
     #[async_trait]
     impl SnapshotPlugin for MockPlugin {
         fn name(&self) -> &'static str {
-            "mock"
+            self.name
         }
 
         fn is_applicable(&self, _cwd: &Path) -> bool {
@@ -143,14 +170,17 @@ mod tests {
         let registry = SnapshotRegistry {
             plugins: vec![
                 Box::new(MockPlugin {
+                    name: "applicable-1",
                     applicable: true,
                     call_count: Arc::clone(&applicable_calls),
                 }),
                 Box::new(MockPlugin {
+                    name: "skipped",
                     applicable: false,
                     call_count: Arc::clone(&skipped_calls),
                 }),
                 Box::new(MockPlugin {
+                    name: "applicable-2",
                     applicable: true,
                     call_count: Arc::clone(&applicable_calls),
                 }),
@@ -195,6 +225,7 @@ mod tests {
             plugins: vec![
                 Box::new(FailingPlugin),
                 Box::new(MockPlugin {
+                    name: "success",
                     applicable: true,
                     call_count: Arc::clone(&success_calls),
                 }),
@@ -207,6 +238,69 @@ mod tests {
         // Only the successful plugin produces a record.
         assert_eq!(records.len(), 1);
         assert_eq!(success_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn rollback_routes_to_named_plugin() {
+        let rollback_calls = Arc::new(AtomicUsize::new(0));
+
+        struct RollbackOnlyPlugin {
+            name: &'static str,
+            rollback_calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl SnapshotPlugin for RollbackOnlyPlugin {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+
+            fn is_applicable(&self, _cwd: &Path) -> bool {
+                true
+            }
+
+            async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
+                Ok("unused".to_string())
+            }
+
+            async fn rollback(&self, _snapshot_id: &str) -> Result<()> {
+                self.rollback_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let registry = SnapshotRegistry {
+            plugins: vec![
+                Box::new(RollbackOnlyPlugin {
+                    name: "git",
+                    rollback_calls: Arc::clone(&rollback_calls),
+                }),
+                Box::new(RollbackOnlyPlugin {
+                    name: "docker",
+                    rollback_calls: Arc::new(AtomicUsize::new(0)),
+                }),
+            ],
+        };
+
+        registry.rollback("git", "snap-001").await.unwrap();
+        assert_eq!(rollback_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn rollback_errors_for_unknown_plugin() {
+        let registry = SnapshotRegistry {
+            plugins: Vec::new(),
+        };
+
+        let err = registry
+            .rollback("missing-plugin", "snap-001")
+            .await
+            .expect_err("unknown plugin must fail");
+
+        assert!(
+            err.to_string().contains("missing-plugin"),
+            "error should name the missing plugin: {err}"
+        );
     }
 
     #[test]

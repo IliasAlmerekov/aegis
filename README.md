@@ -100,7 +100,11 @@ AI agent → $SHELL → Aegis → assess(cmd)
                                └── Block  → print reason, exit 1 (no dialog)
 ```
 
-Before showing the dialog for `Danger` commands, Aegis creates a snapshot (git stash, Docker commit). Snapshot IDs are written to the audit log. There is no built-in rollback command yet — use the snapshot ID from the audit log to roll back manually if needed.
+Before showing the dialog for `Danger` commands, Aegis creates a snapshot (git stash, Docker commit). Snapshot IDs are written to the audit log and can be restored later with:
+
+```bash
+aegis rollback <snapshot-id>
+```
 
 All decisions — approved, denied, blocked — are written to `~/.aegis/audit.jsonl`.
 
@@ -432,6 +436,7 @@ aegis audit --last 20           # show last 20 entries
 aegis audit --risk Danger       # filter by risk level
 aegis audit --format json       # export as JSON array
 aegis audit --format ndjson     # export as newline-delimited JSON
+aegis rollback '<snapshot-id>'  # restore a recorded snapshot
 ```
 
 Example entry:
@@ -451,7 +456,7 @@ Example entry:
     }
   ],
   "decision": "Denied",
-  "snapshots": [{"plugin": "git", "snapshot_id": "stash@{0}"}]
+  "snapshots": [{"plugin": "git", "snapshot_id": "/srv/infra\t6f2c4b1d0e9a8f76543210fedcba9876543210ab"}]
 }
 ```
 

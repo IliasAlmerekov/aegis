@@ -17,6 +17,8 @@ use tokio::runtime::Handle;
 #[cfg(test)]
 use aegis::interceptor::parser::Parser as CommandParser;
 
+mod rollback;
+
 #[derive(Parser)]
 #[command(
     name = "aegis",
@@ -42,6 +44,8 @@ enum Commands {
     Watch,
     /// View the audit log
     Audit(AuditArgs),
+    /// Roll back a previously recorded snapshot
+    Rollback(RollbackArgs),
     /// Manage aegis configuration
     Config(ConfigArgs),
 }
@@ -59,6 +63,12 @@ struct AuditArgs {
     /// Output format: text (default), json, ndjson.
     #[arg(long, value_enum, default_value_t = AuditOutputFormat::Text)]
     format: AuditOutputFormat,
+}
+
+#[derive(Args)]
+struct RollbackArgs {
+    /// Snapshot ID copied from `aegis audit`
+    snapshot_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -166,6 +176,7 @@ fn main() {
                 }
             }
         }
+        Some(Commands::Rollback(args)) => handle_rollback_command(args, &rt),
         Some(Commands::Config(args)) => handle_config_command(args),
         None => {
             if let Some(cmd) = command {
@@ -316,6 +327,22 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
             Err(err) => report_config_load_error(&err),
         },
         ConfigCommand::Validate(args) => handle_config_validate_command(args),
+    }
+}
+
+fn handle_rollback_command(args: RollbackArgs, runtime: &tokio::runtime::Runtime) -> i32 {
+    match runtime.block_on(rollback::execute(args.snapshot_id)) {
+        Ok(target) => {
+            println!(
+                "rollback complete: plugin={} snapshot_id={}",
+                target.plugin, target.snapshot_id
+            );
+            0
+        }
+        Err(err) => {
+            eprintln!("error: rollback failed: {err}");
+            EXIT_INTERNAL
+        }
     }
 }
 

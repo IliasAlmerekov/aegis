@@ -2039,3 +2039,143 @@ reason = "strict override allowlist"
     assert_eq!(entries[0]["risk"], "Danger");
     assert_ne!(entries[0]["snapshots"], serde_json::json!([]));
 }
+
+#[test]
+fn rollback_restores_git_snapshot_from_audit_and_logs_action() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = home.path().join("bin");
+    let log_path = home.path().join("terraform.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("terraform"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+allowlist_override_level = "Danger"
+auto_snapshot_git = true
+auto_snapshot_docker = false
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "rollback test allowlist"
+"#,
+    )
+    .unwrap();
+
+    Command::new("git")
+        .arg("init")
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@aegis.dev",
+            "-c",
+            "user.name=Aegis Test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ])
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    fs::write(workspace.path().join("tracked.txt"), "original\n").unwrap();
+    Command::new("git")
+        .args(["add", "tracked.txt"])
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@aegis.dev",
+            "-c",
+            "user.name=Aegis Test",
+            "commit",
+            "-m",
+            "add tracked file",
+        ])
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+
+    fs::write(workspace.path().join("tracked.txt"), "needs rollback\n").unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let intercept_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_TERRAFORM_LOG", &log_path)
+        .args(["-c", "terraform destroy -target=module.test.api"])
+        .output()
+        .unwrap();
+
+    assert!(intercept_output.status.success());
+    assert_eq!(
+        fs::read_to_string(workspace.path().join("tracked.txt")).unwrap(),
+        "original\n"
+    );
+
+    let entries = read_audit_entries(home.path());
+    let snapshot_id = entries[0]["snapshots"][0]["snapshot_id"]
+        .as_str()
+        .expect("snapshot_id must be a string")
+        .to_string();
+
+    let rollback_output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["rollback", &snapshot_id])
+        .output()
+        .unwrap();
+
+    assert!(
+        rollback_output.status.success(),
+        "rollback stderr:\n{}",
+        String::from_utf8_lossy(&rollback_output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(workspace.path().join("tracked.txt")).unwrap(),
+        "needs rollback\n"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 2);
+    assert_eq!(
+        entries[1]["command"],
+        format!("aegis rollback {snapshot_id}")
+    );
+    assert_eq!(entries[1]["decision"], "Approved");
+    assert_eq!(entries[1]["risk"], "Safe");
+    assert_eq!(entries[1]["snapshots"][0]["plugin"], "git");
+    assert_eq!(entries[1]["snapshots"][0]["snapshot_id"], snapshot_id);
+}
+
+#[test]
+fn rollback_missing_snapshot_prints_recovery_hint() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["rollback", "missing-snapshot"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("missing-snapshot"));
+    assert!(stderr.contains("aegis audit"));
+    assert!(stderr.contains("snapshot"));
+}
