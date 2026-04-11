@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use time::OffsetDateTime;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::Handle;
 
 use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
 use crate::config::{Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config};
@@ -45,36 +45,26 @@ pub struct RuntimeContext {
     current_user: Option<String>,
     scanner: Arc<Scanner>,
     snapshot_registry: SnapshotRegistry,
-    snapshot_runtime: SnapshotRuntime,
+    async_handle: Handle,
     audit_logger: AuditLogger,
-}
-
-enum SnapshotRuntime {
-    Ready(Runtime),
-    Unavailable(String),
 }
 
 impl RuntimeContext {
     /// Load config, build runtime dependencies once, and keep them consistent.
-    pub fn load(_verbose: bool) -> Result<Self, AegisError> {
-        Config::load().and_then(Self::new)
+    pub fn load(_verbose: bool, handle: Handle) -> Result<Self, AegisError> {
+        Config::load().and_then(|config| Self::new(config, handle))
     }
 
     /// Build a runtime context from an already resolved config.
-    pub fn new(config: Config) -> Result<Self, AegisError> {
+    pub fn new(config: Config, handle: Handle) -> Result<Self, AegisError> {
         config.validate_runtime_requirements()?;
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
         let current_user = detect_effective_user();
 
-        let snapshot_runtime = match Builder::new_current_thread().enable_all().build() {
-            Ok(runtime) => SnapshotRuntime::Ready(runtime),
-            Err(err) => SnapshotRuntime::Unavailable(err.to_string()),
-        };
-
         Ok(Self {
             allowlist: Allowlist::new(&config.layered_allowlist_rules())?,
             snapshot_registry: SnapshotRegistry::from_config(&config),
-            snapshot_runtime,
+            async_handle: handle,
             audit_logger: build_audit_logger(&config),
             current_user,
             runtime_config: RuntimeConfig::from(&config),
@@ -114,20 +104,16 @@ impl RuntimeContext {
         self.allowlist_match(&context)
     }
 
-    /// Create best-effort snapshots using the context-bound registry/runtime.
-    pub fn create_snapshots(&self, cwd: &Path, cmd: &str, verbose: bool) -> Vec<SnapshotRecord> {
-        match &self.snapshot_runtime {
-            SnapshotRuntime::Ready(runtime) => {
-                runtime.block_on(self.snapshot_registry.snapshot_all(cwd, cmd))
-            }
-            SnapshotRuntime::Unavailable(err) => {
-                if verbose {
-                    eprintln!("warning: failed to initialize snapshot runtime: {err}");
-                }
+    /// Create best-effort snapshots using the context-bound registry and the
+    /// persistent async handle.
+    pub fn create_snapshots(&self, cwd: &Path, cmd: &str, _verbose: bool) -> Vec<SnapshotRecord> {
+        self.async_handle
+            .block_on(self.snapshot_registry.snapshot_all(cwd, cmd))
+    }
 
-                Vec::new()
-            }
-        }
+    /// Return a reference to the persistent async handle.
+    pub fn async_handle(&self) -> &Handle {
+        &self.async_handle
     }
 
     /// Async variant of `create_snapshots` — call from within an async runtime.
@@ -265,6 +251,18 @@ mod tests {
     use tempfile::TempDir;
     use time::OffsetDateTime;
 
+    fn test_handle() -> Handle {
+        // Leak a single-threaded runtime so the Handle outlives each test.
+        // This is fine for unit tests — the OS reclaims it on process exit.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+        std::mem::forget(rt);
+        handle
+    }
+
     #[test]
     fn custom_patterns_are_built_once_into_runtime_scanner() {
         let mut config = Config::default();
@@ -277,7 +275,7 @@ mod tests {
             safe_alt: None,
         }];
 
-        let context = RuntimeContext::new(config).unwrap();
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
         let assessment = context.assess("echo hello");
 
         assert_eq!(assessment.risk, RiskLevel::Warn);
@@ -297,7 +295,7 @@ mod tests {
             safe_alt: None,
         }];
 
-        let err = match RuntimeContext::new(config) {
+        let err = match RuntimeContext::new(config, test_handle()) {
             Ok(_) => panic!("invalid custom patterns must abort runtime context construction"),
             Err(err) => err,
         };
@@ -321,7 +319,7 @@ mod tests {
         config.auto_snapshot_docker = false;
         config.ci_policy = CiPolicy::Allow;
 
-        let context = RuntimeContext::new(config.clone()).unwrap();
+        let context = RuntimeContext::new(config.clone(), test_handle()).unwrap();
 
         assert_eq!(context.config().mode, config.mode);
         assert_eq!(context.config().ci_policy, config.ci_policy);
@@ -364,7 +362,7 @@ mod tests {
             reason: "expired teardown".to_string(),
         }];
 
-        let err = match RuntimeContext::new(config) {
+        let err = match RuntimeContext::new(config, test_handle()) {
             Ok(_) => panic!("expired allowlist rules must be rejected before runtime setup"),
             Err(err) => err,
         };
@@ -385,7 +383,7 @@ mod tests {
             reason: "scoped teardown".to_string(),
         }];
 
-        let context = RuntimeContext::new(config).unwrap();
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
         let allowlist_ctx = AllowlistContext::with_optional_scope(
             "terraform destroy -target=module.test.api",
             Some(Path::new("/srv/infra")),
@@ -412,7 +410,7 @@ mod tests {
             reason: "scoped teardown".to_string(),
         }];
 
-        let context = RuntimeContext::new(config).unwrap();
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
         let Some(current_user) = context.current_user() else {
             panic!("test requires a resolvable user");
         };
@@ -439,7 +437,7 @@ mod tests {
             reason: "user scoped teardown".to_string(),
         }];
 
-        let mut context = RuntimeContext::new(config).unwrap();
+        let mut context = RuntimeContext::new(config, test_handle()).unwrap();
         context.current_user = None;
 
         assert!(
@@ -478,7 +476,7 @@ mod tests {
             reason: "scoped teardown".to_string(),
         }];
 
-        let context = RuntimeContext::new(config).unwrap();
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
 
         assert!(
             context
@@ -516,7 +514,7 @@ expires_at = "2030-01-01T00:00:00Z"
         .unwrap();
 
         let config = Config::load_for(workspace.path(), Some(home.path())).unwrap();
-        let context = RuntimeContext::new(config).unwrap();
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
         let matched = context
             .allowlist_match_for_command(
                 "terraform destroy -target=module.test.api",
@@ -529,6 +527,47 @@ expires_at = "2030-01-01T00:00:00Z"
             matched.source_layer,
             crate::config::AllowlistSourceLayer::Project
         );
+    }
+
+    #[test]
+    fn runtime_context_uses_external_handle_for_snapshots() {
+        // Persistent runtime: RuntimeContext must accept an external Handle
+        // instead of owning its own Runtime. This proves:
+        // 1. RuntimeContext::new accepts a Handle parameter
+        // 2. create_snapshots works through the external handle
+        // 3. No internal SnapshotRuntime::Ready(Runtime) exists
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+
+        let mut config = Config::default();
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+
+        let context = RuntimeContext::new(config, handle).unwrap();
+        let snapshots = context.create_snapshots(Path::new("."), "echo test", false);
+
+        // With both snapshot plugins disabled, result is empty — but the call
+        // must succeed without panicking (proving the external handle works).
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn runtime_context_new_requires_handle_parameter() {
+        // Verify the two-argument signature is the only way to construct.
+        // This test will fail to compile if RuntimeContext::new still accepts
+        // only Config (one argument).
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+        let config = Config::default();
+
+        // Must compile with two arguments.
+        let _context = RuntimeContext::new(config, handle).unwrap();
     }
 
     fn now_utc() -> OffsetDateTime {

@@ -9,6 +9,7 @@ use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::runtime::RuntimeContext;
+use tokio::runtime::Handle;
 use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -128,18 +129,22 @@ fn main() {
         subcommand,
     } = Cli::parse();
 
+    // Build one Tokio runtime for the entire process lifetime.
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            eprintln!("error: failed to build tokio runtime: {err}");
+            process::exit(EXIT_INTERNAL);
+        }
+    };
+    let handle = rt.handle().clone();
+
     let exit_code = match subcommand {
-        Some(Commands::Watch) => match RuntimeContext::load(verbose) {
-            Ok(context) => match tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt.block_on(aegis::watch::run(&context)),
-                Err(err) => {
-                    eprintln!("error: failed to build tokio runtime for watch mode: {err}");
-                    EXIT_INTERNAL
-                }
-            },
+        Some(Commands::Watch) => match RuntimeContext::load(verbose, handle) {
+            Ok(context) => rt.block_on(aegis::watch::run(&context)),
             Err(err) => report_config_load_error(&err),
         },
         Some(Commands::Audit(args)) => {
@@ -164,7 +169,7 @@ fn main() {
         Some(Commands::Config(args)) => handle_config_command(args),
         None => {
             if let Some(cmd) = command {
-                run_shell_wrapper(&cmd, verbose)
+                run_shell_wrapper(&cmd, verbose, handle)
             } else {
                 0
             }
@@ -199,8 +204,8 @@ fn format_audit_entries(
     }
 }
 
-fn run_shell_wrapper(cmd: &str, verbose: bool) -> i32 {
-    let context = match RuntimeContext::load(verbose) {
+fn run_shell_wrapper(cmd: &str, verbose: bool, handle: Handle) -> i32 {
+    let context = match RuntimeContext::load(verbose, handle) {
         Ok(context) => context,
         Err(err) => return report_config_load_error(&err),
     };
@@ -798,20 +803,30 @@ mod tests {
         }
     }
 
+    fn test_handle() -> Handle {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+        std::mem::forget(rt);
+        handle
+    }
+
     fn context() -> RuntimeContext {
-        RuntimeContext::new(Config::default()).unwrap()
+        RuntimeContext::new(Config::default(), test_handle()).unwrap()
     }
 
     fn context_with_ci_policy(ci_policy: CiPolicy) -> RuntimeContext {
         let mut config = Config::default();
         config.ci_policy = ci_policy;
-        RuntimeContext::new(config).unwrap()
+        RuntimeContext::new(config, test_handle()).unwrap()
     }
 
     fn context_with_mode(mode: Mode) -> RuntimeContext {
         let mut config = Config::default();
         config.mode = mode;
-        RuntimeContext::new(config).unwrap()
+        RuntimeContext::new(config, test_handle()).unwrap()
     }
 
     fn context_with_allowlist_override_level(
@@ -822,7 +837,7 @@ mod tests {
         config.auto_snapshot_git = false;
         config.auto_snapshot_docker = false;
         config.allowlist_override_level = allowlist_override_level;
-        RuntimeContext::new(config).unwrap()
+        RuntimeContext::new(config, test_handle()).unwrap()
     }
 
     #[test]
