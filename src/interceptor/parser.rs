@@ -598,6 +598,146 @@ fn extract_backtick_body(chars: &[char], start_idx: usize) -> Option<(String, us
     None
 }
 
+/// Extract process-substitution bodies from shell input forms like `<(...)`.
+///
+/// The returned strings are the shell commands inside the substitution, without
+/// the surrounding `<(` and `)`.
+pub fn extract_process_substitution_bodies(cmd: &str) -> Vec<String> {
+    let chars: Vec<char> = cmd.chars().collect();
+    let mut bodies = Vec::new();
+    let mut i = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_backticks = false;
+
+    while i < chars.len() {
+        match chars[i] {
+            '\\' if !in_single_quote => {
+                i = (i + 2).min(chars.len());
+            }
+            '\'' if !in_double_quote && !in_backticks => {
+                in_single_quote = !in_single_quote;
+                i += 1;
+            }
+            '"' if !in_single_quote && !in_backticks => {
+                in_double_quote = !in_double_quote;
+                i += 1;
+            }
+            '`' if !in_single_quote => {
+                in_backticks = !in_backticks;
+                i += 1;
+            }
+            '<' if !in_single_quote
+                && !in_double_quote
+                && !in_backticks
+                && chars.get(i + 1) == Some(&'(') =>
+            {
+                if let Some((body, end_idx)) = extract_angle_paren_body(&chars, i) {
+                    bodies.push(body);
+                    i = end_idx + 1;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+
+    bodies
+}
+
+fn extract_angle_paren_body(chars: &[char], start_idx: usize) -> Option<(String, usize)> {
+    let mut body = String::new();
+    let mut idx = start_idx + 2;
+    let mut depth = 1usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_backticks = false;
+
+    while idx < chars.len() {
+        match chars[idx] {
+            '\\' if !in_single_quote => {
+                body.push(chars[idx]);
+                idx += 1;
+                if let Some(next) = chars.get(idx) {
+                    body.push(*next);
+                    idx += 1;
+                }
+            }
+            '\'' if !in_double_quote && !in_backticks => {
+                in_single_quote = !in_single_quote;
+                body.push(chars[idx]);
+                idx += 1;
+            }
+            '"' if !in_single_quote && !in_backticks => {
+                in_double_quote = !in_double_quote;
+                body.push(chars[idx]);
+                idx += 1;
+            }
+            '`' if !in_single_quote => {
+                in_backticks = !in_backticks;
+                body.push(chars[idx]);
+                idx += 1;
+            }
+            '(' if !in_single_quote && !in_double_quote && !in_backticks => {
+                depth += 1;
+                body.push(chars[idx]);
+                idx += 1;
+            }
+            ')' if !in_single_quote && !in_double_quote && !in_backticks => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((body.trim().to_string(), idx));
+                }
+                body.push(chars[idx]);
+                idx += 1;
+            }
+            _ => {
+                body.push(chars[idx]);
+                idx += 1;
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract `eval` payload strings from logical shell segments.
+///
+/// This unwraps the arguments passed to `eval` so nested shell or interpreter
+/// bodies can be analyzed recursively. Variable-only forms such as `eval "$VAR"`
+/// remain opaque and are returned as-is when no literal body is available.
+pub fn extract_eval_payloads(cmd: &str) -> Vec<String> {
+    let mut payloads = Vec::new();
+
+    for segment in split_top_level_segments(cmd) {
+        let tokens = split_tokens(&segment);
+        if tokens.is_empty() {
+            continue;
+        }
+
+        let mut idx = 0;
+
+        if tokens.get(idx).map(String::as_str) == Some("env") {
+            idx += 1;
+        }
+
+        while let Some(token) = tokens.get(idx) {
+            if token.contains('=') && !token.starts_with('-') {
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+
+        if tokens.get(idx).map(String::as_str) == Some("eval") && idx + 1 < tokens.len() {
+            payloads.push(tokens[idx + 1..].join(" "));
+        }
+    }
+
+    payloads
+}
+
 /// Split a token list into sub-commands at separator tokens (`;`, `&&`, `||`, `|`).
 fn split_by_separators(tokens: Vec<String>) -> Vec<Vec<String>> {
     let mut commands: Vec<Vec<String>> = Vec::new();
@@ -1110,6 +1250,30 @@ mod tests {
         assert_eq!(scripts.len(), 1);
         assert_eq!(scripts[0].interpreter, "ruby");
         assert_eq!(scripts[0].body, "system('rm -rf /')");
+    }
+
+    #[test]
+    fn process_substitution_body_basic() {
+        let bodies = extract_process_substitution_bodies(r#"source <(python3 -c "print(42)")"#);
+        assert_eq!(bodies, vec![r#"python3 -c "print(42)""#]);
+    }
+
+    #[test]
+    fn process_substitution_body_nested_parens() {
+        let bodies = extract_process_substitution_bodies(r#"bash <(printf '%s\n' "$(echo hi)")"#);
+        assert_eq!(bodies, vec![r#"printf '%s\n' "$(echo hi)""#]);
+    }
+
+    #[test]
+    fn eval_payload_literal_string() {
+        let payloads = extract_eval_payloads(r#"eval "python3 -c 'print(42)'"#);
+        assert_eq!(payloads, vec![r#"python3 -c 'print(42)'"#]);
+    }
+
+    #[test]
+    fn eval_payload_with_env_prefix() {
+        let payloads = extract_eval_payloads(r#"FOO=bar eval "$DEPLOY_CMD""#);
+        assert_eq!(payloads, vec![r#"$DEPLOY_CMD"#]);
     }
 
     // ── T2.4: ParsedCommand and Parser::parse ────────────────────────────────

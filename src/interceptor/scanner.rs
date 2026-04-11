@@ -6,7 +6,8 @@ use aho_corasick::AhoCorasick;
 use regex::Regex;
 
 use crate::interceptor::RiskLevel;
-use crate::interceptor::parser::{ParsedCommand, Parser, logical_segments};
+use crate::interceptor::nested::recursive_scan_targets;
+use crate::interceptor::parser::{ParsedCommand, Parser};
 use crate::interceptor::patterns::{Pattern, PatternSet, PatternSource};
 
 /// A single pattern match with the actual text fragment that triggered it.
@@ -158,10 +159,11 @@ impl Scanner {
     /// Assess a raw shell command and return a complete [`Assessment`].
     ///
     /// Pipeline:
-    /// 1. Parse the command via [`Parser::parse`] to extract executable, args, and inline scripts.
-    /// 2. Run [`quick_scan`] — if no keyword hits, return `Safe` immediately (zero regex cost).
-    /// 3. Run [`full_scan`] on the raw command string.
-    /// 4. Run [`full_scan`] on each inline script body (e.g. `python -c "..."`) and merge results.
+    /// 1. Parse the command via [`Parser::parse`] to preserve the original command contract.
+    /// 2. Run [`quick_scan`] on the raw command — if no keyword hits, return `Safe` immediately.
+    /// 3. Build the recursive scan path via [`recursive_scan_targets`], unwrapping nested shells,
+    ///    heredocs, inline interpreters, process substitution, and `eval` payloads.
+    /// 4. Run [`full_scan`] on each discovered target and merge unique pattern matches.
     /// 5. Compute the maximum [`RiskLevel`] across all matched patterns and return.
     pub fn assess(&self, cmd: &str) -> Assessment {
         let command = Parser::parse(cmd);
@@ -202,9 +204,13 @@ impl Scanner {
 }
 
 fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> Vec<String> {
+    if requires_recursive_scan(cmd) {
+        return recursive_scan_targets(cmd);
+    }
+
     let mut targets = vec![cmd.to_string()];
 
-    for segment in logical_segments(cmd) {
+    for segment in crate::interceptor::parser::logical_segments(cmd) {
         push_unique_target(&mut targets, segment);
     }
 
@@ -213,6 +219,14 @@ fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> Vec<String> {
     }
 
     targets
+}
+
+fn requires_recursive_scan(cmd: &str) -> bool {
+    cmd.contains("<<")
+        || cmd.contains("<(")
+        || cmd
+            .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&'))
+            .any(|token| token == "eval")
 }
 
 fn push_unique_target(targets: &mut Vec<String>, target: String) {
@@ -1027,6 +1041,30 @@ mod tests {
             assert_eq!(
                 assessment.risk, *expected,
                 "dangerous body escalation {cmd:?}: got {:?}, expected {expected:?}",
+                assessment.risk,
+            );
+        }
+    }
+
+    #[test]
+    fn nested_execution_recursive_payloads_escalate_to_inner_risk() {
+        let s = scanner();
+
+        let cases: &[(&str, RiskLevel)] = &[
+            (r#"source <(bash -c 'rm -rf /')"#, RiskLevel::Block),
+            (r#"eval "bash -c 'rm -rf /'""#, RiskLevel::Block),
+            ("bash <<'EOF'\nbash -c 'rm -rf /'\nEOF", RiskLevel::Block),
+            (
+                r#"bash -c 'source <(bash -c "rm -rf /")'"#,
+                RiskLevel::Block,
+            ),
+        ];
+
+        for (cmd, expected) in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk, *expected,
+                "recursive nested payload {cmd:?}: got {:?}, expected {expected:?}",
                 assessment.risk,
             );
         }

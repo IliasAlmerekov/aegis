@@ -1,5 +1,6 @@
 use aegis::interceptor::{patterns::PatternSet, scanner::Scanner};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use std::time::Duration;
 
 fn make_scanner() -> Scanner {
     let patterns = PatternSet::load().expect("patterns.toml must load");
@@ -140,10 +141,9 @@ fn bench_heredoc_worst_case(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_safe_commands,
-    bench_dangerous_commands,
-    bench_heredoc_worst_case
-);
+criterion_group! {
+    name = benches;
+    config = Criterion::default().measurement_time(Duration::from_secs(8));
+    targets = bench_safe_commands, bench_dangerous_commands, bench_heredoc_worst_case
+}
 criterion_main!(benches);
