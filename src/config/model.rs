@@ -33,8 +33,9 @@ allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Dan
 # expires_at = "2030-01-01T00:00:00Z"
 # reason = "ephemeral test teardown"
 
-auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
-auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
+snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin flags below, Full = all plugins.
+auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
+auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
 
 # CI policy: what to do when aegis detects it is running inside a CI environment.
 # Block (default) — hard-block any non-safe command; no interactive dialog is shown.
@@ -86,6 +87,23 @@ pub enum CiPolicy {
     /// Pass-through: commands run without prompting. Use only when you have
     /// deliberately reviewed the CI pipeline for destructive commands.
     Allow,
+}
+
+/// Controls when and how snapshot plugins run before dangerous commands.
+///
+/// - `None`      — never snapshot.
+/// - `Selective` — only plugins enabled by `auto_snapshot_git` / `auto_snapshot_docker`.
+/// - `Full`      — run every registered plugin regardless of per-plugin flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum SnapshotPolicy {
+    /// Never create snapshots.
+    None,
+    /// Honour per-plugin flags (default — backwards-compatible).
+    #[default]
+    Selective,
+    /// Run all snapshot plugins unconditionally.
+    Full,
 }
 
 /// Maximum override level that structured allowlist rules may grant for
@@ -167,6 +185,7 @@ pub struct AegisConfig {
     #[serde(skip)]
     pub(crate) audit_retention_files_source: Option<AllowlistSourceLayer>,
     pub allowlist_override_level: AllowlistOverrideLevel,
+    pub snapshot_policy: SnapshotPolicy,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
     pub ci_policy: CiPolicy,
@@ -219,6 +238,7 @@ impl AegisConfig {
             audit_max_file_size_bytes_source: None,
             audit_retention_files_source: None,
             allowlist_override_level: AllowlistOverrideLevel::Warn,
+            snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
             ci_policy: CiPolicy::Block,
@@ -364,6 +384,9 @@ impl AegisConfig {
             allowlist_override_level: overlay
                 .allowlist_override_level
                 .unwrap_or(base.allowlist_override_level),
+            snapshot_policy: overlay
+                .snapshot_policy
+                .unwrap_or(base.snapshot_policy),
             auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
@@ -459,6 +482,7 @@ struct PartialConfig {
     custom_patterns: Vec<UserPattern>,
     allowlist: Vec<AllowlistRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
+    snapshot_policy: Option<SnapshotPolicy>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
     ci_policy: Option<CiPolicy>,
@@ -1047,5 +1071,108 @@ expires_at = "2030-01-01T00:00:00Z"
             message.contains("failed to parse"),
             "error must preserve the parse failure details: {message}"
         );
+    }
+
+    // ── Snapshot policy tests ───────────────────────────────────────
+
+    #[test]
+    fn snapshot_policy_defaults_to_selective() {
+        let config = AegisConfig::defaults();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::Selective);
+    }
+
+    #[test]
+    fn snapshot_policy_none_deserializes() {
+        let config: AegisConfig =
+            toml::from_str(r#"snapshot_policy = "None""#).unwrap();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
+    }
+
+    #[test]
+    fn snapshot_policy_selective_deserializes() {
+        let config: AegisConfig =
+            toml::from_str(r#"snapshot_policy = "Selective""#).unwrap();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::Selective);
+    }
+
+    #[test]
+    fn snapshot_policy_full_deserializes() {
+        let config: AegisConfig =
+            toml::from_str(r#"snapshot_policy = "Full""#).unwrap();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
+    }
+
+    #[test]
+    fn snapshot_policy_none_ignores_per_plugin_flags() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+snapshot_policy = "None"
+auto_snapshot_git = true
+auto_snapshot_docker = true
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
+    }
+
+    #[test]
+    fn snapshot_policy_full_enables_all_regardless_of_flags() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+snapshot_policy = "Full"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
+    }
+
+    #[test]
+    fn snapshot_policy_merges_from_overlay() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::write(
+            global_dir.join(GLOBAL_CONFIG_FILE),
+            "snapshot_policy = \"Full\"\n",
+        )
+        .unwrap();
+        fs::write(
+            workspace.path().join(PROJECT_CONFIG_FILE),
+            "snapshot_policy = \"None\"\n",
+        )
+        .unwrap();
+
+        let config =
+            AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        // Project layer overrides global.
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
+    }
+
+    #[test]
+    fn snapshot_policy_absent_in_overlay_keeps_base() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+
+        fs::create_dir_all(&global_dir).unwrap();
+        fs::write(
+            global_dir.join(GLOBAL_CONFIG_FILE),
+            "snapshot_policy = \"None\"\n",
+        )
+        .unwrap();
+        // Project sets only mode, not snapshot_policy.
+        fs::write(
+            workspace.path().join(PROJECT_CONFIG_FILE),
+            "mode = \"Audit\"\n",
+        )
+        .unwrap();
+
+        let config =
+            AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
     }
 }

@@ -7,7 +7,8 @@ pub use allowlist::{
     LayeredAllowlistRule, analyze_allowlist_rule,
 };
 pub use model::{
-    AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, CiPolicy, Mode, UserPattern,
+    AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, CiPolicy, Mode,
+    SnapshotPolicy, UserPattern,
 };
 pub use validate::{
     ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validate_config_layers,

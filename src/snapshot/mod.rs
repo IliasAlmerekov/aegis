@@ -52,14 +52,24 @@ impl Default for SnapshotRegistry {
 impl SnapshotRegistry {
     /// Build a snapshot registry that honours the effective runtime config.
     pub fn from_config(config: &Config) -> Self {
+        use crate::config::SnapshotPolicy;
+
         let mut plugins: Vec<Box<dyn SnapshotPlugin>> = Vec::new();
 
-        if config.auto_snapshot_git {
-            plugins.push(Box::new(GitPlugin));
-        }
-
-        if config.auto_snapshot_docker {
-            plugins.push(Box::new(DockerPlugin::new()));
+        match config.snapshot_policy {
+            SnapshotPolicy::None => { /* no plugins */ }
+            SnapshotPolicy::Selective => {
+                if config.auto_snapshot_git {
+                    plugins.push(Box::new(GitPlugin));
+                }
+                if config.auto_snapshot_docker {
+                    plugins.push(Box::new(DockerPlugin::new()));
+                }
+            }
+            SnapshotPolicy::Full => {
+                plugins.push(Box::new(GitPlugin));
+                plugins.push(Box::new(DockerPlugin::new()));
+            }
         }
 
         Self { plugins }
@@ -220,5 +230,51 @@ mod tests {
             .collect();
 
         assert_eq!(plugin_names, vec!["docker"]);
+    }
+
+    // ── Snapshot policy tests ───────────────────────────────────────
+
+    #[test]
+    fn policy_none_disables_all_plugins() {
+        use crate::config::SnapshotPolicy;
+
+        let mut config = Config::default();
+        config.snapshot_policy = SnapshotPolicy::None;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = true;
+
+        let registry = SnapshotRegistry::from_config(&config);
+        assert!(
+            registry.plugins.is_empty(),
+            "None policy must produce zero plugins"
+        );
+    }
+
+    #[test]
+    fn policy_selective_honours_per_plugin_flags() {
+        use crate::config::SnapshotPolicy;
+
+        let mut config = Config::default();
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+
+        let registry = SnapshotRegistry::from_config(&config);
+        let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
+        assert_eq!(names, vec!["git"]);
+    }
+
+    #[test]
+    fn policy_full_enables_all_plugins() {
+        use crate::config::SnapshotPolicy;
+
+        let mut config = Config::default();
+        config.snapshot_policy = SnapshotPolicy::Full;
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+
+        let registry = SnapshotRegistry::from_config(&config);
+        let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
+        assert_eq!(names, vec!["git", "docker"]);
     }
 }
