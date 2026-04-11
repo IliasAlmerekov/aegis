@@ -314,14 +314,10 @@ fn report_config_load_error(err: &AegisError) -> i32 {
 }
 
 fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMatch>) {
-    let source_label = if allowlist_match.is_some() {
-        "allowlist"
-    } else {
-        match assessment.decision_source() {
-            DecisionSource::BuiltinPattern => "built-in pattern",
-            DecisionSource::CustomPattern => "custom pattern",
-            DecisionSource::Fallback => "fallback",
-        }
+    let source_label = match assessment.decision_source() {
+        DecisionSource::BuiltinPattern => "built-in pattern",
+        DecisionSource::CustomPattern => "custom pattern",
+        DecisionSource::Fallback => "fallback",
     };
 
     eprintln!(
@@ -394,8 +390,10 @@ fn decide_command(
                         assessment.risk, assessment.command.raw,
                     );
                     eprintln!(
-                        "aegis: set ci_policy = \"Allow\" in .aegis.toml to override, \
-                         or add the command to the allowlist."
+                        "aegis: set ci_policy = \"Allow\" in .aegis.toml to disable the \
+                         CI-only hard block and use normal policy evaluation. \
+                         For allowlisted Danger commands, also set \
+                         allowlist_override_level = \"Danger\"."
                     );
                 }
                 Some(BlockReason::IntrinsicRiskBlock) => {
@@ -404,8 +402,8 @@ fn decide_command(
                 Some(BlockReason::StrictPolicy) => {
                     show_policy_block(
                         assessment,
-                        "strict mode blocks non-safe commands unless the allowlist \
-                         override level permits it",
+                        "strict mode blocks non-safe commands unless the command \
+                         matches the allowlist and the override level permits it",
                     );
                 }
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
@@ -882,6 +880,46 @@ mod tests {
         );
 
         assert_eq!(decision, Decision::AutoApproved);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_allowlisted_warn_respects_warn_override_level() {
+        let assessment = make_assessment(RiskLevel::Warn);
+        let allowlist_match = AllowlistMatch {
+            pattern: "git stash clear".to_string(),
+        };
+
+        let (decision, snapshots) = decide_command(
+            &context_with_allowlist_override_level(AllowlistOverrideLevel::Warn),
+            &assessment,
+            Path::new("."),
+            false,
+            Some(&allowlist_match),
+            false,
+        );
+
+        assert_eq!(decision, Decision::AutoApproved);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_allowlisted_warn_still_blocks_with_never_override_level() {
+        let assessment = make_assessment(RiskLevel::Warn);
+        let allowlist_match = AllowlistMatch {
+            pattern: "git stash clear".to_string(),
+        };
+
+        let (decision, snapshots) = decide_command(
+            &context_with_allowlist_override_level(AllowlistOverrideLevel::Never),
+            &assessment,
+            Path::new("."),
+            false,
+            Some(&allowlist_match),
+            false,
+        );
+
+        assert_eq!(decision, Decision::Blocked);
         assert!(snapshots.is_empty());
     }
 }

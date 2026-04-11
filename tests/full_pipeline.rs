@@ -1248,10 +1248,10 @@ auto_snapshot_docker = false
     assert_eq!(entries[0]["risk"], "Warn");
 }
 
-/// Strict mode with allowlist_override_level = Danger and an allowlisted
-/// Danger command must auto-approve and create a git snapshot.
+/// Strict mode with allowlist_override_level = Danger and an allowlisted Danger
+/// command must auto-approve and create a git snapshot.
 #[test]
-fn strict_override_allowlisted_danger_executes_and_creates_snapshot() {
+fn strict_allowlist_override_level_danger_executes_and_creates_snapshot() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
     // bin_dir and log_path must be outside the workspace so that git stash

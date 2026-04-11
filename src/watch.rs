@@ -329,8 +329,8 @@ async fn process_frame(line: String, context: &RuntimeContext) {
                 Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(&assessment),
                 Some(BlockReason::StrictPolicy) => show_policy_block_via_tty(
                     &assessment,
-                    "strict mode blocks non-safe commands unless the allowlist \
-                     override level permits it",
+                    "strict mode blocks non-safe commands unless the command \
+                     matches the allowlist and the override level permits it",
                 ),
                 Some(BlockReason::ProtectCiPolicy) | None => {}
             });

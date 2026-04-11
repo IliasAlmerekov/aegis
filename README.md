@@ -167,12 +167,22 @@ aegis config show      # prints the active config (merged from all sources)
 # Operating mode.
 #   Protect  - prompt on Warn/Danger, block on Block (default)
 #   Audit    - never prompt or block; always log the outcome
-#   Strict   - auto-approve Safe only; block non-safe unless an allowlisted Warn/Danger command is explicitly overridden
+#   Strict   - auto-approve Safe only; block non-safe unless allowlist_override_level permits it
 mode = "Protect"
 
-# Strict only. When true, allowlisted Warn/Danger commands may auto-approve.
+# Allowlist override power:
+#   Warn    - allowlisted Warn auto-approves; Danger still prompts or blocks
+#   Danger  - allowlisted Warn and Danger auto-approve
+#   Never   - allowlist never changes the outcome for non-safe commands
 # Block is never bypassed.
-strict_allowlist_override = false
+allowlist_override_level = "Warn"
+
+# Migration note: older Protect-mode configs auto-approved allowlisted Danger
+# commands by default. To keep that behavior after upgrading, set
+# allowlist_override_level = "Danger" explicitly.
+# Existing Strict-mode configs without an override setting keep the old
+# blocking default. Set `allowlist_override_level = "Warn"` or `"Danger"` to
+# opt into the new allowlist auto-approve behavior there.
 
 # Create a git stash snapshot before Danger commands when policy allows execution.
 auto_snapshot_git = true
@@ -182,8 +192,8 @@ auto_snapshot_git = true
 auto_snapshot_docker = false
 
 # Commands matching these glob patterns are trusted.
-# Protect: allowlisted Warn/Danger auto-approve.
-# Strict: ignored unless strict_allowlist_override = true.
+# Protect: allowlisted Warn auto-approves at Warn/Danger; Danger auto-approves only at Danger.
+# Strict: the same override levels apply, but non-allowed non-safe commands block.
 allowlist = [
     # "terraform destroy -target=module.test.*",
     # "docker system prune --volumes",
@@ -211,9 +221,9 @@ compress_rotated = true
 
 | Mode | Safe | Warn | Danger | Block | CI interaction |
 |------|------|------|--------|-------|----------------|
-| `Protect` | auto-approve | prompt unless allowlisted | snapshot + prompt unless allowlisted | blocked | `ci_policy` only applies here |
+| `Protect` | auto-approve | prompt unless allowlisted at `Warn`/`Danger` | snapshot + prompt unless allowlisted at `Danger` | blocked | `ci_policy` only applies here |
 | `Audit` | auto-approve | auto-approve | auto-approve | auto-approve | never escalates to blocking |
-| `Strict` | auto-approve | blocked by default | blocked by default | blocked | CI cannot weaken strict behavior |
+| `Strict` | auto-approve | blocked unless allowlisted at `Warn`/`Danger` | blocked unless allowlisted at `Danger` | blocked | CI cannot weaken strict behavior |
 
 `Block` is never bypassed in `Protect` or `Strict`, including CI and allowlist flows.
 `Audit` is intentionally dry-run-friendly and non-blocking.
