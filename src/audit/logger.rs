@@ -1,8 +1,11 @@
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(test)]
+use std::io::Read;
 
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -560,54 +563,6 @@ impl AuditLogger {
         out
     }
 
-    fn read_matching(&self, risk: RiskLevel) -> Result<Vec<AuditEntry>> {
-        let mut entries = Vec::new();
-        for segment in self.segments_oldest_to_newest()? {
-            self.extend_entries_from_segment(&segment, Some(risk), &mut entries)?;
-        }
-        Ok(entries)
-    }
-
-    fn read_last_matching(&self, last: usize, risk: Option<RiskLevel>) -> Result<Vec<AuditEntry>> {
-        if last == 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut remaining = last;
-        let mut newest_segments = Vec::new();
-
-        if self.path.exists() {
-            let current = ArchiveSegment {
-                path: self.path.clone(),
-                compressed: false,
-                index: 0,
-            };
-            let tail = self.read_last_matching_from_plain_segment(&current, remaining, risk)?;
-            remaining = remaining.saturating_sub(tail.len());
-            if !tail.is_empty() {
-                newest_segments.push(tail);
-            }
-        }
-
-        for segment in self.segments_newest_archive_first()? {
-            if remaining == 0 {
-                break;
-            }
-
-            let mut entries = self.read_entries_from_segment(&segment, risk)?;
-            let keep_from = entries.len().saturating_sub(remaining);
-            entries = entries.split_off(keep_from);
-            remaining = remaining.saturating_sub(entries.len());
-
-            if !entries.is_empty() {
-                newest_segments.push(entries);
-            }
-        }
-
-        newest_segments.reverse();
-        Ok(newest_segments.into_iter().flatten().collect())
-    }
-
     fn parse_entry_line(
         &self,
         line: &[u8],
@@ -668,77 +623,6 @@ impl AuditLogger {
         Ok(entries)
     }
 
-    fn read_last_matching_from_plain_segment(
-        &self,
-        segment: &ArchiveSegment,
-        last: usize,
-        risk: Option<RiskLevel>,
-    ) -> Result<Vec<AuditEntry>> {
-        if last == 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut file = File::open(&segment.path)?;
-        let mut position = file.seek(SeekFrom::End(0))?;
-        let mut entries = Vec::with_capacity(last);
-        let mut remainder = Vec::new();
-        let mut chunk = vec![0_u8; 8192];
-
-        while position > 0 && entries.len() < last {
-            let read_size = usize::try_from(position.min(chunk.len() as u64))
-                .expect("chunk size is always bounded by usize");
-            position -= read_size as u64;
-            file.seek(SeekFrom::Start(position))?;
-            file.read_exact(&mut chunk[..read_size])?;
-
-            let mut buffer = Vec::with_capacity(read_size + remainder.len());
-            buffer.extend_from_slice(&chunk[..read_size]);
-            buffer.extend_from_slice(&remainder);
-
-            let split_at = if position == 0 {
-                0
-            } else {
-                match buffer.iter().position(|byte| *byte == b'\n') {
-                    Some(index) => index + 1,
-                    None => {
-                        remainder = buffer;
-                        continue;
-                    }
-                }
-            };
-
-            remainder = buffer[..split_at].to_vec();
-
-            for line in buffer[split_at..].split(|byte| *byte == b'\n').rev() {
-                if entries.len() >= last {
-                    break;
-                }
-
-                let Some(entry) = self.parse_entry_line(line, &segment.path, None)? else {
-                    continue;
-                };
-
-                if risk.is_none_or(|expected| entry.risk == expected) {
-                    entries.push(entry);
-                }
-            }
-        }
-
-        if entries.len() < last {
-            let Some(entry) = self.parse_entry_line(&remainder, &segment.path, None)? else {
-                entries.reverse();
-                return Ok(entries);
-            };
-
-            if risk.is_none_or(|expected| entry.risk == expected) {
-                entries.push(entry);
-            }
-        }
-
-        entries.reverse();
-        Ok(entries)
-    }
-
     fn open_segment_reader(&self, segment: &ArchiveSegment) -> Result<Box<dyn BufRead>> {
         let file = File::open(&segment.path)?;
         if segment.compressed {
@@ -759,12 +643,6 @@ impl AuditLogger {
                 index: 0,
             });
         }
-        Ok(segments)
-    }
-
-    fn segments_newest_archive_first(&self) -> Result<Vec<ArchiveSegment>> {
-        let mut segments = self.discover_archives()?;
-        segments.sort_by_key(|segment| segment.index);
         Ok(segments)
     }
 
