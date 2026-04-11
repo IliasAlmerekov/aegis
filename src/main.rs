@@ -365,7 +365,7 @@ fn decide_command(
         in_ci,
         ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: context.config().strict_allowlist_override,
+        allowlist_override_level: context.config().allowlist_override_level,
     });
 
     let snapshots = if plan.should_snapshot {
@@ -404,8 +404,8 @@ fn decide_command(
                 Some(BlockReason::StrictPolicy) => {
                     show_policy_block(
                         assessment,
-                        "strict mode blocks non-safe commands unless an allowlisted \
-                         Warn/Danger command is explicitly overridden",
+                        "strict mode blocks non-safe commands unless the allowlist \
+                         override level permits it",
                     );
                 }
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
@@ -516,7 +516,7 @@ fn same_file(path: &Path, other: Option<&Path>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aegis::config::{CiPolicy, Mode};
+    use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, CiPolicy, Mode};
     use aegis::error::AegisError;
 
     // ── Scanner init failure ──────────────────────────────────────────────────
@@ -726,6 +726,17 @@ mod tests {
         RuntimeContext::new(config).unwrap()
     }
 
+    fn context_with_allowlist_override_level(
+        allowlist_override_level: AllowlistOverrideLevel,
+    ) -> RuntimeContext {
+        let mut config = Config::default();
+        config.mode = Mode::Strict;
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+        config.allowlist_override_level = allowlist_override_level;
+        RuntimeContext::new(config).unwrap()
+    }
+
     #[test]
     fn ci_policy_block_blocks_warn_in_ci() {
         let assessment = make_assessment(RiskLevel::Warn);
@@ -851,6 +862,26 @@ mod tests {
         );
 
         assert_eq!(decision, Decision::Blocked);
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_allowlisted_danger_respects_allowlist_override_level() {
+        let assessment = make_assessment(RiskLevel::Danger);
+        let allowlist_match = AllowlistMatch {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+        };
+
+        let (decision, snapshots) = decide_command(
+            &context_with_allowlist_override_level(AllowlistOverrideLevel::Danger),
+            &assessment,
+            Path::new("."),
+            false,
+            Some(&allowlist_match),
+            false,
+        );
+
+        assert_eq!(decision, Decision::AutoApproved);
         assert!(snapshots.is_empty());
     }
 }

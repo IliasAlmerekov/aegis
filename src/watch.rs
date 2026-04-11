@@ -302,7 +302,7 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         in_ci: false, // CI env detection is irrelevant in watch mode
         ci_policy: config.ci_policy,
         allowlist_match: allowlist_match.is_some(),
-        strict_allowlist_override: config.strict_allowlist_override,
+        allowlist_override_level: config.allowlist_override_level,
     });
 
     // ── 6. Snapshots ──────────────────────────────────────────────────────────
@@ -329,7 +329,8 @@ async fn process_frame(line: String, context: &RuntimeContext) {
                 Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(&assessment),
                 Some(BlockReason::StrictPolicy) => show_policy_block_via_tty(
                     &assessment,
-                    "strict mode blocks non-safe commands without an allowlisted override",
+                    "strict mode blocks non-safe commands unless the allowlist \
+                     override level permits it",
                 ),
                 Some(BlockReason::ProtectCiPolicy) | None => {}
             });

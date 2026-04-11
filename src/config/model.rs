@@ -17,8 +17,9 @@ const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
 mode = "Protect" # Protect=prompt/block, Audit=non-blocking audit-only, Strict=block non-safe by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist = [] # Protect allowlists Warn/Danger. Strict ignores allowlist unless strict_allowlist_override=true.
-strict_allowlist_override = false # Strict only: allowlisted Warn/Danger may auto-approve. Block is never bypassed.
+allowlist = [] # Protect allowlists Warn/Danger. Strict uses allowlist_override_level.
+allowlist_override_level = "Warn" # Allowlisted Warn auto-approves; Danger still prompts unless set to Danger.
+strict_allowlist_override = false # Legacy alias for older configs; kept for compatibility.
 
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible.
 auto_snapshot_docker = false # Docker snapshot is opt-in. Enable once you have tested rollback in your environment.
@@ -69,6 +70,29 @@ pub enum CiPolicy {
     Allow,
 }
 
+/// How much power an allowlisted command has to override policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum AllowlistOverrideLevel {
+    /// Allowlisted `Warn` commands may auto-approve; `Danger` still prompts.
+    #[default]
+    Warn,
+    /// Allowlisted `Warn` and `Danger` commands may auto-approve.
+    Danger,
+    /// Allowlist never changes the approval outcome for non-safe commands.
+    Never,
+}
+
+impl AllowlistOverrideLevel {
+    fn from_legacy_strict_allowlist_override(strict_allowlist_override: bool) -> Self {
+        if strict_allowlist_override {
+            Self::Danger
+        } else {
+            Self::Never
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserPattern {
@@ -86,6 +110,8 @@ pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
     pub allowlist: Vec<String>,
+    /// How much power allowlisted commands have to override policy.
+    pub allowlist_override_level: AllowlistOverrideLevel,
     pub strict_allowlist_override: bool,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
@@ -134,6 +160,7 @@ impl AegisConfig {
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
             allowlist: Vec::new(),
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
             strict_allowlist_override: false,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
@@ -198,6 +225,12 @@ impl AegisConfig {
             mode: overlay.mode.unwrap_or(base.mode),
             custom_patterns,
             allowlist,
+            allowlist_override_level: overlay.allowlist_override_level.unwrap_or_else(|| {
+                overlay
+                    .strict_allowlist_override
+                    .map(AllowlistOverrideLevel::from_legacy_strict_allowlist_override)
+                    .unwrap_or(base.allowlist_override_level)
+            }),
             strict_allowlist_override: overlay
                 .strict_allowlist_override
                 .unwrap_or(base.strict_allowlist_override),
@@ -276,6 +309,7 @@ struct PartialConfig {
     mode: Option<Mode>,
     custom_patterns: Vec<UserPattern>,
     allowlist: Vec<String>,
+    allowlist_override_level: Option<AllowlistOverrideLevel>,
     strict_allowlist_override: Option<bool>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
@@ -612,6 +646,19 @@ description = "Conflicts with built-in pattern id"
 
         let toml = config.to_toml_string().unwrap();
         assert!(toml.contains("strict_allowlist_override = false"));
+    }
+
+    #[test]
+    fn allowlist_override_level_defaults_warn_and_serializes() {
+        let config = AegisConfig::defaults();
+
+        assert_eq!(
+            config.allowlist_override_level,
+            AllowlistOverrideLevel::Warn
+        );
+
+        let toml = config.to_toml_string().unwrap();
+        assert!(toml.contains("allowlist_override_level = \"Warn\""));
     }
 
     #[test]

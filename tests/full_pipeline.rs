@@ -188,6 +188,7 @@ exit 0
     fs::write(
         &config_path,
         r#"allowlist = ["terraform destroy -target=module.test.*"]
+allowlist_override_level = "Danger"
 "#,
     )
     .unwrap();
@@ -323,6 +324,7 @@ fn verbose_allowlist_match_prints_rule_name() {
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"allowlist = ["terraform destroy -target=module.ci.*"]
+allowlist_override_level = "Danger"
 "#,
     )
     .unwrap();
@@ -1110,6 +1112,7 @@ exit 0
 mode = "Protect"
 ci_policy = "Block"
 allowlist = ["terraform destroy -target=module.test.*"]
+allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 "#,
@@ -1270,6 +1273,7 @@ exit 0
         r#"
 mode = "Strict"
 strict_allowlist_override = true
+allowlist_override_level = "Danger"
 allowlist = ["terraform destroy -target=module.test.*"]
 auto_snapshot_git = true
 auto_snapshot_docker = false
