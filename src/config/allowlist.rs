@@ -24,8 +24,8 @@ pub struct AllowlistContext<'a> {
     pub command: &'a str,
     /// Working directory for the command execution, when it could be resolved.
     pub cwd: Option<&'a Path>,
-    /// Effective user running Aegis.
-    pub user: &'a str,
+    /// Effective user running Aegis, when it could be resolved reliably.
+    pub user: Option<&'a str>,
     /// Current time used for expiry evaluation.
     pub now: OffsetDateTime,
 }
@@ -33,27 +33,40 @@ pub struct AllowlistContext<'a> {
 impl<'a> AllowlistContext<'a> {
     /// Create a new allowlist matching context.
     pub fn new(command: &'a str, cwd: &'a Path, user: &'a str, now: OffsetDateTime) -> Self {
+        Self::with_optional_scope(command, Some(cwd), Some(user), now)
+    }
+
+    /// Create a new allowlist matching context with optional cwd and user scope.
+    pub fn with_optional_scope(
+        command: &'a str,
+        cwd: Option<&'a Path>,
+        user: Option<&'a str>,
+        now: OffsetDateTime,
+    ) -> Self {
         Self {
             command,
-            cwd: Some(cwd),
+            cwd,
             user,
             now,
         }
     }
 
     /// Create a new allowlist matching context when cwd resolution failed.
-    pub fn without_cwd(command: &'a str, user: &'a str, now: OffsetDateTime) -> Self {
-        Self {
-            command,
-            cwd: None,
-            user,
-            now,
-        }
+    pub fn without_cwd(command: &'a str, user: Option<&'a str>, now: OffsetDateTime) -> Self {
+        Self::with_optional_scope(command, None, user, now)
     }
 
     /// Return a copy of this context with a different user.
     pub fn with_user(self, user: &'a str) -> Self {
-        Self { user, ..self }
+        Self {
+            user: Some(user),
+            ..self
+        }
+    }
+
+    /// Return a copy of this context without a resolved user.
+    pub fn without_user(self) -> Self {
+        Self { user: None, ..self }
     }
 }
 
@@ -219,9 +232,9 @@ impl CompiledAllowlistRule {
         }
     }
 
-    fn matches_user(&self, user: &str) -> bool {
+    fn matches_user(&self, user: Option<&str>) -> bool {
         match self.user.as_deref() {
-            Some(rule_user) => rule_user == user,
+            Some(rule_user) => user.is_some_and(|user| rule_user == user),
             None => true,
         }
     }

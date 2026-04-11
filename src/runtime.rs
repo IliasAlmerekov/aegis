@@ -1,4 +1,6 @@
 use std::path::Path;
+#[cfg(not(windows))]
+use std::process::Command;
 use std::sync::Arc;
 
 use time::OffsetDateTime;
@@ -40,7 +42,7 @@ impl From<&Config> for RuntimeConfig {
 pub struct RuntimeContext {
     runtime_config: RuntimeConfig,
     allowlist: Allowlist,
-    current_user: String,
+    current_user: Option<String>,
     scanner: Arc<Scanner>,
     snapshot_registry: SnapshotRegistry,
     snapshot_runtime: SnapshotRuntime,
@@ -62,7 +64,7 @@ impl RuntimeContext {
     pub fn new(config: Config) -> Result<Self, AegisError> {
         config.validate_runtime_requirements()?;
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
-        let current_user = detect_effective_user().unwrap_or_default();
+        let current_user = detect_effective_user();
 
         let snapshot_runtime = match Builder::new_current_thread().enable_all().build() {
             Ok(runtime) => SnapshotRuntime::Ready(runtime),
@@ -91,8 +93,8 @@ impl RuntimeContext {
     }
 
     /// Return the effective user identity captured for this runtime context.
-    pub fn current_user(&self) -> &str {
-        &self.current_user
+    pub fn current_user(&self) -> Option<&str> {
+        self.current_user.as_deref()
     }
 
     /// Resolve the allowlist rule, if any, that matches the runtime context.
@@ -107,10 +109,7 @@ impl RuntimeContext {
         cwd: Option<&Path>,
     ) -> Option<AllowlistMatch> {
         let now = OffsetDateTime::now_utc();
-        let context = match cwd {
-            Some(cwd) => AllowlistContext::new(command, cwd, self.current_user(), now),
-            None => AllowlistContext::without_cwd(command, self.current_user(), now),
-        };
+        let context = AllowlistContext::with_optional_scope(command, cwd, self.current_user(), now);
 
         self.allowlist_match(&context)
     }
@@ -213,21 +212,28 @@ fn build_audit_logger(config: &Config) -> AuditLogger {
 fn detect_effective_user() -> Option<String> {
     #[cfg(not(windows))]
     {
-        if let Ok(output) = std::process::Command::new("id").arg("-un").output()
-            && output.status.success()
-        {
-            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !user.is_empty() {
-                return Some(user);
-            }
-        }
+        return detect_effective_user_from_id_command(Path::new("/usr/bin/id"));
     }
 
-    std::env::var("USER")
-        .ok()
-        .or_else(|| std::env::var("USERNAME").ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    #[cfg(windows)]
+    {
+        None
+    }
+}
+
+#[cfg(not(windows))]
+fn detect_effective_user_from_id_command(id_path: &Path) -> Option<String> {
+    if !id_path.is_absolute() {
+        return None;
+    }
+
+    let output = Command::new(id_path).arg("-un").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!user.is_empty()).then_some(user)
 }
 
 #[cfg(test)]
@@ -305,12 +311,11 @@ mod tests {
             context.config().strict_allowlist_override,
             AllowlistOverrideLevel::Danger
         );
-        let allowlist_ctx = AllowlistContext::new(
-            "echo trusted",
-            Path::new("."),
-            context.current_user(),
-            now_utc(),
-        );
+        let Some(current_user) = context.current_user() else {
+            panic!("test requires a resolvable user");
+        };
+        let allowlist_ctx =
+            AllowlistContext::new("echo trusted", Path::new("."), current_user, now_utc());
         assert_eq!(
             context.allowlist_match(&allowlist_ctx).map(|m| m.pattern),
             Some("echo trusted".to_string())
@@ -363,9 +368,9 @@ mod tests {
         }];
 
         let context = RuntimeContext::new(config).unwrap();
-        let allowlist_ctx = AllowlistContext::new(
+        let allowlist_ctx = AllowlistContext::with_optional_scope(
             "terraform destroy -target=module.test.api",
-            Path::new("/srv/infra"),
+            Some(Path::new("/srv/infra")),
             context.current_user(),
             now_utc(),
         );
@@ -378,7 +383,9 @@ mod tests {
         use crate::config::AllowlistRule;
 
         let mut config = Config::default();
-        let current_user = detect_effective_user().unwrap_or_else(|| "unknown".to_string());
+        let Some(current_user) = detect_effective_user() else {
+            return;
+        };
         config.allowlist = vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: None,
@@ -388,14 +395,56 @@ mod tests {
         }];
 
         let context = RuntimeContext::new(config).unwrap();
+        let Some(current_user) = context.current_user() else {
+            panic!("test requires a resolvable user");
+        };
         let allowlist_ctx = AllowlistContext::new(
             "terraform destroy -target=module.test.api",
             Path::new("/srv/infra"),
-            &current_user,
+            current_user,
             now_utc(),
         );
 
         assert!(context.allowlist_match(&allowlist_ctx).is_some());
+    }
+
+    #[test]
+    fn unknown_user_does_not_match_user_scoped_allowlist_rule() {
+        use crate::config::AllowlistRule;
+
+        let mut config = Config::default();
+        config.allowlist = vec![AllowlistRule {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+            cwd: None,
+            user: Some("ci".to_string()),
+            expires_at: None,
+            reason: "user scoped teardown".to_string(),
+        }];
+
+        let mut context = RuntimeContext::new(config).unwrap();
+        context.current_user = None;
+
+        assert!(
+            context
+                .allowlist_match_for_command(
+                    "terraform destroy -target=module.test.api",
+                    Some(Path::new("/srv/infra")),
+                )
+                .is_none()
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn detect_effective_user_rejects_relative_id_command_path() {
+        assert!(detect_effective_user_from_id_command(Path::new("id")).is_none());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn detect_effective_user_reads_name_from_absolute_id_command_path() {
+        let detected = detect_effective_user_from_id_command(Path::new("/usr/bin/id"));
+        assert!(detected.is_some());
     }
 
     #[test]
