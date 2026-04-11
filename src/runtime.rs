@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use time::OffsetDateTime;
 use tokio::runtime::{Builder, Runtime};
 
 use crate::audit::{AuditEntry, AuditLogger, AuditRotationPolicy, Decision};
@@ -97,6 +98,21 @@ impl RuntimeContext {
     /// Resolve the allowlist rule, if any, that matches the runtime context.
     pub fn allowlist_match(&self, context: &AllowlistContext<'_>) -> Option<AllowlistMatch> {
         self.allowlist.match_reason(context)
+    }
+
+    /// Resolve the matching allowlist rule for one command using the runtime user.
+    pub fn allowlist_match_for_command(
+        &self,
+        command: &str,
+        cwd: Option<&Path>,
+    ) -> Option<AllowlistMatch> {
+        let now = OffsetDateTime::now_utc();
+        let context = match cwd {
+            Some(cwd) => AllowlistContext::new(command, cwd, self.current_user(), now),
+            None => AllowlistContext::without_cwd(command, self.current_user(), now),
+        };
+
+        self.allowlist_match(&context)
     }
 
     /// Create best-effort snapshots using the context-bound registry/runtime.
@@ -216,10 +232,13 @@ fn detect_effective_user() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use crate::config::{CiPolicy, UserPattern};
     use crate::interceptor::RiskLevel;
     use crate::interceptor::patterns::Category;
+    use tempfile::TempDir;
     use time::OffsetDateTime;
 
     #[test]
@@ -377,6 +396,72 @@ mod tests {
         );
 
         assert!(context.allowlist_match(&allowlist_ctx).is_some());
+    }
+
+    #[test]
+    fn unknown_cwd_does_not_match_cwd_scoped_allowlist_rule() {
+        use crate::config::AllowlistRule;
+
+        let mut config = Config::default();
+        config.allowlist = vec![AllowlistRule {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped teardown".to_string(),
+        }];
+
+        let context = RuntimeContext::new(config).unwrap();
+
+        assert!(
+            context
+                .allowlist_match_for_command("terraform destroy -target=module.test.api", None,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn load_for_preserves_project_allowlist_precedence_into_runtime_matching() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(".config/aegis");
+        fs::create_dir_all(&global_dir).unwrap();
+
+        fs::write(
+            global_dir.join("config.toml"),
+            r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "global teardown"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            workspace.path().join(".aegis.toml"),
+            r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "project teardown"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+        )
+        .unwrap();
+
+        let config = Config::load_for(workspace.path(), Some(home.path())).unwrap();
+        let context = RuntimeContext::new(config).unwrap();
+        let matched = context
+            .allowlist_match_for_command(
+                "terraform destroy -target=module.test.api",
+                Some(workspace.path()),
+            )
+            .unwrap();
+
+        assert_eq!(matched.reason, "project teardown");
+        assert_eq!(
+            matched.source_layer,
+            crate::config::AllowlistSourceLayer::Project
+        );
     }
 
     fn now_utc() -> OffsetDateTime {

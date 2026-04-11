@@ -22,8 +22,8 @@ pub enum AllowlistSourceLayer {
 pub struct AllowlistContext<'a> {
     /// Raw command string about to be evaluated.
     pub command: &'a str,
-    /// Working directory for the command execution.
-    pub cwd: &'a Path,
+    /// Working directory for the command execution, when it could be resolved.
+    pub cwd: Option<&'a Path>,
     /// Effective user running Aegis.
     pub user: &'a str,
     /// Current time used for expiry evaluation.
@@ -35,7 +35,17 @@ impl<'a> AllowlistContext<'a> {
     pub fn new(command: &'a str, cwd: &'a Path, user: &'a str, now: OffsetDateTime) -> Self {
         Self {
             command,
-            cwd,
+            cwd: Some(cwd),
+            user,
+            now,
+        }
+    }
+
+    /// Create a new allowlist matching context when cwd resolution failed.
+    pub fn without_cwd(command: &'a str, user: &'a str, now: OffsetDateTime) -> Self {
+        Self {
+            command,
+            cwd: None,
             user,
             now,
         }
@@ -202,9 +212,9 @@ impl CompiledAllowlistRule {
         self.regex.is_match(command.trim())
     }
 
-    fn matches_cwd(&self, cwd: &Path) -> bool {
+    fn matches_cwd(&self, cwd: Option<&Path>) -> bool {
         match self.cwd.as_deref() {
-            Some(rule_cwd) => Path::new(rule_cwd) == cwd,
+            Some(rule_cwd) => cwd.is_some_and(|cwd| Path::new(rule_cwd) == cwd),
             None => true,
         }
     }

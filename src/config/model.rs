@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use super::allowlist::{AllowlistSourceLayer, LayeredAllowlistRule};
+use super::allowlist::{Allowlist, AllowlistSourceLayer, LayeredAllowlistRule};
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::RiskLevel;
@@ -228,11 +228,14 @@ impl AegisConfig {
 
     /// Validate config invariants required before constructing runtime state.
     ///
-    /// This includes hard fail-closed checks for scoped allowlist fields and
-    /// expiry handling that must apply to direct `RuntimeContext::new` callers
-    /// as well as file-loaded configs.
+    /// This covers semantic config checks plus scanner and allowlist
+    /// compilation so direct `RuntimeContext::new` callers get the same
+    /// fail-closed guarantees as file-loaded configs.
     pub(crate) fn validate_runtime_requirements(&self) -> Result<()> {
-        self.validate()
+        self.validate()?;
+        interceptor::scanner_for(&self.custom_patterns).map(|_| ())?;
+        Allowlist::new(&self.layered_allowlist_rules()).map(|_| ())?;
+        Ok(())
     }
 
     pub(crate) fn load_for(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
@@ -244,14 +247,12 @@ impl AegisConfig {
         if let Some(path) = global_path.as_deref().filter(|p| p.is_file()) {
             let global = PartialConfig::from_path(path)?;
             merged = Self::merge_layer(merged, global, AllowlistSourceLayer::Global);
-            merged.validate_for_path(path)?;
             merged.validate_runtime_requirements_for_path(path)?;
         }
 
         if project_path.is_file() {
             let project = PartialConfig::from_path(&project_path)?;
             merged = Self::merge_layer(merged, project, AllowlistSourceLayer::Project);
-            merged.validate_for_path(&project_path)?;
             merged.validate_runtime_requirements_for_path(&project_path)?;
         }
 
@@ -337,18 +338,8 @@ impl AegisConfig {
         Ok(())
     }
 
-    fn validate_for_path(&self, path: &Path) -> Result<()> {
-        self.validate().map_err(|err| match err {
-            AegisError::Config(message) => {
-                AegisError::Config(format!("invalid config {}: {message}", path.display()))
-            }
-            other => other,
-        })
-    }
-
     fn validate_runtime_requirements_for_path(&self, path: &Path) -> Result<()> {
-        interceptor::scanner_for(&self.custom_patterns)
-            .map(|_| ())
+        self.validate_runtime_requirements()
             .map_err(|err| match err {
                 AegisError::Config(message) => {
                     AegisError::Config(format!("invalid config {}: {message}", path.display()))
@@ -762,6 +753,74 @@ description = "Conflicts with built-in pattern id"
             message.contains("duplicate pattern id"),
             "custom pattern error must preserve scanner validation details: {message}"
         );
+    }
+
+    #[test]
+    fn load_for_rejects_malformed_allowlist_fields_with_source_path() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
+
+        let cases = [
+            (
+                "pattern",
+                r#"
+[[allowlist]]
+pattern = "   "
+reason = "valid reason"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "pattern must not be empty",
+            ),
+            (
+                "reason",
+                r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "   "
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "reason must not be empty",
+            ),
+            (
+                "cwd",
+                r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "   "
+reason = "valid reason"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "cwd must not be empty",
+            ),
+            (
+                "user",
+                r#"
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+user = "   "
+reason = "valid reason"
+expires_at = "2030-01-01T00:00:00Z"
+"#,
+                "user must not be empty",
+            ),
+        ];
+
+        for (field, contents, expected_message) in cases {
+            fs::write(&config_path, contents).unwrap();
+
+            let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
+            let message = err.to_string();
+
+            assert!(
+                message.contains(&config_path.display().to_string()),
+                "{field} validation error must identify the offending config file: {message}"
+            );
+            assert!(
+                message.contains(expected_message),
+                "{field} validation message mismatch: {message}"
+            );
+        }
     }
 
     #[test]
