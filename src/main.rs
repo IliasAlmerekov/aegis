@@ -907,6 +907,7 @@ mod tests {
         let fallback = Assessment {
             risk: RiskLevel::Warn,
             matched: Vec::new(),
+            highlight_ranges: Vec::new(),
             command: CommandParser::parse("any command"),
         };
         assert_eq!(fallback.risk, RiskLevel::Warn);
@@ -1120,6 +1121,7 @@ mod tests {
         Assessment {
             risk,
             matched: Vec::new(),
+            highlight_ranges: Vec::new(),
             command: CommandParser::parse("rm -rf /"),
         }
     }
@@ -1211,6 +1213,7 @@ mod tests {
         let assessment = Assessment {
             risk: RiskLevel::Safe,
             matched: Vec::new(),
+            highlight_ranges: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
         let (decision, _, _) = decide_command(
@@ -1231,6 +1234,7 @@ mod tests {
         let assessment = Assessment {
             risk: RiskLevel::Safe,
             matched: Vec::new(),
+            highlight_ranges: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
         let (decision, _, _) = decide_command(
@@ -1250,6 +1254,7 @@ mod tests {
         let assessment = Assessment {
             risk: RiskLevel::Safe,
             matched: Vec::new(),
+            highlight_ranges: Vec::new(),
             command: CommandParser::parse("echo hello"),
         };
         let (decision, _, _) =

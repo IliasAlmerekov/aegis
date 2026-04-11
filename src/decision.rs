@@ -300,6 +300,7 @@ mod tests {
         Assessment {
             risk,
             matched: Vec::new(),
+            highlight_ranges: Vec::new(),
             command: CommandParser::parse("terraform destroy -target=module.prod.api"),
         }
     }

@@ -5,17 +5,29 @@ use crate::interceptor::parser::{
     logical_segments,
 };
 
-const MAX_NESTED_SCAN_DEPTH: usize = 8;
+pub(crate) const MAX_NESTED_SCAN_DEPTH: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecursiveScanLimit {
+    DepthExceeded { limit: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecursiveScanReport {
+    pub targets: Vec<String>,
+    pub limit_hit: Option<RecursiveScanLimit>,
+}
 
 /// Collect recursive scan targets derived from nested execution wrappers.
 ///
 /// The returned list always contains `cmd` itself plus any normalized or
 /// unwrapped payloads discovered through shell nesting, heredocs, inline
 /// interpreters, process substitution, and `eval`.
-pub fn recursive_scan_targets(cmd: &str) -> Vec<String> {
+pub fn recursive_scan_targets(cmd: &str) -> RecursiveScanReport {
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
     let mut queue = VecDeque::from([(cmd.trim().to_string(), 0usize)]);
+    let mut limit_hit = None;
 
     while let Some((candidate, depth)) = queue.pop_front() {
         if candidate.is_empty() || !seen.insert(candidate.clone()) {
@@ -25,6 +37,9 @@ pub fn recursive_scan_targets(cmd: &str) -> Vec<String> {
         targets.push(candidate.clone());
 
         if depth >= MAX_NESTED_SCAN_DEPTH {
+            limit_hit.get_or_insert(RecursiveScanLimit::DepthExceeded {
+                limit: MAX_NESTED_SCAN_DEPTH,
+            });
             continue;
         }
 
@@ -36,7 +51,7 @@ pub fn recursive_scan_targets(cmd: &str) -> Vec<String> {
         }
     }
 
-    targets
+    RecursiveScanReport { targets, limit_hit }
 }
 
 fn expand_nested_targets(cmd: &str) -> Vec<String> {
@@ -64,12 +79,12 @@ fn expand_nested_targets(cmd: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::recursive_scan_targets;
+    use super::{MAX_NESTED_SCAN_DEPTH, RecursiveScanLimit, recursive_scan_targets};
 
     #[test]
     fn recursive_targets_include_inline_script_body_from_nested_shell() {
         let targets = recursive_scan_targets(r#"bash -c 'python3 -c "print(42)"'"#);
-        assert!(targets.iter().any(|target| target == "print(42)"));
+        assert!(targets.targets.iter().any(|target| target == "print(42)"));
     }
 
     #[test]
@@ -79,10 +94,11 @@ mod tests {
 
         assert!(
             targets
+                .targets
                 .iter()
                 .any(|target| target == r#"python3 -c "print(42)""#)
         );
-        assert!(targets.iter().any(|target| target == "print(42)"));
+        assert!(targets.targets.iter().any(|target| target == "print(42)"));
     }
 
     #[test]
@@ -91,10 +107,11 @@ mod tests {
 
         assert!(
             targets
+                .targets
                 .iter()
                 .any(|target| target == r#"python3 -c "print(42)""#)
         );
-        assert!(targets.iter().any(|target| target == "print(42)"));
+        assert!(targets.targets.iter().any(|target| target == "print(42)"));
     }
 
     #[test]
@@ -103,9 +120,27 @@ mod tests {
 
         assert!(
             targets
+                .targets
                 .iter()
                 .any(|target| target == "python3 -c 'print(42)'")
         );
-        assert!(targets.iter().any(|target| target == "print(42)"));
+        assert!(targets.targets.iter().any(|target| target == "print(42)"));
+    }
+
+    #[test]
+    fn recursive_targets_report_depth_limit_when_nesting_exceeds_cap() {
+        let mut cmd = "eval \"printf hi\"".to_string();
+        for _ in 0..=MAX_NESTED_SCAN_DEPTH {
+            cmd = format!("eval \"{cmd}\"");
+        }
+
+        let report = recursive_scan_targets(&cmd);
+
+        assert_eq!(
+            report.limit_hit,
+            Some(RecursiveScanLimit::DepthExceeded {
+                limit: MAX_NESTED_SCAN_DEPTH,
+            })
+        );
     }
 }

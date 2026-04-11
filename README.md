@@ -602,6 +602,15 @@ Run the benchmarks yourself to see numbers on your hardware:
 cargo bench
 ```
 
+To compare the generated Criterion output against the checked-in CI baseline:
+
+```bash
+cargo run --bin aegis_benchcheck -- --baseline perf/scanner_bench_baseline.toml --criterion-root target/criterion
+```
+
+See [docs/performance-baseline.md](docs/performance-baseline.md) for the
+benchmark policy, thresholds, and update process.
+
 ---
 
 ## Contributing

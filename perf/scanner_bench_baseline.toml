@@ -1,0 +1,19 @@
+default_regression_pct = 25.0
+
+[[benchmarks]]
+name = "1000_safe_commands"
+baseline_ns = 2_800_000
+regression_pct = 25.0
+description = "1,000 safe commands should remain close to the hot-path latency budget on CI runners."
+
+[[benchmarks]]
+name = "100_dangerous_commands"
+baseline_ns = 1_000_000
+regression_pct = 25.0
+description = "100 dangerous commands exercise the full regex verification path across categories."
+
+[[benchmarks]]
+name = "heredoc_worst_case"
+baseline_ns = 300_000
+regression_pct = 30.0
+description = "Worst-case inline-script/heredoc scanning should stay bounded on shared CI hardware."

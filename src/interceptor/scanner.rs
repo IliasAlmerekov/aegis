@@ -6,7 +6,9 @@ use aho_corasick::AhoCorasick;
 use regex::Regex;
 
 use crate::interceptor::RiskLevel;
-use crate::interceptor::nested::recursive_scan_targets;
+#[cfg(test)]
+use crate::interceptor::nested::MAX_NESTED_SCAN_DEPTH;
+use crate::interceptor::nested::{RecursiveScanLimit, RecursiveScanReport, recursive_scan_targets};
 use crate::interceptor::parser::{ParsedCommand, Parser, PipelineChain, top_level_pipelines};
 use crate::interceptor::patterns::{Category, Pattern, PatternSet, PatternSource};
 
@@ -16,6 +18,17 @@ pub struct MatchResult {
     pub pattern: Arc<Pattern>,
     /// The substring of the scanned text that the pattern's regex matched.
     pub matched_text: String,
+    /// The concrete span in the original command suitable for confirmation UI highlighting.
+    pub highlight_range: Option<HighlightRange>,
+}
+
+/// A concrete byte range inside the original command for confirmation UI highlighting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HighlightRange {
+    /// Inclusive start byte offset.
+    pub start: usize,
+    /// Exclusive end byte offset.
+    pub end: usize,
 }
 
 /// What ultimately caused the final interception decision.
@@ -35,6 +48,8 @@ pub struct Assessment {
     pub risk: RiskLevel,
     /// Every pattern that matched the command (raw + inline scripts).
     pub matched: Vec<MatchResult>,
+    /// Sorted, merged highlight spans for the original raw command.
+    pub highlight_ranges: Vec<HighlightRange>,
     /// The parsed representation of the original command string.
     pub command: ParsedCommand,
 }
@@ -69,6 +84,9 @@ impl Assessment {
 ///
 /// False positives (extra `true` results) are acceptable; they only cost a regex
 /// scan. False negatives (a `false` when a pattern would match) are forbidden.
+const MAX_SCAN_COMMAND_LEN: usize = 64 * 1024;
+const MAX_INLINE_SCRIPT_LEN: usize = 16 * 1024;
+
 pub struct Scanner {
     ac: AhoCorasick,
     /// `true` when ≥ 1 pattern yielded no extractable keyword.
@@ -151,6 +169,10 @@ impl Scanner {
                 rx.find(cmd).map(|m| MatchResult {
                     pattern: Arc::clone(pattern),
                     matched_text: m.as_str().to_string(),
+                    highlight_range: Some(HighlightRange {
+                        start: m.start(),
+                        end: m.end(),
+                    }),
                 })
             })
             .collect()
@@ -166,7 +188,41 @@ impl Scanner {
     /// 4. Run [`full_scan`] on each discovered target and merge unique pattern matches.
     /// 5. Compute the maximum [`RiskLevel`] across all matched patterns and return.
     pub fn assess(&self, cmd: &str) -> Assessment {
+        if cmd.len() > MAX_SCAN_COMMAND_LEN {
+            return uncertain_assessment_without_parse(
+                cmd,
+                "SCAN-001",
+                format!(
+                    "scan input exceeded command length limit ({})",
+                    MAX_SCAN_COMMAND_LEN
+                ),
+                Some(
+                    "Review the command out-of-band or move the payload into a smaller, reviewed script file",
+                ),
+            );
+        }
+
         let command = Parser::parse(cmd);
+
+        if let Some(script) = command
+            .inline_scripts
+            .iter()
+            .find(|script| script.body.len() > MAX_INLINE_SCRIPT_LEN)
+        {
+            let interpreter = script.interpreter.clone();
+            return uncertain_assessment(
+                command,
+                "SCAN-002",
+                format!(
+                    "scan input exceeded inline script length limit ({}) for {}",
+                    MAX_INLINE_SCRIPT_LEN, interpreter
+                ),
+                Some(
+                    "Review the generated script separately or store it in a checked file before execution",
+                ),
+            );
+        }
+
         let maybe_pipelines = cmd.contains('|').then(|| top_level_pipelines(cmd));
         let has_pipeline_chain = maybe_pipelines
             .as_ref()
@@ -177,13 +233,26 @@ impl Scanner {
             return Assessment {
                 risk: RiskLevel::Safe,
                 matched: vec![],
+                highlight_ranges: vec![],
                 command,
             };
         }
 
         let mut matched = Vec::new();
 
-        for target in scan_targets(cmd, &command) {
+        let target_report = scan_targets(cmd, &command);
+        if let Some(limit_hit) = target_report.limit_hit {
+            return uncertain_assessment(
+                command,
+                "SCAN-003",
+                recursive_limit_description(limit_hit),
+                Some(
+                    "Reduce shell nesting depth or rewrite the command into a reviewed intermediate script",
+                ),
+            );
+        }
+
+        for target in target_report.targets {
             for pattern in self.full_scan(&target) {
                 if !matched
                     .iter()
@@ -210,13 +279,124 @@ impl Scanner {
             .map(|p| p.pattern.risk)
             .max()
             .unwrap_or(RiskLevel::Safe);
+        let highlight_ranges = sorted_highlight_ranges(cmd, &matched);
 
         Assessment {
             risk,
             matched,
+            highlight_ranges,
             command,
         }
     }
+}
+
+fn uncertain_assessment_without_parse(
+    cmd: &str,
+    id: &'static str,
+    description: String,
+    safe_alt: Option<&'static str>,
+) -> Assessment {
+    uncertain_assessment(
+        ParsedCommand {
+            executable: None,
+            args: Vec::new(),
+            inline_scripts: Vec::new(),
+            raw: cmd.to_string(),
+        },
+        id,
+        description,
+        safe_alt,
+    )
+}
+
+fn uncertain_assessment(
+    command: ParsedCommand,
+    id: &'static str,
+    description: String,
+    safe_alt: Option<&'static str>,
+) -> Assessment {
+    let matched = vec![uncertain_match(id, description, safe_alt)];
+    let highlight_ranges = sorted_highlight_ranges(&command.raw, &matched);
+
+    Assessment {
+        risk: RiskLevel::Warn,
+        matched,
+        highlight_ranges,
+        command,
+    }
+}
+
+fn uncertain_match(
+    id: &'static str,
+    description: String,
+    safe_alt: Option<&'static str>,
+) -> MatchResult {
+    MatchResult {
+        pattern: Arc::new(Pattern {
+            id: id.into(),
+            category: Category::Process,
+            risk: RiskLevel::Warn,
+            pattern: id.into(),
+            description: description.into(),
+            safe_alt: safe_alt.map(Into::into),
+            source: PatternSource::Builtin,
+        }),
+        matched_text: String::new(),
+        highlight_range: None,
+    }
+}
+
+fn recursive_limit_description(limit: RecursiveScanLimit) -> String {
+    match limit {
+        RecursiveScanLimit::DepthExceeded { limit } => {
+            format!("scan input exceeded recursive parsing depth limit ({limit})")
+        }
+    }
+}
+
+fn sorted_highlight_ranges(cmd: &str, matches: &[MatchResult]) -> Vec<HighlightRange> {
+    let mut ranges = Vec::with_capacity(matches.len());
+
+    for matched in matches {
+        if let Some(range) = matched.highlight_range
+            && cmd.get(range.start..range.end).is_some()
+        {
+            ranges.push(range);
+            continue;
+        }
+
+        let fragment = matched.matched_text.trim();
+        if fragment.is_empty() {
+            continue;
+        }
+
+        if let Some(start) = cmd.find(fragment) {
+            ranges.push(HighlightRange {
+                start,
+                end: start + fragment.len(),
+            });
+        }
+    }
+
+    if ranges.len() <= 1 {
+        return ranges;
+    }
+
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut merged: Vec<HighlightRange> = Vec::with_capacity(ranges.len());
+
+    for range in ranges {
+        if let Some(last) = merged.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
+        }
+
+        merged.push(range);
+    }
+
+    merged
 }
 
 fn semantic_pipeline_matches(pipelines: &[PipelineChain]) -> Vec<MatchResult> {
@@ -293,6 +473,7 @@ fn push_semantic_match(
             source: PatternSource::Builtin,
         }),
         matched_text: matched_text.to_string(),
+        highlight_range: None,
     });
 }
 
@@ -394,7 +575,7 @@ fn first_token(segment: &str) -> Option<String> {
         .next()
 }
 
-fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> Vec<String> {
+fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> RecursiveScanReport {
     if requires_recursive_scan(cmd) {
         return recursive_scan_targets(cmd);
     }
@@ -409,7 +590,10 @@ fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> Vec<String> {
         push_unique_target(&mut targets, script.body.clone());
     }
 
-    targets
+    RecursiveScanReport {
+        targets,
+        limit_hit: None,
+    }
 }
 
 fn requires_recursive_scan(cmd: &str) -> bool {
@@ -1380,6 +1564,67 @@ mod tests {
                 "negative pipeline semantic case {cmd:?} should not emit PIPE evidence: {ids:?}"
             );
         }
+    }
+
+    #[test]
+    fn oversized_command_returns_uncertain_warn() {
+        let s = scanner();
+        let cmd = format!("echo {}", "x".repeat(MAX_SCAN_COMMAND_LEN + 1));
+
+        let assessment = s.assess(&cmd);
+
+        assert_eq!(assessment.risk, RiskLevel::Warn);
+        assert_eq!(assessment.matched.len(), 1);
+        assert_eq!(assessment.matched[0].pattern.id.as_ref(), "SCAN-001");
+        assert!(
+            assessment.matched[0]
+                .pattern
+                .description
+                .contains("command length limit"),
+            "oversized command must explain why scanning became uncertain"
+        );
+    }
+
+    #[test]
+    fn oversized_inline_script_returns_uncertain_warn() {
+        let s = scanner();
+        let script = "x".repeat(MAX_INLINE_SCRIPT_LEN + 1);
+        let cmd = format!("python3 -c \"{script}\"");
+
+        let assessment = s.assess(&cmd);
+
+        assert_eq!(assessment.risk, RiskLevel::Warn);
+        assert_eq!(assessment.matched.len(), 1);
+        assert_eq!(assessment.matched[0].pattern.id.as_ref(), "SCAN-002");
+        assert!(
+            assessment.matched[0]
+                .pattern
+                .description
+                .contains("inline script length limit"),
+            "oversized inline script must explain why scanning became uncertain"
+        );
+    }
+
+    #[test]
+    fn recursive_depth_limit_returns_uncertain_warn() {
+        let s = scanner();
+        let mut cmd = "eval \"printf hi\"".to_string();
+        for _ in 0..=MAX_NESTED_SCAN_DEPTH {
+            cmd = format!("eval \"{cmd}\"");
+        }
+
+        let assessment = s.assess(&cmd);
+
+        assert_eq!(assessment.risk, RiskLevel::Warn);
+        assert_eq!(assessment.matched.len(), 1);
+        assert_eq!(assessment.matched[0].pattern.id.as_ref(), "SCAN-003");
+        assert!(
+            assessment.matched[0]
+                .pattern
+                .description
+                .contains("recursive parsing depth limit"),
+            "recursive depth overflow must explain why scanning became uncertain"
+        );
     }
 
     // ── performance ──────────────────────────────────────────────────────────

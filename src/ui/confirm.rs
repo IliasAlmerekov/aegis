@@ -6,11 +6,12 @@ use crossterm::{
     queue,
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
 };
-use regex::Regex;
 
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::PatternSource;
-use crate::interceptor::scanner::{Assessment, DecisionSource, MatchResult};
+#[cfg(test)]
+use crate::interceptor::scanner::MatchResult;
+use crate::interceptor::scanner::{Assessment, DecisionSource, HighlightRange};
 use crate::snapshot::SnapshotRecord;
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -268,7 +269,10 @@ fn render_dialog<W: Write>(assessment: &Assessment, snapshots: &[SnapshotRecord]
 /// Print the `  Command:` section with dangerous fragments highlighted in red.
 fn print_command_line<W: Write>(assessment: &Assessment, out: &mut W) {
     let _ = queue!(out, Print("  Command:\n    "));
-    let highlighted = build_highlighted_command(&assessment.command.raw, &assessment.matched);
+    let highlighted = build_highlighted_command_from_ranges(
+        &assessment.command.raw,
+        &assessment.highlight_ranges,
+    );
     let _ = queue!(out, Print(highlighted));
     let _ = queue!(out, Print("\n"));
 }
@@ -352,53 +356,83 @@ fn prompt_warn<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
 
 // ── Command highlighting ───────────────────────────────────────────────────────
 
-/// Build a copy of `cmd` with matched regex ranges wrapped in ANSI bold-red codes.
+/// Build a copy of `cmd` with scanner-provided match fragments wrapped in ANSI bold-red codes.
+#[cfg(test)]
+fn build_highlighted_command(cmd: &str, matches: &[MatchResult]) -> String {
+    let ranges = sorted_highlight_ranges_for_tests(cmd, matches);
+    build_highlighted_command_from_ranges(cmd, &ranges)
+}
+
+/// Build a copy of `cmd` with already-sorted highlight ranges wrapped in ANSI bold-red codes.
 ///
 /// Overlapping ranges are merged before highlighting so the output is well-formed.
-fn build_highlighted_command(cmd: &str, matches: &[MatchResult]) -> String {
-    // Collect all match ranges from every pattern's regex.
-    let mut ranges: Vec<(usize, usize)> = Vec::new();
-    for m in matches {
-        if let Ok(rx) = Regex::new(&m.pattern.pattern) {
-            for hit in rx.find_iter(cmd) {
-                ranges.push((hit.start(), hit.end()));
-            }
-        }
-    }
-
+fn build_highlighted_command_from_ranges(cmd: &str, ranges: &[HighlightRange]) -> String {
     if ranges.is_empty() {
         return cmd.to_string();
     }
 
-    // Sort then merge overlapping / adjacent ranges.
-    ranges.sort_unstable_by_key(|r| r.0);
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (start, end) in ranges {
-        if let Some(last) = merged.last_mut()
-            && start <= last.1
-        {
-            last.1 = last.1.max(end);
-            continue;
-        }
-        merged.push((start, end));
-    }
-
     // Reconstruct the string with ANSI bold-red around each highlighted span.
-    let mut result = String::with_capacity(cmd.len() + merged.len() * 16);
+    let mut result = String::with_capacity(cmd.len() + ranges.len() * 9);
     let mut pos = 0;
-    for (start, end) in &merged {
-        if *start > pos {
-            result.push_str(&cmd[pos..*start]);
+    for range in ranges {
+        if range.start > pos {
+            result.push_str(&cmd[pos..range.start]);
         }
         result.push_str("\x1b[1;31m");
-        result.push_str(&cmd[*start..*end]);
+        result.push_str(&cmd[range.start..range.end]);
         result.push_str("\x1b[0m");
-        pos = *end;
+        pos = range.end;
     }
     if pos < cmd.len() {
         result.push_str(&cmd[pos..]);
     }
     result
+}
+
+#[cfg(test)]
+fn sorted_highlight_ranges_for_tests(cmd: &str, matches: &[MatchResult]) -> Vec<HighlightRange> {
+    let mut ranges = Vec::with_capacity(matches.len());
+
+    for matched in matches {
+        if let Some(range) = matched.highlight_range
+            && cmd.get(range.start..range.end).is_some()
+        {
+            ranges.push(range);
+            continue;
+        }
+
+        let fragment = matched.matched_text.trim();
+        if fragment.is_empty() {
+            continue;
+        }
+
+        if let Some(start) = cmd.find(fragment) {
+            ranges.push(HighlightRange {
+                start,
+                end: start + fragment.len(),
+            });
+        }
+    }
+
+    if ranges.len() <= 1 {
+        return ranges;
+    }
+
+    ranges.sort_unstable_by_key(|range| range.start);
+    let mut merged: Vec<HighlightRange> = Vec::with_capacity(ranges.len());
+
+    for range in ranges {
+        if let Some(last) = merged.last_mut()
+            && range.start <= last.end
+        {
+            last.end = last.end.max(range.end);
+            continue;
+        }
+
+        merged.push(range);
+    }
+
+    merged
 }
 
 fn dangerous_action_text(assessment: &Assessment) -> String {
@@ -415,7 +449,10 @@ fn dangerous_action_text(assessment: &Assessment) -> String {
         })
         .max_by_key(|fragment| fragment.len())
     else {
-        return build_highlighted_command(&assessment.command.raw, &assessment.matched);
+        return build_highlighted_command_from_ranges(
+            &assessment.command.raw,
+            &assessment.highlight_ranges,
+        );
     };
 
     format!("\x1b[1;31m{fragment}\x1b[0m")
@@ -532,6 +569,7 @@ mod tests {
                 source: PatternSource::Builtin,
             }),
             matched_text: String::new(),
+            highlight_range: None,
         }
     }
 
@@ -553,12 +591,40 @@ mod tests {
                 source: PatternSource::Builtin,
             }),
             matched_text: matched_text.to_string(),
+            highlight_range: None,
+        }
+    }
+
+    fn make_match_with_text_and_range(
+        id: &'static str,
+        risk: RiskLevel,
+        pattern: &'static str,
+        description: &'static str,
+        matched_text: &'static str,
+        start: usize,
+    ) -> MatchResult {
+        MatchResult {
+            pattern: Arc::new(Pattern {
+                id: Cow::Borrowed(id),
+                category: Category::Filesystem,
+                risk,
+                pattern: Cow::Borrowed(pattern),
+                description: Cow::Borrowed(description),
+                safe_alt: None,
+                source: PatternSource::Builtin,
+            }),
+            matched_text: matched_text.to_string(),
+            highlight_range: Some(HighlightRange {
+                start,
+                end: start + matched_text.len(),
+            }),
         }
     }
 
     fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) -> Assessment {
         Assessment {
             risk,
+            highlight_ranges: sorted_highlight_ranges_for_tests(cmd, &matches),
             matched: matches,
             command: Parser::parse(cmd),
         }
@@ -566,7 +632,7 @@ mod tests {
 
     /// Strip ANSI escape sequences from a string so we can do plain-text assertions.
     fn strip_ansi(s: &str) -> String {
-        let re = Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+        let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
         re.replace_all(s, "").to_string()
     }
 
@@ -1161,7 +1227,7 @@ mod tests {
 
     #[test]
     fn highlighting_wraps_match_in_ansi() {
-        let p = make_match("FS-001", RiskLevel::Danger, r"rm\s+-rf", "desc", None);
+        let p = make_match_with_text("FS-001", RiskLevel::Danger, r"rm\s+-rf", "desc", "rm -rf");
         let patterns = vec![p];
         let result = build_highlighted_command("rm -rf /home", &patterns);
         assert!(
@@ -1175,8 +1241,77 @@ mod tests {
     }
 
     #[test]
+    fn highlighting_uses_scanner_matched_text_without_recompiling_regex() {
+        let p = make_match_with_text("FS-001", RiskLevel::Danger, "(", "desc", "rm -rf");
+        let result = build_highlighted_command("rm -rf /home", &[p]);
+
+        assert!(
+            result.contains("\x1b[1;31mrm -rf\x1b[0m"),
+            "highlighting must use scanner-provided match metadata even when the pattern regex is unusable in the UI"
+        );
+    }
+
+    #[test]
+    fn highlighting_does_not_duplicate_single_match_across_repeated_fragments() {
+        let cmd = "rm -rf /tmp/one && echo safe && rm -rf /tmp/two";
+        let start = cmd.rfind("rm -rf").unwrap();
+        let p = make_match_with_text_and_range(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+-rf",
+            "desc",
+            "rm -rf",
+            start,
+        );
+
+        let result = build_highlighted_command(cmd, &[p]);
+
+        assert_eq!(
+            result.matches("\x1b[1;31m").count(),
+            1,
+            "a single scanner match must highlight one concrete command span, not every identical fragment in the command"
+        );
+    }
+
+    #[test]
+    fn highlighting_large_heredoc_like_input_marks_single_match_once() {
+        let repeated_line = "rm -rf /tmp/cache\n";
+        let mut cmd = String::from("cat <<'EOF'\n");
+        for _ in 0..256 {
+            cmd.push_str("echo keep\n");
+        }
+        for _ in 0..128 {
+            cmd.push_str(repeated_line);
+        }
+        cmd.push_str("EOF");
+        let start = cmd.rfind("rm -rf /tmp/cache").unwrap();
+        let p = make_match_with_text_and_range(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+-rf",
+            "desc",
+            "rm -rf /tmp/cache",
+            start,
+        );
+
+        let result = build_highlighted_command(&cmd, &[p]);
+
+        assert_eq!(
+            result.matches("\x1b[1;31m").count(),
+            1,
+            "large heredoc-like inputs must still honor the scanner's concrete match span instead of highlighting every repeated copy"
+        );
+    }
+
+    #[test]
     fn highlighting_no_match_returns_unchanged() {
-        let p = make_match("FS-001", RiskLevel::Danger, r"terraform", "desc", None);
+        let p = make_match_with_text(
+            "FS-001",
+            RiskLevel::Danger,
+            r"terraform",
+            "desc",
+            "terraform",
+        );
         let patterns = vec![p];
         let cmd = "echo hello";
         let result = build_highlighted_command(cmd, &patterns);
@@ -1186,8 +1321,8 @@ mod tests {
     #[test]
     fn highlighting_merges_overlapping_ranges() {
         // Two patterns that overlap on "rm -rf"
-        let p1 = make_match("A", RiskLevel::Danger, r"rm\s+-rf /", "desc", None);
-        let p2 = make_match("B", RiskLevel::Danger, r"rm\s+-rf", "desc", None);
+        let p1 = make_match_with_text("A", RiskLevel::Danger, r"rm\s+-rf /", "desc", "rm -rf /");
+        let p2 = make_match_with_text("B", RiskLevel::Danger, r"rm\s+-rf", "desc", "rm -rf");
         let result = build_highlighted_command("rm -rf /home", &[p1, p2]);
         // Should not have double ANSI codes inside the overlap.
         let opens = result.matches("\x1b[1;31m").count();
