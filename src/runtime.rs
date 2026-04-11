@@ -58,6 +58,7 @@ impl RuntimeContext {
 
     /// Build a runtime context from an already resolved config.
     pub fn new(config: Config) -> Result<Self, AegisError> {
+        config.validate_runtime_requirements()?;
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
 
         let snapshot_runtime = match Builder::new_current_thread().enable_all().build() {
@@ -278,6 +279,76 @@ mod tests {
         assert_eq!(
             context.config().strict_allowlist_override,
             AllowlistOverrideLevel::Danger
+        );
+    }
+
+    #[test]
+    fn runtime_context_rejects_expired_allowlist_rules() {
+        use crate::config::AllowlistRule;
+        use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+        let mut config = Config::default();
+        config.allowlist = vec![AllowlistRule {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+            cwd: None,
+            user: None,
+            expires_at: Some(OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).unwrap()),
+            reason: "expired teardown".to_string(),
+        }];
+
+        let err = match RuntimeContext::new(config) {
+            Ok(_) => panic!("expired allowlist rules must be rejected before runtime setup"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn runtime_context_rejects_scoped_allowlist_rules() {
+        use crate::config::AllowlistRule;
+
+        let mut config = Config::default();
+        config.allowlist = vec![AllowlistRule {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped teardown".to_string(),
+        }];
+
+        let err = match RuntimeContext::new(config) {
+            Ok(_) => panic!("scoped allowlist rules must be rejected before runtime setup"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("unsupported scoped matching fields")
+        );
+    }
+
+    #[test]
+    fn runtime_context_rejects_user_scoped_allowlist_rules() {
+        use crate::config::AllowlistRule;
+
+        let mut config = Config::default();
+        config.allowlist = vec![AllowlistRule {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+            cwd: None,
+            user: Some("ci".to_string()),
+            expires_at: None,
+            reason: "scoped teardown".to_string(),
+        }];
+
+        let err = match RuntimeContext::new(config) {
+            Ok(_) => panic!("scoped allowlist rules must be rejected before runtime setup"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string()
+                .contains("unsupported scoped matching fields")
         );
     }
 }

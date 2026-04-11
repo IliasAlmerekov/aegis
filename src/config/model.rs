@@ -222,6 +222,15 @@ impl AegisConfig {
         Ok(path)
     }
 
+    /// Validate config invariants required before constructing runtime state.
+    ///
+    /// This includes hard fail-closed checks for scoped allowlist fields and
+    /// expiry handling that must apply to direct `RuntimeContext::new` callers
+    /// as well as file-loaded configs.
+    pub(crate) fn validate_runtime_requirements(&self) -> Result<()> {
+        self.validate()
+    }
+
     pub(crate) fn load_for(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
         let global_path = home_dir.map(|h| h.join(GLOBAL_CONFIG_DIR).join(GLOBAL_CONFIG_FILE));
         let project_path = current_dir.join(PROJECT_CONFIG_FILE);
