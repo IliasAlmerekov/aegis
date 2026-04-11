@@ -170,7 +170,7 @@ fn shell_wrapper_exit_42_preserves_exit_status() {
 }
 
 #[test]
-fn allowlisted_terraform_destroy_skips_dialog_but_other_targets_are_denied() {
+fn allowlisted_terraform_destroy_with_danger_override_skips_dialog_but_other_targets_are_denied() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
     let bin_dir = workspace.path().join("bin");
@@ -188,6 +188,7 @@ exit 0
     fs::write(
         &config_path,
         r#"
+allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 reason = "test allowlist"
@@ -265,6 +266,64 @@ reason = "test allowlist"
     assert!(entries[1].get("allowlist_pattern").is_none());
 }
 
+#[test]
+fn protect_mode_allowlisted_danger_without_danger_override_is_denied_non_interactive() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let log_path = workspace.path().join("terraform.log");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    write_executable(
+        &bin_dir.join("terraform"),
+        r#"#!/bin/sh
+printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
+exit 0
+"#,
+    );
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Protect"
+allowlist_override_level = "Warn"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+reason = "protect warn ceiling"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_TEST_TERRAFORM_LOG", &log_path)
+        .stdin(Stdio::null())
+        .args(["-c", "terraform destroy -target=module.test.api"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        read_stub_invocations(&log_path).is_empty(),
+        "Protect mode must not auto-approve allowlisted Danger without Danger override"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "Denied");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert!(entries[0].get("allowlist_pattern").is_none());
+    assert!(entries[0].get("allowlist_reason").is_none());
+}
+
 /// Block-level commands must never be silently auto-approved by an allowlist
 /// entry — even when the glob pattern explicitly covers the command.
 ///
@@ -330,6 +389,7 @@ fn verbose_allowlist_match_prints_rule_name() {
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
+allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.ci.*"
 reason = "verbose allowlist test"
@@ -1102,10 +1162,10 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(contents.contains("Strict blocks non-safe by default"));
     assert!(contents.contains("allowlist_override_level = \"Warn\""));
     assert!(contents.contains("[[allowlist]]"));
-    assert!(contents.contains("Strict-mode allowlist ceiling"));
-    assert!(contents.contains("Strict-mode allowlisted warnings auto-approve"));
-    assert!(contents.contains("Strict-mode allowlisted destructive commands"));
-    assert!(contents.contains("Strict-mode allowlist auto-approval"));
+    assert!(contents.contains("Protect/Strict allowlist ceiling"));
+    assert!(contents.contains("Warn auto-approves allowlisted Warn commands in Protect/Strict"));
+    assert!(contents.contains("Danger also auto-approves allowlisted Danger commands"));
+    assert!(contents.contains("Never disables allowlist auto-approval for non-safe commands"));
     assert!(contents.contains("Block never bypasses in Protect/Strict"));
     assert!(
         !contents.contains("allowlist = ["),
@@ -1582,6 +1642,7 @@ exit 0
         r#"
 mode = "Protect"
 ci_policy = "Block"
+allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 [[allowlist]]

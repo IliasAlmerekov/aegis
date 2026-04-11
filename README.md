@@ -170,10 +170,10 @@ aegis config show      # prints the active config (merged from all sources)
 #   Strict   - auto-approve Safe only; block non-safe unless allowlist_override_level permits it
 mode = "Protect"
 
-# Strict-mode allowlist ceiling.
-#   Warn   - in Strict mode, allowlisted warnings may auto-approve.
-#   Danger - in Strict mode, allowlisted Warn and Danger commands may auto-approve.
-#   Never  - in Strict mode, allowlisted commands never auto-approve.
+# Protect/Strict allowlist ceiling.
+#   Warn   - allowlisted Warn commands may auto-approve.
+#   Danger - allowlisted Warn and Danger commands may auto-approve.
+#   Never  - allowlisted non-safe commands never auto-approve.
 allowlist_override_level = "Warn"
 
 # Create a git stash snapshot before Danger commands when policy allows execution.
@@ -184,8 +184,8 @@ auto_snapshot_git = true
 auto_snapshot_docker = false
 
 # Structured allowlist rules use array-of-tables entries.
-# Protect: allowlisted Warn/Danger auto-approve.
-# Strict: allowlisted Warn auto-approves; Danger depends on allowlist_override_level.
+# Protect: allowlisted Warn auto-approves at Warn/Danger; Danger only at Danger.
+# Strict: allowlisted Warn auto-approves at Warn/Danger; Danger only at Danger.
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/srv/infra"

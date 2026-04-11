@@ -19,10 +19,10 @@ const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
 mode = "Protect" # Protect prompts on Warn/Danger, Audit is non-blocking audit-only, Strict blocks non-safe by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist_override_level = "Warn" # Strict-mode allowlist ceiling: Warn | Danger | Never.
-# Warn keeps Strict-mode allowlisted warnings auto-approve.
-# Danger extends Strict-mode allowlisted destructive commands.
-# Never disables Strict-mode allowlist auto-approval.
+allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Danger | Never.
+# Warn auto-approves allowlisted Warn commands in Protect/Strict.
+# Danger also auto-approves allowlisted Danger commands.
+# Never disables allowlist auto-approval for non-safe commands.
 # Block never bypasses in Protect/Strict.
 
 # Structured allowlist rules use array-of-tables entries.
@@ -88,7 +88,8 @@ pub enum CiPolicy {
     Allow,
 }
 
-/// Maximum override level that structured allowlist rules may grant in strict mode.
+/// Maximum override level that structured allowlist rules may grant for
+/// non-safe commands in Protect/Strict mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum AllowlistOverrideLevel {

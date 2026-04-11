@@ -12,21 +12,22 @@
 
 ## File Map
 
-| File | Action | Responsibility |
-|---|---|---|
-| `Cargo.toml` | Modify | Add `base64 = "0.22"`; expand tokio features |
-| `src/ui/confirm.rs` | Modify | Add `/dev/tty`-based dialog and block notification functions |
+| File                  | Action | Responsibility                                                                   |
+| --------------------- | ------ | -------------------------------------------------------------------------------- |
+| `Cargo.toml`          | Modify | Add `base64 = "0.22"`; expand tokio features                                     |
+| `src/ui/confirm.rs`   | Modify | Add `/dev/tty`-based dialog and block notification functions                     |
 | `src/audit/logger.rs` | Modify | Add optional watch-mode fields to `AuditEntry`; add `with_watch_context` builder |
-| `src/runtime.rs` | Modify | Add `create_snapshots_async` and `append_watch_audit_entry` |
-| `src/watch.rs` | Create | Frame types, bounded reader, emit helper, watch loop, child execution |
-| `src/lib.rs` | Modify | Export `pub mod watch` |
-| `src/main.rs` | Modify | Wire `Commands::Watch` to own a multi-thread runtime and call `watch::run` |
+| `src/runtime.rs`      | Modify | Add `create_snapshots_async` and `append_watch_audit_entry`                      |
+| `src/watch.rs`        | Create | Frame types, bounded reader, emit helper, watch loop, child execution            |
+| `src/lib.rs`          | Modify | Export `pub mod watch`                                                           |
+| `src/main.rs`         | Modify | Wire `Commands::Watch` to own a multi-thread runtime and call `watch::run`       |
 
 ---
 
 ## Task 1: Update Cargo.toml
 
 **Files:**
+
 - Modify: `Cargo.toml`
 
 - [ ] **Step 1: Add `base64` dependency and expand tokio features**
@@ -41,6 +42,7 @@ tokio = { version = "1", features = ["process", "fs", "rt", "rt-multi-thread", "
 ```
 
 The added features:
+
 - `rt-multi-thread` — required for `tokio::task::block_in_place` (used to run TUI dialog without blocking the executor with a separate thread)
 - `io-util` — required for `AsyncBufReadExt` (`fill_buf`, `consume`) and `AsyncReadExt` (`read`)
 - `sync` — required for `tokio::sync::mpsc`
@@ -65,6 +67,7 @@ rtk git commit -m "chore: add base64 dep and expand tokio features for watch mod
 ## Task 2: Add `/dev/tty` UI helpers in `src/ui/confirm.rs`
 
 **Files:**
+
 - Modify: `src/ui/confirm.rs`
 
 The existing `show_confirmation` reads from `io::stdin()` and writes to `io::stderr()`. In watch mode, stdin is the NDJSON control stream — the TUI must use `/dev/tty` instead. This task adds two new public functions that open `/dev/tty` directly and fail-closed if it is unavailable.
@@ -220,6 +223,7 @@ rtk git commit -m "feat: add /dev/tty UI helpers for watch mode"
 ## Task 3: Extend `AuditEntry` with watch-mode fields
 
 **Files:**
+
 - Modify: `src/audit/logger.rs`
 
 Adds four optional fields to `AuditEntry` and a `with_watch_context` builder method. All fields use `skip_serializing_if = "Option::is_none"` — existing log readers that ignore unknown fields are unaffected.
@@ -377,6 +381,7 @@ rtk git commit -m "feat: add watch-mode fields to AuditEntry"
 ## Task 4: Add watch-mode methods to `RuntimeContext`
 
 **Files:**
+
 - Modify: `src/runtime.rs`
 
 Adds `create_snapshots_async` (calls `snapshot_registry.snapshot_all()` directly, no `block_on`) and `append_watch_audit_entry` (builds a watch-context `AuditEntry`).
@@ -457,6 +462,7 @@ rtk git commit -m "feat: add async snapshot path and watch audit method to Runti
 ## Task 5: Create `src/watch.rs` — Frame types, bounded reader, emit helper
 
 **Files:**
+
 - Create: `src/watch.rs`
 
 This task establishes the protocol types and I/O primitives. The watch loop (Task 6) is built on top.
@@ -834,6 +840,7 @@ rtk git commit -m "feat: add watch frame types, bounded reader, and emit helper"
 ## Task 6: Implement the watch loop in `src/watch.rs`
 
 **Files:**
+
 - Modify: `src/watch.rs`
 
 Replace the `run` placeholder with the full watch loop. Uses `tokio::task::block_in_place` for the TUI dialog (requires `rt-multi-thread`, added in Task 1).
@@ -1179,6 +1186,7 @@ rtk git commit -m "feat: implement watch loop and child execution in watch::run"
 ## Task 7: Wire `Commands::Watch` in `src/main.rs`
 
 **Files:**
+
 - Modify: `src/main.rs`
 
 Replace the stub that prints "watch: not yet implemented" and returns 0. The watch mode owns its own multi-thread tokio runtime (required for `block_in_place`).
@@ -1265,6 +1273,7 @@ Some(Commands::Watch) => {
 ```
 
 Also add the import at the top of `main.rs` if not already present:
+
 ```rust
 use aegis::watch;
 ```
@@ -1284,6 +1293,7 @@ echo '{"cmd":"echo hello","id":"1"}' | rtk cargo run --bin aegis -- watch
 ```
 
 Expected output on stdout (approximate):
+
 ```
 {"type":"stdout","id":"1","data_b64":"aGVsbG8K"}
 {"type":"result","id":"1","decision":"approved","exit_code":0}
@@ -1319,6 +1329,7 @@ rtk git commit -m "feat: implement aegis watch — NDJSON framed command interce
 ## Task 8: Add integration tests for watch mode
 
 **Files:**
+
 - Create: `tests/integration/watch_mode.rs`
 - Modify: `tests/integration/mod.rs` (or `tests/integration.rs`)
 
@@ -1513,16 +1524,19 @@ ls tests/
 ```
 
 If there is a `tests/integration/` directory with a `mod.rs`, add:
+
 ```rust
 mod watch_mode;
 ```
 
 If the integration tests are in `tests/integration.rs` (flat file), append:
+
 ```rust
 mod watch_mode;
 ```
 
 If neither exists, create `tests/integration.rs` with:
+
 ```rust
 mod watch_mode;
 ```
@@ -1566,27 +1580,27 @@ rtk git commit -m "test: add integration tests for aegis watch mode"
 
 **Spec coverage check:**
 
-| Spec requirement | Task |
-|---|---|
-| NDJSON input: cmd, cwd, interactive, source, id | Task 5 (InputFrame) |
-| 1 MiB frame size cap enforced before allocation | Task 5 (read_bounded_line) |
-| Unknown fields ignored | Task 5 (serde default) |
-| output: stdout/stderr/result/error frames | Task 5 (OutputFrame) |
-| data_b64 for binary-safe child output | Task 5, 6 |
-| id echoed on all frames | Task 5, 6 |
-| /dev/tty for all human UI | Task 2 |
-| Fail-closed if /dev/tty unavailable | Task 2 (tty_unavailable_decision) |
-| Child stdin = /dev/null | Task 6 (execute_and_emit) |
-| Single emitter (mpsc channel) prevents frame interleaving | Task 6 |
-| stdout write failure is terminal (kill child, exit 4) | Task 6 |
-| stdin EOF → exit 0 | Task 6 (run loop) |
-| Per-stream ordering preserved | Task 6 (separate pump tasks) |
-| cwd applies to execution, policy, snapshots, audit | Task 6 (process_frame) |
-| Audit entries for denied/blocked/approved | Task 6 (append_watch_audit_entry) |
-| watch-mode audit fields: source, cwd, id, transport | Task 3, 4 |
-| Malformed frames audited as watch-mode errors | Not yet — audit error frames in process_frame; add if audit logger supports it |
-| RuntimeContext::create_snapshots_async (no nested block_on) | Task 4 |
-| Multi-thread runtime for block_in_place | Task 1, 7 |
-| signal → exit_code = 128 + signal | Task 6 (ExitStatusExt) |
+| Spec requirement                                            | Task                                                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| NDJSON input: cmd, cwd, interactive, source, id             | Task 5 (InputFrame)                                                            |
+| 1 MiB frame size cap enforced before allocation             | Task 5 (read_bounded_line)                                                     |
+| Unknown fields ignored                                      | Task 5 (serde default)                                                         |
+| output: stdout/stderr/result/error frames                   | Task 5 (OutputFrame)                                                           |
+| data_b64 for binary-safe child output                       | Task 5, 6                                                                      |
+| id echoed on all frames                                     | Task 5, 6                                                                      |
+| /dev/tty for all human UI                                   | Task 2                                                                         |
+| Fail-closed if /dev/tty unavailable                         | Task 2 (tty_unavailable_decision)                                              |
+| Child stdin = /dev/null                                     | Task 6 (execute_and_emit)                                                      |
+| Single emitter (mpsc channel) prevents frame interleaving   | Task 6                                                                         |
+| stdout write failure is terminal (kill child, exit 4)       | Task 6                                                                         |
+| stdin EOF → exit 0                                          | Task 6 (run loop)                                                              |
+| Per-stream ordering preserved                               | Task 6 (separate pump tasks)                                                   |
+| cwd applies to execution, policy, snapshots, audit          | Task 6 (process_frame)                                                         |
+| Audit entries for denied/blocked/approved                   | Task 6 (append_watch_audit_entry)                                              |
+| watch-mode audit fields: source, cwd, id, transport         | Task 3, 4                                                                      |
+| Malformed frames audited as watch-mode errors               | Not yet — audit error frames in process_frame; add if audit logger supports it |
+| RuntimeContext::create_snapshots_async (no nested block_on) | Task 4                                                                         |
+| Multi-thread runtime for block_in_place                     | Task 1, 7                                                                      |
+| signal → exit_code = 128 + signal                           | Task 6 (ExitStatusExt)                                                         |
 
 **Gap:** Malformed frame audit logging is partially implemented (the code returns early after emitting an error frame but does not call `append_watch_audit_entry` for frames that fail to parse). This is acceptable for v1 — the spec says "audit as watch-mode errors" but parsing failure means there is no `cmd` to attach the entry to. Log a minimal entry or add a `None`-cmd audit path if auditing every malformed frame is strictly required.

@@ -24,7 +24,7 @@ pub struct RuntimeConfig {
     pub mode: crate::config::Mode,
     /// Effective CI policy.
     pub ci_policy: crate::config::CiPolicy,
-    /// Effective strict-mode allowlist ceiling.
+    /// Effective Protect/Strict allowlist ceiling for non-safe commands.
     pub strict_allowlist_override: AllowlistOverrideLevel,
 }
 
