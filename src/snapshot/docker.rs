@@ -1,5 +1,9 @@
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::path::Path;
+use std::process::Output;
+use std::thread;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -13,6 +17,9 @@ type Result<T> = std::result::Result<T, AegisError>;
 
 /// Sentinel returned when there were no running containers at snapshot time.
 const NO_CONTAINERS: &str = "none";
+const EXECUTABLE_BUSY_ERRNO: i32 = 26;
+const DOCKER_BUSY_RETRY_ATTEMPTS: usize = 12;
+const DOCKER_BUSY_RETRY_DELAY_MS: u64 = 25;
 
 pub struct DockerPlugin {
     /// Path to the docker executable. Defaults to `"docker"` (resolved from PATH).
@@ -62,6 +69,43 @@ impl DockerPlugin {
         }
         args
     }
+
+    async fn run_docker_output<I, S>(&self, args: I, context: &str) -> Result<Output>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let args: Vec<OsString> = args
+            .into_iter()
+            .map(|arg| arg.as_ref().to_os_string())
+            .collect();
+
+        let mut attempt = 0usize;
+        loop {
+            match Command::new(&self.docker_bin).args(&args).output().await {
+                Ok(output) => return Ok(output),
+                Err(error)
+                    if is_executable_busy(&error) && attempt < DOCKER_BUSY_RETRY_ATTEMPTS =>
+                {
+                    attempt += 1;
+                    tracing::warn!(
+                        docker_bin = %self.docker_bin,
+                        context,
+                        attempt,
+                        "docker binary busy during command launch, retrying"
+                    );
+                    thread::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS));
+                }
+                Err(error) => {
+                    return Err(AegisError::Snapshot(format!("{context}: {error}")));
+                }
+            }
+        }
+    }
+}
+
+fn is_executable_busy(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(EXECUTABLE_BUSY_ERRNO)
 }
 
 /// Host-level configuration captured from a running container before snapshot.
@@ -100,11 +144,9 @@ struct ContainerRecord {
 impl DockerPlugin {
     /// Run `docker inspect <container_id>` and extract the fields needed for rollback.
     async fn inspect_container(&self, container_id: &str) -> Result<ContainerConfig> {
-        let out = Command::new(&self.docker_bin)
-            .args(["inspect", container_id])
-            .output()
-            .await
-            .map_err(|e| AegisError::Snapshot(format!("docker inspect failed: {e}")))?;
+        let out = self
+            .run_docker_output(["inspect", container_id], "docker inspect failed")
+            .await?;
 
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -279,11 +321,9 @@ impl SnapshotPlugin for DockerPlugin {
     ///   `docker commit` and do not need to be replayed separately.
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
         let ps_args = self.build_ps_args();
-        let ps_out = Command::new(&self.docker_bin)
-            .args(&ps_args)
-            .output()
-            .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to run docker ps: {e}")))?;
+        let ps_out = self
+            .run_docker_output(&ps_args, "failed to run docker ps")
+            .await?;
 
         if !ps_out.status.success() {
             let stderr = String::from_utf8_lossy(&ps_out.stderr);
@@ -312,11 +352,9 @@ impl SnapshotPlugin for DockerPlugin {
             let config = self.inspect_container(container_id).await?;
             let image = format!("aegis-snap-{container_id}-{timestamp}");
 
-            let commit_out = Command::new(&self.docker_bin)
-                .args(["commit", container_id, &image])
-                .output()
-                .await
-                .map_err(|e| AegisError::Snapshot(format!("docker commit failed: {e}")))?;
+            let commit_out = self
+                .run_docker_output(["commit", container_id, &image], "docker commit failed")
+                .await?;
 
             if !commit_out.status.success() {
                 let stderr = String::from_utf8_lossy(&commit_out.stderr);
@@ -358,11 +396,9 @@ impl SnapshotPlugin for DockerPlugin {
             })?;
 
             // Step 1: stop — best-effort.
-            let stop_out = Command::new(&self.docker_bin)
-                .args(["stop", &record.container_id])
-                .output()
-                .await
-                .map_err(|e| AegisError::Snapshot(format!("docker stop failed: {e}")))?;
+            let stop_out = self
+                .run_docker_output(["stop", &record.container_id], "docker stop failed")
+                .await?;
 
             if !stop_out.status.success() {
                 tracing::warn!(
@@ -373,11 +409,9 @@ impl SnapshotPlugin for DockerPlugin {
             }
 
             // Step 2: remove — best-effort; releases the container name for recreation.
-            let rm_out = Command::new(&self.docker_bin)
-                .args(["rm", &record.container_id])
-                .output()
-                .await
-                .map_err(|e| AegisError::Snapshot(format!("docker rm failed: {e}")))?;
+            let rm_out = self
+                .run_docker_output(["rm", &record.container_id], "docker rm failed")
+                .await?;
 
             if !rm_out.status.success() {
                 tracing::warn!(
@@ -389,11 +423,9 @@ impl SnapshotPlugin for DockerPlugin {
 
             // Step 3: recreate with original host-level config.
             let run_args = Self::build_run_args(&record.image, &record.config);
-            let run_out = Command::new(&self.docker_bin)
-                .args(&run_args)
-                .output()
-                .await
-                .map_err(|e| AegisError::Snapshot(format!("docker run failed: {e}")))?;
+            let run_out = self
+                .run_docker_output(&run_args, "docker run failed")
+                .await?;
 
             if !run_out.status.success() {
                 let stderr = String::from_utf8_lossy(&run_out.stderr);
@@ -443,6 +475,10 @@ mod tests {
         let output = StdCommand::new(&path).output().unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "updated\n");
+    }
+
+    fn single_quote_for_shell(path: &std::path::Path) -> String {
+        path.to_string_lossy().replace('\'', r"'\''")
     }
 
     /// Helper that creates a plugin with `All` scope — no filtering.
@@ -780,6 +816,37 @@ esac"#,
             .rollback(&snapshot_id)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rollback_retries_when_docker_binary_is_temporarily_busy() {
+        let dir = TempDir::new().unwrap();
+        let docker_bin = write_mock_docker(
+            dir.path(),
+            r#"case "$1" in
+  stop) exit 0 ;;
+  rm)   exit 0 ;;
+  run)  printf "newcontainer\n"; exit 0 ;;
+  *)    exit 1 ;;
+esac"#,
+        );
+        let quoted_path = single_quote_for_shell(&docker_bin);
+        let mut holder = StdCommand::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("exec 3>>'{quoted_path}'; sleep 0.3"))
+            .spawn()
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        let snapshot_id = minimal_record("abc123", "aegis-snap-abc123-1700000000");
+        let result = plugin(&docker_bin).rollback(&snapshot_id).await;
+
+        let _ = holder.wait();
+        assert!(
+            result.is_ok(),
+            "rollback should retry transient ETXTBSY from mock docker binary: {result:?}"
+        );
     }
 
     #[tokio::test]
