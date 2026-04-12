@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::decision::{
     ExecutionTransport, PolicyAllowlistResult, PolicyCiState, PolicyConfigFlags,
     PolicyExecutionContext, PolicyInput, evaluate_policy,
@@ -32,7 +34,7 @@ pub fn plan_with_context(
     };
     let applicable_snapshot_plugins = match &request.cwd_state {
         CwdState::Resolved(path) => context.applicable_snapshot_plugins(path),
-        CwdState::Unavailable => Vec::new(),
+        CwdState::Unavailable => context.applicable_snapshot_plugins(Path::new(".")),
     };
 
     let decision_context = DecisionContext::new(
@@ -73,6 +75,8 @@ pub fn plan_with_context(
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
     use crate::config::{Config, Mode, SnapshotPolicy};
     use crate::decision::ExecutionTransport;
@@ -80,6 +84,7 @@ mod tests {
         ApprovalRequirement, ExecutionDisposition, PlanningOutcome, SnapshotPlan,
     };
     use crate::runtime::RuntimeContext;
+    use tempfile::TempDir;
     use tokio::runtime::Handle;
 
     fn test_handle() -> Handle {
@@ -166,5 +171,46 @@ mod tests {
         };
         assert_eq!(plan.execution_disposition(), ExecutionDisposition::Block);
         assert_eq!(plan.approval_requirement(), ApprovalRequirement::None);
+    }
+
+    #[test]
+    fn unavailable_cwd_uses_legacy_snapshot_plugin_fallback_in_plan() {
+        let original_cwd = std::env::current_dir().unwrap();
+        let workspace = TempDir::new().unwrap();
+        Command::new("git")
+            .arg("init")
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        std::env::set_current_dir(workspace.path()).unwrap();
+
+        let mut config = Config::default();
+        config.mode = Mode::Protect;
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+
+        let outcome = super::plan_with_context(
+            &context,
+            super::PlanningRequest {
+                command: "terraform destroy -target=module.prod.api",
+                cwd_state: CwdState::Unavailable,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("danger command must produce a normal plan");
+        };
+        assert_eq!(
+            plan.snapshot_plan(),
+            SnapshotPlan::Required {
+                applicable_plugins: vec!["git"],
+            }
+        );
     }
 }

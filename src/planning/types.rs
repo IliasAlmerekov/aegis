@@ -16,13 +16,13 @@ pub enum PlanningOutcome {
 
 /// Canonical typed plan for one intercepted command.
 pub struct InterceptionPlan {
-    assessment: Assessment,
+    assessment: Box<Assessment>,
     decision_context: DecisionContext,
     policy_decision: PolicyDecision,
     approval_requirement: ApprovalRequirement,
     snapshot_plan: SnapshotPlan,
     execution_disposition: ExecutionDisposition,
-    audit_facts: AuditFacts,
+    audit_facts: Box<AuditFacts>,
 }
 
 impl InterceptionPlan {
@@ -56,19 +56,19 @@ impl InterceptionPlan {
         );
 
         Self {
-            assessment,
+            assessment: Box::new(assessment),
             decision_context,
             policy_decision,
             approval_requirement,
             snapshot_plan,
             execution_disposition,
-            audit_facts,
+            audit_facts: Box::new(audit_facts),
         }
     }
 
     /// Return the scanner assessment used to build the plan.
     pub fn assessment(&self) -> &Assessment {
-        &self.assessment
+        self.assessment.as_ref()
     }
 
     /// Return the resolved decision context used to evaluate policy.
@@ -98,7 +98,7 @@ impl InterceptionPlan {
 
     /// Return audit-only facts derived during planning.
     pub fn audit_facts(&self) -> &AuditFacts {
-        &self.audit_facts
+        self.audit_facts.as_ref()
     }
 }
 

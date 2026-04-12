@@ -606,15 +606,7 @@ fn render_json_outcome(prepared: &PreparedPlanner, outcome: &PlanningOutcome) ->
         PlanningOutcome::SetupFailure(plan) => report_setup_failure(plan),
         PlanningOutcome::Planned(plan) => match prepared {
             PreparedPlanner::Ready(context) => {
-                let snapshot_plugins_override = (!plan.policy_decision().snapshots_required)
-                    .then(|| snapshot_plugins_for_shell_plan(prepared, plan))
-                    .filter(|plugins| !plugins.is_empty());
-
-                emit_policy_evaluation_json(
-                    plan,
-                    context.config().ci_policy,
-                    snapshot_plugins_override,
-                )
+                emit_policy_evaluation_json(plan, context.config().ci_policy)
             }
             PreparedPlanner::SetupFailure(_) => EXIT_INTERNAL,
         },
@@ -675,8 +667,10 @@ fn create_snapshots_for_plan(
     plan: &InterceptionPlan,
     verbose: bool,
 ) -> Vec<SnapshotRecord> {
-    let applicable_snapshot_plugins = snapshot_plugins_for_shell_plan(prepared, plan);
-    if applicable_snapshot_plugins.is_empty() {
+    if matches!(
+        plan.snapshot_plan(),
+        aegis::planning::SnapshotPlan::NotRequired
+    ) {
         return Vec::new();
     }
 
@@ -690,38 +684,6 @@ fn create_snapshots_for_plan(
             }
         },
         PreparedPlanner::SetupFailure(_) => Vec::new(),
-    }
-}
-
-fn snapshot_plugins_for_shell_plan(
-    prepared: &PreparedPlanner,
-    plan: &InterceptionPlan,
-) -> Vec<&'static str> {
-    match plan.snapshot_plan() {
-        aegis::planning::SnapshotPlan::Required { applicable_plugins } => applicable_plugins,
-        aegis::planning::SnapshotPlan::NotRequired => {
-            legacy_snapshot_plugins_for_unavailable_cwd(prepared, plan)
-        }
-    }
-}
-
-fn legacy_snapshot_plugins_for_unavailable_cwd(
-    prepared: &PreparedPlanner,
-    plan: &InterceptionPlan,
-) -> Vec<&'static str> {
-    if !matches!(plan.decision_context().cwd_state(), CwdState::Unavailable)
-        || plan.assessment().risk != RiskLevel::Danger
-    {
-        return Vec::new();
-    }
-
-    match prepared {
-        PreparedPlanner::Ready(context)
-            if context.config().snapshot_policy != aegis::config::SnapshotPolicy::None =>
-        {
-            context.applicable_snapshot_plugins(Path::new("."))
-        }
-        PreparedPlanner::Ready(_) | PreparedPlanner::SetupFailure(_) => Vec::new(),
     }
 }
 
@@ -915,12 +877,8 @@ fn evaluate_policy_decision(
     (decision, applicable_snapshot_plugins)
 }
 
-fn emit_policy_evaluation_json(
-    plan: &InterceptionPlan,
-    ci_policy: aegis::config::CiPolicy,
-    snapshot_plugins_override: Option<Vec<&'static str>>,
-) -> i32 {
-    match policy_output::render_planned(plan, ci_policy, snapshot_plugins_override) {
+fn emit_policy_evaluation_json(plan: &InterceptionPlan, ci_policy: aegis::config::CiPolicy) -> i32 {
+    match policy_output::render_planned(plan, ci_policy) {
         Ok(json) => {
             println!("{json}");
             policy_output::exit_code_for(plan.policy_decision().decision)
@@ -1307,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_cwd_shell_plan_uses_legacy_snapshot_plugin_fallback() {
+    fn unavailable_cwd_shell_plan_carries_snapshot_fallback_in_plan() {
         let original_cwd = env::current_dir().unwrap();
         let workspace = TempDir::new().unwrap();
         Command::new("git")
@@ -1336,10 +1294,14 @@ mod tests {
         let PlanningOutcome::Planned(plan) = outcome else {
             panic!("expected planned outcome");
         };
-        let plugins = snapshot_plugins_for_shell_plan(&prepared, &plan);
 
         env::set_current_dir(original_cwd).unwrap();
-        assert_eq!(plugins, vec!["git"]);
+        assert_eq!(
+            plan.snapshot_plan(),
+            aegis::planning::SnapshotPlan::Required {
+                applicable_plugins: vec!["git"],
+            }
+        );
     }
 
     #[test]

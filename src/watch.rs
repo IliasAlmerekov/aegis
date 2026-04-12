@@ -413,30 +413,16 @@ async fn create_watch_snapshots(
     plan: &InterceptionPlan,
     cwd: &std::path::Path,
 ) -> Vec<crate::snapshot::SnapshotRecord> {
-    let applicable_snapshot_plugins = watch_snapshot_plugins(context, plan);
-    if applicable_snapshot_plugins.is_empty() {
+    if matches!(
+        plan.snapshot_plan(),
+        crate::planning::SnapshotPlan::NotRequired
+    ) {
         return Vec::new();
     }
 
     context
         .create_snapshots_async(cwd, &plan.assessment().command.raw)
         .await
-}
-
-fn watch_snapshot_plugins(context: &RuntimeContext, plan: &InterceptionPlan) -> Vec<&'static str> {
-    match plan.snapshot_plan() {
-        crate::planning::SnapshotPlan::Required { applicable_plugins } => applicable_plugins,
-        crate::planning::SnapshotPlan::NotRequired => {
-            if matches!(plan.decision_context().cwd_state(), CwdState::Unavailable)
-                && plan.assessment().risk == crate::interceptor::RiskLevel::Danger
-                && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
-            {
-                context.applicable_snapshot_plugins(std::path::Path::new("."))
-            } else {
-                Vec::new()
-            }
-        }
-    }
 }
 
 fn report_watch_setup_failure(plan: &SetupFailurePlan) {
