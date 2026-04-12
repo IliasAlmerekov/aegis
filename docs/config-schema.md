@@ -4,6 +4,8 @@
 
 Aegis config uses an explicit `config_version` field.
 
+This section is the repository's explicit `schema evolution` and `migration` reference.
+
 - `config_version = 1` is the current schema.
 - omitted `config_version` is treated as a legacy pre-version config input
 - unsupported future versions are rejected explicitly
@@ -46,6 +48,8 @@ ci_policy = "Block"
 ## Mode semantics
 
 Current runtime modes are `Protect`, `Audit`, and `Strict`.
+
+This `mode semantics` section documents the current runtime behavior.
 
 ### Protect
 
@@ -93,6 +97,7 @@ reason = "ephemeral test teardown"
 
 Runtime rules:
 
+- every runtime-effective allowlist rule must declare `cwd or user scope`
 - every runtime-effective allowlist rule must declare `cwd` or `user` scope
 - `pattern` and `reason` must not be empty
 - if present, `cwd` and `user` must not be empty
@@ -106,9 +111,10 @@ Runtime rules:
 
 Legacy compatibility:
 
+- legacy examples may still appear as `allowlist = ["..."]` during migration discussions
 - legacy string-array allowlists remain parseable for migration and inspection
 - legacy string-array entries are normalized internally to structured rules with reason `migrated from legacy allowlist entry`
-- legacy entries are not runtime-effective until they gain `cwd` and/or `user` scope
+- legacy entries are `readable for migration, invalid for runtime` until they gain `cwd` and/or `user` scope
 
 `allowlist_override_level` controls when allowlist matches change policy outcomes in `Protect` and `Strict`:
 
@@ -227,3 +233,14 @@ Notes:
 - known legacy configs may be normalized into the current structured form
 - unsupported future schema versions are rejected explicitly
 - docs must follow current runtime behavior instead of guessing future semantics
+
+## Deprecated fields
+
+There are no active deprecated fields in schema version `1`.
+
+If future config changes deprecate fields, the migration story must explain:
+
+- what changed
+- what replaces it
+- whether old inputs are auto-migrated or rejected
+- which schema evolution boundary introduced the deprecation
