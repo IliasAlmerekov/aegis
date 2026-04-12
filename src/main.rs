@@ -499,7 +499,7 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
                 EXIT_INTERNAL
             }
         },
-        ConfigCommand::Show => match Config::load() {
+        ConfigCommand::Show => match Config::load_inspection() {
             Ok(config) => match config.to_toml_string() {
                 Ok(toml) => {
                     print!("{toml}");

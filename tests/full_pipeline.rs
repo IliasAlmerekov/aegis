@@ -303,7 +303,8 @@ fn json_output_allowlisted_danger_reports_effective_allowlist_and_snapshot_plan_
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
@@ -312,7 +313,8 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "strict override allowlist"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -382,13 +384,15 @@ exit 0
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         &config_path,
-        format!(r#"
+        format!(
+            r#"
 allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "test allowlist"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -610,13 +614,15 @@ fn verbose_allowlist_match_prints_rule_name() {
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
 reason = "verbose allowlist test"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -656,13 +662,15 @@ fn quiet_allowlist_match_suppresses_aegis_diagnostics() {
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
 reason = "quiet allowlist test"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -697,13 +705,15 @@ fn verbosity_verbose_allowlist_match_prints_rule_name() {
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 allowlist_override_level = "Danger"
 [[allowlist]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
 reason = "verbosity verbose test"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -1608,6 +1618,84 @@ reason = "ephemeral test teardown"
 }
 
 #[test]
+fn unscoped_structured_allowlist_fails_runtime_execution() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[[allowlist]]
+pattern = "terraform destroy *"
+reason = "too broad"
+"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "printf should-not-run"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("must declare cwd or user scope"));
+}
+
+#[test]
+fn config_validate_reports_missing_scope_as_error_for_legacy_allowlist() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"allowlist = ["terraform destroy *"]"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "validate", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        json["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["code"] == "missing_scope")
+    );
+}
+
+#[test]
+fn config_show_uses_inspection_path_for_legacy_allowlist() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"allowlist = ["terraform destroy *"]"#,
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["config", "show"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[[allowlist]]"));
+    assert!(stdout.contains("pattern = \"terraform destroy *\""));
+    assert!(stdout.contains("reason = \"migrated from legacy allowlist entry\""));
+}
+
+#[test]
 fn config_init_writes_truthful_mode_comments() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
@@ -1628,6 +1716,7 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(contents.contains("allowlist_override_level = \"Warn\""));
     assert!(contents.contains("[[allowlist]]"));
     assert!(contents.contains("Protect/Strict allowlist ceiling"));
+    assert!(contents.contains("allowlist rule must declare cwd or user scope"));
     assert!(contents.contains("Warn auto-approves allowlisted Warn commands in Protect/Strict"));
     assert!(contents.contains("Danger also auto-approves allowlisted Danger commands"));
     assert!(contents.contains("Never disables allowlist auto-approval for non-safe commands"));
@@ -2107,7 +2196,8 @@ exit 0
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Protect"
 ci_policy = "Block"
 allowlist_override_level = "Danger"
@@ -2117,7 +2207,8 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "protect allowlist"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -2173,7 +2264,8 @@ exit 0
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Strict"
 allowlist_override_level = "Warn"
 auto_snapshot_git = false
@@ -2182,7 +2274,8 @@ auto_snapshot_docker = false
 pattern = "*"
 cwd = "{workspace_cwd}"
 reason = "structured ceiling test"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -2250,7 +2343,8 @@ exit 0
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = false
@@ -2259,7 +2353,8 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "ephemeral test teardown"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -2579,7 +2674,8 @@ exit 0
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
@@ -2588,7 +2684,8 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "strict override allowlist"
-"#),
+"#
+        ),
     )
     .unwrap();
 
@@ -2657,7 +2754,8 @@ exit 0
     let workspace_cwd = workspace.path().to_string_lossy();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
@@ -2665,7 +2763,8 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "rollback test allowlist"
-"#),
+"#
+        ),
     )
     .unwrap();
 

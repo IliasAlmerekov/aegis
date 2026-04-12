@@ -248,7 +248,8 @@ exit 0
     let disabled_cwd = disabled_workspace.path().to_string_lossy();
     fs::write(
         enabled_workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
@@ -257,12 +258,14 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{enabled_cwd}"
 reason = "snapshot enabled"
-"#),
+"#
+        ),
     )
     .unwrap();
     fs::write(
         disabled_workspace.path().join(".aegis.toml"),
-        format!(r#"
+        format!(
+            r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = false
@@ -271,7 +274,8 @@ auto_snapshot_docker = false
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{disabled_cwd}"
 reason = "snapshot disabled"
-"#),
+"#
+        ),
     )
     .unwrap();
 

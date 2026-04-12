@@ -19,6 +19,8 @@ fn config_schema_doc_exists_and_describes_versioning_and_migration() {
         "schema evolution",
         "allowlist = [",
         "[[allowlist]]",
+        "cwd or user scope",
+        "readable for migration, invalid for runtime",
         "mode semantics",
         "deprecated fields",
         "migration",

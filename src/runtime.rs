@@ -398,6 +398,26 @@ mod tests {
     }
 
     #[test]
+    fn runtime_context_rejects_unscoped_allowlist_rules() {
+        use crate::config::AllowlistRule;
+
+        let mut config = Config::default();
+        config.allowlist = vec![AllowlistRule {
+            pattern: "terraform destroy *".to_string(),
+            cwd: None,
+            user: None,
+            expires_at: None,
+            reason: "too broad".to_string(),
+        }];
+
+        let err = match RuntimeContext::new(config, test_handle()) {
+            Ok(_) => panic!("runtime context must reject unscoped allowlist rules"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("must declare cwd or user scope"));
+    }
+
+    #[test]
     fn runtime_context_accepts_scoped_allowlist_rules() {
         use crate::config::AllowlistRule;
 

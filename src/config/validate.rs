@@ -197,6 +197,22 @@ pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> Validat
     for (index, rule) in config.allowlist.iter().enumerate() {
         let location = source_map.allowlist_location(index);
 
+        if rule
+            .cwd
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && rule
+                .user
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            errors.push(ValidationIssue {
+                code: "missing_scope",
+                message: "allowlist rule must declare cwd or user scope".to_string(),
+                location: location.clone(),
+            });
+        }
+
         if rule.expires_at.is_some_and(|expires_at| expires_at <= now) {
             errors.push(ValidationIssue {
                 code: "expired_rule",
@@ -425,6 +441,24 @@ mod tests {
                 .any(|e| e.code == "invalid_allowlist_rule")
         );
         assert!(report.warnings.iter().any(|w| w.code == "missing_scope"));
+    }
+
+    #[test]
+    fn validate_reports_error_for_unscoped_rule() {
+        let config = Config {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy *".to_string(),
+                cwd: None,
+                user: None,
+                expires_at: None,
+                reason: "too broad".to_string(),
+            }],
+            ..Config::defaults()
+        };
+
+        let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
+        assert!(report.errors.iter().any(|e| e.code == "missing_scope"));
+        assert!(report.warnings.iter().any(|w| w.code == "broad_pattern"));
     }
 
     #[test]

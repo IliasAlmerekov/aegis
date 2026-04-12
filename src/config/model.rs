@@ -29,6 +29,9 @@ allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Dan
 # Block never bypasses in Protect/Strict.
 
 # Structured allowlist rules use array-of-tables entries.
+# Every runtime-effective allowlist rule must declare cwd or user scope.
+# Legacy string-array allowlist entries stay readable for migration and
+# inspection, but they are invalid for runtime until you add scope.
 # [[allowlist]]
 # pattern = "terraform destroy -target=module.test.*"
 # cwd = "/srv/infra"
@@ -299,6 +302,15 @@ impl AegisConfig {
         Self::load_for(&current_dir, home_dir.as_deref())
     }
 
+    pub fn load_inspection() -> Result<Self> {
+        let current_dir = env::current_dir()?;
+        let home_dir = env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+
+        Self::load_for_inspection(&current_dir, home_dir.as_deref())
+    }
+
     pub fn defaults() -> Self {
         Self {
             config_version: CURRENT_CONFIG_VERSION,
@@ -355,6 +367,10 @@ impl AegisConfig {
 
     pub(crate) fn load_for(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
         Self::load_for_internal(current_dir, home_dir, true)
+    }
+
+    pub fn load_for_inspection(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
+        Self::load_for_internal(current_dir, home_dir, false)
     }
 
     pub(crate) fn layer_paths_for(
@@ -719,6 +735,31 @@ reason = "ephemeral test teardown"
 
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn unscoped_allowlist_rule_is_invalid_for_runtime_validation() {
+        let config = AegisConfig {
+            allowlist: vec![AllowlistRule {
+                pattern: "terraform destroy *".to_string(),
+                cwd: None,
+                user: None,
+                expires_at: None,
+                reason: "legacy broad rule".to_string(),
+            }],
+            ..AegisConfig::defaults()
+        };
+
+        let err = config.validate_runtime_requirements().unwrap_err();
+        assert!(err.to_string().contains("must declare cwd or user scope"));
+    }
+
+    #[test]
+    fn legacy_allowlist_remains_parseable_but_fails_runtime_requirements() {
+        let config: AegisConfig = toml::from_str(r#"allowlist = ["terraform destroy *"]"#).unwrap();
+
+        let err = config.validate_runtime_requirements().unwrap_err();
+        assert!(err.to_string().contains("must declare cwd or user scope"));
     }
 
     #[test]

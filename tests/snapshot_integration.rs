@@ -134,14 +134,18 @@ fn git_snapshot_and_rollback_work_from_repo_subdirectory() {
 
     fs::write(
         subdir.join(".aegis.toml"),
-        r#"
+        &format!(
+            r#"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
+cwd = "{}"
 reason = "subdir snapshot test"
-"#,
+            "#,
+            subdir.display()
+        ),
     )
     .unwrap();
 
@@ -205,14 +209,18 @@ fn git_snapshot_and_rollback_work_from_git_worktree() {
     fs::write(worktree.path().join("tracked.txt"), "worktree change\n").unwrap();
     fs::write(
         worktree.path().join(".aegis.toml"),
-        r#"
+        &format!(
+            r#"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
+cwd = "{}"
 reason = "worktree snapshot test"
-"#,
+            "#,
+            worktree.path().display()
+        ),
     )
     .unwrap();
 
@@ -267,14 +275,18 @@ fn rollback_conflict_reports_manual_recovery_commands_and_preserves_stash() {
     fs::write(workspace.path().join("tracked.txt"), "stashed change\n").unwrap();
     fs::write(
         workspace.path().join(".aegis.toml"),
-        r#"
+        &format!(
+            r#"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
+cwd = "{}"
 reason = "rollback conflict test"
-"#,
+            "#,
+            workspace.path().display()
+        ),
     )
     .unwrap();
 

@@ -172,6 +172,9 @@ Project values override global values; global values override defaults. Vec fiel
 If any discovered config file is invalid, Aegis fails closed with exit code `4` and tells you which file to fix or remove.
 `config_version` documents the schema version; if it is omitted, Aegis treats the file as a legacy pre-version config and normalizes it forward when possible.
 
+Runtime-effective allowlist rules must declare `cwd` or `user` scope. Unscoped rules are rejected at runtime and by `aegis config validate`.
+Legacy string-array allowlist entries remain readable for migration and inspection: `aegis config show` normalizes them into structured `[[allowlist]]` entries, but they stay invalid for runtime until you add `cwd` and/or `user`.
+
 Generate a starter config:
 
 ```bash

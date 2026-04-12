@@ -36,7 +36,16 @@ pattern = "terraform destroy *"
 reason = "migrated from legacy allowlist entry"
 ```
 
-The recommended follow-up is to replace the legacy entry with an explicit structured rule and a real reason.
+That legacy form is readable for migration, invalid for runtime. It remains usable for inspection and repair workflows such as `aegis config show`, but runtime loading and `aegis config validate` require every runtime-effective allowlist rule to declare cwd or user scope.
+
+The required follow-up is to replace the legacy entry with an explicit structured rule, add `cwd` and/or `user`, and keep a real reason. For example:
+
+```toml
+[[allowlist]]
+pattern = "terraform destroy -target=module.test.*"
+cwd = "/srv/infra"
+reason = "ephemeral test teardown"
+```
 
 ### Mode semantics
 
