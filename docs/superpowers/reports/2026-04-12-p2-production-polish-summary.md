@@ -26,6 +26,12 @@
 - **Next step:** decide whether to redesign the test fixture to make worktree support deterministic or move this case into an explicitly environment-gated integration suite.
 - **Owner / destination:** follow-up phase / backlog item for snapshot-integration hardening.
 
+- **Issue:** `rtk cargo deny check` currently fails in the local environment because `cargo-deny 0.19.1` panics while parsing the current RustSec advisory DB format (`failed to find toml block` for `nats/RUSTSEC-2023-0029.md`).
+- **Why deferred:** this appears to be an external tool/advisory-schema compatibility issue rather than a repository dependency-policy failure, so fixing it would require upgrading or replacing the local `cargo-deny` toolchain rather than changing Aegis code.
+- **Why acceptable now:** the repository-specific verification signals still passed (`fmt`, `clippy`, `test`, `bench`, `audit`), and the remaining failure does not indicate a known vulnerability or policy violation in Aegis itself.
+- **Next step:** rerun `cargo deny check` with a newer `cargo-deny` version once the local toolchain can be updated, then replace this blocker note with the validated outcome.
+- **Owner / destination:** external tooling follow-up / local environment maintenance.
+
 ## Baseline Summary
 
 - `rtk cargo fmt --check` — PASS
