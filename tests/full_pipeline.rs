@@ -257,6 +257,92 @@ fn json_output_danger_command_returns_prompt_decision_without_stderr_or_audit() 
 }
 
 #[test]
+fn invalid_project_config_in_json_mode_preserves_stderr_contract() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "mode = <<<THIS IS NOT VALID TOML\n",
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "echo hi", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(
+        output.stdout.is_empty(),
+        "setup failure must keep the current stderr-only contract"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error: failed to load config"));
+    assert!(stderr.contains("Fix or remove the invalid config file"));
+}
+
+#[test]
+fn json_mode_still_does_not_write_audit_entries_when_planned() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "echo hi", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["command"], "echo hi");
+    assert_eq!(json["execution"]["mode"], "evaluation_only");
+    assert_eq!(json["execution"]["will_execute"], false);
+    assert!(
+        !home.path().join(".aegis").join("audit.jsonl").exists(),
+        "planned json evaluation must not append an audit entry"
+    );
+}
+
+#[test]
+fn planner_migration_keeps_json_block_reason_contract() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "rm -rf /", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["decision"], "block");
+    assert_eq!(json["block_reason"], "intrinsic_risk_block");
+}
+
+#[test]
+fn planner_migration_keeps_shell_audit_projection_fields() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "printf hello"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["mode"], "Protect");
+    assert_eq!(entries[0]["ci_detected"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_matched"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_effective"], serde_json::json!(false));
+}
+
+#[test]
 fn json_output_snapshot_policy_none_disables_snapshot_request_for_danger() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
