@@ -72,15 +72,19 @@ struct ExecutionOutput {
 pub(crate) fn render_planned(
     plan: &InterceptionPlan,
     ci_policy: CiPolicy,
+    snapshot_plugins_override: Option<Vec<&'static str>>,
 ) -> Result<String, serde_json::Error> {
     let assessment = plan.assessment();
     let decision = plan.policy_decision();
     let decision_context = plan.decision_context();
     let allowlist_match = decision_context.allowlist_match();
-    let snapshot_plan = plan.snapshot_plan();
-    let applicable_snapshot_plugins = match &snapshot_plan {
-        SnapshotPlan::NotRequired => Vec::new(),
-        SnapshotPlan::Required { applicable_plugins } => applicable_plugins.clone(),
+    let plan_snapshot = plan.snapshot_plan();
+    let (snapshot_requested, applicable_snapshot_plugins) = match snapshot_plugins_override {
+        Some(applicable_plugins) => (true, applicable_plugins),
+        None => match &plan_snapshot {
+            SnapshotPlan::NotRequired => (false, Vec::new()),
+            SnapshotPlan::Required { applicable_plugins } => (true, applicable_plugins.clone()),
+        },
     };
     let decision_label = decision_string(decision.decision);
     let exit_code = exit_code_for(decision.decision);
@@ -116,7 +120,7 @@ pub(crate) fn render_planned(
         },
         snapshots_created: Vec::new(),
         snapshot_plan: SnapshotPlanOutput {
-            requested: matches!(snapshot_plan, SnapshotPlan::Required { .. }),
+            requested: snapshot_requested,
             applicable_plugins: applicable_snapshot_plugins
                 .into_iter()
                 .map(str::to_string)

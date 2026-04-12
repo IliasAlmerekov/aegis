@@ -603,7 +603,15 @@ fn render_json_outcome(prepared: &PreparedPlanner, outcome: &PlanningOutcome) ->
         PlanningOutcome::SetupFailure(plan) => report_setup_failure(plan),
         PlanningOutcome::Planned(plan) => match prepared {
             PreparedPlanner::Ready(context) => {
-                emit_policy_evaluation_json(plan, context.config().ci_policy)
+                let snapshot_plugins_override = (!plan.policy_decision().snapshots_required)
+                    .then(|| snapshot_plugins_for_shell_plan(prepared, plan))
+                    .filter(|plugins| !plugins.is_empty());
+
+                emit_policy_evaluation_json(
+                    plan,
+                    context.config().ci_policy,
+                    snapshot_plugins_override,
+                )
             }
             PreparedPlanner::SetupFailure(_) => EXIT_INTERNAL,
         },
@@ -664,7 +672,8 @@ fn create_snapshots_for_plan(
     plan: &InterceptionPlan,
     verbose: bool,
 ) -> Vec<SnapshotRecord> {
-    if !plan.policy_decision().snapshots_required {
+    let applicable_snapshot_plugins = snapshot_plugins_for_shell_plan(prepared, plan);
+    if applicable_snapshot_plugins.is_empty() {
         return Vec::new();
     }
 
@@ -673,9 +682,43 @@ fn create_snapshots_for_plan(
             CwdState::Resolved(path) => {
                 context.create_snapshots(path.as_path(), &plan.assessment().command.raw, verbose)
             }
-            CwdState::Unavailable => Vec::new(),
+            CwdState::Unavailable => {
+                context.create_snapshots(Path::new("."), &plan.assessment().command.raw, verbose)
+            }
         },
         PreparedPlanner::SetupFailure(_) => Vec::new(),
+    }
+}
+
+fn snapshot_plugins_for_shell_plan(
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+) -> Vec<&'static str> {
+    match plan.snapshot_plan() {
+        aegis::planning::SnapshotPlan::Required { applicable_plugins } => applicable_plugins,
+        aegis::planning::SnapshotPlan::NotRequired => {
+            legacy_snapshot_plugins_for_unavailable_cwd(prepared, plan)
+        }
+    }
+}
+
+fn legacy_snapshot_plugins_for_unavailable_cwd(
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+) -> Vec<&'static str> {
+    if !matches!(plan.decision_context().cwd_state(), CwdState::Unavailable)
+        || plan.assessment().risk != RiskLevel::Danger
+    {
+        return Vec::new();
+    }
+
+    match prepared {
+        PreparedPlanner::Ready(context)
+            if context.config().snapshot_policy != aegis::config::SnapshotPolicy::None =>
+        {
+            context.applicable_snapshot_plugins(Path::new("."))
+        }
+        PreparedPlanner::Ready(_) | PreparedPlanner::SetupFailure(_) => Vec::new(),
     }
 }
 
@@ -866,8 +909,12 @@ fn evaluate_policy_decision(
     (decision, applicable_snapshot_plugins)
 }
 
-fn emit_policy_evaluation_json(plan: &InterceptionPlan, ci_policy: aegis::config::CiPolicy) -> i32 {
-    match policy_output::render_planned(plan, ci_policy) {
+fn emit_policy_evaluation_json(
+    plan: &InterceptionPlan,
+    ci_policy: aegis::config::CiPolicy,
+    snapshot_plugins_override: Option<Vec<&'static str>>,
+) -> i32 {
+    match policy_output::render_planned(plan, ci_policy, snapshot_plugins_override) {
         Ok(json) => {
             println!("{json}");
             policy_output::exit_code_for(plan.policy_decision().decision)
@@ -983,6 +1030,7 @@ mod tests {
         AllowlistMatch, AllowlistOverrideLevel, AllowlistSourceLayer, CiPolicy, Mode,
     };
     use aegis::error::AegisError;
+    use tempfile::TempDir;
 
     // ── Scanner init failure ──────────────────────────────────────────────────
     //
@@ -1250,6 +1298,42 @@ mod tests {
         config.auto_snapshot_docker = false;
         config.allowlist_override_level = allowlist_override_level;
         RuntimeContext::new(config, test_handle()).unwrap()
+    }
+
+    #[test]
+    fn unavailable_cwd_shell_plan_uses_legacy_snapshot_plugin_fallback() {
+        let original_cwd = env::current_dir().unwrap();
+        let workspace = TempDir::new().unwrap();
+        Command::new("git")
+            .arg("init")
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        env::set_current_dir(workspace.path()).unwrap();
+
+        let mut config = Config::default();
+        config.snapshot_policy = aegis::config::SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+        let prepared = PreparedPlanner::Ready(context);
+        let outcome = prepare_and_plan(
+            &prepared,
+            aegis::planning::PlanningRequest {
+                command: "terraform destroy -target=module.prod.api",
+                cwd_state: CwdState::Unavailable,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("expected planned outcome");
+        };
+        let plugins = snapshot_plugins_for_shell_plan(&prepared, &plan);
+
+        env::set_current_dir(original_cwd).unwrap();
+        assert_eq!(plugins, vec!["git"]);
     }
 
     #[test]
