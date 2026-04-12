@@ -2,13 +2,28 @@
 
 ## Schema evolution
 
-Aegis config now uses an explicit `config_version` field.
+Aegis config uses an explicit `config_version` field.
 
 - `config_version = 1` is the current schema.
-- If `config_version` is omitted, Aegis treats the file as a legacy pre-version config and loads it with backwards-compatibility rules where possible.
-- Unknown future versions fail closed instead of being guessed.
+- omitted `config_version` is treated as a legacy pre-version config input
+- unsupported future versions are rejected explicitly
 
-This document is the schema evolution policy for Aegis config.
+This document describes the current runtime contract for schema version `1`.
+
+## Layered merge order
+
+Effective config is merged in this order:
+
+1. built-in defaults
+2. global config: `~/.config/aegis/config.toml`
+3. project config: `.aegis.toml`
+
+Merge behavior:
+
+- scalar fields: later layers override earlier layers
+- vector fields such as `custom_patterns` and `allowlist`: layers are concatenated
+- for merged vectors, global entries come first and project entries come after
+- for allowlist precedence at runtime, project rules are checked before global rules
 
 ## Current schema version
 
@@ -16,64 +31,199 @@ This document is the schema evolution policy for Aegis config.
 config_version = 1
 ```
 
-New configs created by `aegis config init` and normalized configs printed by `aegis config show` use the current version.
-
-## Migration
-
-### Legacy allowlist format
-
-Older configs may use the legacy string-array form:
+Current defaults:
 
 ```toml
-allowlist = ["terraform destroy *"]
+config_version = 1
+mode = "Protect"
+allowlist_override_level = "Warn"
+snapshot_policy = "Selective"
+auto_snapshot_git = true
+auto_snapshot_docker = false
+ci_policy = "Block"
 ```
 
-Aegis migrates that form into the structured schema internally and `config show` prints the normalized form:
+## Mode semantics
 
-```toml
-[[allowlist]]
-pattern = "terraform destroy *"
-reason = "migrated from legacy allowlist entry"
-```
+Current runtime modes are `Protect`, `Audit`, and `Strict`.
 
-That legacy form is readable for migration, invalid for runtime. It remains usable for inspection and repair workflows such as `aegis config show`, but runtime loading and `aegis config validate` require every runtime-effective allowlist rule to declare cwd or user scope.
+### Protect
 
-The required follow-up is to replace the legacy entry with an explicit structured rule, add `cwd` and/or `user`, and keep a real reason. For example:
+- `Safe` auto-approves
+- `Warn` prompts unless an allowlist override makes it effective
+- `Danger` prompts unless an allowlist override makes it effective
+- `Block` always blocks
+- when snapshots are requested, that matters only for `Danger`
+
+### Audit
+
+- `Safe`, `Warn`, `Danger`, and `Block` all remain non-blocking at runtime
+- Audit mode does not prompt
+- Audit mode does not request snapshots
+
+### Strict
+
+- `Safe` auto-approves
+- `Warn` and `Danger` block unless an allowlist override makes them effective
+- `Block` always blocks
+- when an allowlisted `Danger` command is auto-approved, snapshot requirements still apply
+
+### Prompt semantics
+
+- interactive approval accepts only `y` / `yes`
+- `Y` and `YES` are accepted after lowercase normalization
+- empty input denies
+- any other input denies
+- read failure denies
+- non-interactive prompt-required flows deny
+- default is deny
+
+## Allowlist semantics
+
+Allowlist rules use the structured array-of-tables form:
 
 ```toml
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/srv/infra"
+user = "ci"
+expires_at = "2030-01-01T00:00:00Z"
 reason = "ephemeral test teardown"
 ```
 
-### Mode semantics
+Runtime rules:
 
-`mode` remains versioned by schema policy, not by guesswork.
+- every runtime-effective allowlist rule must declare `cwd` or `user` scope
+- `pattern` and `reason` must not be empty
+- if present, `cwd` and `user` must not be empty
+- expired rules are invalid for runtime use
+- patterns are matched against the trimmed command string
+- `*` and `?` behave as glob wildcards
+- exact rules match only the same command
+- scoped rules match only when the current `cwd` and/or `user` also match
+- project allowlist rules beat global allowlist rules when both match
+- within the same layer, the first declared matching rule wins
 
-If mode semantics ever change in a future schema version:
+Legacy compatibility:
 
-- the new behavior must ship under a new `config_version`
-- the migration notes must describe the old and new mode semantics explicitly
-- `config show` must reflect the effective normalized meaning
+- legacy string-array allowlists remain parseable for migration and inspection
+- legacy string-array entries are normalized internally to structured rules with reason `migrated from legacy allowlist entry`
+- legacy entries are not runtime-effective until they gain `cwd` and/or `user` scope
 
-Current version `1` keeps the existing `Protect`, `Audit`, and `Strict` semantics.
+`allowlist_override_level` controls when allowlist matches change policy outcomes in `Protect` and `Strict`:
 
-### Deprecated fields
+- `Warn`: allowlisted `Warn` commands may auto-approve
+- `Danger`: allowlisted `Warn` and `Danger` commands may auto-approve
+- `Never`: non-safe allowlist auto-approval is disabled
+- `Block` never bypasses in `Protect` or `Strict`
 
-There are no active deprecated config fields in schema version `1`.
+## Snapshot policy
 
-This section defines the deprecated fields policy for future schema versions.
+Snapshot requests matter only for `Danger` flows.
 
-When deprecations are introduced, the migration path must include:
+- `None` never requests snapshots
+- `Selective` honors `auto_snapshot_git` / `auto_snapshot_docker`
+- `Full` requests all applicable snapshot plugins regardless of per-plugin flags
 
-- what field is deprecated
-- what replacement field to use
-- whether the old field is still auto-migrated or hard-rejected
-- in which `config_version` the old field will stop working
+Important details:
+
+- if there are no applicable snapshot plugins, no snapshots are requested even for `Danger`
+- `Audit` does not request snapshots
+- `Warn` does not request snapshots
+
+Example:
+
+```toml
+snapshot_policy = "Selective"
+auto_snapshot_git = true
+auto_snapshot_docker = false
+
+[docker_scope]
+mode = "Labeled"
+label = "aegis.snapshot"
+name_patterns = []
+```
+
+## CI policy
+
+`ci_policy` is a runtime policy input, not the GitHub Actions workflow definition.
+
+Supported values:
+
+- `Block`
+- `Allow`
+
+Current runtime behavior:
+
+- in `Protect`, `ci_policy = Block` blocks non-safe commands instead of prompting
+- in `Protect`, `ci_policy = Allow` does not short-circuit the normal policy flow
+- with `ci_policy = Allow`, non-safe commands still follow the usual prompt path, so non-interactive confirmation surfaces can still deny
+- `Strict` is not weakened by CI
+- `Audit` remains non-blocking
+- `Block` risk remains blocked regardless of CI policy
+
+## JSON output contract
+
+`aegis --output json` currently emits schema version `1`.
+
+Top-level fields:
+
+- `schema_version`
+- `command`
+- `risk`
+- `decision`
+- `exit_code`
+- `mode`
+- `ci_state`
+- `matched_patterns`
+- `allowlist_match`
+- `snapshots_created`
+- `snapshot_plan`
+- `execution`
+- optional `block_reason`
+- `decision_source`
+
+Current decision labels:
+
+- `auto_approve`
+- `prompt`
+- `block`
+
+Current execution contract:
+
+- `execution.mode` is `evaluation_only`
+- `execution.will_execute` is `false`
+
+Example:
+
+```json
+{
+  "schema_version": 1,
+  "command": "rm -rf /tmp",
+  "risk": "danger",
+  "decision": "prompt",
+  "exit_code": 2,
+  "mode": "protect",
+  "ci_state": { "detected": false, "policy": "block" },
+  "matched_patterns": [],
+  "allowlist_match": { "matched": false, "effective": false },
+  "snapshots_created": [],
+  "snapshot_plan": { "requested": true, "applicable_plugins": [] },
+  "execution": { "mode": "evaluation_only", "will_execute": false },
+  "decision_source": "builtin_pattern"
+}
+```
+
+Notes:
+
+- `matched_patterns[*]` includes pattern metadata, matched text, and optional `safe_alternative`
+- `allowlist_match.pattern` and `allowlist_match.reason` are optional
+- `block_reason` is optional and uses values such as `intrinsic_risk_block`, `strict_policy`, and `protect_ci_policy`
+- `decision_source` is one of `builtin_pattern`, `custom_pattern`, or `fallback`
 
 ## Compatibility policy
 
-- New releases must not break known legacy configs blindly.
-- Legacy compatibility may normalize old data into the latest structured representation.
-- Unsupported future schemas are rejected explicitly so users are told to upgrade Aegis or downgrade the config.
+- new releases should preserve compatibility for schema version `1`
+- known legacy configs may be normalized into the current structured form
+- unsupported future schema versions are rejected explicitly
+- docs must follow current runtime behavior instead of guessing future semantics
