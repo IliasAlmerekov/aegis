@@ -28,9 +28,9 @@
 
 ## Baseline Summary
 
-- `rtk cargo fmt --check` —
-- `rtk cargo clippy -- -D warnings` —
-- `rtk cargo test` —
-- `rtk cargo bench --bench scanner_bench` —
-- `rtk cargo audit` —
-- `rtk cargo deny check` —
+- `rtk cargo fmt --check` — PASS
+- `rtk cargo clippy -- -D warnings` — PASS
+- `rtk cargo test` — PASS; includes watch-mode audit entry coverage
+- `rtk cargo bench --bench scanner_bench` — PASS; benchmark completed successfully
+- `rtk cargo audit` — PASS
+- `rtk cargo deny check` — FAIL; `cargo-deny` panicked while parsing cached advisory DB entry `~/.cargo/advisory-dbs/.../nats/RUSTSEC-2023-0029.md` (`failed to find toml block`)
