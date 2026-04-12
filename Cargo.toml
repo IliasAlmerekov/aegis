@@ -1,6 +1,6 @@
 [package]
 name = "aegis"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations"
@@ -9,6 +9,12 @@ homepage = "https://github.com/IliasAlmerekov/aegis"
 keywords = ["security", "ai", "shell", "cli", "safety"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
+exclude = [
+    ".claude/**",
+    ".codex/**",
+    ".planning/**",
+    "*.txt",
+]
 
 [dependencies]
 base64 = "0.22"

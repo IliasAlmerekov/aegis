@@ -1,161 +1,119 @@
-# External Integrations
+# Aegis Integrations Scan
 
-**Analysis Date:** 2026-03-27
+Last refreshed: 2026-04-12
+Focus: tech+arch
 
-## APIs & External Services
+## User/runtime integration surfaces
 
-**Git:**
+### 1. Shell-wrapper execution
 
-- Git CLI - Used for snapshot creation (`src/snapshot/git.rs`)
-  - Method: subprocess invocation via `tokio::process::Command`
-  - Operations: `git rev-parse --git-dir` (detect repo), `git status --porcelain` (check clean), `git stash push --include-untracked` (snapshot), `git stash pop` (rollback)
-  - Auth: Uses system git config (SSH keys, credentials already configured)
+- Main entrypoint is `aegis -c '<cmd>'`.
+- `src/main.rs` resolves the real shell from:
+  1. `AEGIS_REAL_SHELL`
+  2. `SHELL` if it does not point back to Aegis
+  3. `/bin/sh` fallback
+- Installer writes managed shell-wrapper blocks into `~/.bashrc` or `~/.zshrc`.
 
-**Docker:**
+### 2. Watch mode
 
-- Docker CLI - Used for container snapshots (`src/snapshot/docker.rs`)
-  - Method: subprocess invocation via `tokio::process::Command`
-  - Operations: `docker ps -q` (list containers), `docker inspect` (capture config), `docker commit` (snapshot), `docker container rm` (cleanup), `docker run` (rollback)
-  - Auth: Uses system docker socket and credentials (if configured)
+- `aegis watch` reads NDJSON frames from stdin and emits NDJSON results to stdout.
+- Implemented in `src/watch.rs`.
+- Human confirmation in watch mode goes through `/dev/tty`, so this surface is Unix-oriented.
 
-## Data Storage
+### 3. Config integration
 
-**Databases:**
+- Effective config layers:
+  - built-in defaults
+  - `~/.config/aegis/config.toml`
+  - `.aegis.toml`
+- Config commands:
+  - `aegis config init`
+  - `aegis config show`
+  - `aegis config validate`
+- Structured allowlist, custom patterns, snapshot policy, CI policy, audit policy are all wired into runtime.
 
-- None. Aegis is stateless between invocations.
+## External tool / platform integrations
 
-**File Storage:**
+### Git
 
-- Local filesystem only (no cloud storage integration)
-  - Audit log: `~/.aegis/audit.jsonl` (append-only JSONL file)
-  - Global config: `~/.config/aegis/config.toml` (TOML file)
-  - Project config: `.aegis.toml` in project root (TOML file)
-  - Snapshot data: managed by git and docker CLIs (no direct Aegis handling)
+- `src/snapshot/git.rs`
+- Used for:
+  - repo detection via `git rev-parse --git-dir`
+  - best-effort pre-danger snapshots via `git stash push --include-untracked`
+  - rollback via `git stash pop --index`
+- Coverage includes:
+  - repo root
+  - subdirectories
+  - staged + unstaged changes
+  - untracked files
+  - worktrees
+  - rollback conflict path
 
-**Caching:**
+### Docker
 
-- In-memory only (no Redis, Memcached, or persistent cache)
-  - Pattern database: compiled at startup via `std::sync::LazyLock` in `src/interceptor/mod.rs`
-  - Scanner instance: cached in `BUILTIN_SCANNER` static
-  - Custom patterns: cached per config fingerprint in `CUSTOM_SCANNER_CACHE`
+- `src/snapshot/docker.rs`
+- Used for:
+  - container discovery via `docker ps -q`
+  - metadata capture via `docker inspect`
+  - filesystem snapshot via `docker commit`
+  - rollback via `docker stop` / `docker rm` / `docker run`
+- Supports scoped selection:
+  - `Labeled`
+  - `All`
+  - `Names`
 
-## Authentication & Identity
+### Filesystem / local machine
 
-**Auth Provider:**
+- Audit log: `~/.aegis/audit.jsonl`
+- Optional rotation archives: `audit.jsonl.N` or `audit.jsonl.N.gz`
+- Lock file: companion `.lock`
+- Installer target default: `/usr/local/bin/aegis`
 
-- Custom — no external auth service
-- Aegis requires no authentication or login
+## CI / GitHub integrations
 
-**Human Authorization:**
+- `.github/workflows/ci.yml`
+  - fmt
+  - clippy
+  - tests
+  - cargo-audit
+  - cargo-deny
+  - release builds
+  - scanner benchmark policy
+- `.github/workflows/release.yml`
+  - tag-triggered release
+  - Linux + macOS asset builds
+  - SHA-256 checksum generation
+  - GitHub Release publication
 
-- Interactive shell confirmation via stdin/stderr (`src/ui/confirm.rs`)
-  - Risk level `Block`: auto-blocked, no prompt
-  - Risk level `Danger`: requires user type `yes` exactly to proceed
-  - Risk level `Warn`: requires user not type `n` to proceed
-  - Risk level `Safe`: auto-approved
+## Audit / machine-readable integrations
 
-**CI Detection:**
+- `aegis audit`
+  - text / json / ndjson output
+  - filters by risk, decision, time, substring
+  - summary mode
+  - integrity verification mode
+- `aegis --output json`
+  - evaluation-only decision JSON
+  - includes risk, decision, matched patterns, allowlist match, snapshot plan, CI state
 
-- Detects non-interactive environments via `io::stdin().is_terminal()`
-- Policy enforcement (`src/config/model.rs`):
-  - `CiPolicy::Block` (default): hard-blocks all non-safe commands in CI
-  - `CiPolicy::Allow` (opt-in): passes through commands without prompting in CI
+## Public-repo hygiene signals
 
-## Monitoring & Observability
+- `.gitignore` excludes `.env`, `.claude/`, `.codex/`, `.worktrees/`, `target/`.
+- Quick regex scan found no obvious committed secret material.
+- Public-facing governance files present:
+  - `LICENSE`
+  - `CONTRIBUTING.md`
+  - `CODE_OF_CONDUCT.md`
 
-**Error Tracking:**
+## Integration gaps / caution areas
 
-- None. Aegis does not report to external error tracking services.
+- README points to `AEGIS.md` for the full pattern table, but no `AEGIS.md` file exists in the repository.
+- `docs/architecture-decisions.md` says README documents the security model and non-goals; repository scan did not find that section in README.
+- Release workflow generates checksum files, but `scripts/install.sh` does not consume or verify them.
+- No threat-model or limitations document was found under `docs/`.
+- Windows is explicitly unsupported and the installer rejects it; this is honest, but it limits “general public” reach.
 
-**Logs:**
+## Bottom line from integrations view
 
-- Structured logging via `tracing` framework (`src/audit/logger.rs`)
-- Append-only JSONL audit log at `~/.aegis/audit.jsonl`
-  - Format: One JSON object per line (RFC 3339 timestamp, risk level, decision, matched patterns, snapshot records)
-  - Rotation (optional): Enabled via `[audit]` config section
-    - Supported: file size limits, retention count, gzip compression of rotated files
-  - Backward compatibility: Deserializer accepts both RFC 3339 and Unix timestamp formats for migrations
-
-**Internal Logging (development):**
-
-- `tracing-subscriber` with `fmt` formatter and `env-filter` support
-- Controlled by `RUST_LOG` environment variable (default: off in production)
-- Output: stderr only (never stdout, which is reserved for command passthrough)
-
-## CI/CD & Deployment
-
-**Hosting:**
-
-- GitHub Releases - Binary distribution
-  - Builds published for: Linux x86_64, Linux aarch64, macOS x86_64, macOS aarch64
-  - Artifacts include SHA256 checksums
-
-**CI Pipeline:**
-
-- GitHub Actions (`.github/workflows/ci.yml`)
-  - Runs on every push to any branch and all pull requests
-  - Jobs:
-    1. `check`: fmt, clippy, test, cargo-audit, cargo-deny
-    2. `build`: release builds on Ubuntu and macOS
-
-**Release Pipeline:**
-
-- GitHub Actions (`.github/workflows/release.yml`)
-  - Triggered on: tag push matching `v*` pattern
-  - Builds native binaries for all 4 platforms
-  - Uses `cross` crate for aarch64 cross-compilation
-  - Publishes to GitHub Releases with generated release notes
-
-**Installation:**
-
-- Shell script installer (`scripts/install.sh`) - detects platform and downloads pre-built binary from GitHub Releases
-- Alternative: `cargo install aegis` from crates.io
-
-## Environment Configuration
-
-**Required env vars:**
-
-- None for normal operation
-
-**Optional env vars:**
-
-- `RUST_LOG` - Control tracing verbosity (format: `module::path=level`, e.g., `debug`, `info`, `warn`)
-- `AEGIS_FORCE_INTERACTIVE=1` - Force interactive mode even when stdin is piped (testing only; must never be set in production)
-- `CARGO_TERM_COLOR=always` - CI/CD helper (set in workflows)
-- `RUST_BACKTRACE=1` - CI/CD helper (set in workflows)
-
-**Secrets location:**
-
-- No secrets are stored by Aegis
-- Git and Docker credentials use system configuration (not managed by Aegis)
-- Audit log may contain sensitive data (e.g., command arguments); should be protected with filesystem permissions
-
-## Webhooks & Callbacks
-
-**Incoming:**
-
-- None. Aegis is not a service and does not expose any HTTP endpoints.
-
-**Outgoing:**
-
-- None. Aegis does not make HTTP requests or call external APIs.
-
-## Subprocess Execution
-
-**Direct subprocess calls:**
-
-1. `git rev-parse --git-dir` - Detect if cwd is a git repository
-2. `git status --porcelain` - Check if git working tree is clean
-3. `git stash push --include-untracked -m <message>` - Create git snapshot
-4. `git stash pop <stash-id>` - Rollback git snapshot
-5. `docker ps -q` - List running containers
-6. `docker inspect <container-id>` - Inspect container configuration
-7. `docker commit <container-id> <image-name>` - Create docker snapshot
-8. `docker run ...` - Rollback docker snapshot
-9. `docker container rm ...` - Clean up snapshot images
-
-All subprocess calls use `tokio::process::Command` for async non-blocking execution. Failures in snapshot creation are logged as warnings and do not prevent command execution.
-
----
-
-_Integration audit: 2026-03-27_
+The repo is already well-integrated with shell setup, Git, Docker, CI, audit, release automation, and machine-readable outputs.  
+The biggest public-release weakness is not missing integration plumbing; it is missing verification/honesty layers around those integrations in the public docs and install path.

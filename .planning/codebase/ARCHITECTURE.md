@@ -1,251 +1,181 @@
-# Architecture
-
-**Analysis Date:** 2026-03-27
-
-## Pattern Overview
-
-**Overall:** Layered pipeline with separation of concerns (risk assessment → decision logic → audit logging → execution)
-
-**Key Characteristics:**
-
-- **Single-responsibility modules**: Each layer handles a discrete concern (parsing, scanning, decision-making, snapshot/rollback, audit)
-- **Fail-closed defaults**: When subsystems fail (scanner, config, snapshots), the system requires confirmation rather than auto-approving
-- **Lazy-cached patterns**: Built-in patterns compiled once at startup; custom patterns cached by content hash
-- **Best-effort snapshots**: Snapshot failures don't block command execution; they're logged as warnings only
-- **Immutable audit trail**: Append-only JSONL with optional rotation; never modifies existing records
-
-## Layers
-
-**Presentation (CLI/UI):**
-
-- Purpose: Parse arguments, display confirmation dialogs, format output
-- Location: `src/main.rs`, `src/ui/confirm.rs`
-- Contains: Command-line parsing (clap), TUI rendering (crossterm), exit code contracts
-- Depends on: All modules below
-- Used by: Shell environment (user-facing entry point)
-
-**Decision/Control:**
-
-- Purpose: Orchestrate the full command lifecycle (assess → decide → audit → execute)
-- Location: `src/main.rs` functions (`run_shell_wrapper`, `decide_command`)
-- Contains: CI detection, allowlist matching, decision logic (CI policy, snapshot coordination)
-- Depends on: interceptor, config, snapshot, audit, runtime
-- Used by: main() entry point
-
-**Runtime Context:**
-
-- Purpose: Build and cache all dependencies once per CLI invocation
-- Location: `src/runtime.rs`
-- Contains: RuntimeContext struct holding scanner, snapshot registry, audit logger, config
-- Depends on: config, interceptor, snapshot, audit
-- Used by: main.rs for all downstream operations
-
-**Interceptor (Risk Assessment):**
-
-- Purpose: Parse shell commands and assess risk level via pattern matching
-- Location: `src/interceptor/` (mod.rs, scanner.rs, parser.rs, patterns.rs)
-- Contains:
-  - `Parser`: Tokenizes raw command, extracts inline scripts, builds ParsedCommand
-  - `Scanner`: Two-pass scanning (Aho-Corasick quick-scan → regex full-scan)
-  - `PatternSet`: Loads built-in + custom patterns, validates uniqueness
-  - `RiskLevel`: Enum (Safe < Warn < Danger < Block)
-- Depends on: config (for custom patterns), error
-- Used by: runtime, main.rs decision logic
-
-**Snapshot/Rollback:**
-
-- Purpose: Create and manage state snapshots (Git stash, Docker container state)
-- Location: `src/snapshot/` (mod.rs, git.rs, docker.rs)
-- Contains:
-  - `SnapshotPlugin` trait (async): is_applicable, snapshot, rollback
-  - `SnapshotRegistry`: Coordinates all plugins, runs snapshots in parallel
-  - `GitPlugin`: Uses `git stash` for working tree state
-  - `DockerPlugin`: Container state management
-- Depends on: tokio (for async subprocess), error
-- Used by: runtime decision logic to create pre-command snapshots
-
-**Audit (Logging):**
+# Aegis Architecture Scan
 
-- Purpose: Append-only audit trail of all commands, decisions, matches
-- Location: `src/audit/` (mod.rs, logger.rs)
-- Contains:
-  - `AuditEntry`: Command, risk, matched patterns, decision, snapshots, timestamp
-  - `AuditLogger`: Append to JSONL, query by risk/count, optional rotation
-  - `AuditRotationPolicy`: Compression and retention settings
-- Depends on: error, time, flate2 (optional compression)
-- Used by: runtime to log every command assessment
+Last refreshed: 2026-04-12
+Focus: tech+arch
 
-**Config (Policy):**
+## High-level architecture
 
-- Purpose: Load and validate user preferences from TOML files
-- Location: `src/config/` (mod.rs, model.rs, allowlist.rs)
-- Contains:
-  - `AegisConfig`: mode, ci_policy, allowlist, custom_patterns, snapshot settings, audit rotation
-  - `Allowlist`: Regex-based command allowlist with caching
-  - `UserPattern`: User-defined custom patterns
-  - Config search order: project `.aegis.toml` → global `~/.config/aegis/config.toml` → defaults
-- Depends on: error, serde, toml
-- Used by: runtime to initialize all subsystems
+Aegis is a single-crate Rust CLI that sits in front of the user’s real shell and evaluates commands before execution.
 
-**Error Handling:**
+Core flow in `src/main.rs`:
 
-- Purpose: Typed error representation across all modules
-- Location: `src/error.rs`
-- Contains: `AegisError` enum via thiserror (Parse, Snapshot, RollbackConflict, Config, Io)
-- Depends on: thiserror, std::io
-- Used by: All modules for error propagation
+1. Parse CLI args / subcommand.
+2. Build one Tokio runtime for process lifetime.
+3. Load one `RuntimeContext`.
+4. Assess command risk with the interceptor pipeline.
+5. Evaluate policy with `decision.rs`.
+6. If required, create snapshots.
+7. Prompt / block / auto-approve.
+8. Append audit entry.
+9. Execute real shell command or return reserved Aegis exit code.
 
-## Data Flow
+## Runtime dependency graph
 
-**Shell Wrapper Mode (normal interactive use):**
+`RuntimeContext` (`src/runtime.rs`) is the key composition point:
 
-1. `main.rs` calls `run_shell_wrapper(cmd, verbose)`
-2. `RuntimeContext::load(verbose)` → builds config, scanner, snapshot registry, audit logger (all once)
-3. `context.assess(cmd)` → runs interceptor pipeline:
-   - `Parser::parse(cmd)` → extracts executable, args, inline scripts
-   - `Scanner::assess(cmd)` → Aho-Corasick quick-scan (returns false/true), optional full regex scan
-   - Returns `Assessment { risk, matched, command }`
-4. `context.allowlist_match(cmd)` → checks if command matches allowlist rules (exits early if matched and not Block)
-5. `decide_command()` applies business logic:
-   - If CI environment with CiPolicy::Block and non-safe: return Blocked
-   - If allowlisted and not Block: return AutoApproved with snapshots if Danger
-   - If not allowlisted: show TUI confirmation dialog, get user input
-6. `context.create_snapshots(cwd, cmd, verbose)` → async snapshot creation (best-effort, failures logged only)
-7. `context.append_audit_entry()` → appends one AuditEntry to JSONL
-8. `exec_command(cmd)` → uses `CommandExt::exec` (Unix) or Command::status (non-Unix) to replace process
-9. Return exit code (0 on success, 2 Denied, 3 Blocked, 4 Internal Error, or child's exit code)
+- validates config runtime requirements
+- builds scanner from built-in + custom patterns
+- compiles structured allowlist
+- creates snapshot registry from config
+- captures current user
+- configures audit logger
+- exposes one persistent Tokio handle
 
-**Audit Query Mode:**
+This is a good architectural shift away from scattered defaults/singletons.
 
-1. `main.rs` calls `AuditLogger::query(last, risk_filter)` → reads JSONL, filters, returns Vec<AuditEntry>
-2. Format output as text, JSON, or NDJSON
-3. Print and exit 0
+## Interception pipeline
 
-**Config Init Mode:**
+### Parser / normalization
 
-1. `main.rs` calls `Config::init_in(cwd)` → writes `.aegis.toml` with template
-2. Print path and exit 0
+`src/interceptor/parser.rs` handles:
 
-**State Management:**
+- tokenization with quotes/escaping
+- logical command segmentation
+- nested shell unwrapping (`bash -c`, `sh -c`, env-prefixed shell calls)
+- heredocs
+- inline interpreters (`python -c`, `node -e`, etc.)
+- command substitution / subshell extraction
+- top-level pipeline extraction
 
-- **Config state**: Loaded once per CLI invocation via `RuntimeContext::load()`. Immutable after that.
-- **Scanner state**: Built-in patterns cached globally in `LazyLock<BUILTIN_SCANNER>`. Custom patterns cached by content hash in `LazyLock<Mutex<HashMap>>`.
-- **Audit state**: Append-only; never modified. Reads/writes are synchronized via file locking (OS-level).
-- **Snapshot state**: Created on-demand per dangerous command; identified by opaque string (e.g., git stash hash).
+### Scanner
 
-## Key Abstractions
+`src/interceptor/scanner.rs` implements:
 
-**RiskLevel (Enum):**
+- Aho-Corasick quick prefilter
+- regex full-scan for actual matches
+- recursive nested-payload scanning
+- semantic pipeline checks (`PIPE-*`)
+- uncertain WARN fallback for:
+  - oversized command input
+  - oversized inline scripts
+  - recursive-depth overflow
 
-- Purpose: Ordered severity classification (Safe < Warn < Danger < Block)
-- Examples: `RiskLevel::Safe`, `RiskLevel::Danger`
-- Pattern: `#[non_exhaustive]` for forward compatibility
+### Pattern model
 
-**Pattern:**
+`src/interceptor/patterns.rs` merges:
 
-- Purpose: Represents a single security pattern (builtin or user-defined)
-- Location: `src/interceptor/patterns.rs`
-- Fields: id, category, risk, pattern (regex), description, safe_alt, source
-- Pattern: Uses `Cow<'static, str>` for zero-copy built-in + owned user-defined strings
+1. built-in embedded TOML patterns
+2. user `custom_patterns`
 
-**Assessment:**
+It enforces:
 
-- Purpose: Result of assessing a single command through the scanner pipeline
-- Location: `src/interceptor/scanner.rs`
-- Fields: risk (highest matched level), matched (Vec<MatchResult>), command (ParsedCommand)
-- Pattern: Immutable after construction; passed through decision logic unchanged
+- duplicate-id rejection
+- empty-field rejection
+- pattern source tracking (`builtin` / `custom`)
 
-**ParsedCommand:**
+## Policy architecture
 
-- Purpose: Parsed representation of a shell command
-- Location: `src/interceptor/parser.rs`
-- Fields: executable, args, inline_scripts, raw (original)
-- Pattern: Extracted once during assess phase; used for pattern matching and audit logging
+`src/decision.rs` is a side-effect-free policy kernel.
 
-**AuditEntry:**
+Inputs:
 
-- Purpose: Single immutable record of a command + decision
-- Location: `src/audit/logger.rs`
-- Fields: sequence, timestamp, command, risk, matched_patterns, decision, snapshots, allowlist_pattern
-- Pattern: Serialized as one line of JSONL; never modified after creation
+- scanner assessment
+- mode (`Protect`, `Audit`, `Strict`)
+- CI detection
+- allowlist match state
+- snapshot policy / override flags
+- transport (`Shell`, `Watch`, `Evaluation`)
 
-**SnapshotPlugin (Trait):**
+Outputs:
 
-- Purpose: Plugin interface for state snapshots
-- Location: `src/snapshot/mod.rs`
-- Methods: name(), is_applicable(), snapshot() (async), rollback() (async)
-- Pattern: `#[async_trait]` for vtable-compatible async functions
+- `PolicyAction` (`AutoApprove`, `Prompt`, `Block`)
+- rationale
+- snapshot requirement
+- whether allowlist materially changed the outcome
 
-**Decision (Enum):**
+This is clean and release-friendly: policy is no longer encoded only in UI/main branching.
 
-- Purpose: Final user/system choice on whether to run the command
-- Location: `src/audit/logger.rs`
-- Variants: Safe (auto-approved), Warn (approved), Danger (approved), Denied (user said no), Blocked (hard-blocked), AutoApproved (allowlist or CI)
-- Pattern: Deterministic given Assessment + Config + CI environment
+## Snapshot architecture
 
-## Entry Points
+`src/snapshot/mod.rs` provides:
 
-**CLI (Shell Wrapper Mode):**
+- `SnapshotPlugin` trait
+- `SnapshotRegistry`
+- config-aware plugin enablement
+- rollback registry independent from snapshot-creation flags
 
-- Location: `src/main.rs` main() → run_shell_wrapper()
-- Triggers: User runs `aegis -c "command"` or as `$SHELL` proxy
-- Responsibilities: Parse args, load runtime, assess, decide, audit, execute
+Built-in plugins:
 
-**CLI (Audit Subcommand):**
+- `GitPlugin`
+- `DockerPlugin`
 
-- Location: `src/main.rs` main() → Commands::Audit handler
-- Triggers: User runs `aegis audit [--last N] [--risk {safe|warn|danger|block}] [--format {text|json|ndjson}]`
-- Responsibilities: Query audit log, format, print
+Important accuracy note:
 
-**CLI (Config Subcommand):**
+- snapshot creation is best-effort
+- plugin failure logs warnings and does not abort overall decision flow
+- rollback exists and is exposed publicly via `aegis rollback <snapshot-id>`
 
-- Location: `src/main.rs` main() → Commands::Config handler
-- Triggers: User runs `aegis config init` or `aegis config show`
-- Responsibilities: Initialize template or print active config
+## Audit architecture
 
-**Library API:**
+`src/audit/logger.rs` is one of the more mature subsystems:
 
-- Location: `src/lib.rs`
-- Exports: `pub fn assess(cmd)`, `pub fn assess_with_custom_patterns(cmd, patterns)`, `pub fn scanner_for(patterns)`
-- Used by: External tools, tests, integration harnesses
+- append-only JSONL log
+- RFC 3339 timestamps
+- per-process sequence number
+- optional rotation
+- optional gzip archives
+- optional tamper-evident SHA-256 chain
+- query / summary / integrity verification
+- companion lock file for multi-process safety
 
-## Error Handling
+Integration evidence is strong here:
 
-**Strategy:** Typed errors via thiserror; fail-closed defaults
+- dedicated concurrency tests
+- dedicated integrity tests
+- watch-mode audit context support
 
-**Patterns:**
+## Additional product surfaces
 
-- **Config load failure** → falls back to `Config::default()` (safe defaults: Protect mode, Block CI policy)
-- **Scanner init failure** → RuntimeContext.assess() returns `RiskLevel::Warn` (requires confirmation for every command)
-- **Snapshot creation failure** → logged as warning; empty Vec returned; command still proceeds
-- **Audit append failure** → logged as warning (if verbose); does not affect command execution
-- **Pattern compilation error** → panics at startup (programming error; fail-fast)
-- **Invalid regex in user pattern** → scanner gracefully skips that pattern (logged, not fatal)
-- **Git stash pop conflict** → detailed error with recovery commands; stash preserved
+### Watch mode
 
-## Cross-Cutting Concerns
+`src/watch.rs` adds a long-lived automation surface:
 
-**Logging:** Via `tracing` crate. Info/warn/error events used for:
+- NDJSON in
+- NDJSON out
+- per-frame execution
+- `/dev/tty` confirmation path
+- watch-specific audit metadata
 
-- Snapshot operations (git stash success, docker state saved)
-- Config loading (missing files, defaults applied)
-- Pattern matching details (when verbose mode enabled)
-- Audit rotation (file size thresholds, compression)
+### Evaluation-only JSON mode
 
-**Validation:**
+`src/policy_output.rs` exposes a machine-readable planning/evaluation contract without execution.
 
-- Config TOML parsing uses `serde` with `#[serde(deny_unknown_fields)]` for strictness
-- Pattern ID uniqueness enforced at PatternSet construction
-- Custom patterns validated for duplicate IDs before being added to scanner
+## Architecture strengths for first public release
 
-**Authentication:** None built-in. Audit log access depends on filesystem permissions (~/.aegis/audit.jsonl).
+- Clear module split by concern.
+- Thin-enough `main.rs` orchestration relative to earlier ADR goals.
+- RuntimeContext centralizes config-bound dependencies.
+- Policy is explicit and testable.
+- Audit subsystem has strong operational depth.
+- Scanner/parser/security regression coverage is substantial.
+- CI and release automation are already part of the architecture, not an afterthought.
 
-**CI Detection:**
+## Architecture-level risks / blockers for “stable security tool” positioning
 
-- Reads environment variables (AEGIS_CI, GITHUB_ACTIONS, GITLAB_CI, CIRCLECI, BUILDKITE, TRAVIS, JENKINS_URL, TF_BUILD)
-- Explicit AEGIS_CI=1 override takes priority
-- Applied per command in decide_command() to enforce CiPolicy::Block (no interactive TTY available)
+- Documentation architecture is not yet aligned with runtime architecture:
+  - README still states outdated prompt defaults.
+  - README links missing `AEGIS.md`.
+  - ADR-010 says README documents the security model, but that section is absent.
+- Fuzzing is architecturally declared as required before v1.0, but repository contents do not include fuzz targets.
+- Installer architecture does not yet match release architecture:
+  - release workflow publishes checksums
+  - installer does not verify them
+- Versioning/messaging mismatch:
+  - code/package says `1.0.0`
+  - repository conventions/TODO still say important production gates remain open
+- `tracing_subscriber` is present in dependencies but not wired in runtime, leaving observability partially unfinished.
 
----
+## Bottom line from architecture view
 
-_Architecture analysis: 2026-03-27_
+Architecture quality is good enough for a public MVP and arguably for a first tagged release.  
+It is not yet honest to present the project as a fully mature or production-grade security boundary until documentation, fuzzing, install verification, and release-positioning drift are fixed.

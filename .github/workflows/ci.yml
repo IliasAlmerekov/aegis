@@ -14,7 +14,7 @@ env:
   RUST_BACKTRACE: 1
   RUST_TOOLCHAIN: 1.94.0
   CARGO_AUDIT_VERSION: 0.22.1
-  CARGO_DENY_VERSION: 0.19.1
+  CARGO_DENY_VERSION: 0.18.2
 
 jobs:
   quality:
@@ -94,7 +94,7 @@ jobs:
           fi
 
       - name: cargo deny check
-        run: cargo deny check
+        run: cargo deny check bans licenses sources
 
   build:
     name: Release build (${{ matrix.os }})

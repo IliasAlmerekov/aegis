@@ -44,6 +44,37 @@ agent → $SHELL (aegis) → assess
 
 ---
 
+## Security model
+
+Aegis is a **heuristic command guardrail** for common destructive shell commands.
+
+- It is **not a sandbox**
+- It is **not a complete security boundary**
+- Approved commands run with **your normal user permissions**
+- Detection is based on the **raw command text**, not full shell execution tracing
+- Snapshots and rollback are **best-effort** when configured
+
+Aegis is designed to reduce accidental damage from direct, recognisable commands. It should not be treated as protection against a determined bypass.
+
+---
+
+## Limitations
+
+Aegis may not catch:
+
+- obfuscated or encoded shell input
+- runtime-assembled commands such as `eval "$(some_function)"`
+- indirect execution where one command writes a script and a later command runs it
+- alias/function expansion that changes what a command does after parsing
+
+It also does not:
+
+- restrict filesystem, network, or syscall access after you approve a command
+- guarantee lossless snapshots or perfect rollback fidelity
+- support Windows; current support is Linux and macOS only
+
+---
+
 ## Track all agent commands (global setup)
 
 The installer automatically sets `$SHELL` to the Aegis binary and adds a managed block to your `~/.bashrc` / `~/.zshrc`. Open a new terminal and Aegis is active.
@@ -116,8 +147,7 @@ Patterns are Rust regex strings. Use `(?i)` for case-insensitive matching.
 
 ## Built-in pattern categories
 
-60 patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.  
-Full pattern table: [AEGIS.md](AEGIS.md).
+60 patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.
 
 ---
 
