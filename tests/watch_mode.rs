@@ -132,7 +132,6 @@ fn missing_cmd_field_emits_error_frame() {
 }
 
 #[test]
-#[ignore = "requires AEGIS_AUDIT_PATH env var support in AuditLogger"]
 fn watch_mode_audit_entry_sets_transport_watch() {
     use std::fs;
     use std::io::Write;
@@ -160,13 +159,16 @@ fn watch_mode_audit_entry_sets_transport_watch() {
     drop(child.stdin.take());
     let _ = child.wait_with_output().unwrap();
 
-    if audit_path.exists() {
-        let contents = fs::read_to_string(&audit_path).unwrap();
-        let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
-        assert_eq!(entry["transport"], "watch");
-        assert_eq!(entry["source"], "test-agent");
-        assert_eq!(entry["id"], "a1");
-    }
+    assert!(
+        audit_path.exists(),
+        "watch mode should honor AEGIS_AUDIT_PATH and create the audit log there"
+    );
+
+    let contents = fs::read_to_string(&audit_path).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(entry["transport"], "watch");
+    assert_eq!(entry["source"], "test-agent");
+    assert_eq!(entry["id"], "a1");
 }
 
 #[test]

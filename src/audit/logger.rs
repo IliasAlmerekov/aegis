@@ -1044,6 +1044,10 @@ impl AuditLogger {
 }
 
 fn default_audit_path() -> PathBuf {
+    if let Some(path) = env::var_os("AEGIS_AUDIT_PATH").filter(|value| !value.is_empty()) {
+        return PathBuf::from(path);
+    }
+
     let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
     PathBuf::from(home).join(".aegis").join("audit.jsonl")
 }

@@ -4,8 +4,9 @@
 
 ### tests/watch_mode.rs
 - File / test: `watch_mode_audit_entry_sets_transport_watch`
-- Evidence: test is marked `#[ignore]` and explicitly says it requires `AEGIS_AUDIT_PATH` support in `AuditLogger`
+- Evidence: test was previously ignored because `AuditLogger` lacked `AEGIS_AUDIT_PATH` support
 - Decision: Fix now
+- Result: fixed by honoring `AEGIS_AUDIT_PATH` in `src/audit/logger.rs` and re-enabling the test
 
 ### tests/audit_integrity.rs
 - File / test: entire file
