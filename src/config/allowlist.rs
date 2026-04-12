@@ -244,11 +244,23 @@ impl CompiledAllowlistRule {
     }
 }
 
+fn validate_scope(rule: &AllowlistRule) -> Result<()> {
+    if has_scope(rule.cwd.as_deref()) || has_scope(rule.user.as_deref()) {
+        Ok(())
+    } else {
+        Err(AegisError::Config(
+            "allowlist rule must declare cwd or user scope".to_string(),
+        ))
+    }
+}
+
 fn compile_rule(rule: LayeredAllowlistRule) -> Result<CompiledAllowlistRule> {
     let pattern = required_field("pattern", &rule.rule.pattern)?;
     let reason = required_field("reason", &rule.rule.reason)?;
     let cwd = optional_scope_field("cwd", rule.rule.cwd.as_deref())?;
     let user = optional_scope_field("user", rule.rule.user.as_deref())?;
+
+    validate_scope(&rule.rule)?;
 
     let regex = Regex::new(&glob_to_regex(pattern)).map_err(|error| {
         AegisError::Config(format!(
@@ -441,7 +453,7 @@ mod tests {
     fn expired_rule_is_not_effective_for_matching() {
         let allowlist = Allowlist::new(&[AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
-            cwd: None,
+            cwd: Some("/srv/infra".to_string()),
             user: None,
             expires_at: Some(now_utc() - Duration::minutes(1)),
             reason: "expired teardown".to_string(),
@@ -469,10 +481,51 @@ mod tests {
         assert!(warnings.iter().any(|w| w.code == "broad_pattern"));
     }
 
+    #[test]
+    fn unscoped_rule_is_rejected_by_allowlist_compilation() {
+        let err = Allowlist::new(&[AllowlistRule {
+            pattern: "terraform destroy *".to_string(),
+            cwd: None,
+            user: None,
+            expires_at: None,
+            reason: "too broad".to_string(),
+        }])
+        .expect_err("unscoped allowlist rule must be rejected");
+
+        assert!(err.to_string().contains("must declare cwd or user scope"));
+    }
+
+    #[test]
+    fn cwd_scoped_rule_still_compiles() {
+        let allowlist = Allowlist::new(&[AllowlistRule {
+            pattern: "terraform destroy -target=module.test.*".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped teardown".to_string(),
+        }]);
+
+        assert!(allowlist.is_ok());
+    }
+
+    #[test]
+    fn broad_pattern_warning_still_exists_for_scoped_rule() {
+        let warnings = analyze_allowlist_rule(&AllowlistRule {
+            pattern: "terraform destroy *".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped but broad".to_string(),
+        });
+
+        assert!(!warnings.iter().any(|w| w.code == "missing_scope"));
+        assert!(warnings.iter().any(|w| w.code == "broad_pattern"));
+    }
+
     fn rule(pattern: &str, reason: &str) -> AllowlistRule {
         AllowlistRule {
             pattern: pattern.to_string(),
-            cwd: None,
+            cwd: Some("/srv/infra".to_string()),
             user: None,
             expires_at: None,
             reason: reason.to_string(),

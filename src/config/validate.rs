@@ -417,7 +417,13 @@ mod tests {
         };
 
         let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
-        assert!(report.errors.is_empty());
+        // After scope enforcement, an unscoped rule is a compile-time error.
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.code == "invalid_allowlist_rule")
+        );
         assert!(report.warnings.iter().any(|w| w.code == "missing_scope"));
     }
 

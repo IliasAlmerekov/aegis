@@ -789,11 +789,13 @@ auto_snapshot_docker = true
 
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
+cwd = "/srv/infra"
 reason = "global terraform teardown"
 expires_at = "2030-01-01T00:00:00Z"
 
 [[allowlist]]
 pattern = "docker system prune --volumes"
+cwd = "/srv/infra"
 reason = "global cleanup"
 expires_at = "2030-01-01T00:00:00Z"
 
@@ -845,6 +847,7 @@ auto_snapshot_git = false
 
 [[allowlist]]
 pattern = "global-safe-cmd"
+cwd = "/srv/infra"
 reason = "global command"
 expires_at = "2030-01-01T00:00:00Z"
 
@@ -864,6 +867,7 @@ description = "Global cloud nuke rule"
 mode = "Audit"
 [[allowlist]]
 pattern = "project-safe-cmd"
+cwd = "/srv/infra"
 reason = "project command"
 expires_at = "2030-01-01T00:00:00Z"
 

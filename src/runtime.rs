@@ -335,7 +335,7 @@ mod tests {
         config.allowlist_override_level = AllowlistOverrideLevel::Danger;
         config.allowlist = vec![AllowlistRule {
             pattern: "echo trusted".to_string(),
-            cwd: None,
+            cwd: Some(".".to_string()),
             user: None,
             expires_at: None,
             reason: "runtime test".to_string(),
@@ -519,24 +519,31 @@ mod tests {
         let global_dir = home.path().join(".config/aegis");
         fs::create_dir_all(&global_dir).unwrap();
 
+        let workspace_cwd = workspace.path().to_string_lossy();
         fs::write(
             global_dir.join("config.toml"),
-            r#"
+            format!(
+                r#"
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
+cwd = "{workspace_cwd}"
 reason = "global teardown"
 expires_at = "2030-01-01T00:00:00Z"
-"#,
+"#
+            ),
         )
         .unwrap();
         fs::write(
             workspace.path().join(".aegis.toml"),
-            r#"
+            format!(
+                r#"
 [[allowlist]]
 pattern = "terraform destroy -target=module.test.*"
+cwd = "{workspace_cwd}"
 reason = "project teardown"
 expires_at = "2030-01-01T00:00:00Z"
-"#,
+"#
+            ),
         )
         .unwrap();
 
