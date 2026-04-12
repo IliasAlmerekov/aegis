@@ -9,6 +9,12 @@
 
 ---
 
+**[Platform support](docs/platform-support.md)** — Aegis is currently supported on Unix-like systems only (Linux and macOS). Windows, `PowerShell`, and `cmd.exe` are explicitly out of scope until a dedicated strategy exists.
+
+**[Config schema](docs/config-schema.md)** — Config files are versioned. Legacy allowlist syntax is normalized forward, and future schema changes must ship with an explicit migration story.
+
+---
+
 ## Why Aegis exists
 
 AI coding agents are fast and capable. They are also capable of destroying production data in seconds. Any agent that can run shell commands can run destructive shell commands. Aegis puts a human back in the loop — with zero friction for safe commands and a mandatory confirmation gate for everything else.
@@ -21,7 +27,12 @@ AI coding agents are fast and capable. They are also capable of destroying produ
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-The installer detects your platform (`linux`/`macos`, `x86_64`/`aarch64`), downloads the matching pre-built binary from GitHub Releases, and installs it to `/usr/local/bin/aegis`.
+The installer detects your platform (`linux`/`macos`, `x86_64`/`aarch64`), downloads the matching pre-built binary from GitHub Releases, installs it to `/usr/local/bin/aegis`, and adds an Aegis-managed shell-wrapper block to your shell rc file (`~/.bashrc` or `~/.zshrc`). That block pins:
+
+- `AEGIS_REAL_SHELL` to your current real shell
+- `SHELL` to the installed `aegis` binary
+
+This keeps shell-wrapper setup deterministic and avoids accidental recursive wrapping on reinstall.
 
 Or install from source with Cargo:
 
@@ -55,15 +66,9 @@ Five steps from zero to your first interception.
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-**2. Register Aegis as your shell**
+**2. Open a new shell**
 
-```bash
-# bash
-echo 'export SHELL=$(which aegis)' >> ~/.bashrc && source ~/.bashrc
-
-# zsh
-echo 'export SHELL=$(which aegis)' >> ~/.zshrc && source ~/.zshrc
-```
+The installer already wrote the managed shell-wrapper block for you. Open a new terminal, or source the rc file that the installer printed.
 
 **3. Configure Claude Code (if you use it)**
 
@@ -85,6 +90,14 @@ aegis -c 'echo hello'
 ```
 
 Aegis only interrupts you when it matters.
+
+**Uninstall / rollback**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
+```
+
+This removes the managed shell-wrapper block and deletes the installed `aegis` binary.
 
 ---
 
@@ -157,6 +170,7 @@ Aegis merges config from all available sources, in priority order (highest first
 
 Project values override global values; global values override defaults. Vec fields (`custom_patterns`, `allowlist`) are concatenated — global entries first, then project entries.
 If any discovered config file is invalid, Aegis fails closed with exit code `4` and tells you which file to fix or remove.
+`config_version` documents the schema version; if it is omitted, Aegis treats the file as a legacy pre-version config and normalizes it forward when possible.
 
 Generate a starter config:
 
@@ -168,6 +182,8 @@ aegis config show      # prints the active config (merged from all sources)
 ### Full reference
 
 ```toml
+config_version = 1
+
 # Operating mode.
 #   Protect  - prompt on Warn/Danger, block on Block (default)
 #   Audit    - never prompt or block; always log the outcome

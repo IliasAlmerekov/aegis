@@ -14,8 +14,11 @@ use crate::interceptor::patterns::Category;
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
 const GLOBAL_CONFIG_FILE: &str = "config.toml";
+pub const CURRENT_CONFIG_VERSION: u32 = 1;
+const LEGACY_ALLOWLIST_REASON: &str = "migrated from legacy allowlist entry";
 
 const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
+config_version = 1 # Schema version. Omit only when loading a pre-version legacy config for migration.
 mode = "Protect" # Protect prompts on Warn/Danger, Audit is non-blocking audit-only, Strict blocks non-safe and indirect execution forms by default.
 
 custom_patterns = [] # Extra user-defined patterns loaded for this project.
@@ -232,10 +235,16 @@ pub struct AllowlistRule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
+    #[serde(
+        default = "default_config_version",
+        deserialize_with = "deserialize_config_version"
+    )]
+    pub config_version: u32,
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
     #[serde(skip)]
     pub(crate) custom_pattern_layers: Vec<AllowlistSourceLayer>,
+    #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
     pub(crate) allowlist_layers: Vec<AllowlistSourceLayer>,
@@ -292,6 +301,7 @@ impl AegisConfig {
 
     pub fn defaults() -> Self {
         Self {
+            config_version: CURRENT_CONFIG_VERSION,
             mode: Mode::Protect,
             custom_patterns: Vec::new(),
             custom_pattern_layers: Vec::new(),
@@ -429,6 +439,7 @@ impl AegisConfig {
         allowlist_layers.extend(std::iter::repeat_n(allowlist_layer, allowlist_count));
 
         Self {
+            config_version: overlay.config_version.unwrap_or(base.config_version),
             mode: overlay.mode.unwrap_or(base.mode),
             custom_patterns,
             custom_pattern_layers,
@@ -544,8 +555,11 @@ impl AegisConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct PartialConfig {
+    #[serde(default, deserialize_with = "deserialize_optional_config_version")]
+    config_version: Option<u32>,
     mode: Option<Mode>,
     custom_patterns: Vec<UserPattern>,
+    #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
     allowlist: Vec<AllowlistRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
     snapshot_policy: Option<SnapshotPolicy>,
@@ -572,6 +586,70 @@ impl PartialConfig {
         toml::from_str(&contents).map_err(|error| {
             AegisError::Config(format!("failed to parse {}: {error}", path.display()))
         })
+    }
+}
+
+fn deserialize_allowlist_rules<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<AllowlistRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AllowlistField {
+        Structured(Vec<AllowlistRule>),
+        Legacy(Vec<String>),
+    }
+
+    let field = Option::<AllowlistField>::deserialize(deserializer)?;
+    Ok(match field {
+        None => Vec::new(),
+        Some(AllowlistField::Structured(rules)) => rules,
+        Some(AllowlistField::Legacy(patterns)) => patterns
+            .into_iter()
+            .map(|pattern| AllowlistRule {
+                pattern,
+                cwd: None,
+                user: None,
+                expires_at: None,
+                reason: LEGACY_ALLOWLIST_REASON.to_string(),
+            })
+            .collect(),
+    })
+}
+
+fn default_config_version() -> u32 {
+    CURRENT_CONFIG_VERSION
+}
+
+fn deserialize_config_version<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let version = u32::deserialize(deserializer)?;
+    validate_config_version(version).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_config_version<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<u32>::deserialize(deserializer)?
+        .map(validate_config_version)
+        .transpose()
+        .map_err(serde::de::Error::custom)
+}
+
+fn validate_config_version(version: u32) -> std::result::Result<u32, String> {
+    if version == CURRENT_CONFIG_VERSION {
+        Ok(version)
+    } else {
+        Err(format!(
+            "unsupported config_version {version}; supported version is {CURRENT_CONFIG_VERSION}"
+        ))
     }
 }
 
@@ -609,10 +687,21 @@ reason = "ephemeral test teardown"
     }
 
     #[test]
-    fn legacy_string_allowlist_is_rejected() {
-        let err =
-            toml::from_str::<AegisConfig>(r#"allowlist = ["terraform destroy *"]"#).unwrap_err();
-        assert!(err.to_string().contains("invalid type"));
+    fn legacy_string_allowlist_is_migrated_to_structured_rules() {
+        let config: AegisConfig = toml::from_str(r#"allowlist = ["terraform destroy *"]"#).unwrap();
+
+        assert_eq!(config.allowlist.len(), 1);
+        assert_eq!(config.allowlist[0].pattern, "terraform destroy *");
+        assert_eq!(
+            config.allowlist[0].reason,
+            "migrated from legacy allowlist entry"
+        );
+    }
+
+    #[test]
+    fn unsupported_config_version_is_rejected() {
+        let err = toml::from_str::<AegisConfig>("config_version = 99").unwrap_err();
+        assert!(err.to_string().contains("unsupported config_version"));
     }
 
     #[test]

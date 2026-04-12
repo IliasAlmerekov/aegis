@@ -1608,6 +1608,7 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(output.status.success());
 
     let contents = fs::read_to_string(workspace.path().join(".aegis.toml")).unwrap();
+    assert!(contents.contains("config_version = 1"));
     assert!(contents.contains("Protect prompts on Warn/Danger"));
     assert!(contents.contains("Audit is non-blocking audit-only"));
     assert!(contents.contains("Strict blocks non-safe and indirect execution forms by default"));
@@ -2273,7 +2274,7 @@ reason = "ephemeral test teardown"
 }
 
 #[test]
-fn legacy_allowlist_schema_fails_config_load() {
+fn legacy_allowlist_schema_is_migrated_by_config_show() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
@@ -2292,13 +2293,18 @@ allowlist = ["terraform destroy *"]
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(4));
-    assert!(output.stdout.is_empty(), "config load must fail closed");
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "legacy config should migrate cleanly"
+    );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("error: failed to load config"));
-    assert!(stderr.contains(&workspace.path().join(".aegis.toml").display().to_string()));
-    assert!(stderr.contains("invalid type"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config_version = 1"));
+    assert!(stdout.contains("[[allowlist]]"));
+    assert!(stdout.contains("pattern = \"terraform destroy *\""));
+    assert!(stdout.contains("reason = \"migrated from legacy allowlist entry\""));
+    assert!(!stdout.contains("allowlist = ["));
 }
 
 /// Audit mode must never block or prompt — even Block-level commands in CI
