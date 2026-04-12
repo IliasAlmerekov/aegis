@@ -8,9 +8,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
-use crate::decision::{
-    BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
-    PolicyConfigFlags, PolicyExecutionContext, PolicyInput, evaluate_policy,
+use crate::decision::{BlockReason, ExecutionTransport};
+use crate::planning::{
+    CwdState, ExecutionDisposition, InterceptionPlan, PlanningOutcome, PreparedPlanner,
+    SetupFailureKind, SetupFailurePlan, prepare_and_plan,
 };
 use crate::runtime::RuntimeContext;
 use crate::ui::confirm::{
@@ -205,7 +206,12 @@ pub fn emit_frame(frame: &OutputFrame) -> std::io::Result<()> {
 ///
 /// Must be called with a multi-thread tokio runtime so that
 /// `tokio::task::block_in_place` is available for TUI dialog rendering.
-pub async fn run(context: &RuntimeContext) -> i32 {
+pub async fn run(prepared: &PreparedPlanner) -> i32 {
+    if let PreparedPlanner::SetupFailure(plan) = prepared {
+        report_watch_setup_failure(plan);
+        return 4;
+    }
+
     let mut reader = TokioBufReader::new(tokio::io::stdin());
 
     loop {
@@ -231,14 +237,14 @@ pub async fn run(context: &RuntimeContext) -> i32 {
                 if line.trim().is_empty() {
                     continue; // skip blank separator lines
                 }
-                process_frame(line, context).await;
+                process_frame(line, prepared).await;
             }
         }
     }
 }
 
 /// Process a single input line as a watch-mode frame.
-async fn process_frame(line: String, context: &RuntimeContext) {
+async fn process_frame(line: String, prepared: &PreparedPlanner) {
     // ── 1. Parse JSON ─────────────────────────────────────────────────────────
     let frame: InputFrame = match serde_json::from_str(&line) {
         Ok(f) => f,
@@ -274,9 +280,9 @@ async fn process_frame(line: String, context: &RuntimeContext) {
     }
 
     // ── 3. Validate and resolve cwd ───────────────────────────────────────────
-    let resolved_cwd = if let Some(ref cwd_str) = frame.cwd {
-        let p = PathBuf::from(cwd_str);
-        if !p.is_dir() {
+    let cwd_state = if let Some(ref cwd_str) = frame.cwd {
+        let path = PathBuf::from(cwd_str);
+        if !path.is_dir() {
             if emit_frame(&OutputFrame::Error {
                 id: id.clone(),
                 exit_code: 4,
@@ -288,61 +294,55 @@ async fn process_frame(line: String, context: &RuntimeContext) {
             }
             return;
         }
-        Some(p)
+        CwdState::Resolved(path)
     } else {
-        std::env::current_dir().ok()
+        match std::env::current_dir() {
+            Ok(path) => CwdState::Resolved(path),
+            Err(_) => CwdState::Unavailable,
+        }
     };
-    let cwd = resolved_cwd.clone().unwrap_or_else(|| PathBuf::from("."));
-
-    // ── 4. Assess ─────────────────────────────────────────────────────────────
-    let assessment = context.assess(&frame.cmd);
-    let allowlist_match = context.allowlist_match_for_command(&frame.cmd, resolved_cwd.as_deref());
-
-    // ── 5. Evaluate policy ────────────────────────────────────────────────────
-    let config = context.config();
-    let applicable_snapshot_plugins = context.applicable_snapshot_plugins(&cwd);
-    let decision = evaluate_policy(PolicyInput {
-        assessment: &assessment,
-        mode: config.mode,
-        ci_state: PolicyCiState { detected: false },
-        allowlist: PolicyAllowlistResult {
-            matched: allowlist_match.is_some(),
-        },
-        config_flags: PolicyConfigFlags {
-            ci_policy: config.ci_policy,
-            allowlist_override_level: config.strict_allowlist_override,
-            snapshot_policy: config.snapshot_policy,
-        },
-        execution_context: PolicyExecutionContext {
+    let outcome = prepare_and_plan(
+        prepared,
+        crate::planning::PlanningRequest {
+            command: &frame.cmd,
+            cwd_state,
             transport: ExecutionTransport::Watch,
-            applicable_snapshot_plugins: applicable_snapshot_plugins.as_slice(),
+            ci_detected: false,
         },
-    });
+    );
 
-    // ── 6. Snapshots ──────────────────────────────────────────────────────────
-    let snapshots = if decision.snapshots_required {
-        context.create_snapshots_async(&cwd, &frame.cmd).await
-    } else {
-        Vec::new()
-    };
+    match outcome {
+        PlanningOutcome::SetupFailure(plan) => {
+            report_watch_setup_failure(&plan);
+            std::process::exit(4);
+        }
+        PlanningOutcome::Planned(plan) => run_watch_plan(frame, prepared, plan).await,
+    }
+}
 
-    // ── 7. Dialog / decision (blocking — uses /dev/tty) ──────────────────────
-    let runtime_decision = match decision.decision {
-        PolicyAction::AutoApprove => Decision::AutoApproved,
-        PolicyAction::Prompt => {
-            let approved =
-                tokio::task::block_in_place(|| show_confirmation_via_tty(&assessment, &snapshots));
+async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: InterceptionPlan) {
+    let id = frame.id.clone();
+    let context = runtime_context(prepared);
+    let cwd = watch_execution_cwd(plan.decision_context().cwd_state());
+    let snapshots = create_watch_snapshots(context, &plan, cwd.as_path()).await;
+
+    let runtime_decision = match plan.execution_disposition() {
+        ExecutionDisposition::Execute => Decision::AutoApproved,
+        ExecutionDisposition::RequiresApproval => {
+            let approved = tokio::task::block_in_place(|| {
+                show_confirmation_via_tty(plan.assessment(), &snapshots)
+            });
             if approved {
                 Decision::Approved
             } else {
                 Decision::Denied
             }
         }
-        PolicyAction::Block => {
-            tokio::task::block_in_place(|| match decision.block_reason() {
-                Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(&assessment),
+        ExecutionDisposition::Block => {
+            tokio::task::block_in_place(|| match plan.policy_decision().block_reason() {
+                Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(plan.assessment()),
                 Some(BlockReason::StrictPolicy) => show_policy_block_via_tty(
-                    &assessment,
+                    plan.assessment(),
                     "strict mode blocks non-safe commands unless the command \
                      matches the allowlist and the override level permits it",
                 ),
@@ -352,13 +352,12 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         }
     };
 
-    // ── 8. Audit ──────────────────────────────────────────────────────────────
     context.append_watch_audit_entry(
-        &assessment,
+        plan.assessment(),
         runtime_decision,
         &snapshots,
-        allowlist_match.as_ref(),
-        decision.allowlist_effective,
+        plan.decision_context().allowlist_match(),
+        plan.policy_decision().allowlist_effective,
         frame.source.clone(),
         frame.cwd.clone(),
         id.clone(),
@@ -366,7 +365,6 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         true,
     );
 
-    // ── 9. Emit result or execute ─────────────────────────────────────────────
     match runtime_decision {
         Decision::Denied => {
             if emit_frame(&OutputFrame::Result {
@@ -393,6 +391,58 @@ async fn process_frame(line: String, context: &RuntimeContext) {
         Decision::Approved | Decision::AutoApproved => {
             execute_and_emit(&frame.cmd, &cwd, id).await;
         }
+    }
+}
+
+fn runtime_context(prepared: &PreparedPlanner) -> &RuntimeContext {
+    match prepared {
+        PreparedPlanner::Ready(context) => context,
+        PreparedPlanner::SetupFailure(_) => unreachable!("watch run handles setup failure first"),
+    }
+}
+
+fn watch_execution_cwd(cwd_state: &CwdState) -> PathBuf {
+    match cwd_state {
+        CwdState::Resolved(path) => path.clone(),
+        CwdState::Unavailable => PathBuf::from("."),
+    }
+}
+
+async fn create_watch_snapshots(
+    context: &RuntimeContext,
+    plan: &InterceptionPlan,
+    cwd: &std::path::Path,
+) -> Vec<crate::snapshot::SnapshotRecord> {
+    let applicable_snapshot_plugins = watch_snapshot_plugins(context, plan);
+    if applicable_snapshot_plugins.is_empty() {
+        return Vec::new();
+    }
+
+    context
+        .create_snapshots_async(cwd, &plan.assessment().command.raw)
+        .await
+}
+
+fn watch_snapshot_plugins(context: &RuntimeContext, plan: &InterceptionPlan) -> Vec<&'static str> {
+    match plan.snapshot_plan() {
+        crate::planning::SnapshotPlan::Required { applicable_plugins } => applicable_plugins,
+        crate::planning::SnapshotPlan::NotRequired => {
+            if matches!(plan.decision_context().cwd_state(), CwdState::Unavailable)
+                && plan.assessment().risk == crate::interceptor::RiskLevel::Danger
+                && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
+            {
+                context.applicable_snapshot_plugins(std::path::Path::new("."))
+            } else {
+                Vec::new()
+            }
+        }
+    }
+}
+
+fn report_watch_setup_failure(plan: &SetupFailurePlan) {
+    eprintln!("{}", plan.user_message());
+    if matches!(plan.kind(), SetupFailureKind::InvalidConfig) {
+        eprintln!("error: Fix or remove the invalid config file and try again.");
     }
 }
 

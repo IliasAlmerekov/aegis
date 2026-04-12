@@ -22,12 +22,12 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::runtime::Handle;
 
 #[cfg(test)]
-use aegis::interceptor::parser::Parser as CommandParser;
-#[cfg(test)]
 use aegis::decision::{
     PolicyAction, PolicyAllowlistResult, PolicyCiState, PolicyConfigFlags, PolicyDecision,
     PolicyExecutionContext, PolicyInput, evaluate_policy,
 };
+#[cfg(test)]
+use aegis::interceptor::parser::Parser as CommandParser;
 
 mod policy_output;
 mod rollback;
@@ -240,10 +240,10 @@ fn main() {
     let handle = rt.handle().clone();
 
     let exit_code = match subcommand {
-        Some(Commands::Watch) => match RuntimeContext::load(verbosity.is_verbose(), handle) {
-            Ok(context) => rt.block_on(aegis::watch::run(&context)),
-            Err(err) => report_config_load_error(&err),
-        },
+        Some(Commands::Watch) => {
+            let prepared = prepare_planner(verbosity.is_verbose(), handle);
+            rt.block_on(aegis::watch::run(&prepared))
+        }
         Some(Commands::Audit(args)) => {
             if args.summary && matches!(args.format, AuditOutputFormat::Ndjson) {
                 eprintln!("error: --summary cannot be used with --format ndjson");

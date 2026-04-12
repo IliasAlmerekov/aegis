@@ -184,6 +184,30 @@ fn invalid_cwd_emits_error_frame() {
 }
 
 #[test]
+fn watch_invalid_cwd_keeps_current_error_frame_contract_after_planner_migration() {
+    let output =
+        aegis_watch(b"{\"cmd\":\"echo x\",\"cwd\":\"/nonexistent/path/xyz\",\"id\":\"bad-cwd\"}\n");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stderr.is_empty(),
+        "invalid cwd remains a per-frame error, not a startup stderr failure"
+    );
+
+    let frames = parse_frames(&output.stdout);
+    assert_eq!(
+        frames.len(),
+        1,
+        "invalid cwd should emit exactly one error frame"
+    );
+    let error = &frames[0];
+    assert_eq!(error["type"], "error");
+    assert_eq!(error["id"], "bad-cwd");
+    assert_eq!(error["exit_code"], 4);
+    assert_eq!(error["message"], "invalid cwd");
+}
+
+#[test]
 fn oversized_frame_emits_error_frame_and_continues() {
     let big_cmd = "x".repeat(1_100_000);
     let big_frame = format!("{{\"cmd\":\"{big_cmd}\"}}\n");
@@ -271,4 +295,30 @@ fn malformed_project_config_aborts_watch_startup_with_clear_error() {
         stderr.contains("Fix or remove the invalid config file"),
         "stderr must tell the user how to recover: {stderr}"
     );
+}
+
+#[test]
+fn invalid_project_config_in_watch_still_fails_before_emitting_frames() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let config_path = workspace.path().join(".aegis.toml");
+    fs::write(&config_path, "mode = <<<THIS IS NOT VALID TOML\n").unwrap();
+
+    let output = aegis_watch_in(
+        home.path(),
+        workspace.path(),
+        b"{\"cmd\":\"echo hi\",\"id\":\"watch-config\"}\n",
+    );
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(
+        output.stdout.is_empty(),
+        "watch must not emit frames on startup failure"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error: failed to load config"));
+    assert!(stderr.contains(&config_path.display().to_string()));
+    assert!(stderr.contains("failed to parse"));
+    assert!(stderr.contains("Fix or remove the invalid config file"));
 }
