@@ -3,6 +3,7 @@ pub mod config;
 pub mod decision;
 pub mod error;
 pub mod interceptor;
+pub mod planning;
 pub mod runtime;
 pub mod snapshot;
 pub mod ui;
