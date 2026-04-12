@@ -6,10 +6,7 @@ use aegis::audit::{
     AuditEntry, AuditIntegrityStatus, AuditLogger, AuditQuery, AuditTimestamp, Decision,
 };
 use aegis::config::{AllowlistMatch, Config, ValidationReport, validate_config_layers};
-use aegis::decision::{
-    BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
-    PolicyConfigFlags, PolicyDecision, PolicyExecutionContext, PolicyInput, evaluate_policy,
-};
+use aegis::decision::{BlockReason, ExecutionTransport};
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
@@ -26,6 +23,11 @@ use tokio::runtime::Handle;
 
 #[cfg(test)]
 use aegis::interceptor::parser::Parser as CommandParser;
+#[cfg(test)]
+use aegis::decision::{
+    PolicyAction, PolicyAllowlistResult, PolicyCiState, PolicyConfigFlags, PolicyDecision,
+    PolicyExecutionContext, PolicyInput, evaluate_policy,
+};
 
 mod policy_output;
 mod rollback;
@@ -798,6 +800,7 @@ fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMat
     }
 }
 
+#[cfg(test)]
 fn decide_command(
     context: &RuntimeContext,
     assessment: &Assessment,
@@ -817,6 +820,7 @@ fn decide_command(
     execute_policy_decision(context, assessment, cwd, policy_decision, verbose)
 }
 
+#[cfg(test)]
 fn execute_policy_decision(
     context: &RuntimeContext,
     assessment: &Assessment,
@@ -879,6 +883,7 @@ fn execute_policy_decision(
     }
 }
 
+#[cfg(test)]
 fn evaluate_policy_decision(
     context: &RuntimeContext,
     assessment: &Assessment,
