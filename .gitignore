@@ -7,3 +7,13 @@
 fuzz/artifacts/
 fuzz/coverage/
 fuzz/target/
+fuzz/Cargo.lock
+fuzz/corpus/parser/*
+!fuzz/corpus/parser/empty.txt
+!fuzz/corpus/parser/whitespace.txt
+!fuzz/corpus/parser/quotes.txt
+!fuzz/corpus/parser/unterminated-quote.txt
+!fuzz/corpus/parser/heredoc.txt
+!fuzz/corpus/parser/unterminated-heredoc.txt
+!fuzz/corpus/parser/inline-python.txt
+!fuzz/corpus/parser/nested-shell.txt
