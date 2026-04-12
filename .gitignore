@@ -4,3 +4,6 @@
 .claude/
 .codex/
 .worktrees/
+fuzz/artifacts/
+fuzz/coverage/
+fuzz/target/
