@@ -1,0 +1,57 @@
+[[cases]]
+name = "nested_shell_block"
+command = "bash -c 'rm -rf /'"
+expected_risk = "block"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "intrinsic_risk_block"
+
+[[cases]]
+name = "heredoc_body_block"
+command = """cat <<'EOF'
+rm -rf /
+EOF"""
+expected_risk = "block"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "intrinsic_risk_block"
+
+[[cases]]
+name = "eval_wrapper_block"
+command = "eval \"bash -c 'rm -rf /'\""
+expected_risk = "block"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "intrinsic_risk_block"
+
+[[cases]]
+name = "process_substitution_block"
+command = "source <(bash -c 'rm -rf /')"
+expected_risk = "block"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "intrinsic_risk_block"
+
+[[cases]]
+name = "encoded_payload_wrapper_blocks_in_strict_mode"
+command = "python -c \"import base64; exec(base64.b64decode('cHJpbnQoJ2hpJyk=').decode())\""
+expected_risk = "warn"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "strict_policy"
+
+[[cases]]
+name = "multiline_nested_shell_body_block"
+command = "bash -c $'echo start\\nrm -rf /'"
+expected_risk = "block"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "intrinsic_risk_block"
+
+[[cases]]
+name = "environment_prefixed_nested_shell_block"
+command = "MY_VAR=secret bash -c 'rm -rf /'"
+expected_risk = "block"
+expected_decision = "block"
+expected_exit_code = 3
+expected_block_reason = "intrinsic_risk_block"

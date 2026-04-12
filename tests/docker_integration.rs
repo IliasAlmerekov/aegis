@@ -34,6 +34,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use aegis::config::{DockerScope, DockerScopeMode};
 use aegis::snapshot::{DockerPlugin, SnapshotPlugin};
 
 // ─── guard ───────────────────────────────────────────────────────────────────
@@ -410,5 +411,76 @@ async fn snapshot_rollback_preserves_port_binding() {
     assert_eq!(
         host_port, "41980",
         "rolled-back container must have the original port binding"
+    );
+}
+
+/// Default labeled selection policy must snapshot only containers that opt in
+/// via `aegis.snapshot=true`, ignoring unrelated running containers.
+#[tokio::test]
+async fn snapshot_default_labeled_scope_selects_only_opted_in_containers() {
+    require_docker!();
+
+    let labeled_name = unique_name("labeled");
+    let unlabeled_name = unique_name("unlabeled");
+    let _labeled_guard = ContainerGuard(labeled_name.clone());
+    let _unlabeled_guard = ContainerGuard(unlabeled_name.clone());
+
+    start_alpine(&labeled_name, &["--label", "aegis.snapshot=true"]).await;
+    start_alpine(&unlabeled_name, &[]).await;
+
+    let plugin = DockerPlugin::new();
+    let snapshot_id = plugin
+        .snapshot(Path::new("/"), "docker stop test")
+        .await
+        .expect("snapshot must succeed");
+
+    let records: Vec<serde_json::Value> = snapshot_id
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("snapshot line must be valid json"))
+        .collect();
+
+    assert_eq!(
+        records.len(),
+        1,
+        "only labeled container should be snapshotted"
+    );
+    assert_eq!(
+        records[0]["config"]["name"].as_str(),
+        Some(labeled_name.as_str())
+    );
+}
+
+/// Name-pattern selection policy must snapshot only matching containers.
+#[tokio::test]
+async fn snapshot_name_scope_selects_only_matching_container_names() {
+    require_docker!();
+
+    let selected_name = unique_name("selected");
+    let skipped_name = unique_name("skipped");
+    let _selected_guard = ContainerGuard(selected_name.clone());
+    let _skipped_guard = ContainerGuard(skipped_name.clone());
+
+    start_alpine(&selected_name, &[]).await;
+    start_alpine(&skipped_name, &[]).await;
+
+    let plugin = DockerPlugin::new().with_scope(DockerScope {
+        mode: DockerScopeMode::Names,
+        label: "aegis.snapshot".to_string(),
+        name_patterns: vec![selected_name.clone()],
+    });
+    let snapshot_id = plugin
+        .snapshot(Path::new("/"), "docker stop test")
+        .await
+        .expect("snapshot must succeed");
+
+    let records: Vec<serde_json::Value> = snapshot_id
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("snapshot line must be valid json"))
+        .collect();
+
+    assert_eq!(records.len(), 1, "only matching name should be snapshotted");
+    assert_eq!(
+        records[0]["config"]["name"].as_str(),
+        Some(selected_name.as_str())
     );
 }

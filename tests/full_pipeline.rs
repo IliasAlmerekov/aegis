@@ -2729,7 +2729,10 @@ reason = "rollback test allowlist"
     assert_eq!(entries[1]["decision"], "Approved");
     assert_eq!(entries[1]["risk"], "Safe");
     assert_eq!(entries[1]["snapshots"][0]["plugin"], "git");
-    assert_eq!(entries[1]["snapshots"][0]["snapshot_id"], snapshot_id);
+    assert_eq!(
+        entries[1]["snapshots"][0]["snapshot_id"].as_str(),
+        Some(snapshot_id.as_str())
+    );
 }
 
 #[test]
