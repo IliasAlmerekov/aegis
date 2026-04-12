@@ -35,23 +35,23 @@ pub fn plan_with_context(
         CwdState::Unavailable => Vec::new(),
     };
 
-    let decision_context = DecisionContext {
-        mode: context.config().mode,
-        transport: request.transport,
-        ci_detected: request.ci_detected,
-        cwd_state: request.cwd_state,
+    let decision_context = DecisionContext::new(
+        context.config().mode,
+        request.transport,
+        request.ci_detected,
+        request.cwd_state,
         allowlist_match,
         applicable_snapshot_plugins,
-    };
+    );
 
     let policy_decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
-        mode: decision_context.mode,
+        mode: decision_context.mode(),
         ci_state: PolicyCiState {
-            detected: decision_context.ci_detected,
+            detected: decision_context.ci_detected(),
         },
         allowlist: PolicyAllowlistResult {
-            matched: decision_context.allowlist_match.is_some(),
+            matched: decision_context.allowlist_match().is_some(),
         },
         config_flags: PolicyConfigFlags {
             ci_policy: context.config().ci_policy,
@@ -59,8 +59,8 @@ pub fn plan_with_context(
             snapshot_policy: context.config().snapshot_policy,
         },
         execution_context: PolicyExecutionContext {
-            transport: decision_context.transport,
-            applicable_snapshot_plugins: decision_context.applicable_snapshot_plugins.as_slice(),
+            transport: decision_context.transport(),
+            applicable_snapshot_plugins: decision_context.applicable_snapshot_plugins(),
         },
     });
 

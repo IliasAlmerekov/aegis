@@ -151,18 +151,63 @@ impl SetupFailurePlan {
 /// Typed planning context resolved before pure policy evaluation.
 #[derive(Debug, Clone)]
 pub struct DecisionContext {
-    /// Effective execution mode.
-    pub mode: Mode,
-    /// Caller transport requesting the decision.
-    pub transport: ExecutionTransport,
-    /// Whether CI was detected for this invocation.
-    pub ci_detected: bool,
-    /// Working-directory resolution state.
-    pub cwd_state: CwdState,
-    /// Matching allowlist entry for the command in this context, if any.
-    pub allowlist_match: Option<AllowlistMatch>,
-    /// Snapshot plugins applicable to the resolved cwd.
-    pub applicable_snapshot_plugins: Vec<&'static str>,
+    mode: Mode,
+    transport: ExecutionTransport,
+    ci_detected: bool,
+    cwd_state: CwdState,
+    allowlist_match: Option<AllowlistMatch>,
+    applicable_snapshot_plugins: Vec<&'static str>,
+}
+
+impl DecisionContext {
+    /// Construct a decision context with all policy-relevant inputs resolved.
+    pub(crate) fn new(
+        mode: Mode,
+        transport: ExecutionTransport,
+        ci_detected: bool,
+        cwd_state: CwdState,
+        allowlist_match: Option<AllowlistMatch>,
+        applicable_snapshot_plugins: Vec<&'static str>,
+    ) -> Self {
+        Self {
+            mode,
+            transport,
+            ci_detected,
+            cwd_state,
+            allowlist_match,
+            applicable_snapshot_plugins,
+        }
+    }
+
+    /// Return the effective execution mode.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Return the caller transport requesting the decision.
+    pub fn transport(&self) -> ExecutionTransport {
+        self.transport
+    }
+
+    /// Return whether CI was detected for this invocation.
+    pub fn ci_detected(&self) -> bool {
+        self.ci_detected
+    }
+
+    /// Return the working-directory resolution state.
+    pub fn cwd_state(&self) -> &CwdState {
+        &self.cwd_state
+    }
+
+    /// Return the matching allowlist entry for the command in this context, if any.
+    pub fn allowlist_match(&self) -> Option<&AllowlistMatch> {
+        self.allowlist_match.as_ref()
+    }
+
+    /// Return the snapshot plugins applicable to the resolved cwd.
+    pub fn applicable_snapshot_plugins(&self) -> &[&'static str] {
+        self.applicable_snapshot_plugins.as_slice()
+    }
 }
 
 /// Working-directory resolution state visible to planning.
@@ -234,28 +279,19 @@ pub enum SetupFailureKind {
 /// Pre-outcome audit facts derived during planning.
 #[derive(Debug, Clone)]
 pub struct AuditFacts {
-    /// Raw command string being planned.
-    pub command: String,
-    /// Assessed risk for the command.
-    pub risk: RiskLevel,
-    /// Stable audit representations of matched patterns.
-    pub matched_patterns: Vec<MatchedPattern>,
-    /// Effective mode used during planning.
-    pub mode: Mode,
-    /// Whether CI was detected during planning.
-    pub ci_detected: bool,
-    /// Whether any allowlist rule matched the command.
-    pub allowlist_matched: bool,
-    /// Whether allowlist changed the policy outcome.
-    pub allowlist_effective: bool,
-    /// Decision transport associated with the plan.
-    pub transport: ExecutionTransport,
-    /// Hard-block reason when policy blocked the command.
-    pub block_reason: Option<BlockReason>,
+    command: String,
+    risk: RiskLevel,
+    matched_patterns: Vec<MatchedPattern>,
+    mode: Mode,
+    ci_detected: bool,
+    allowlist_matched: bool,
+    allowlist_effective: bool,
+    transport: ExecutionTransport,
+    block_reason: Option<BlockReason>,
 }
 
 impl AuditFacts {
-    fn from_plan_inputs(
+    pub(crate) fn from_plan_inputs(
         assessment: &Assessment,
         decision_context: &DecisionContext,
         block_reason: Option<BlockReason>,
@@ -272,5 +308,120 @@ impl AuditFacts {
             transport: decision_context.transport,
             block_reason,
         }
+    }
+
+    /// Return the raw command string being planned.
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    /// Return the assessed risk for the command.
+    pub fn risk(&self) -> RiskLevel {
+        self.risk
+    }
+
+    /// Return the stable audit representations of matched patterns.
+    pub fn matched_patterns(&self) -> &[MatchedPattern] {
+        self.matched_patterns.as_slice()
+    }
+
+    /// Return the effective mode used during planning.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Return whether CI was detected during planning.
+    pub fn ci_detected(&self) -> bool {
+        self.ci_detected
+    }
+
+    /// Return whether any allowlist rule matched the command.
+    pub fn allowlist_matched(&self) -> bool {
+        self.allowlist_matched
+    }
+
+    /// Return whether allowlist changed the policy outcome.
+    pub fn allowlist_effective(&self) -> bool {
+        self.allowlist_effective
+    }
+
+    /// Return the decision transport associated with the plan.
+    pub fn transport(&self) -> ExecutionTransport {
+        self.transport
+    }
+
+    /// Return the hard-block reason when policy blocked the command.
+    pub fn block_reason(&self) -> Option<BlockReason> {
+        self.block_reason
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::allowlist::AllowlistSourceLayer;
+    use crate::decision::BlockReason;
+    use crate::interceptor;
+
+    #[test]
+    fn decision_context_constructor_preserves_read_access_via_getters() {
+        let cwd_state = CwdState::Resolved(PathBuf::from("."));
+        let allowlist_match = AllowlistMatch {
+            pattern: "echo *".to_string(),
+            reason: "trusted local echo".to_string(),
+            source_layer: AllowlistSourceLayer::Project,
+        };
+        let applicable_snapshot_plugins = vec!["git"];
+        let context = DecisionContext::new(
+            Mode::Protect,
+            ExecutionTransport::Shell,
+            true,
+            cwd_state.clone(),
+            Some(allowlist_match.clone()),
+            applicable_snapshot_plugins.clone(),
+        );
+
+        assert_eq!(context.mode(), Mode::Protect);
+        assert_eq!(context.transport(), ExecutionTransport::Shell);
+        assert!(context.ci_detected());
+        assert_eq!(context.cwd_state(), &cwd_state);
+        assert_eq!(context.allowlist_match(), Some(&allowlist_match));
+        assert_eq!(
+            context.applicable_snapshot_plugins(),
+            applicable_snapshot_plugins.as_slice()
+        );
+    }
+
+    #[test]
+    fn audit_facts_exposes_pre_outcome_fields_via_getters() {
+        let assessment = interceptor::assess("rm -rf /").unwrap();
+        let decision_context = DecisionContext::new(
+            Mode::Strict,
+            ExecutionTransport::Shell,
+            false,
+            CwdState::Resolved(PathBuf::from(".")),
+            None,
+            Vec::new(),
+        );
+
+        let audit_facts = AuditFacts::from_plan_inputs(
+            &assessment,
+            &decision_context,
+            Some(BlockReason::IntrinsicRiskBlock),
+            false,
+        );
+
+        assert_eq!(audit_facts.command(), "rm -rf /");
+        assert_eq!(audit_facts.risk(), RiskLevel::Block);
+        assert!(!audit_facts.matched_patterns().is_empty());
+        assert_eq!(audit_facts.mode(), Mode::Strict);
+        assert!(!audit_facts.ci_detected());
+        assert!(!audit_facts.allowlist_matched());
+        assert!(!audit_facts.allowlist_effective());
+        assert_eq!(audit_facts.transport(), ExecutionTransport::Shell);
+        assert_eq!(
+            audit_facts.block_reason(),
+            Some(BlockReason::IntrinsicRiskBlock)
+        );
     }
 }
