@@ -11,7 +11,9 @@
 
 **[Platform support](docs/platform-support.md)** — Aegis is currently supported on Unix-like systems only (Linux and macOS). Windows, `PowerShell`, and `cmd.exe` are explicitly out of scope until a dedicated strategy exists.
 
-**[Config schema](docs/config-schema.md)** — Config files are versioned. Legacy allowlist syntax is normalized forward, and future schema changes must ship with an explicit migration story.
+**[Config schema](docs/config-schema.md)** — Exact runtime behavior for modes, allowlists, snapshot policy, `ci_policy`, and `--output json`.
+
+**[CI and release guarantees](docs/ci.md)** — Exact workflow pinning, pinned tool versions, and what repository CI does and does not guarantee.
 
 ---
 
@@ -46,12 +48,11 @@ cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 
 ```text
 $ aegis -c 'terraform destroy'
-[aegis] Risk: DANGER
-[aegis] Snapshot created: git:stash@{3}
-[aegis] Command:
+AEGIS INTERCEPTED A DANGEROUS COMMAND
+Command:
   terraform destroy
-[aegis] Continue? [y/N]: n
-[aegis] Denied by user. Command not executed.
+Execute dangerous command? [y/N]: n
+Command cancelled.
 ```
 
 ---
@@ -108,18 +109,23 @@ Aegis is set as your `$SHELL`. When any program (Claude Code, Codex CLI, a scrip
 ```
 AI agent → $SHELL → Aegis → assess(cmd)
                                ├── Safe   → exec immediately
-                               ├── Warn   → show dialog, default = Yes
-                               ├── Danger → snapshot + show dialog, default = No
-                               └── Block  → print reason, exit 1 (no dialog)
+                               ├── Warn   → show dialog, approve only on `y` / `yes`
+                               ├── Danger → may request snapshots + show dialog, approve only on `y` / `yes`
+                               └── Block  → print reason and refuse execution
 ```
 
-Before showing the dialog for `Danger` commands, Aegis creates a snapshot (git stash, Docker commit). Snapshot IDs are written to the audit log and can be restored later with:
+Default is deny: empty input or anything other than `y` / `yes` cancels the command.
+
+Before a `Danger` command executes, Aegis may request snapshots depending on `snapshot_policy`, plugin applicability, and current config. Snapshot IDs are written to the audit log and can be restored later with:
 
 ```bash
 aegis rollback <snapshot-id>
 ```
 
-All decisions — approved, denied, blocked — are written to `~/.aegis/audit.jsonl`.
+All execution-time decisions — approved, denied, blocked — are written to `~/.aegis/audit.jsonl`.
+
+For the exact mode matrix, snapshot semantics, allowlist rules, and JSON schema, see [docs/config-schema.md](docs/config-schema.md).
+For pinned workflow/tooling inputs and release-contract details, see [docs/ci.md](docs/ci.md).
 
 ---
 
@@ -161,19 +167,24 @@ For stronger guarantees, pair Aegis with OS-level controls: run your agent in a 
 
 ---
 
-## aegis.toml reference
+## Configuration overview
 
-Aegis merges config from all available sources, in priority order (highest first):
-1. `.aegis.toml` in the current directory (project-level)
-2. `~/.config/aegis/config.toml` (global)
-3. Built-in defaults
+Aegis merges config from:
 
-Project values override global values; global values override defaults. Vec fields (`custom_patterns`, `allowlist`) are concatenated — global entries first, then project entries.
-If any discovered config file is invalid, Aegis fails closed with exit code `4` and tells you which file to fix or remove.
-`config_version` documents the schema version; if it is omitted, Aegis treats the file as a legacy pre-version config and normalizes it forward when possible.
+- built-in defaults
+- `~/.config/aegis/config.toml`
+- `.aegis.toml`
 
-Runtime-effective allowlist rules must declare `cwd` or `user` scope. Unscoped rules are rejected at runtime and by `aegis config validate`.
-Legacy string-array allowlist entries remain readable for migration and inspection: `aegis config show` normalizes them into structured `[[allowlist]]` entries, but they stay invalid for runtime until you add `cwd` and/or `user`.
+At a high level:
+
+- `Protect` prompts for non-safe commands
+- `Audit` is non-blocking
+- `Strict` blocks non-safe commands unless an allowlist override applies
+- `snapshot_policy` controls whether `Danger` commands request snapshots
+- runtime `ci_policy` changes how `Protect` behaves when CI is detected
+- `--output json` is evaluation-only and documented in [docs/config-schema.md](docs/config-schema.md)
+
+For exact semantics and the full schema, see [docs/config-schema.md](docs/config-schema.md).
 
 Generate a starter config:
 
@@ -181,69 +192,6 @@ Generate a starter config:
 aegis config init      # writes .aegis.toml in the current directory
 aegis config show      # prints the active config (merged from all sources)
 ```
-
-### Full reference
-
-```toml
-config_version = 1
-
-# Operating mode.
-#   Protect  - prompt on Warn/Danger, block on Block (default)
-#   Audit    - never prompt or block; always log the outcome
-#   Strict   - auto-approve Safe only; block non-safe and indirect execution forms unless allowlist_override_level permits it
-mode = "Protect"
-
-# Protect/Strict allowlist ceiling.
-#   Warn   - allowlisted Warn commands may auto-approve.
-#   Danger - allowlisted Warn and Danger commands may auto-approve.
-#   Never  - allowlisted non-safe commands never auto-approve.
-allowlist_override_level = "Warn"
-
-# Create a git stash snapshot before Danger commands when policy allows execution.
-auto_snapshot_git = true
-
-# Snapshot running containers before Danger commands when Docker is available.
-# Disabled by default - enable once you have tested rollback in your environment.
-auto_snapshot_docker = false
-
-# Structured allowlist rules use array-of-tables entries.
-# Protect: allowlisted Warn auto-approves at Warn/Danger; Danger only at Danger.
-# Strict: allowlisted Warn auto-approves at Warn/Danger; Danger only at Danger.
-[[allowlist]]
-pattern = "terraform destroy -target=module.test.*"
-cwd = "/srv/infra"
-user = "ci"
-reason = "ephemeral test teardown"
-
-# Extra patterns loaded on top of the built-in set.
-# Fields: id, category, risk, pattern (regex), description, safe_alt (optional).
-custom_patterns = [
-    # { id = "USR-001", category = "Cloud", risk = "Danger",
-    #   pattern = "my-destroy-script\\.sh",
-    #   description = "Internal teardown script — always requires approval",
-    #   safe_alt = "my-destroy-script.sh --dry-run" },
-]
-
-[audit]
-# Rotate ~/.aegis/audit.jsonl after it grows beyond this many bytes.
-# Disabled by default to preserve the historical single-file behaviour.
-rotation_enabled = false
-max_file_size_bytes = 10485760
-retention_files = 5
-compress_rotated = true
-integrity_mode = "Off" # Off | ChainSha256
-```
-
-### Mode quick-reference
-
-| Mode | Safe | Warn | Danger | Block | CI interaction |
-|------|------|------|--------|-------|----------------|
-| `Protect` | auto-approve | prompt unless allowlisted at `Warn`/`Danger` | snapshot + prompt unless allowlisted at `Danger` | blocked | `ci_policy` only applies here |
-| `Audit` | auto-approve | auto-approve | auto-approve | auto-approve | never escalates to blocking |
-| `Strict` | auto-approve | blocked unless allowlisted at `Warn`/`Danger` | blocked unless allowlisted at `Danger` | blocked | CI cannot weaken strict behavior |
-
-`Block` is never bypassed in `Protect` or `Strict`, including CI and allowlist flows.
-`Audit` is intentionally dry-run-friendly and non-blocking.
 
 ### Strict policy profile
 
@@ -541,53 +489,7 @@ aegis -c 'rm -rf /tmp' --output json
   - `2` → `prompt`
   - `3` → `block`
 
-Schema version `1`:
-
-```json
-{
-  "schema_version": 1,
-  "command": "rm -rf /tmp",
-  "risk": "danger",
-  "decision": "prompt",
-  "exit_code": 2,
-  "mode": "protect",
-  "ci_state": {
-    "detected": false,
-    "policy": "block"
-  },
-  "matched_patterns": [
-    {
-      "id": "FS-001",
-      "category": "filesystem",
-      "risk": "danger",
-      "matched_text": "rm -rf /tmp",
-      "description": "Recursive delete",
-      "safe_alternative": "rm -i <path>",
-      "source": "builtin"
-    }
-  ],
-  "allowlist_match": {
-    "matched": false,
-    "effective": false
-  },
-  "snapshots_created": [],
-  "snapshot_plan": {
-    "requested": true,
-    "applicable_plugins": []
-  },
-  "execution": {
-    "mode": "evaluation_only",
-    "will_execute": false
-  },
-  "decision_source": "builtin_pattern"
-}
-```
-
-Notes:
-
-- `matched_patterns`, `snapshots_created`, and `snapshot_plan.applicable_plugins` are always arrays.
-- `allowlist_match.pattern` and `allowlist_match.reason` appear only when a rule matched.
-- `block_reason` appears only when `decision = "block"`.
+For the exact schema version `1` contract, fields, and examples, see [docs/config-schema.md](docs/config-schema.md).
 
 ---
 

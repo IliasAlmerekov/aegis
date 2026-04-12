@@ -12,7 +12,7 @@
 
 Aegis officially supports **Unix-like systems only** today.
 
-That means the supported runtime model is:
+That means the supported runtime boundary is:
 
 - POSIX-style shell invocation
 - `SHELL`-based wrapper setup
