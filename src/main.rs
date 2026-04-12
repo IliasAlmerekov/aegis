@@ -525,6 +525,7 @@ fn handle_rollback_command(args: RollbackArgs, runtime: &tokio::runtime::Runtime
             );
             0
         }
+        Err(err) if matches!(err, AegisError::Config(_)) => report_config_load_error(&err),
         Err(err) => {
             eprintln!("error: rollback failed: {err}");
             EXIT_INTERNAL

@@ -13,10 +13,8 @@ pub(crate) struct RollbackTarget {
 }
 
 pub(crate) async fn execute(snapshot_id: String) -> Result<RollbackTarget> {
-    let audit_logger = match Config::load() {
-        Ok(config) => AuditLogger::from_audit_config(&config.audit),
-        Err(_) => AuditLogger::default(),
-    };
+    let config = Config::load()?;
+    let audit_logger = AuditLogger::from_audit_config(&config.audit);
     let target = find_snapshot_target(&audit_logger, &snapshot_id)?;
 
     SnapshotRegistry::for_rollback()

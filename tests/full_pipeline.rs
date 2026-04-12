@@ -2882,3 +2882,69 @@ fn rollback_missing_snapshot_prints_recovery_hint() {
     assert!(stderr.contains("aegis audit"));
     assert!(stderr.contains("snapshot"));
 }
+
+#[test]
+fn rollback_with_malformed_project_config_fails_closed_instead_of_falling_back() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let config_path = workspace.path().join(".aegis.toml");
+
+    fs::write(&config_path, "mode = <<<THIS IS NOT VALID TOML\n").unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["rollback", "missing-snapshot"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&config_path.display().to_string()),
+        "rollback must report the malformed config path: {stderr}"
+    );
+    assert!(
+        stderr.contains("failed to parse"),
+        "rollback must surface config parsing errors instead of silently falling back: {stderr}"
+    );
+    assert!(
+        !stderr.contains("snapshot id"),
+        "rollback must fail on config load before attempting snapshot lookup: {stderr}"
+    );
+}
+
+#[test]
+fn rollback_with_malformed_project_config_uses_standard_config_load_error_format() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let config_path = workspace.path().join(".aegis.toml");
+
+    fs::write(&config_path, "mode = <<<THIS IS NOT VALID TOML\n").unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["rollback", "missing-snapshot"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: failed to load config:"),
+        "rollback config failures should use the standard config-load prefix: {stderr}"
+    );
+    assert!(
+        stderr.contains(&config_path.display().to_string()),
+        "rollback config failures should identify the invalid config path: {stderr}"
+    );
+    assert!(
+        stderr.contains("Fix or remove the invalid config file and try again."),
+        "rollback config failures should print the standard recovery hint: {stderr}"
+    );
+    assert!(
+        !stderr.contains("error: rollback failed:"),
+        "rollback config failures should not use the generic rollback-failed wrapper: {stderr}"
+    );
+}
