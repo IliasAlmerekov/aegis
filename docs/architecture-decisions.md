@@ -175,6 +175,23 @@ The honest model:
 
 ---
 
+## ADR-011: Typed planning boundary for interception policy
+
+**Decision:** Interception policy is exposed through a typed planning boundary:
+`prepare_planner` maps fail-closed setup errors into typed setup-failure plans,
+and `plan_with_context` produces a canonical `InterceptionPlan` for shell-wrapper,
+watch mode, and evaluation-only JSON.
+
+**Rationale:** This keeps policy semantics in one place while leaving UI,
+snapshots, execution, and audit append as downstream adapters. Surfaces should
+adapt a typed plan; they should not rebuild policy inputs or decision meaning
+independently.
+
+**Status:** Enforced by the `src/planning/` module and consumed by shell, watch,
+and JSON evaluation flows.
+
+---
+
 ## ADR-009: Fuzz testing for parser
 
 **Decision:** `parser.rs` has dedicated fuzz targets using `cargo-fuzz` (libFuzzer).

@@ -307,6 +307,42 @@ fn json_mode_still_does_not_write_audit_entries_when_planned() {
 }
 
 #[test]
+fn planner_migration_keeps_json_block_reason_contract() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "rm -rf /", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["decision"], "block");
+    assert_eq!(json["block_reason"], "intrinsic_risk_block");
+}
+
+#[test]
+fn planner_migration_keeps_shell_audit_projection_fields() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "printf hello"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["mode"], "Protect");
+    assert_eq!(entries[0]["ci_detected"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_matched"], serde_json::json!(false));
+    assert_eq!(entries[0]["allowlist_effective"], serde_json::json!(false));
+}
+
+#[test]
 fn json_output_snapshot_policy_none_disables_snapshot_request_for_danger() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
