@@ -1,6 +1,7 @@
-use aegis::config::{AllowlistMatch, CiPolicy, Mode};
-use aegis::decision::{BlockReason, PolicyAction, PolicyDecision};
-use aegis::interceptor::scanner::{Assessment, DecisionSource};
+use aegis::config::{CiPolicy, Mode};
+use aegis::decision::{BlockReason, PolicyAction};
+use aegis::interceptor::scanner::DecisionSource;
+use aegis::planning::{InterceptionPlan, SnapshotPlan};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -68,15 +69,19 @@ struct ExecutionOutput {
     will_execute: bool,
 }
 
-pub(crate) fn render(
-    assessment: &Assessment,
-    decision: PolicyDecision,
-    allowlist_match: Option<&AllowlistMatch>,
-    mode: Mode,
-    ci_detected: bool,
+pub(crate) fn render_planned(
+    plan: &InterceptionPlan,
     ci_policy: CiPolicy,
-    applicable_snapshot_plugins: Vec<&'static str>,
 ) -> Result<String, serde_json::Error> {
+    let assessment = plan.assessment();
+    let decision = plan.policy_decision();
+    let decision_context = plan.decision_context();
+    let allowlist_match = decision_context.allowlist_match();
+    let snapshot_plan = plan.snapshot_plan();
+    let applicable_snapshot_plugins = match &snapshot_plan {
+        SnapshotPlan::NotRequired => Vec::new(),
+        SnapshotPlan::Required { applicable_plugins } => applicable_plugins.clone(),
+    };
     let decision_label = decision_string(decision.decision);
     let exit_code = exit_code_for(decision.decision);
     let output = PolicyEvaluationOutput {
@@ -85,9 +90,9 @@ pub(crate) fn render(
         risk: assessment.risk.to_string(),
         decision: decision_label.to_string(),
         exit_code,
-        mode: mode_string(mode).to_string(),
+        mode: mode_string(decision_context.mode()).to_string(),
         ci_state: CiState {
-            detected: ci_detected,
+            detected: decision_context.ci_detected(),
             policy: ci_policy_string(ci_policy).to_string(),
         },
         matched_patterns: assessment
@@ -111,7 +116,7 @@ pub(crate) fn render(
         },
         snapshots_created: Vec::new(),
         snapshot_plan: SnapshotPlanOutput {
-            requested: decision.snapshots_required,
+            requested: matches!(snapshot_plan, SnapshotPlan::Required { .. }),
             applicable_plugins: applicable_snapshot_plugins
                 .into_iter()
                 .map(str::to_string)

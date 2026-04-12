@@ -13,6 +13,10 @@ use aegis::decision::{
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
+use aegis::planning::{
+    CwdState, ExecutionDisposition, InterceptionPlan, PlanningOutcome, PreparedPlanner,
+    SetupFailureKind, SetupFailurePlan, prepare_and_plan, prepare_planner,
+};
 use aegis::runtime::AuditWriteOptions;
 use aegis::runtime::RuntimeContext;
 use aegis::snapshot::SnapshotRecord;
@@ -375,77 +379,43 @@ fn run_shell_wrapper(
     verbosity: OutputVerbosity,
     handle: Handle,
 ) -> i32 {
-    let context = match RuntimeContext::load(verbosity.is_verbose(), handle) {
-        Ok(context) => context,
-        Err(err) => return report_config_load_error(&err),
-    };
-    let assessment = context.assess(cmd);
-
-    let resolved_cwd = env::current_dir().ok();
-    let cwd = resolved_cwd.clone().unwrap_or_else(|| PathBuf::from("."));
-    let allowlist_match = context.allowlist_match_for_command(cmd, resolved_cwd.as_deref());
+    let prepared = prepare_planner(verbosity.is_verbose(), handle);
     let in_ci = is_ci_environment();
+    let cwd_state = match env::current_dir() {
+        Ok(path) => CwdState::Resolved(path),
+        Err(_) => CwdState::Unavailable,
+    };
+    let transport = match output {
+        CommandOutputFormat::Text => ExecutionTransport::Shell,
+        CommandOutputFormat::Json => ExecutionTransport::Evaluation,
+    };
+    let outcome = prepare_and_plan(
+        &prepared,
+        aegis::planning::PlanningRequest {
+            command: cmd,
+            cwd_state,
+            transport,
+            ci_detected: in_ci,
+        },
+    );
 
     if verbosity.is_verbose() && matches!(output, CommandOutputFormat::Text) {
-        if in_ci {
+        if in_ci && let PreparedPlanner::Ready(context) = &prepared {
             eprintln!(
                 "ci: detected CI environment, ci_policy={:?}",
                 context.config().ci_policy
             );
         }
-        log_assessment(&assessment, allowlist_match.as_ref());
+        if let PlanningOutcome::Planned(plan) = &outcome {
+            log_assessment(plan.assessment(), plan.decision_context().allowlist_match());
+        }
     }
 
     if matches!(output, CommandOutputFormat::Json) {
-        let (decision, applicable_snapshot_plugins) = evaluate_policy_decision(
-            &context,
-            &assessment,
-            &cwd,
-            allowlist_match.as_ref(),
-            in_ci,
-            ExecutionTransport::Evaluation,
-        );
-        return emit_policy_evaluation_json(
-            &assessment,
-            decision,
-            allowlist_match.as_ref(),
-            context.config().mode,
-            in_ci,
-            context.config().ci_policy,
-            if decision.snapshots_required {
-                applicable_snapshot_plugins
-            } else {
-                Vec::new()
-            },
-        );
+        return render_json_outcome(&prepared, &outcome);
     }
 
-    let (decision, snapshots, allowlist_effective) = decide_command(
-        &context,
-        &assessment,
-        &cwd,
-        verbosity.is_verbose(),
-        allowlist_match.as_ref(),
-        in_ci,
-    );
-
-    context.append_audit_entry(
-        &assessment,
-        decision,
-        &snapshots,
-        AuditWriteOptions {
-            allowlist_match: allowlist_match.as_ref(),
-            allowlist_effective,
-            ci_detected: in_ci,
-            verbose: verbosity.is_verbose(),
-        },
-    );
-
-    match decision {
-        Decision::Approved | Decision::AutoApproved => exec_command(cmd),
-        Decision::Denied => EXIT_DENIED,
-        Decision::Blocked => EXIT_BLOCKED,
-    }
+    run_shell_text_outcome(cmd, verbosity, &prepared, outcome)
 }
 
 /// Returns `true` when aegis is running inside a CI environment.
@@ -620,6 +590,140 @@ fn report_config_load_error(err: &AegisError) -> i32 {
     EXIT_INTERNAL
 }
 
+fn report_setup_failure(plan: &SetupFailurePlan) -> i32 {
+    eprintln!("{}", plan.user_message());
+    if matches!(plan.kind(), SetupFailureKind::InvalidConfig) {
+        eprintln!("error: Fix or remove the invalid config file and try again.");
+    }
+    EXIT_INTERNAL
+}
+
+fn render_json_outcome(prepared: &PreparedPlanner, outcome: &PlanningOutcome) -> i32 {
+    match outcome {
+        PlanningOutcome::SetupFailure(plan) => report_setup_failure(plan),
+        PlanningOutcome::Planned(plan) => match prepared {
+            PreparedPlanner::Ready(context) => {
+                emit_policy_evaluation_json(plan, context.config().ci_policy)
+            }
+            PreparedPlanner::SetupFailure(_) => EXIT_INTERNAL,
+        },
+    }
+}
+
+fn run_shell_text_outcome(
+    cmd: &str,
+    verbosity: OutputVerbosity,
+    prepared: &PreparedPlanner,
+    outcome: PlanningOutcome,
+) -> i32 {
+    match outcome {
+        PlanningOutcome::SetupFailure(plan) => report_setup_failure(&plan),
+        PlanningOutcome::Planned(plan) => {
+            run_planned_shell_command(cmd, verbosity.is_verbose(), prepared, &plan)
+        }
+    }
+}
+
+fn run_planned_shell_command(
+    cmd: &str,
+    verbose: bool,
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+) -> i32 {
+    match plan.execution_disposition() {
+        ExecutionDisposition::Execute => {
+            let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
+            append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots, verbose);
+            exec_command(cmd)
+        }
+        ExecutionDisposition::RequiresApproval => {
+            let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
+            let approved = show_confirmation(plan.assessment(), &snapshots);
+            let decision = if approved {
+                Decision::Approved
+            } else {
+                Decision::Denied
+            };
+            append_shell_audit(prepared, plan, decision, &snapshots, verbose);
+            if approved {
+                exec_command(cmd)
+            } else {
+                EXIT_DENIED
+            }
+        }
+        ExecutionDisposition::Block => {
+            show_block_for_plan(plan);
+            append_shell_audit(prepared, plan, Decision::Blocked, &[], verbose);
+            EXIT_BLOCKED
+        }
+    }
+}
+
+fn create_snapshots_for_plan(
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+    verbose: bool,
+) -> Vec<SnapshotRecord> {
+    if !plan.policy_decision().snapshots_required {
+        return Vec::new();
+    }
+
+    match prepared {
+        PreparedPlanner::Ready(context) => match plan.decision_context().cwd_state() {
+            CwdState::Resolved(path) => {
+                context.create_snapshots(path.as_path(), &plan.assessment().command.raw, verbose)
+            }
+            CwdState::Unavailable => Vec::new(),
+        },
+        PreparedPlanner::SetupFailure(_) => Vec::new(),
+    }
+}
+
+fn append_shell_audit(
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+    decision: Decision,
+    snapshots: &[SnapshotRecord],
+    verbose: bool,
+) {
+    if let PreparedPlanner::Ready(context) = prepared {
+        context.append_audit_entry(
+            plan.assessment(),
+            decision,
+            snapshots,
+            AuditWriteOptions {
+                allowlist_match: plan.decision_context().allowlist_match(),
+                allowlist_effective: plan.policy_decision().allowlist_effective,
+                ci_detected: plan.decision_context().ci_detected(),
+                verbose,
+            },
+        );
+    }
+}
+
+fn show_block_for_plan(plan: &InterceptionPlan) {
+    match plan.policy_decision().block_reason() {
+        Some(BlockReason::ProtectCiPolicy) => {
+            eprintln!(
+                "aegis: blocked by CI policy (Protect mode + ci_policy=Block): {}",
+                plan.assessment().command.raw,
+            );
+            eprintln!("hint: inspect the allowlist or run aegis config validate.");
+            eprintln!("hint: rerun with --output json for machine-readable policy details.");
+        }
+        Some(BlockReason::IntrinsicRiskBlock) => {
+            show_confirmation(plan.assessment(), &[]);
+        }
+        Some(BlockReason::StrictPolicy) => {
+            show_policy_block(
+                plan.assessment(),
+                "blocked by strict mode (non-safe commands require an allowlist override)",
+            );
+        }
+        None => {}
+    }
+}
+
 fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMatch>) {
     let source_label = match assessment.decision_source() {
         DecisionSource::BuiltinPattern => "built-in pattern",
@@ -762,27 +866,11 @@ fn evaluate_policy_decision(
     (decision, applicable_snapshot_plugins)
 }
 
-fn emit_policy_evaluation_json(
-    assessment: &Assessment,
-    decision: PolicyDecision,
-    allowlist_match: Option<&AllowlistMatch>,
-    mode: aegis::config::Mode,
-    in_ci: bool,
-    ci_policy: aegis::config::CiPolicy,
-    applicable_snapshot_plugins: Vec<&'static str>,
-) -> i32 {
-    match policy_output::render(
-        assessment,
-        decision,
-        allowlist_match,
-        mode,
-        in_ci,
-        ci_policy,
-        applicable_snapshot_plugins,
-    ) {
+fn emit_policy_evaluation_json(plan: &InterceptionPlan, ci_policy: aegis::config::CiPolicy) -> i32 {
+    match policy_output::render_planned(plan, ci_policy) {
         Ok(json) => {
             println!("{json}");
-            policy_output::exit_code_for(decision.decision)
+            policy_output::exit_code_for(plan.policy_decision().decision)
         }
         Err(err) => {
             eprintln!("error: failed to serialize policy evaluation output: {err}");
