@@ -26,10 +26,10 @@ fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output
         .spawn()
         .expect("failed to spawn aegis watch");
 
-    if let Err(err) = child.stdin.as_mut().unwrap().write_all(input) {
-        if err.kind() != ErrorKind::BrokenPipe {
-            panic!("failed to write to aegis watch stdin: {err}");
-        }
+    if let Err(err) = child.stdin.as_mut().unwrap().write_all(input)
+        && err.kind() != ErrorKind::BrokenPipe
+    {
+        panic!("failed to write to aegis watch stdin: {err}");
     }
     drop(child.stdin.take()); // close stdin to send EOF
 

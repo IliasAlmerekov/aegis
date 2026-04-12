@@ -15,7 +15,6 @@ use aegis::planning::{
     SetupFailureKind, SetupFailurePlan, prepare_and_plan, prepare_planner,
 };
 use aegis::runtime::AuditWriteOptions;
-use aegis::runtime::RuntimeContext;
 use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -28,6 +27,8 @@ use aegis::decision::{
 };
 #[cfg(test)]
 use aegis::interceptor::parser::Parser as CommandParser;
+#[cfg(test)]
+use aegis::runtime::RuntimeContext;
 
 mod policy_output;
 mod rollback;
