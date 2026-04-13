@@ -33,8 +33,12 @@ pub enum Category {
 
 /// Unified runtime pattern.
 ///
-/// Built-in patterns use `Cow::Borrowed(&'static str)` — zero-copy.
-/// User-defined patterns loaded from TOML use `Cow::Owned(String)`.
+/// Both built-in and user-defined patterns are normalized into the same
+/// `Cow<'static, str>`-backed runtime representation.
+///
+/// In the current implementation, built-in patterns parsed from the embedded
+/// TOML and user-defined patterns loaded from config both enter this type via
+/// owned strings.
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub id: Cow<'static, str>,
