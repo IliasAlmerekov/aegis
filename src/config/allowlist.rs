@@ -125,7 +125,10 @@ pub struct AllowlistWarning {
     pub location: String,
 }
 
-/// Compiled allowlist matcher for trusted command strings.
+/// Compiled effective allowlist view used for authoritative runtime matching.
+///
+/// This is the runtime matcher consulted for allow/deny decisions after the
+/// layered config input has been validated and compiled.
 #[derive(Debug, Clone, Default)]
 pub struct Allowlist {
     project_entries: Vec<CompiledAllowlistRule>,
@@ -144,7 +147,7 @@ struct CompiledAllowlistRule {
 }
 
 impl Allowlist {
-    /// Compile layered allowlist rules into a contextual matcher.
+    /// Compile layered allowlist rules into the effective runtime matcher.
     pub fn new<T>(rules: &[T]) -> Result<Self>
     where
         T: Clone + Into<LayeredAllowlistRule>,
@@ -189,6 +192,10 @@ impl Allowlist {
 }
 
 /// Produce advisory warnings for one structured allowlist rule.
+///
+/// This analysis is informational only. It does not participate in
+/// authoritative runtime allow/deny matching, which is performed exclusively
+/// by the compiled [`Allowlist`].
 pub fn analyze_allowlist_rule(rule: &AllowlistRule) -> Vec<AllowlistWarning> {
     let mut warnings = Vec::new();
     let location = warning_location(rule);

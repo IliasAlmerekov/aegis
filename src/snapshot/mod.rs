@@ -56,11 +56,21 @@ pub trait SnapshotPlugin: Send + Sync {
     async fn rollback(&self, snapshot_id: &str) -> Result<()>;
 }
 
-/// Holds all registered plugins and drives the snapshot lifecycle.
+/// Holds the config-filtered runtime snapshot provider set.
+///
+/// This registry materializes the providers made available by the effective
+/// runtime config. A provider being present here means it is available for
+/// later applicability checks, not that it will snapshot every command or in
+/// every working directory.
 pub struct SnapshotRegistry {
     plugins: Vec<Box<dyn SnapshotPlugin>>,
 }
 
+/// Eager runtime snapshot config used to materialize a [`SnapshotRegistry`].
+///
+/// This captures the config boundary between "which built-in providers are
+/// available at runtime" and the later per-command/per-directory applicability
+/// checks performed by each provider.
 #[derive(Debug, Clone)]
 pub struct SnapshotRegistryConfig {
     pub snapshot_policy: crate::config::SnapshotPolicy,
@@ -92,7 +102,11 @@ impl SnapshotRegistry {
         Self::from_runtime_config(&SnapshotRegistryConfig::from(config))
     }
 
-    /// Build a snapshot registry from the eager config required at runtime.
+    /// Build a snapshot registry from the eager runtime config.
+    ///
+    /// This materializes the config-filtered set of available snapshot
+    /// providers. Applicability remains a later concern evaluated by each
+    /// provider for a specific working directory or command.
     pub fn from_runtime_config(config: &SnapshotRegistryConfig) -> Self {
         #[cfg(test)]
         SNAPSHOT_REGISTRY_BUILD_COUNT.with(|count| count.set(count.get() + 1));

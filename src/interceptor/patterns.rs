@@ -91,7 +91,11 @@ struct PatternsFile {
     patterns: Vec<RawPattern>,
 }
 
-/// Compiled set of patterns used by the scanner.
+/// Effective merged pattern set consumed when constructing a scanner.
+///
+/// This is the authoritative runtime view after combining the built-in
+/// patterns embedded in the binary with any custom patterns supplied by the
+/// resolved config layers.
 #[derive(Debug)]
 pub struct PatternSet {
     pub patterns: Vec<Arc<Pattern>>,
@@ -101,16 +105,24 @@ pub struct PatternSet {
 const BUILTIN_PATTERNS_TOML: &str = include_str!("../../config/patterns.toml");
 
 impl PatternSet {
-    /// Parse and return the built-in pattern set from the embedded `config/patterns.toml`.
+    /// Parse and return the canonical built-in-only pattern set.
+    ///
+    /// This loads the embedded `config/patterns.toml` without any config
+    /// overlays, providing the built-in source of truth before custom patterns
+    /// are merged for runtime scanner construction.
     pub fn load() -> Result<PatternSet, AegisError> {
         Self::from_sources(&[])
     }
 
-    /// Build one validated runtime set from built-in + custom sources.
+    /// Build the authoritative merged pattern view for scanner construction.
     ///
     /// Merge order is fixed and explicit:
     /// 1) built-in patterns embedded in the binary
     /// 2) user-defined patterns loaded from config
+    ///
+    /// The returned set is the effective runtime input consumed by
+    /// `Scanner::new`, after validation and normalization into one `Pattern`
+    /// representation.
     pub fn from_sources(custom_patterns: &[UserPattern]) -> Result<PatternSet, AegisError> {
         let file: PatternsFile = toml::from_str(BUILTIN_PATTERNS_TOML)
             .map_err(|e| AegisError::Config(format!("failed to parse patterns.toml: {e}")))?;

@@ -546,6 +546,11 @@ impl AegisConfig {
             })
     }
 
+    /// Return the precedence-resolved allowlist input annotated with source layer.
+    ///
+    /// This preserves per-rule provenance from the layered config merge so
+    /// later allowlist compilation can distinguish project-vs-global entries
+    /// while compiling the effective runtime matcher.
     pub(crate) fn layered_allowlist_rules(&self) -> Vec<LayeredAllowlistRule> {
         self.allowlist
             .iter()
