@@ -554,7 +554,11 @@ mod tests {
         let warnings = analyze_allowlist_rule(&rule);
         let allowlist = Allowlist::from_layered_rules(&[rule]).unwrap();
 
-        assert!(warnings.iter().any(|warning| warning.code == "broad_pattern"));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.code == "broad_pattern")
+        );
         assert_eq!(
             allowlist
                 .match_reason(&ctx("terraform destroy -target=module.test.api"))

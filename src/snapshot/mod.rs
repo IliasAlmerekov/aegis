@@ -55,7 +55,8 @@ fn materialize_builtin_plugins(
     names: &[&str],
     docker_scope: &crate::config::DockerScope,
 ) -> Vec<Box<dyn SnapshotPlugin>> {
-    names.iter()
+    names
+        .iter()
         .filter_map(|name| materialize_builtin_plugin(name, docker_scope))
         .collect()
 }
@@ -159,10 +160,8 @@ impl SnapshotRegistry {
                 plugins = materialize_builtin_plugins(&enabled_names, &config.docker_scope);
             }
             SnapshotPolicy::Full => {
-                plugins = materialize_builtin_plugins(
-                    available_provider_names(),
-                    &config.docker_scope,
-                );
+                plugins =
+                    materialize_builtin_plugins(available_provider_names(), &config.docker_scope);
             }
         }
 
