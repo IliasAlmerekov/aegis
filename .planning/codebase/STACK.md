@@ -3,81 +3,99 @@
 Last refreshed: 2026-04-12
 Focus: tech+arch
 
-## Core implementation stack
+## Core stack
 
-- Language: Rust `2024` (`Cargo.toml`)
+- Language: Rust `2024`
 - Package: single crate `aegis`
-- Declared crate version: `1.0.0`
+- Declared version: `0.1.0`
 - Primary binaries:
   - `src/main.rs` → `aegis`
-  - `src/bin/aegis_benchcheck.rs` → benchmark policy checker
+  - `src/bin/aegis_benchcheck.rs` → benchmark-policy checker
 
-## Runtime / library dependencies
+## Runtime dependencies
 
 From `Cargo.toml`:
 
-- CLI / argument parsing: `clap 4.5`
+- CLI: `clap 4.5`
 - Errors: `thiserror 1`, `anyhow 1`
-- Config / data formats: `serde 1`, `toml 0.8`, `serde_json 1`
-- Async runtime / subprocesses: `tokio 1`, `async-trait 0.1`
+- Config / serialization: `serde 1`, `toml 0.8`, `serde_json 1`
+- Async / subprocess orchestration: `tokio 1`, `async-trait 0.1`
 - Terminal UI: `crossterm 0.28`
-- Scanning: `aho-corasick 1.1`, `regex 1.11`
-- Time / audit timestamps: `time 0.3`
-- Audit compression / integrity: `flate2 1`, `sha2 0.10`
+- Scanner: `aho-corasick 1.1`, `regex 1.11`
+- Audit / timestamps / integrity: `time 0.3`, `flate2 1`, `sha2 0.10`
 - Misc: `base64 0.22`
 
-## Design choices visible in code
+## Supporting repo tooling
 
-- Hot path remains synchronous in `src/interceptor/`.
-- Scanner is two-pass:
-  - fast keyword prefilter via Aho-Corasick
-  - authoritative regex pass only on candidate inputs
-- Built-in scanner is cached with `std::sync::LazyLock` in `src/interceptor/mod.rs`.
-- Runtime dependency container exists as `RuntimeContext` in `src/runtime.rs`.
-- Policy decisions are isolated in `src/decision.rs`.
-- Async is used mainly for snapshot/rollback and watch-mode process handling.
+- Benchmarks: `criterion 0.5`
+- Dependency policy: `deny.toml`
+- Release workflows:
+  - `.github/workflows/ci.yml`
+  - `.github/workflows/release.yml`
+- Fuzzing package present:
+  - `fuzz/Cargo.toml`
+  - `fuzz/fuzz_targets/parser.rs`
+  - `fuzz/corpus/parser/*`
 
-## Tooling / verification stack present in repo
+## Observable implementation choices
 
-- Formatting: `cargo fmt --check`
-- Linting: `cargo clippy -- -D warnings`
-- Tests: `cargo test`
-- Benchmarks: `cargo bench --bench scanner_bench`
-- Supply chain: `cargo audit`, `cargo deny check`
-- CI: `.github/workflows/ci.yml`
-- Release automation: `.github/workflows/release.yml`
+- `src/interceptor/` remains synchronous and hot-path oriented.
+- Scanner is still two-pass:
+  - Aho-Corasick keyword prefilter
+  - regex verification only for candidates
+- Policy is separated from UI/execution in:
+  - `src/decision.rs`
+  - `src/planning/*`
+- Runtime dependency wiring is centralized in `src/runtime.rs`.
+- Audit integrity and rotation are first-class runtime concerns, not bolt-ons.
 
-## Test / quality footprint
+## Verification snapshot from this rescan
 
-- Test files at repo root under `tests/`: 13 integration-style suites
-- Test annotations found in `src/` + `tests/`: ~475 (`#[test]` / `#[tokio::test]`)
-- Notable suites:
-  - `tests/full_pipeline.rs`
-  - `tests/security_regression.rs`
-  - `tests/audit_concurrency.rs`
-  - `tests/audit_integrity.rs`
-  - `tests/snapshot_integration.rs`
-  - `tests/docker_integration.rs`
-  - `tests/installer_flow.rs`
-  - `tests/watch_mode.rs`
+Executed locally against the current repo state:
 
-## Release/public-readiness strengths
+- `rtk cargo fmt --check` ✅
+- `rtk cargo clippy -- -D warnings` ✅
+- `rtk cargo test` ✅ `490 passed`
+- `rtk cargo bench --bench scanner_bench` ✅
+- `rtk cargo run --quiet --bin aegis_benchcheck -- --baseline perf/scanner_bench_baseline.toml --criterion-root target/criterion` ✅
+- `rtk cargo audit` ✅
+- `rtk cargo deny check bans licenses sources` ✅
+  - passes with warnings about unmatched allowed licenses and duplicate `windows-sys`
+- `rtk cargo +nightly fuzz build parser` ✅
+- `rtk cargo publish --dry-run --allow-dirty` ✅
+  - dry-run verified packaging/build path
+  - warning: `aegis@0.1.0` already exists on crates.io index
 
-- CI is pinned to explicit tool/action versions and includes fmt/clippy/test/audit/deny/build/bench jobs.
-- Release workflow builds Linux + macOS artifacts and publishes `.sha256` checksum sidecars.
-- Installer/uninstaller scripts exist and have dedicated integration coverage.
-- Public repo basics exist: `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`.
-- Quick secret-pattern scan of tracked files found no obvious embedded keys/tokens.
+## Packaging state
 
-## Release/public-readiness gaps found directly in repo
+Current crate metadata improved materially versus the earlier scan:
 
-- `Cargo.toml` declares `version = "1.0.0"`, but `CONVENTION.md` and `TODO.md` still describe the project as not yet production-ready.
-- Fuzzing is documented as required before v1.0 (`docs/architecture-decisions.md`), but no `fuzz/` directory is present in the repository.
-- `tracing-subscriber` is a dependency, but no initialization call was found in `src/`.
-- Public install flow downloads a binary directly in `scripts/install.sh`; it does not verify the published SHA-256 checksum before installation.
-- The checked-in report `docs/superpowers/reports/2026-04-12-p2-production-polish-summary.md` records local PASS for fmt/clippy/test/bench/audit, but `cargo deny check` was still unresolved there because the pinned local `cargo-deny 0.19.1` panicked on advisory DB parsing.
+- `Cargo.toml` now excludes:
+  - `.claude/**`
+  - `.codex/**`
+  - `.planning/**`
+  - `*.txt`
+- `cargo package --list --allow-dirty` no longer includes the previously flagged stray text files.
+- Package still includes a broad set of internal project docs under `docs/` and `docs/superpowers/`, but the crate is publishable and the dry-run verify step succeeded.
 
-## Bottom line from stack view
+## Release/public readiness from stack view
 
-Technically, this is already a substantial, tested Rust CLI with CI, release automation, benchmarks, audit integrity, and rollback flows.  
-From a release-positioning standpoint, the stack looks like a strong public beta / MVP, not a confidently finished security product.
+### Strong signals
+
+- Versioning now matches an early public release (`0.1.0`), not a premature `1.0.0`.
+- Parser fuzzing infrastructure now exists and the parser fuzz target builds.
+- Local verification baseline passes.
+- Bench regression policy passes.
+- Publish dry-run succeeds.
+
+### Remaining stack-level cautions
+
+- `scripts/install.sh` still downloads and installs the binary directly without verifying the published `.sha256` sidecar.
+- README still presents `curl | sh` as the primary install path.
+- `docs/ci.md` says `cargo-deny` is pinned to `0.19.1`, while `.github/workflows/ci.yml` currently sets `CARGO_DENY_VERSION: 0.18.2`.
+- If crates.io publication matters, the dry-run warning about `aegis@0.1.0` already existing on the index needs explicit release-owner confirmation.
+
+## Bottom line
+
+The stack is now good enough for a first public `0.1.0` release and for real Linux/macOS usage as a local guardrail.
+It still falls short of a fully mature production-security positioning because installer verification and some release/documentation details remain unfinished.

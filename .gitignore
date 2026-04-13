@@ -17,3 +17,5 @@ fuzz/corpus/parser/*
 !fuzz/corpus/parser/unterminated-heredoc.txt
 !fuzz/corpus/parser/inline-python.txt
 !fuzz/corpus/parser/nested-shell.txt
+docs/claude-source-borrowings.md
+docs/CODEX-*.md

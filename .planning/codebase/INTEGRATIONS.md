@@ -3,117 +3,136 @@
 Last refreshed: 2026-04-12
 Focus: tech+arch
 
-## User/runtime integration surfaces
+## User-facing runtime surfaces
 
 ### 1. Shell-wrapper execution
 
-- Main entrypoint is `aegis -c '<cmd>'`.
+- Main user path remains `aegis -c '<cmd>'`.
 - `src/main.rs` resolves the real shell from:
   1. `AEGIS_REAL_SHELL`
-  2. `SHELL` if it does not point back to Aegis
+  2. `SHELL` when it does not point back to Aegis
   3. `/bin/sh` fallback
-- Installer writes managed shell-wrapper blocks into `~/.bashrc` or `~/.zshrc`.
+- `scripts/install.sh` writes a managed block into `~/.bashrc` or `~/.zshrc`.
 
 ### 2. Watch mode
 
-- `aegis watch` reads NDJSON frames from stdin and emits NDJSON results to stdout.
+- `aegis watch` consumes NDJSON frames from stdin and emits NDJSON results to stdout.
 - Implemented in `src/watch.rs`.
-- Human confirmation in watch mode goes through `/dev/tty`, so this surface is Unix-oriented.
+- Confirmation for watch-mode execution goes through `/dev/tty`, so this is intentionally Unix-oriented.
 
-### 3. Config integration
+### 3. Evaluation-only JSON
 
-- Effective config layers:
-  - built-in defaults
-  - `~/.config/aegis/config.toml`
-  - `.aegis.toml`
-- Config commands:
-  - `aegis config init`
-  - `aegis config show`
-  - `aegis config validate`
-- Structured allowlist, custom patterns, snapshot policy, CI policy, audit policy are all wired into runtime.
+- `aegis -c '<cmd>' --output json`
+- Exposes machine-readable decision data without executing the command.
+- Includes risk, decision, matched patterns, allowlist info, CI state, and snapshot plan.
 
-## External tool / platform integrations
+### 4. Config integration
 
-### Git
+Effective config layers are wired as:
 
-- `src/snapshot/git.rs`
-- Used for:
-  - repo detection via `git rev-parse --git-dir`
-  - best-effort pre-danger snapshots via `git stash push --include-untracked`
-  - rollback via `git stash pop --index`
-- Coverage includes:
-  - repo root
-  - subdirectories
-  - staged + unstaged changes
-  - untracked files
-  - worktrees
-  - rollback conflict path
+- built-in defaults
+- `~/.config/aegis/config.toml`
+- project `.aegis.toml`
 
-### Docker
+Operational commands:
 
-- `src/snapshot/docker.rs`
-- Used for:
-  - container discovery via `docker ps -q`
-  - metadata capture via `docker inspect`
-  - filesystem snapshot via `docker commit`
-  - rollback via `docker stop` / `docker rm` / `docker run`
-- Supports scoped selection:
-  - `Labeled`
-  - `All`
-  - `Names`
+- `aegis config init`
+- `aegis config show`
+- `aegis config validate`
 
-### Filesystem / local machine
+## External tool integrations
 
-- Audit log: `~/.aegis/audit.jsonl`
-- Optional rotation archives: `audit.jsonl.N` or `audit.jsonl.N.gz`
-- Lock file: companion `.lock`
-- Installer target default: `/usr/local/bin/aegis`
+### Git snapshots
 
-## CI / GitHub integrations
+Implemented in `src/snapshot/git.rs`:
 
-- `.github/workflows/ci.yml`
-  - fmt
-  - clippy
-  - tests
-  - cargo-audit
-  - cargo-deny
-  - release builds
-  - scanner benchmark policy
-- `.github/workflows/release.yml`
-  - tag-triggered release
-  - Linux + macOS asset builds
-  - SHA-256 checksum generation
-  - GitHub Release publication
+- applicability detection via Git repo checks
+- pre-danger snapshot via stash
+- rollback via stash restoration
 
-## Audit / machine-readable integrations
+The repo includes dedicated coverage for subdirs, worktrees, untracked files, and rollback conflict paths.
 
-- `aegis audit`
-  - text / json / ndjson output
-  - filters by risk, decision, time, substring
-  - summary mode
-  - integrity verification mode
-- `aegis --output json`
-  - evaluation-only decision JSON
-  - includes risk, decision, matched patterns, allowlist match, snapshot plan, CI state
+### Docker snapshots
+
+Implemented in `src/snapshot/docker.rs`:
+
+- live container discovery
+- metadata capture
+- snapshot via `docker commit`
+- rollback via stop/remove/run reconstruction
+
+Supported scope modes are configurable and documented in code.
+
+### Local filesystem / audit
+
+- Audit root: `~/.aegis/audit.jsonl`
+- Rotation archives supported
+- gzip archive support present
+- tamper-evident hash chaining supported
+- companion lock-file logic exists for multi-process safety
+
+## CI / release integrations
+
+### CI workflow
+
+`.github/workflows/ci.yml` currently runs:
+
+- fmt
+- clippy
+- tests
+- `cargo audit`
+- `cargo deny check bans licenses sources`
+- release build job
+- scanner benchmark job + policy check
+
+### Release workflow
+
+`.github/workflows/release.yml` currently:
+
+- builds Linux + macOS assets
+- publishes `.sha256` sidecars
+- marks prereleases automatically for `-rc`, `-beta`, `-alpha`
+- uploads artifacts to a GitHub Release
 
 ## Public-repo hygiene signals
 
-- `.gitignore` excludes `.env`, `.claude/`, `.codex/`, `.worktrees/`, `target/`.
-- Quick regex scan found no obvious committed secret material.
-- Public-facing governance files present:
-  - `LICENSE`
-  - `CONTRIBUTING.md`
-  - `CODE_OF_CONDUCT.md`
+- `LICENSE`, `CONTRIBUTING.md`, and `CODE_OF_CONDUCT.md` are present.
+- README now includes:
+  - security model
+  - limitations
+  - platform claims
+- `docs/platform-support.md` exists and matches the Unix-only positioning.
+- `fuzz/` now exists in the repo, consistent with the ADR update.
 
-## Integration gaps / caution areas
+## Integration gaps that still matter for release confidence
 
-- README points to `AEGIS.md` for the full pattern table, but no `AEGIS.md` file exists in the repository.
-- `docs/architecture-decisions.md` says README documents the security model and non-goals; repository scan did not find that section in README.
-- Release workflow generates checksum files, but `scripts/install.sh` does not consume or verify them.
-- No threat-model or limitations document was found under `docs/`.
-- Windows is explicitly unsupported and the installer rejects it; this is honest, but it limits “general public” reach.
+### Installer verification gap
 
-## Bottom line from integrations view
+- Release workflow generates checksum files.
+- `scripts/install.sh` downloads only the binary asset and does not fetch or verify the matching `.sha256`.
+- The primary README install flow is still `curl ... | sh`.
 
-The repo is already well-integrated with shell setup, Git, Docker, CI, audit, release automation, and machine-readable outputs.  
-The biggest public-release weakness is not missing integration plumbing; it is missing verification/honesty layers around those integrations in the public docs and install path.
+### Threat-model documentation gap
+
+- `docs/platform-support.md` exists.
+- `README.md` has a limitations section.
+- But `docs/threat-model.md` is still absent.
+
+This matters because `CONVENTION.md` still treats threat model + limitations documentation as part of stronger production claims.
+
+### CI/doc drift
+
+- `docs/ci.md` says pinned `cargo-deny` is `0.19.1`.
+- `.github/workflows/ci.yml` currently sets `CARGO_DENY_VERSION: 0.18.2`.
+
+### Crates.io release caveat
+
+- `rtk cargo publish --dry-run --allow-dirty` succeeded.
+- The dry-run also warned that `aegis@0.1.0` already exists on the crates.io index.
+
+That is not a blocker for a GitHub release, but it is a real caveat if the intended “first release” includes crates.io publication under the current name/version.
+
+## Bottom line
+
+Integration coverage is now strong enough for a real public `0.1.0` GitHub release and day-to-day usage on Linux/macOS.
+The remaining weakness is no longer missing plumbing; it is mostly missing verification/positioning polish around installer trust and threat-model documentation.

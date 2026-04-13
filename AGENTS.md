@@ -144,5 +144,5 @@ rtk cargo deny check
 
 For command-style routing and role mapping, see:
 
-- `docs/CODEX-TICKET-ORCHESTRATION.md`
-- `docs/CODEX-COMMAND-AGENT-MAP.md`
+- `meta/CODEX-TICKET-ORCHESTRATION.md`
+- `meta/CODEX-COMMAND-AGENT-MAP.md`

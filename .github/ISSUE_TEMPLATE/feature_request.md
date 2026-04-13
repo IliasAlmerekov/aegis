@@ -6,6 +6,8 @@ labels: enhancement
 assignees: ""
 ---
 
+> Prefer GitHub Discussions for open-ended ideas once Discussions are enabled. Use this template for actionable, scoped feature requests.
+
 ## Problem statement
 
 What problem are you trying to solve?
