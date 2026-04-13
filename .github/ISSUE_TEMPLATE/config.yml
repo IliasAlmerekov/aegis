@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability report
+    url: https://github.com/IliasAlmerekov/aegis/security/policy
+    about: Please use the private security reporting flow described in SECURITY.md. Do not post vulnerabilities publicly.
+  - name: Roadmap ideas and questions
+    url: https://github.com/IliasAlmerekov/aegis/discussions
+    about: Use Discussions for roadmap ideas and questions once Discussions are enabled in repository settings.

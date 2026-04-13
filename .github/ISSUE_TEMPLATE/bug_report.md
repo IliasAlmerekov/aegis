@@ -6,6 +6,8 @@ labels: bug
 assignees: ""
 ---
 
+> Do not use this template for suspected security vulnerabilities. Follow `SECURITY.md` instead.
+
 ## Summary
 
 Describe the problem clearly and concisely.
