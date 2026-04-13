@@ -36,9 +36,9 @@ pub enum Category {
 /// Both built-in and user-defined patterns are normalized into the same
 /// `Cow<'static, str>`-backed runtime representation.
 ///
-/// In the current implementation, built-in patterns parsed from the embedded
-/// TOML and user-defined patterns loaded from config both enter this type via
-/// owned strings.
+/// This type can carry either borrowed static strings or owned runtime
+/// strings, allowing scanner consumers to operate on one normalized shape
+/// without depending on how a given pattern was materialized.
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub id: Cow<'static, str>,

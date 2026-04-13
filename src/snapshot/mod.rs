@@ -41,13 +41,11 @@ pub fn available_provider_names() -> &'static [&'static str] {
 fn materialize_builtin_plugin(
     name: &str,
     docker_scope: &crate::config::DockerScope,
-) -> Option<Box<dyn SnapshotPlugin>> {
+) -> Box<dyn SnapshotPlugin> {
     match name {
-        "git" => Some(Box::new(GitPlugin)),
-        "docker" => Some(Box::new(
-            DockerPlugin::new().with_scope(docker_scope.clone()),
-        )),
-        _ => None,
+        "git" => Box::new(GitPlugin),
+        "docker" => Box::new(DockerPlugin::new().with_scope(docker_scope.clone())),
+        _ => panic!("unknown built-in snapshot provider {name:?}"),
     }
 }
 
@@ -57,7 +55,7 @@ fn materialize_builtin_plugins(
 ) -> Vec<Box<dyn SnapshotPlugin>> {
     names
         .iter()
-        .filter_map(|name| materialize_builtin_plugin(name, docker_scope))
+        .map(|name| materialize_builtin_plugin(name, docker_scope))
         .collect()
 }
 
@@ -490,6 +488,15 @@ mod tests {
         assert_eq!(
             registry.configured_provider_names(),
             available_provider_names().to_vec()
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown built-in snapshot provider")]
+    fn materialize_builtin_plugins_fails_closed_for_unknown_builtin_name() {
+        let _ = materialize_builtin_plugins(
+            &["git", "unknown-provider"],
+            &crate::config::DockerScope::default(),
         );
     }
 
