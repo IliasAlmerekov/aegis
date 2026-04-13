@@ -125,7 +125,10 @@ pub struct AllowlistWarning {
     pub location: String,
 }
 
-/// Compiled allowlist matcher for trusted command strings.
+/// Compiled effective allowlist view used for authoritative runtime matching.
+///
+/// This is the runtime matcher consulted for allow/deny decisions after the
+/// layered config input has been validated and compiled.
 #[derive(Debug, Clone, Default)]
 pub struct Allowlist {
     project_entries: Vec<CompiledAllowlistRule>,
@@ -144,8 +147,20 @@ struct CompiledAllowlistRule {
 }
 
 impl Allowlist {
-    /// Compile layered allowlist rules into a contextual matcher.
+    /// Compatibility alias for [`Allowlist::from_layered_rules`].
+    ///
+    /// This preserves the legacy constructor shape while delegating to the
+    /// explicit layered-rule compile facade.
     pub fn new<T>(rules: &[T]) -> Result<Self>
+    where
+        T: Clone + Into<LayeredAllowlistRule>,
+    {
+        Self::from_layered_rules(rules)
+    }
+
+    /// Compile layered provenance-preserving rules into the effective runtime
+    /// matcher used for authoritative allow/deny decisions.
+    pub fn from_layered_rules<T>(rules: &[T]) -> Result<Self>
     where
         T: Clone + Into<LayeredAllowlistRule>,
     {
@@ -189,6 +204,10 @@ impl Allowlist {
 }
 
 /// Produce advisory warnings for one structured allowlist rule.
+///
+/// This analysis is informational only. It does not participate in
+/// authoritative runtime allow/deny matching, which is performed exclusively
+/// by the compiled [`Allowlist`].
 pub fn analyze_allowlist_rule(rule: &AllowlistRule) -> Vec<AllowlistWarning> {
     let mut warnings = Vec::new();
     let location = warning_location(rule);
@@ -520,6 +539,32 @@ mod tests {
 
         assert!(!warnings.iter().any(|w| w.code == "missing_scope"));
         assert!(warnings.iter().any(|w| w.code == "broad_pattern"));
+    }
+
+    #[test]
+    fn advisory_warnings_do_not_override_authoritative_runtime_matching() {
+        let rule = AllowlistRule {
+            pattern: "terraform destroy *".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped teardown".to_string(),
+        };
+
+        let warnings = analyze_allowlist_rule(&rule);
+        let allowlist = Allowlist::from_layered_rules(&[rule]).unwrap();
+
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.code == "broad_pattern")
+        );
+        assert_eq!(
+            allowlist
+                .match_reason(&ctx("terraform destroy -target=module.test.api"))
+                .map(|matched| matched.reason),
+            Some("scoped teardown".to_string())
+        );
     }
 
     fn rule(pattern: &str, reason: &str) -> AllowlistRule {

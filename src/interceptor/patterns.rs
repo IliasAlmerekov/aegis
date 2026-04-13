@@ -33,8 +33,12 @@ pub enum Category {
 
 /// Unified runtime pattern.
 ///
-/// Built-in patterns use `Cow::Borrowed(&'static str)` — zero-copy.
-/// User-defined patterns loaded from TOML use `Cow::Owned(String)`.
+/// Both built-in and user-defined patterns are normalized into the same
+/// `Cow<'static, str>`-backed runtime representation.
+///
+/// This type can carry either borrowed static strings or owned runtime
+/// strings, allowing scanner consumers to operate on one normalized shape
+/// without depending on how a given pattern was materialized.
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub id: Cow<'static, str>,
@@ -91,26 +95,38 @@ struct PatternsFile {
     patterns: Vec<RawPattern>,
 }
 
-/// Compiled set of patterns used by the scanner.
+/// Effective merged pattern set consumed when constructing a scanner.
+///
+/// This is the authoritative runtime view after combining the built-in
+/// patterns embedded in the binary with any custom patterns supplied by the
+/// resolved config layers.
 #[derive(Debug)]
 pub struct PatternSet {
-    pub patterns: Vec<Arc<Pattern>>,
+    patterns: Vec<Arc<Pattern>>,
 }
 
 /// Built-in patterns embedded at compile time — binary stays self-contained.
 const BUILTIN_PATTERNS_TOML: &str = include_str!("../../config/patterns.toml");
 
 impl PatternSet {
-    /// Parse and return the built-in pattern set from the embedded `config/patterns.toml`.
+    /// Parse and return the canonical built-in-only pattern set.
+    ///
+    /// This loads the embedded `config/patterns.toml` without any config
+    /// overlays, providing the built-in source of truth before custom patterns
+    /// are merged for runtime scanner construction.
     pub fn load() -> Result<PatternSet, AegisError> {
         Self::from_sources(&[])
     }
 
-    /// Build one validated runtime set from built-in + custom sources.
+    /// Build the authoritative merged pattern view for scanner construction.
     ///
     /// Merge order is fixed and explicit:
     /// 1) built-in patterns embedded in the binary
     /// 2) user-defined patterns loaded from config
+    ///
+    /// The returned set is the effective runtime input consumed by
+    /// `Scanner::new`, after validation and normalization into one `Pattern`
+    /// representation.
     pub fn from_sources(custom_patterns: &[UserPattern]) -> Result<PatternSet, AegisError> {
         let file: PatternsFile = toml::from_str(BUILTIN_PATTERNS_TOML)
             .map_err(|e| AegisError::Config(format!("failed to parse patterns.toml: {e}")))?;
@@ -139,6 +155,11 @@ impl PatternSet {
 
         // 5) compiled into runtime PatternSet (regex compilation happens in Scanner::new).
         Ok(PatternSet { patterns })
+    }
+
+    /// Return the effective merged pattern set consumed by scanner construction.
+    pub fn patterns(&self) -> &[Arc<Pattern>] {
+        self.patterns.as_slice()
     }
 
     fn validate_pattern(pattern: &Pattern, ids: &mut HashSet<String>) -> Result<(), AegisError> {
@@ -183,9 +204,9 @@ mod tests {
     fn load_builtin_patterns_parses_without_error() {
         let set = PatternSet::load().expect("patterns.toml should parse cleanly");
         assert!(
-            set.patterns.len() >= 50,
+            set.patterns().len() >= 50,
             "expected at least 50 patterns, got {}",
-            set.patterns.len()
+            set.patterns().len()
         );
     }
 
@@ -193,7 +214,7 @@ mod tests {
     fn all_categories_represented() {
         let set = PatternSet::load().unwrap();
         let categories: std::collections::HashSet<_> =
-            set.patterns.iter().map(|p| p.category).collect();
+            set.patterns().iter().map(|p| p.category).collect();
         assert!(categories.contains(&Category::Filesystem));
         assert!(categories.contains(&Category::Git));
         assert!(categories.contains(&Category::Database));
@@ -206,7 +227,7 @@ mod tests {
     #[test]
     fn all_patterns_have_non_empty_fields() {
         let set = PatternSet::load().unwrap();
-        for p in &set.patterns {
+        for p in set.patterns() {
             assert!(!p.id.is_empty(), "empty id");
             assert!(!p.pattern.is_empty(), "empty pattern for {}", p.id);
             assert!(!p.description.is_empty(), "empty description for {}", p.id);
@@ -227,7 +248,7 @@ mod tests {
         let set = PatternSet::from_sources(&[custom]).expect("custom pattern set should compile");
 
         let matched = set
-            .patterns
+            .patterns()
             .iter()
             .find(|p| p.id.as_ref() == "USR-999")
             .expect("custom pattern id should be present");

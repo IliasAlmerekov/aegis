@@ -361,7 +361,7 @@ impl AegisConfig {
     pub(crate) fn validate_runtime_requirements(&self) -> Result<()> {
         self.validate()?;
         interceptor::scanner_for(&self.custom_patterns).map(|_| ())?;
-        Allowlist::new(&self.layered_allowlist_rules()).map(|_| ())?;
+        Allowlist::from_layered_rules(&self.layered_allowlist_rules()).map(|_| ())?;
         Ok(())
     }
 
@@ -546,6 +546,11 @@ impl AegisConfig {
             })
     }
 
+    /// Return the layered allowlist input annotated with source layer.
+    ///
+    /// This preserves per-rule provenance from the layered config merge so
+    /// later allowlist compilation can distinguish project-vs-global entries
+    /// while compiling the effective runtime matcher.
     pub(crate) fn layered_allowlist_rules(&self) -> Vec<LayeredAllowlistRule> {
         self.allowlist
             .iter()

@@ -54,10 +54,11 @@ impl Scanner {
     /// The Aho-Corasick automaton is constructed once here; subsequent calls to
     /// [`quick_scan`] are allocation-free.
     pub fn new(patterns: PatternSet) -> Self {
+        let effective_patterns = patterns.patterns();
+
         // Compile each regex once. An invalid pattern in patterns.toml is a programming error —
         // panic at startup is the correct response (fail fast, not silently skip).
-        let compiled: Vec<(Arc<Pattern>, Regex)> = patterns
-            .patterns
+        let compiled: Vec<(Arc<Pattern>, Regex)> = effective_patterns
             .iter()
             .map(|p| {
                 let rx = Regex::new(&p.pattern)
@@ -69,7 +70,7 @@ impl Scanner {
         let mut keywords: Vec<String> = Vec::new();
         let mut has_uncovered = false;
 
-        for pattern in &patterns.patterns {
+        for pattern in effective_patterns {
             let kws = keywords::extract_keywords(&pattern.pattern);
             if kws.is_empty() {
                 has_uncovered = true;
