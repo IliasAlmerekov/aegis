@@ -143,7 +143,9 @@ fn custom_pattern_cache_key(custom_patterns: &[UserPattern]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RiskLevel, assess};
+    use super::{RiskLevel, assess, assess_with_custom_patterns};
+    use crate::config::UserPattern;
+    use crate::interceptor::patterns::{Category, PatternSource};
 
     #[test]
     fn safe_is_less_than_warn() {
@@ -163,5 +165,27 @@ mod tests {
     #[test]
     fn assess_reports_safe_for_benign_command() {
         assert_eq!(assess("echo hello world").unwrap().risk, RiskLevel::Safe);
+    }
+
+    #[test]
+    fn assess_with_custom_patterns_uses_the_effective_merged_pattern_set() {
+        let custom = UserPattern {
+            id: "USR-REG-001".to_string(),
+            category: Category::Cloud,
+            risk: RiskLevel::Warn,
+            pattern: "internal-teardown".to_string(),
+            description: "Internal teardown guard".to_string(),
+            safe_alt: Some("internal-teardown --dry-run".to_string()),
+        };
+
+        let assessment = assess_with_custom_patterns("internal-teardown", &[custom]).unwrap();
+
+        assert_eq!(assessment.risk, RiskLevel::Warn);
+        assert!(
+            assessment
+                .matched
+                .iter()
+                .any(|matched| matched.pattern.source == PatternSource::Custom)
+        );
     }
 }

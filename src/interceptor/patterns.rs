@@ -102,7 +102,7 @@ struct PatternsFile {
 /// resolved config layers.
 #[derive(Debug)]
 pub struct PatternSet {
-    pub patterns: Vec<Arc<Pattern>>,
+    patterns: Vec<Arc<Pattern>>,
 }
 
 /// Built-in patterns embedded at compile time — binary stays self-contained.
@@ -157,6 +157,11 @@ impl PatternSet {
         Ok(PatternSet { patterns })
     }
 
+    /// Return the effective merged pattern set consumed by scanner construction.
+    pub fn patterns(&self) -> &[Arc<Pattern>] {
+        self.patterns.as_slice()
+    }
+
     fn validate_pattern(pattern: &Pattern, ids: &mut HashSet<String>) -> Result<(), AegisError> {
         if pattern.id.trim().is_empty() {
             return Err(AegisError::Config(format!(
@@ -199,9 +204,9 @@ mod tests {
     fn load_builtin_patterns_parses_without_error() {
         let set = PatternSet::load().expect("patterns.toml should parse cleanly");
         assert!(
-            set.patterns.len() >= 50,
+            set.patterns().len() >= 50,
             "expected at least 50 patterns, got {}",
-            set.patterns.len()
+            set.patterns().len()
         );
     }
 
@@ -209,7 +214,7 @@ mod tests {
     fn all_categories_represented() {
         let set = PatternSet::load().unwrap();
         let categories: std::collections::HashSet<_> =
-            set.patterns.iter().map(|p| p.category).collect();
+            set.patterns().iter().map(|p| p.category).collect();
         assert!(categories.contains(&Category::Filesystem));
         assert!(categories.contains(&Category::Git));
         assert!(categories.contains(&Category::Database));
@@ -222,7 +227,7 @@ mod tests {
     #[test]
     fn all_patterns_have_non_empty_fields() {
         let set = PatternSet::load().unwrap();
-        for p in &set.patterns {
+        for p in set.patterns() {
             assert!(!p.id.is_empty(), "empty id");
             assert!(!p.pattern.is_empty(), "empty pattern for {}", p.id);
             assert!(!p.description.is_empty(), "empty description for {}", p.id);
@@ -243,7 +248,7 @@ mod tests {
         let set = PatternSet::from_sources(&[custom]).expect("custom pattern set should compile");
 
         let matched = set
-            .patterns
+            .patterns()
             .iter()
             .find(|p| p.id.as_ref() == "USR-999")
             .expect("custom pattern id should be present");
