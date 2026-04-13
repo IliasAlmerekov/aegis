@@ -1,7 +1,7 @@
 use std::path::Path;
 #[cfg(not(windows))]
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use time::OffsetDateTime;
 use tokio::runtime::Handle;
@@ -13,7 +13,7 @@ use crate::config::{
 use crate::error::AegisError;
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
-use crate::snapshot::{SnapshotRecord, SnapshotRegistry};
+use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
 
 /// Internal runtime view of the effective policy configuration.
 ///
@@ -49,7 +49,8 @@ pub struct RuntimeContext {
     allowlist: Allowlist,
     current_user: Option<String>,
     scanner: Arc<Scanner>,
-    snapshot_registry: SnapshotRegistry,
+    snapshot_registry_config: SnapshotRegistryConfig,
+    snapshot_registry: OnceLock<SnapshotRegistry>,
     async_handle: Handle,
     audit_logger: AuditLogger,
 }
@@ -75,7 +76,8 @@ impl RuntimeContext {
 
         Ok(Self {
             allowlist: Allowlist::new(&config.layered_allowlist_rules())?,
-            snapshot_registry: SnapshotRegistry::from_config(&config),
+            snapshot_registry_config: SnapshotRegistryConfig::from(&config),
+            snapshot_registry: OnceLock::new(),
             async_handle: handle,
             audit_logger: build_audit_logger(&config),
             current_user,
@@ -99,6 +101,12 @@ impl RuntimeContext {
         self.current_user.as_deref()
     }
 
+    fn snapshot_registry(&self) -> &SnapshotRegistry {
+        self.snapshot_registry.get_or_init(|| {
+            SnapshotRegistry::from_runtime_config(&self.snapshot_registry_config)
+        })
+    }
+
     /// Resolve the allowlist rule, if any, that matches the runtime context.
     pub fn allowlist_match(&self, context: &AllowlistContext<'_>) -> Option<AllowlistMatch> {
         self.allowlist.match_reason(context)
@@ -120,13 +128,13 @@ impl RuntimeContext {
     /// persistent async handle.
     pub fn create_snapshots(&self, cwd: &Path, cmd: &str, _verbose: bool) -> Vec<SnapshotRecord> {
         self.async_handle
-            .block_on(self.snapshot_registry.snapshot_all(cwd, cmd))
+            .block_on(self.snapshot_registry().snapshot_all(cwd, cmd))
     }
 
     /// Return the names of snapshot plugins that would be eligible for `cwd`
     /// without creating any snapshots.
     pub fn applicable_snapshot_plugins(&self, cwd: &Path) -> Vec<&'static str> {
-        self.snapshot_registry.applicable_plugins(cwd)
+        self.snapshot_registry().applicable_plugins(cwd)
     }
 
     /// Return a reference to the persistent async handle.
@@ -143,7 +151,7 @@ impl RuntimeContext {
         cwd: &std::path::Path,
         cmd: &str,
     ) -> Vec<crate::snapshot::SnapshotRecord> {
-        self.snapshot_registry.snapshot_all(cwd, cmd).await
+        self.snapshot_registry().snapshot_all(cwd, cmd).await
     }
 
     /// Append one audit entry with the context-bound logger configuration.

@@ -59,6 +59,25 @@ pub struct SnapshotRegistry {
     plugins: Vec<Box<dyn SnapshotPlugin>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SnapshotRegistryConfig {
+    pub snapshot_policy: crate::config::SnapshotPolicy,
+    pub auto_snapshot_git: bool,
+    pub auto_snapshot_docker: bool,
+    pub docker_scope: crate::config::DockerScope,
+}
+
+impl From<&Config> for SnapshotRegistryConfig {
+    fn from(config: &Config) -> Self {
+        Self {
+            snapshot_policy: config.snapshot_policy,
+            auto_snapshot_git: config.auto_snapshot_git,
+            auto_snapshot_docker: config.auto_snapshot_docker,
+            docker_scope: config.docker_scope.clone(),
+        }
+    }
+}
+
 impl Default for SnapshotRegistry {
     fn default() -> Self {
         Self::from_config(&Config::default())
@@ -68,6 +87,11 @@ impl Default for SnapshotRegistry {
 impl SnapshotRegistry {
     /// Build a snapshot registry that honours the effective runtime config.
     pub fn from_config(config: &Config) -> Self {
+        Self::from_runtime_config(&SnapshotRegistryConfig::from(config))
+    }
+
+    /// Build a snapshot registry from the eager config required at runtime.
+    pub fn from_runtime_config(config: &SnapshotRegistryConfig) -> Self {
         #[cfg(test)]
         SNAPSHOT_REGISTRY_BUILD_COUNT.fetch_add(1, Ordering::SeqCst);
 
