@@ -56,12 +56,12 @@ pub trait SnapshotPlugin: Send + Sync {
     async fn rollback(&self, snapshot_id: &str) -> Result<()>;
 }
 
-/// Holds the config-filtered runtime snapshot provider set.
+/// Holds the runtime snapshot provider set used for snapshot and rollback flows.
 ///
-/// This registry materializes the providers made available by the effective
-/// runtime config. A provider being present here means it is available for
-/// later applicability checks, not that it will snapshot every command or in
-/// every working directory.
+/// Entries may be materialized from the effective runtime config or assembled
+/// for broader recovery operations such as rollback. A provider being present
+/// here means it is available for later applicability checks, not that it will
+/// snapshot every command or in every working directory.
 pub struct SnapshotRegistry {
     plugins: Vec<Box<dyn SnapshotPlugin>>,
 }

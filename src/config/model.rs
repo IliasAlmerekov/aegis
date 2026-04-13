@@ -546,7 +546,7 @@ impl AegisConfig {
             })
     }
 
-    /// Return the precedence-resolved allowlist input annotated with source layer.
+    /// Return the layered allowlist input annotated with source layer.
     ///
     /// This preserves per-rule provenance from the layered config merge so
     /// later allowlist compilation can distinguish project-vs-global entries
