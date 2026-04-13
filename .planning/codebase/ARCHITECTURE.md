@@ -7,175 +7,147 @@ Focus: tech+arch
 
 Aegis is a single-crate Rust CLI that sits in front of the user’s real shell and evaluates commands before execution.
 
-Core flow in `src/main.rs`:
+Current flow visible in `src/main.rs` and `src/planning/*`:
 
 1. Parse CLI args / subcommand.
 2. Build one Tokio runtime for process lifetime.
-3. Load one `RuntimeContext`.
-4. Assess command risk with the interceptor pipeline.
-5. Evaluate policy with `decision.rs`.
-6. If required, create snapshots.
-7. Prompt / block / auto-approve.
-8. Append audit entry.
-9. Execute real shell command or return reserved Aegis exit code.
+3. Prepare the runtime planner (`prepare_planner`).
+4. Produce a typed `PlanningOutcome`.
+5. For planned commands:
+   - assess risk
+   - evaluate policy
+   - derive approval + snapshot requirements
+   - append audit facts
+   - execute / prompt / block
 
-## Runtime dependency graph
+This is stronger than a direct “scan + if” shell wrapper: the repo now has an explicit planning boundary and typed policy outputs.
 
-`RuntimeContext` (`src/runtime.rs`) is the key composition point:
+## Key architectural pieces
 
-- validates config runtime requirements
-- builds scanner from built-in + custom patterns
-- compiles structured allowlist
-- creates snapshot registry from config
-- captures current user
-- configures audit logger
-- exposes one persistent Tokio handle
+### Runtime composition
 
-This is a good architectural shift away from scattered defaults/singletons.
+`src/runtime.rs` provides `RuntimeContext`, which centralizes:
 
-## Interception pipeline
+- loaded config
+- scanner construction
+- layered allowlist
+- snapshot registry
+- audit logger
+- current user context
+- shared Tokio handle
 
-### Parser / normalization
+This keeps subsystem wiring out of leaf modules.
 
-`src/interceptor/parser.rs` handles:
+### Interception subsystem
 
-- tokenization with quotes/escaping
-- logical command segmentation
-- nested shell unwrapping (`bash -c`, `sh -c`, env-prefixed shell calls)
-- heredocs
-- inline interpreters (`python -c`, `node -e`, etc.)
-- command substitution / subshell extraction
-- top-level pipeline extraction
+`src/interceptor/` contains the hot path:
 
-### Scanner
+- `parser.rs` — tokenization, heredocs, inline interpreters, nested shell extraction
+- `nested.rs` — recursive scan target discovery
+- `scanner.rs` — Aho-Corasick fast path plus regex verification
+- `patterns.rs` — built-in + custom pattern loading
 
-`src/interceptor/scanner.rs` implements:
+The parser/scanner remain synchronous, which is consistent with the performance contract in repo conventions.
 
-- Aho-Corasick quick prefilter
-- regex full-scan for actual matches
-- recursive nested-payload scanning
-- semantic pipeline checks (`PIPE-*`)
-- uncertain WARN fallback for:
-  - oversized command input
-  - oversized inline scripts
-  - recursive-depth overflow
+### Policy subsystem
 
-### Pattern model
+Policy logic is now separated into:
 
-`src/interceptor/patterns.rs` merges:
+- `src/decision.rs`
+- `src/planning/core.rs`
+- `src/planning/types.rs`
+- `src/planning/prepare.rs`
 
-1. built-in embedded TOML patterns
-2. user `custom_patterns`
+Observed architectural benefit:
 
-It enforces:
+- shell wrapper
+- watch mode
+- evaluation-only JSON
 
-- duplicate-id rejection
-- empty-field rejection
-- pattern source tracking (`builtin` / `custom`)
+all adapt the same decision model instead of re-implementing policy ad hoc.
 
-## Policy architecture
-
-`src/decision.rs` is a side-effect-free policy kernel.
-
-Inputs:
-
-- scanner assessment
-- mode (`Protect`, `Audit`, `Strict`)
-- CI detection
-- allowlist match state
-- snapshot policy / override flags
-- transport (`Shell`, `Watch`, `Evaluation`)
-
-Outputs:
-
-- `PolicyAction` (`AutoApprove`, `Prompt`, `Block`)
-- rationale
-- snapshot requirement
-- whether allowlist materially changed the outcome
-
-This is clean and release-friendly: policy is no longer encoded only in UI/main branching.
-
-## Snapshot architecture
+### Snapshot subsystem
 
 `src/snapshot/mod.rs` provides:
 
-- `SnapshotPlugin` trait
+- `SnapshotPlugin`
 - `SnapshotRegistry`
 - config-aware plugin enablement
-- rollback registry independent from snapshot-creation flags
+- rollback-oriented registry construction
 
-Built-in plugins:
+Built-in implementations:
 
 - `GitPlugin`
 - `DockerPlugin`
 
-Important accuracy note:
+The subsystem remains honestly best-effort: snapshot failure does not silently auto-approve, but snapshot creation is not treated as a hard fidelity guarantee.
 
-- snapshot creation is best-effort
-- plugin failure logs warnings and does not abort overall decision flow
-- rollback exists and is exposed publicly via `aegis rollback <snapshot-id>`
+### Audit subsystem
 
-## Audit architecture
+`src/audit/logger.rs` is one of the most mature parts of the architecture:
 
-`src/audit/logger.rs` is one of the more mature subsystems:
-
-- append-only JSONL log
+- append-only JSONL
 - RFC 3339 timestamps
-- per-process sequence number
-- optional rotation
-- optional gzip archives
-- optional tamper-evident SHA-256 chain
-- query / summary / integrity verification
-- companion lock file for multi-process safety
+- integrity chaining
+- rotation
+- query and summary support
+- archive support
+- integrity verification
 
-Integration evidence is strong here:
+This is backed by dedicated concurrency and integrity tests, which is a strong readiness signal.
 
-- dedicated concurrency tests
-- dedicated integrity tests
-- watch-mode audit context support
+## Architectural strengths for a first public release
 
-## Additional product surfaces
+- `main.rs` is still orchestration-heavy, but core policy semantics are no longer trapped there.
+- The planning boundary (`PlanningOutcome`, `InterceptionPlan`, `SetupFailurePlan`) makes fail-closed behavior easier to reason about.
+- Watch mode and JSON evaluation share typed policy semantics with shell-wrapper mode.
+- Parser/scanner, policy, snapshots, audit, and UI remain separated by responsibility.
+- The repo now includes real parser fuzzing infrastructure instead of only forward-looking claims.
 
-### Watch mode
+## What improved since the previous scan
 
-`src/watch.rs` adds a long-lived automation surface:
+The current repo state closes several earlier architecture-readiness gaps:
 
-- NDJSON in
-- NDJSON out
-- per-frame execution
-- `/dev/tty` confirmation path
-- watch-specific audit metadata
+- README now documents security model and limitations.
+- Package version is now `0.1.0`, which matches early-release positioning better than a premature `1.0.0`.
+- `fuzz/` exists and `rtk cargo +nightly fuzz build parser` succeeds.
+- `cargo publish --dry-run --allow-dirty` succeeds.
+- Crate packaging excludes `.claude/`, `.codex/`, `.planning/`, and stray `*.txt`.
 
-### Evaluation-only JSON mode
+## Residual architecture-level issues
 
-`src/policy_output.rs` exposes a machine-readable planning/evaluation contract without execution.
+### 1. Installer trust chain is incomplete
 
-## Architecture strengths for first public release
+The release workflow publishes checksums, but the installer path still does not verify them before installation.
 
-- Clear module split by concern.
-- Thin-enough `main.rs` orchestration relative to earlier ADR goals.
-- RuntimeContext centralizes config-bound dependencies.
-- Policy is explicit and testable.
-- Audit subsystem has strong operational depth.
-- Scanner/parser/security regression coverage is substantial.
-- CI and release automation are already part of the architecture, not an afterthought.
+That means:
 
-## Architecture-level risks / blockers for “stable security tool” positioning
+- release automation is ahead of installer trust UX
+- architecture is good enough for a public beta
+- architecture is not yet ideal for stronger secure-install claims
 
-- Documentation architecture is not yet aligned with runtime architecture:
-  - README still states outdated prompt defaults.
-  - README links missing `AEGIS.md`.
-  - ADR-010 says README documents the security model, but that section is absent.
-- Fuzzing is architecturally declared as required before v1.0, but repository contents do not include fuzz targets.
-- Installer architecture does not yet match release architecture:
-  - release workflow publishes checksums
-  - installer does not verify them
-- Versioning/messaging mismatch:
-  - code/package says `1.0.0`
-  - repository conventions/TODO still say important production gates remain open
-- `tracing_subscriber` is present in dependencies but not wired in runtime, leaving observability partially unfinished.
+### 2. Threat-model artifact is still missing
 
-## Bottom line from architecture view
+`CONVENTION.md` and repo positioning still point toward a formal threat-model expectation for stronger production claims, but `docs/threat-model.md` is absent.
 
-Architecture quality is good enough for a public MVP and arguably for a first tagged release.  
-It is not yet honest to present the project as a fully mature or production-grade security boundary until documentation, fuzzing, install verification, and release-positioning drift are fixed.
+### 3. Documentation drift is reduced, not eliminated
+
+The biggest README issues were fixed, but one concrete repo drift remains:
+
+- `docs/ci.md` and `.github/workflows/ci.yml` disagree on the pinned `cargo-deny` version
+
+### 4. Crates.io publication is not fully de-risked
+
+The dry-run succeeded, but it warned that `aegis@0.1.0` already exists on the crates.io index.
+
+Architecturally this is not a code problem, but it matters if release scope includes publishing to crates.io under the current name/version.
+
+## Architecture verdict
+
+The architecture is now good enough for:
+
+- a public repository
+- a first `0.1.0` GitHub release
+- real usage as a local Linux/macOS command guardrail
+
+The architecture is still not a comfortable basis for claiming “fully production-ready security tool” status until installer verification and threat-model documentation are completed.

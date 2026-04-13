@@ -5,21 +5,20 @@ Focus: tech+arch
 
 ## Top-level layout
 
-### Source
+### Core source
 
 - `src/main.rs` — CLI entrypoint and orchestration
 - `src/lib.rs` — public module exports
-- `src/decision.rs` — pure policy engine
+- `src/decision.rs` — policy engine
 - `src/runtime.rs` — runtime dependency container
-- `src/policy_output.rs` — evaluation-only JSON projection
-- `src/rollback.rs` — snapshot rollback lookup + audit logging
 - `src/watch.rs` — NDJSON watch mode
+- `src/policy_output.rs` — evaluation-only JSON rendering
+- `src/rollback.rs` — rollback command support
 - `src/error.rs` — shared typed errors
 
 ### Subsystems
 
 - `src/interceptor/`
-  - `mod.rs`
   - `parser.rs`
   - `scanner.rs`
   - `patterns.rs`
@@ -28,10 +27,14 @@ Focus: tech+arch
   - `model.rs`
   - `allowlist.rs`
   - `validate.rs`
+- `src/planning/`
+  - `core.rs`
+  - `prepare.rs`
+  - `types.rs`
 - `src/snapshot/`
-  - `mod.rs`
   - `git.rs`
   - `docker.rs`
+  - `mod.rs`
 - `src/audit/`
   - `logger.rs`
   - `mod.rs`
@@ -41,9 +44,9 @@ Focus: tech+arch
 - `src/bin/`
   - `aegis_benchcheck.rs`
 
-## Test layout
+## Test / benchmark structure
 
-Integration-style suites in `tests/`:
+Integration-style suites under `tests/`:
 
 - `full_pipeline.rs`
 - `cli_integration.rs`
@@ -66,13 +69,22 @@ Fixtures:
 Benchmarks:
 
 - `benches/scanner_bench.rs`
-- policy baseline file: `perf/scanner_bench_baseline.toml`
+- `perf/scanner_bench_baseline.toml`
 
-## Documentation layout
+Fuzzing structure now present:
 
-Core docs found:
+- `fuzz/Cargo.toml`
+- `fuzz/fuzz_targets/parser.rs`
+- `fuzz/corpus/parser/*`
+
+## Documentation / release assets
+
+Public-facing docs present:
 
 - `README.md`
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`
+- `LICENSE`
 - `CONVENTION.md`
 - `docs/architecture-decisions.md`
 - `docs/config-schema.md`
@@ -80,43 +92,55 @@ Core docs found:
 - `docs/ci.md`
 - `docs/performance-baseline.md`
 
-Process / planning artifacts also exist:
-
-- `docs/tickets/...`
-- `docs/superpowers/plans/...`
-- `docs/superpowers/specs/...`
-- `docs/superpowers/reports/...`
-
-## Release / distribution assets
+Release/distribution files present:
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
 - `scripts/install.sh`
 - `scripts/uninstall.sh`
 - `scripts/setup-git-hooks.sh`
-- `LICENSE`
-- `CONTRIBUTING.md`
-- `CODE_OF_CONDUCT.md`
 
-## Structural positives
+## Structural improvements since the earlier scan
 
-- Source tree matches the intended domain split: interceptor, config, snapshots, audit, UI.
-- Test tree is broad and organized by operational concern, not only by unit granularity.
-- Release/distribution assets already exist in-repo.
-- Docs for config, CI, performance, and platform support are present.
+- `fuzz/` now exists in-repo instead of only in planning docs.
+- `Cargo.toml` now excludes internal agent/planning directories and stray text files from crate packaging.
+- Versioning is structurally aligned with an initial release (`0.1.0`).
+- README structure now includes honest security-model and limitations sections.
 
-## Structural gaps relevant to release/public readiness
+## Structural cautions still visible
 
-- README references `AEGIS.md`, but that file is absent.
-- No `fuzz/` directory exists despite ADR/TODO references to fuzz targets.
-- No dedicated threat-model or limitations document was found.
-- No `CHANGELOG.md`, `SECURITY.md`, or public release-notes artifact exists in the repo tree.
-- Version/maturity signaling is structurally inconsistent:
-  - package version is already `1.0.0`
-  - roadmap/TODO still describes major production-readiness work as incomplete
+### Missing threat-model artifact
 
-## Practical release interpretation from structure alone
+No `docs/threat-model.md` exists.
 
-- **Public repository:** structure is already good enough.
-- **First tagged release:** structure is good enough for a preview/beta release.
-- **Stable “security tool” release:** structure still wants a few missing public-facing docs/artifacts before that claim is comfortable.
+### Installer trust path still incomplete
+
+The structure contains:
+
+- release checksum generation
+- install script
+
+but not a checksum-verifying install flow artifact.
+
+### Crate package is cleaner, but still broad
+
+`cargo package --list --allow-dirty` verified successfully, but the package still includes a large internal documentation footprint under `docs/` and `docs/superpowers/`.
+
+That is not a release blocker by itself; it is just worth knowing.
+
+### Working tree is not pristine
+
+At scan time, `rtk git status --short` showed concurrent local changes:
+
+- `D file.txt`
+- `D hello.txt`
+- `D staged.txt`
+- `?? docs/claude-source-borrowings.md`
+
+This did not block the scan, but it means the repository is being actively edited and release preparation should account for unrelated in-flight changes.
+
+## Structural verdict
+
+- **Public repo:** structure is ready.
+- **First GitHub release:** structure is ready.
+- **Stable production/security positioning:** structure is close, but still wants a threat-model artifact and a verification-first install story.
