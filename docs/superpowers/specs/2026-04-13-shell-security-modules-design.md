@@ -221,6 +221,8 @@ Not allowed in Stage 1:
 - existing-behavior-preserved tests
 - moved-module boundary tests
 - corrective regression tests for any fix
+- each stage must record whether hot-path benchmarking was rerun, and if not,
+  why rerunning it was considered unnecessary
 - benchmark note stating that semantics and performance are intended to be
   preserved by default
 
@@ -314,6 +316,8 @@ A corrective fix is allowed only if all are true:
 - semantic pipeline regressions
 - moved-module boundary tests
 - corrective regression tests where relevant
+- each stage must record whether hot-path benchmarking was rerun, and if not,
+  why rerunning it was considered unnecessary
 - benchmark note for hot-path-sensitive areas, especially:
   - quick scan
   - keyword extraction coverage
@@ -341,6 +345,15 @@ Rollback must remain staged:
   facade
 
 This is a primary reason for the parser-first rollout.
+
+## Corrective Fix Log
+
+Every corrective fix in this initiative must carry an explicit log entry in the
+design note, summary, or commit explanation that includes:
+
+- a before/after behavior statement
+- the fail-closed or boundary rationale
+- a reference to the regression test covering the fix
 
 ## Success Criteria
 
@@ -380,6 +393,8 @@ This is a primary reason for the parser-first rollout.
 
 - `allowlist.rs` and `confirm.rs` are not substantially redesigned as part of
   this initiative
+- incidental churn such as import, path, or facade adjustments is acceptable,
+  but no semantic redesign is in scope
 - external extraction from `interceptor/` remains a rare exception for
   genuinely shared, non-semantic helpers only
 
