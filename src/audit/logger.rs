@@ -493,6 +493,11 @@ impl AuditLogger {
         self
     }
 
+    /// Build an audit logger from validated config without touching the filesystem.
+    ///
+    /// This eager constructor establishes the append/query contract only.
+    /// Future lazy work must remain internal helper activation and must not move
+    /// the append-only write path itself behind a hidden first-use lifecycle.
     pub fn from_audit_config(config: &AuditConfig) -> Self {
         let logger = Self::default().with_integrity_mode(config.integrity_mode);
         if let Some(policy) = AuditRotationPolicy::from_config(config) {
@@ -1636,6 +1641,38 @@ mod tests {
         assert_eq!(json["pattern_ids"], serde_json::json!(["PAT-000"]));
         assert_eq!(json["allowlist_matched"], serde_json::json!(false));
         assert_eq!(json["allowlist_effective"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn new_does_not_create_files_or_directories() {
+        let dir = TempDir::new().unwrap();
+        let logger = AuditLogger::new(dir.path().join("nested/audit.jsonl"));
+
+        assert!(!logger.path().exists());
+        assert!(!logger.lock_path().exists());
+    }
+
+    #[test]
+    fn append_creates_parent_and_writes_entry_without_prebuilt_helpers() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("nested/audit.jsonl");
+        let logger = AuditLogger::new(&log_path);
+
+        let entry = AuditEntry::new(
+            "echo hello".to_string(),
+            RiskLevel::Safe,
+            Vec::new(),
+            Decision::Approved,
+            Vec::new(),
+            None,
+            None,
+        );
+
+        logger.append(entry).unwrap();
+
+        assert!(log_path.exists());
+        let contents = std::fs::read_to_string(log_path).unwrap();
+        assert!(contents.contains("\"command\":\"echo hello\""));
     }
 
     #[test]
