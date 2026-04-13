@@ -147,7 +147,10 @@ struct CompiledAllowlistRule {
 }
 
 impl Allowlist {
-    /// Compile layered allowlist rules into the effective runtime matcher.
+    /// Compatibility alias for [`Allowlist::from_layered_rules`].
+    ///
+    /// This preserves the legacy constructor shape while delegating to the
+    /// explicit layered-rule compile facade.
     pub fn new<T>(rules: &[T]) -> Result<Self>
     where
         T: Clone + Into<LayeredAllowlistRule>,
@@ -155,7 +158,8 @@ impl Allowlist {
         Self::from_layered_rules(rules)
     }
 
-    /// Compile layered allowlist rules into the effective runtime matcher.
+    /// Compile layered provenance-preserving rules into the effective runtime
+    /// matcher used for authoritative allow/deny decisions.
     pub fn from_layered_rules<T>(rules: &[T]) -> Result<Self>
     where
         T: Clone + Into<LayeredAllowlistRule>,
