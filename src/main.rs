@@ -855,7 +855,13 @@ fn evaluate_policy_decision(
     in_ci: bool,
     transport: ExecutionTransport,
 ) -> (PolicyDecision, Vec<&'static str>) {
-    let applicable_snapshot_plugins = context.applicable_snapshot_plugins(cwd);
+    let applicable_snapshot_plugins = if assessment.risk == RiskLevel::Danger
+        && context.config().snapshot_policy != aegis::config::SnapshotPolicy::None
+    {
+        context.applicable_snapshot_plugins(cwd)
+    } else {
+        Vec::new()
+    };
     let decision = evaluate_policy(PolicyInput {
         assessment,
         mode: context.config().mode,
