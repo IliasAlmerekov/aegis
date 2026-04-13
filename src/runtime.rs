@@ -609,6 +609,20 @@ expires_at = "2030-01-01T00:00:00Z"
     }
 
     #[test]
+    fn runtime_context_new_does_not_build_snapshot_registry_eagerly() {
+        crate::snapshot::reset_snapshot_registry_build_count_for_tests();
+
+        let mut config = Config::default();
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+
+        let _context = RuntimeContext::new(config, test_handle()).unwrap();
+
+        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 0);
+    }
+
+    #[test]
     fn runtime_context_new_requires_handle_parameter() {
         // Verify the two-argument signature is the only way to construct.
         // This test will fail to compile if RuntimeContext::new still accepts

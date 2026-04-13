@@ -11,7 +11,23 @@ use async_trait::async_trait;
 use crate::config::Config;
 use crate::error::AegisError;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 type Result<T> = std::result::Result<T, AegisError>;
+
+#[cfg(test)]
+static SNAPSHOT_REGISTRY_BUILD_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_snapshot_registry_build_count_for_tests() {
+    SNAPSHOT_REGISTRY_BUILD_COUNT.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn snapshot_registry_build_count_for_tests() -> usize {
+    SNAPSHOT_REGISTRY_BUILD_COUNT.load(Ordering::SeqCst)
+}
 
 /// A record of a single successful snapshot created by one plugin.
 #[derive(Debug, Clone)]
@@ -52,6 +68,9 @@ impl Default for SnapshotRegistry {
 impl SnapshotRegistry {
     /// Build a snapshot registry that honours the effective runtime config.
     pub fn from_config(config: &Config) -> Self {
+        #[cfg(test)]
+        SNAPSHOT_REGISTRY_BUILD_COUNT.fetch_add(1, Ordering::SeqCst);
+
         use crate::config::SnapshotPolicy;
 
         let mut plugins: Vec<Box<dyn SnapshotPlugin>> = Vec::new();

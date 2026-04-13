@@ -128,6 +128,34 @@ mod tests {
     }
 
     #[test]
+    fn safe_command_plan_does_not_materialize_snapshot_registry() {
+        crate::snapshot::reset_snapshot_registry_build_count_for_tests();
+
+        let mut config = Config::default();
+        config.mode = Mode::Protect;
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+
+        let outcome = super::plan_with_context(
+            &context,
+            super::PlanningRequest {
+                command: "echo hello",
+                cwd_state: CwdState::Resolved(std::path::PathBuf::from(".")),
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("safe command must produce a normal plan");
+        };
+        assert_eq!(plan.snapshot_plan(), SnapshotPlan::NotRequired);
+        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 0);
+    }
+
+    #[test]
     fn protect_warn_plans_requires_approval() {
         let context = context(Mode::Protect, SnapshotPolicy::Selective);
         let outcome = super::plan_with_context(
@@ -212,5 +240,44 @@ mod tests {
                 applicable_plugins: vec!["git"],
             }
         );
+    }
+
+    #[test]
+    fn danger_command_plan_materializes_snapshot_registry_once() {
+        crate::snapshot::reset_snapshot_registry_build_count_for_tests();
+
+        let original_cwd = std::env::current_dir().unwrap();
+        let workspace = TempDir::new().unwrap();
+        Command::new("git")
+            .arg("init")
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        std::env::set_current_dir(workspace.path()).unwrap();
+
+        let mut config = Config::default();
+        config.mode = Mode::Protect;
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+
+        let outcome = super::plan_with_context(
+            &context,
+            super::PlanningRequest {
+                command: "terraform destroy -target=module.prod.api",
+                cwd_state: CwdState::Unavailable,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("danger command must produce a normal plan");
+        };
+        assert!(matches!(plan.snapshot_plan(), SnapshotPlan::Required { .. }));
+        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 1);
     }
 }
