@@ -16,6 +16,8 @@ use std::cell::Cell;
 
 type Result<T> = std::result::Result<T, AegisError>;
 
+const BUILTIN_SNAPSHOT_PROVIDER_NAMES: &[&str] = &["git", "docker"];
+
 #[cfg(test)]
 thread_local! {
     static SNAPSHOT_REGISTRY_BUILD_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -29,6 +31,11 @@ pub(crate) fn reset_snapshot_registry_build_count_for_tests() {
 #[cfg(test)]
 pub(crate) fn snapshot_registry_build_count_for_tests() -> usize {
     SNAPSHOT_REGISTRY_BUILD_COUNT.with(Cell::get)
+}
+
+/// Return the names of snapshot providers built into this binary/runtime.
+pub fn available_provider_names() -> &'static [&'static str] {
+    BUILTIN_SNAPSHOT_PROVIDER_NAMES
 }
 
 /// A record of a single successful snapshot created by one plugin.
@@ -149,6 +156,11 @@ impl SnapshotRegistry {
         }
     }
 
+    /// Return the names of providers materialized by the current runtime config.
+    pub fn configured_provider_names(&self) -> Vec<&'static str> {
+        self.plugins.iter().map(|plugin| plugin.name()).collect()
+    }
+
     /// Call every applicable plugin and collect snapshot records.
     ///
     /// Plugins that are not applicable for `cwd` are skipped silently.
@@ -172,8 +184,12 @@ impl SnapshotRegistry {
         records
     }
 
-    /// Return the names of snapshot plugins applicable to `cwd` without
-    /// creating any snapshots.
+    /// Return the subset of configured providers that are applicable to `cwd`.
+    ///
+    /// This is a later-stage runtime-use check than either
+    /// [`available_provider_names`] (providers known to the binary/runtime) or
+    /// [`SnapshotRegistry::configured_provider_names`] (providers materialized
+    /// by the current runtime config). No snapshots are created.
     pub fn applicable_plugins(&self, cwd: &Path) -> Vec<&'static str> {
         self.plugins
             .iter()
@@ -418,6 +434,22 @@ mod tests {
             .collect();
 
         assert_eq!(plugin_names, vec!["docker"]);
+    }
+
+    #[test]
+    fn available_provider_names_report_builtins_independent_of_runtime_config() {
+        assert_eq!(available_provider_names(), ["git", "docker"]);
+    }
+
+    #[test]
+    fn configured_provider_names_report_only_materialized_runtime_plugins() {
+        let mut config = Config::default();
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = true;
+
+        let registry = SnapshotRegistry::from_config(&config);
+
+        assert_eq!(registry.configured_provider_names(), vec!["docker"]);
     }
 
     // ── Snapshot policy tests ───────────────────────────────────────
