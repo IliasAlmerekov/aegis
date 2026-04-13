@@ -32,9 +32,15 @@ pub fn plan_with_context(
         }
         CwdState::Unavailable => context.allowlist_match_for_command(request.command, None),
     };
-    let applicable_snapshot_plugins = match &request.cwd_state {
-        CwdState::Resolved(path) => context.applicable_snapshot_plugins(path),
-        CwdState::Unavailable => context.applicable_snapshot_plugins(Path::new(".")),
+    let applicable_snapshot_plugins = if assessment.risk == crate::interceptor::RiskLevel::Danger
+        && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
+    {
+        match &request.cwd_state {
+            CwdState::Resolved(path) => context.applicable_snapshot_plugins(path),
+            CwdState::Unavailable => context.applicable_snapshot_plugins(Path::new(".")),
+        }
+    } else {
+        Vec::new()
     };
 
     let decision_context = DecisionContext::new(
@@ -179,6 +185,33 @@ mod tests {
             plan.approval_requirement(),
             ApprovalRequirement::HumanConfirmationRequired
         );
+    }
+
+    #[test]
+    fn warn_command_plan_keeps_snapshot_registry_unmaterialized() {
+        crate::snapshot::reset_snapshot_registry_build_count_for_tests();
+
+        let mut config = Config::default();
+        config.mode = Mode::Protect;
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+
+        let outcome = super::plan_with_context(
+            &context,
+            super::PlanningRequest {
+                command: "git stash clear",
+                cwd_state: CwdState::Resolved(std::path::PathBuf::from(".")),
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("warn command must produce a normal plan");
+        };
+        assert_eq!(plan.snapshot_plan(), SnapshotPlan::NotRequired);
+        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 0);
     }
 
     #[test]
