@@ -12,21 +12,23 @@ use crate::config::Config;
 use crate::error::AegisError;
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 type Result<T> = std::result::Result<T, AegisError>;
 
 #[cfg(test)]
-static SNAPSHOT_REGISTRY_BUILD_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static SNAPSHOT_REGISTRY_BUILD_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 #[cfg(test)]
 pub(crate) fn reset_snapshot_registry_build_count_for_tests() {
-    SNAPSHOT_REGISTRY_BUILD_COUNT.store(0, Ordering::SeqCst);
+    SNAPSHOT_REGISTRY_BUILD_COUNT.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(crate) fn snapshot_registry_build_count_for_tests() -> usize {
-    SNAPSHOT_REGISTRY_BUILD_COUNT.load(Ordering::SeqCst)
+    SNAPSHOT_REGISTRY_BUILD_COUNT.with(Cell::get)
 }
 
 /// A record of a single successful snapshot created by one plugin.
@@ -93,7 +95,7 @@ impl SnapshotRegistry {
     /// Build a snapshot registry from the eager config required at runtime.
     pub fn from_runtime_config(config: &SnapshotRegistryConfig) -> Self {
         #[cfg(test)]
-        SNAPSHOT_REGISTRY_BUILD_COUNT.fetch_add(1, Ordering::SeqCst);
+        SNAPSHOT_REGISTRY_BUILD_COUNT.with(|count| count.set(count.get() + 1));
 
         use crate::config::SnapshotPolicy;
 

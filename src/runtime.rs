@@ -102,9 +102,8 @@ impl RuntimeContext {
     }
 
     fn snapshot_registry(&self) -> &SnapshotRegistry {
-        self.snapshot_registry.get_or_init(|| {
-            SnapshotRegistry::from_runtime_config(&self.snapshot_registry_config)
-        })
+        self.snapshot_registry
+            .get_or_init(|| SnapshotRegistry::from_runtime_config(&self.snapshot_registry_config))
     }
 
     /// Resolve the allowlist rule, if any, that matches the runtime context.
@@ -627,7 +626,10 @@ expires_at = "2030-01-01T00:00:00Z"
 
         let _context = RuntimeContext::new(config, test_handle()).unwrap();
 
-        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 0);
+        assert_eq!(
+            crate::snapshot::snapshot_registry_build_count_for_tests(),
+            0
+        );
     }
 
     #[test]

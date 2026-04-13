@@ -82,6 +82,7 @@ pub fn plan_with_context(
 #[cfg(test)]
 mod tests {
     use std::process::Command;
+    use std::sync::Mutex;
 
     use super::*;
     use crate::config::{Config, Mode, SnapshotPolicy};
@@ -102,6 +103,8 @@ mod tests {
         std::mem::forget(rt);
         handle
     }
+
+    static CURRENT_DIR_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn context(mode: Mode, snapshot_policy: SnapshotPolicy) -> RuntimeContext {
         let mut config = Config::default();
@@ -158,7 +161,10 @@ mod tests {
             panic!("safe command must produce a normal plan");
         };
         assert_eq!(plan.snapshot_plan(), SnapshotPlan::NotRequired);
-        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 0);
+        assert_eq!(
+            crate::snapshot::snapshot_registry_build_count_for_tests(),
+            0
+        );
     }
 
     #[test]
@@ -211,7 +217,10 @@ mod tests {
             panic!("warn command must produce a normal plan");
         };
         assert_eq!(plan.snapshot_plan(), SnapshotPlan::NotRequired);
-        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 0);
+        assert_eq!(
+            crate::snapshot::snapshot_registry_build_count_for_tests(),
+            0
+        );
     }
 
     #[test]
@@ -236,6 +245,7 @@ mod tests {
 
     #[test]
     fn unavailable_cwd_uses_legacy_snapshot_plugin_fallback_in_plan() {
+        let _guard = CURRENT_DIR_TEST_MUTEX.lock().unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         let workspace = TempDir::new().unwrap();
         Command::new("git")
@@ -279,6 +289,7 @@ mod tests {
     fn danger_command_plan_materializes_snapshot_registry_once() {
         crate::snapshot::reset_snapshot_registry_build_count_for_tests();
 
+        let _guard = CURRENT_DIR_TEST_MUTEX.lock().unwrap();
         let original_cwd = std::env::current_dir().unwrap();
         let workspace = TempDir::new().unwrap();
         Command::new("git")
@@ -310,7 +321,13 @@ mod tests {
         let PlanningOutcome::Planned(plan) = outcome else {
             panic!("danger command must produce a normal plan");
         };
-        assert!(matches!(plan.snapshot_plan(), SnapshotPlan::Required { .. }));
-        assert_eq!(crate::snapshot::snapshot_registry_build_count_for_tests(), 1);
+        assert!(matches!(
+            plan.snapshot_plan(),
+            SnapshotPlan::Required { .. }
+        ));
+        assert_eq!(
+            crate::snapshot::snapshot_registry_build_count_for_tests(),
+            1
+        );
     }
 }
