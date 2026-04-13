@@ -178,14 +178,22 @@ mod tests {
             safe_alt: Some("internal-teardown --dry-run".to_string()),
         };
 
-        let assessment = assess_with_custom_patterns("internal-teardown", &[custom]).unwrap();
+        let assessment =
+            assess_with_custom_patterns("internal-teardown && rm -rf /tmp/demo", &[custom])
+                .unwrap();
 
-        assert_eq!(assessment.risk, RiskLevel::Warn);
+        assert_eq!(assessment.risk, RiskLevel::Danger);
         assert!(
             assessment
                 .matched
                 .iter()
                 .any(|matched| matched.pattern.source == PatternSource::Custom)
+        );
+        assert!(
+            assessment
+                .matched
+                .iter()
+                .any(|matched| matched.pattern.source == PatternSource::Builtin)
         );
     }
 }
