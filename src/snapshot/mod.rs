@@ -38,6 +38,28 @@ pub fn available_provider_names() -> &'static [&'static str] {
     BUILTIN_SNAPSHOT_PROVIDER_NAMES
 }
 
+fn materialize_builtin_plugin(
+    name: &str,
+    docker_scope: &crate::config::DockerScope,
+) -> Option<Box<dyn SnapshotPlugin>> {
+    match name {
+        "git" => Some(Box::new(GitPlugin)),
+        "docker" => Some(Box::new(
+            DockerPlugin::new().with_scope(docker_scope.clone()),
+        )),
+        _ => None,
+    }
+}
+
+fn materialize_builtin_plugins(
+    names: &[&str],
+    docker_scope: &crate::config::DockerScope,
+) -> Vec<Box<dyn SnapshotPlugin>> {
+    names.iter()
+        .filter_map(|name| materialize_builtin_plugin(name, docker_scope))
+        .collect()
+}
+
 /// A record of a single successful snapshot created by one plugin.
 #[derive(Debug, Clone)]
 pub struct SnapshotRecord {
@@ -125,20 +147,22 @@ impl SnapshotRegistry {
         match config.snapshot_policy {
             SnapshotPolicy::None => { /* no plugins */ }
             SnapshotPolicy::Selective => {
-                if config.auto_snapshot_git {
-                    plugins.push(Box::new(GitPlugin));
-                }
-                if config.auto_snapshot_docker {
-                    plugins.push(Box::new(
-                        DockerPlugin::new().with_scope(config.docker_scope.clone()),
-                    ));
-                }
+                let enabled_names: Vec<_> = available_provider_names()
+                    .iter()
+                    .copied()
+                    .filter(|name| match *name {
+                        "git" => config.auto_snapshot_git,
+                        "docker" => config.auto_snapshot_docker,
+                        _ => false,
+                    })
+                    .collect();
+                plugins = materialize_builtin_plugins(&enabled_names, &config.docker_scope);
             }
             SnapshotPolicy::Full => {
-                plugins.push(Box::new(GitPlugin));
-                plugins.push(Box::new(
-                    DockerPlugin::new().with_scope(config.docker_scope.clone()),
-                ));
+                plugins = materialize_builtin_plugins(
+                    available_provider_names(),
+                    &config.docker_scope,
+                );
             }
         }
 
@@ -152,11 +176,19 @@ impl SnapshotRegistry {
     /// is disabled in the current config.
     pub fn for_rollback() -> Self {
         Self {
-            plugins: vec![Box::new(GitPlugin), Box::new(DockerPlugin::new())],
+            plugins: materialize_builtin_plugins(
+                available_provider_names(),
+                &crate::config::DockerScope::default(),
+            ),
         }
     }
 
-    /// Return the names of providers materialized by the current runtime config.
+    /// Return the names of providers materialized into this registry instance.
+    ///
+    /// For registries built from runtime config, this reports the
+    /// config-filtered materialized provider set. For registries built for other
+    /// purposes, such as [`SnapshotRegistry::for_rollback`], it reports the
+    /// providers materialized for that registry's use.
     pub fn configured_provider_names(&self) -> Vec<&'static str> {
         self.plugins.iter().map(|plugin| plugin.name()).collect()
     }
@@ -450,6 +482,16 @@ mod tests {
         let registry = SnapshotRegistry::from_config(&config);
 
         assert_eq!(registry.configured_provider_names(), vec!["docker"]);
+    }
+
+    #[test]
+    fn for_rollback_materializes_all_builtin_providers() {
+        let registry = SnapshotRegistry::for_rollback();
+
+        assert_eq!(
+            registry.configured_provider_names(),
+            available_provider_names().to_vec()
+        );
     }
 
     // ── Snapshot policy tests ───────────────────────────────────────
