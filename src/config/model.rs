@@ -361,7 +361,7 @@ impl AegisConfig {
     pub(crate) fn validate_runtime_requirements(&self) -> Result<()> {
         self.validate()?;
         interceptor::scanner_for(&self.custom_patterns).map(|_| ())?;
-        Allowlist::new(&self.layered_allowlist_rules()).map(|_| ())?;
+        Allowlist::from_layered_rules(&self.layered_allowlist_rules()).map(|_| ())?;
         Ok(())
     }
 

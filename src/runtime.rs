@@ -75,7 +75,7 @@ impl RuntimeContext {
         let current_user = detect_effective_user();
 
         Ok(Self {
-            allowlist: Allowlist::new(&config.layered_allowlist_rules())?,
+            allowlist: Allowlist::from_layered_rules(&config.layered_allowlist_rules())?,
             snapshot_registry_config: SnapshotRegistryConfig::from(&config),
             snapshot_registry: OnceLock::new(),
             async_handle: handle,

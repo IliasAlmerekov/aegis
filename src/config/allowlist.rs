@@ -152,6 +152,14 @@ impl Allowlist {
     where
         T: Clone + Into<LayeredAllowlistRule>,
     {
+        Self::from_layered_rules(rules)
+    }
+
+    /// Compile layered allowlist rules into the effective runtime matcher.
+    pub fn from_layered_rules<T>(rules: &[T]) -> Result<Self>
+    where
+        T: Clone + Into<LayeredAllowlistRule>,
+    {
         let mut project_entries = Vec::new();
         let mut global_entries = Vec::new();
 
@@ -527,6 +535,28 @@ mod tests {
 
         assert!(!warnings.iter().any(|w| w.code == "missing_scope"));
         assert!(warnings.iter().any(|w| w.code == "broad_pattern"));
+    }
+
+    #[test]
+    fn advisory_warnings_do_not_override_authoritative_runtime_matching() {
+        let rule = AllowlistRule {
+            pattern: "terraform destroy *".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped teardown".to_string(),
+        };
+
+        let warnings = analyze_allowlist_rule(&rule);
+        let allowlist = Allowlist::from_layered_rules(&[rule]).unwrap();
+
+        assert!(warnings.iter().any(|warning| warning.code == "broad_pattern"));
+        assert_eq!(
+            allowlist
+                .match_reason(&ctx("terraform destroy -target=module.test.api"))
+                .map(|matched| matched.reason),
+            Some("scoped teardown".to_string())
+        );
     }
 
     fn rule(pattern: &str, reason: &str) -> AllowlistRule {
