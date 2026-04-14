@@ -79,7 +79,7 @@ Then manually undo any shell or agent configuration you added yourself, if appli
 
 ## How it works
 
-By default in Protect mode, Aegis sets itself as your `$SHELL`. Every command — from Claude Code, Codex, a script, or your terminal — passes through Aegis first:
+If Aegis is configured as your shell wrapper or shell path, then in the default interactive Protect flow every command — from Claude Code, Codex, a script, or your terminal — passes through Aegis first:
 
 ```
 agent → $SHELL (aegis) → assess
@@ -89,7 +89,7 @@ agent → $SHELL (aegis) → assess
                            └── Block  → refuse, exit 3
 ```
 
-Mode-specific behavior is configured in `.aegis.toml`; see the config section below.
+Mode-specific behavior is configured in `.aegis.toml`; see the config docs below.
 
 ---
 
@@ -135,7 +135,7 @@ The installer automatically sets `$SHELL` to the Aegis binary and adds a managed
 
 **Other AI agents** that respect `$SHELL` (Codex CLI, etc.) pick it up automatically.
 
-To use Aegis only for a single project, add a `.aegis.toml` to the project root with the desired policy:
+If Aegis is already being used as the shell wrapper, a project `.aegis.toml` can override policy for that directory or project:
 
 ```toml
 mode = "Strict"  # block non-safe commands in this directory only
