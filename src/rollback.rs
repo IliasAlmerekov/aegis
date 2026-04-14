@@ -2,7 +2,7 @@ use aegis::audit::{AuditEntry, AuditLogger, AuditSnapshot, Decision};
 use aegis::config::Config;
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
-use aegis::snapshot::SnapshotRegistry;
+use aegis::snapshot::{SnapshotRegistry, SnapshotRegistryConfig};
 
 type Result<T> = std::result::Result<T, AegisError>;
 
@@ -17,9 +17,11 @@ pub(crate) async fn execute(snapshot_id: String) -> Result<RollbackTarget> {
     let audit_logger = AuditLogger::from_audit_config(&config.audit);
     let target = find_snapshot_target(&audit_logger, &snapshot_id)?;
 
-    SnapshotRegistry::for_rollback()
-        .rollback(&target.plugin, &target.snapshot_id)
-        .await?;
+    SnapshotRegistry::from_runtime_config(&SnapshotRegistryConfig::for_rollback_from_config(
+        &config,
+    ))
+    .rollback(&target.plugin, &target.snapshot_id)
+    .await?;
 
     if let Err(err) = append_rollback_audit_entry(&audit_logger, &target) {
         eprintln!("warning: rollback succeeded but audit append failed: {err}");

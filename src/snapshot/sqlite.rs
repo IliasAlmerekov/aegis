@@ -25,6 +25,14 @@ impl SqlitePlugin {
             snapshots_dir,
         }
     }
+
+    fn resolve_db_path(&self, cwd: &Path) -> PathBuf {
+        if self.db_path.is_relative() {
+            cwd.join(&self.db_path)
+        } else {
+            self.db_path.clone()
+        }
+    }
 }
 
 #[async_trait]
@@ -33,19 +41,20 @@ impl SnapshotPlugin for SqlitePlugin {
         "sqlite"
     }
 
-    fn is_applicable(&self, _cwd: &Path) -> bool {
-        !self.db_path.as_os_str().is_empty() && self.db_path.is_file()
+    fn is_applicable(&self, cwd: &Path) -> bool {
+        let db_path = self.resolve_db_path(cwd);
+        !self.db_path.as_os_str().is_empty() && db_path.is_file()
     }
 
-    async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
+    async fn snapshot(&self, cwd: &Path, _cmd: &str) -> Result<String> {
+        let db_path = self.resolve_db_path(cwd);
         fs::create_dir_all(&self.snapshots_dir)?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let file_stem = self
-            .db_path
+        let file_stem = db_path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .filter(|stem| !stem.is_empty())
@@ -54,15 +63,13 @@ impl SnapshotPlugin for SqlitePlugin {
         let mut dump_path = self.snapshots_dir.join(format!("{base_name}.db"));
         let mut suffix = 1usize;
         while dump_path.exists() {
-            dump_path = self
-                .snapshots_dir
-                .join(format!("{base_name}-{suffix}.db"));
+            dump_path = self.snapshots_dir.join(format!("{base_name}-{suffix}.db"));
             suffix += 1;
         }
 
-        fs::copy(&self.db_path, &dump_path)?;
+        fs::copy(&db_path, &dump_path)?;
 
-        let snapshot_id = format!("{}{SEP}{}", self.db_path.display(), dump_path.display());
+        let snapshot_id = format!("{}{SEP}{}", db_path.display(), dump_path.display());
         tracing::info!(%snapshot_id, "sqlite snapshot created");
         Ok(snapshot_id)
     }
@@ -199,7 +206,10 @@ mod tests {
             temp_dir.path().join("snaps"),
         );
 
-        let err = plugin.rollback("not-a-valid-snapshot-id").await.unwrap_err();
+        let err = plugin
+            .rollback("not-a-valid-snapshot-id")
+            .await
+            .unwrap_err();
 
         match err {
             AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),

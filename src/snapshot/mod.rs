@@ -172,6 +172,21 @@ impl From<&Config> for SnapshotRegistryConfig {
     }
 }
 
+impl SnapshotRegistryConfig {
+    /// Build a rollback runtime config that preserves effective provider
+    /// settings while forcing all built-in providers to be available.
+    pub fn for_rollback_from_config(config: &Config) -> Self {
+        let mut runtime_config = Self::from(config);
+        runtime_config.snapshot_policy = crate::config::SnapshotPolicy::Full;
+        runtime_config.auto_snapshot_git = true;
+        runtime_config.auto_snapshot_docker = true;
+        runtime_config.auto_snapshot_postgres = true;
+        runtime_config.auto_snapshot_mysql = true;
+        runtime_config.auto_snapshot_sqlite = true;
+        runtime_config
+    }
+}
+
 impl Default for SnapshotRegistry {
     fn default() -> Self {
         Self::from_config(&Config::default())
@@ -228,21 +243,9 @@ impl SnapshotRegistry {
     /// able to restore previously recorded snapshots even if snapshot creation
     /// is disabled in the current config.
     pub fn for_rollback() -> Self {
-        let config = SnapshotRegistryConfig {
-            snapshot_policy: crate::config::SnapshotPolicy::Full,
-            auto_snapshot_git: true,
-            auto_snapshot_docker: true,
-            auto_snapshot_postgres: true,
-            postgres_snapshot: crate::config::model::PostgresSnapshotConfig::default(),
-            auto_snapshot_mysql: true,
-            mysql_snapshot: crate::config::model::MysqlSnapshotConfig::default(),
-            auto_snapshot_sqlite: true,
-            sqlite_snapshot_path: String::new(),
-            snapshots_dir: default_snapshots_dir(),
-            docker_scope: crate::config::DockerScope::default(),
-        };
-
-        Self::from_runtime_config(&config)
+        Self::from_runtime_config(&SnapshotRegistryConfig::for_rollback_from_config(
+            &Config::default(),
+        ))
     }
 
     /// Return the names of providers materialized into this registry instance.
@@ -313,6 +316,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
 
     struct MockPlugin {
         name: &'static str,
@@ -660,5 +664,62 @@ mod tests {
             registry.configured_provider_names(),
             vec!["git", "docker", "postgres", "mysql", "sqlite"]
         );
+    }
+
+    #[test]
+    fn rollback_runtime_config_preserves_db_settings_and_forces_all_providers() {
+        let mut config = Config::default();
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+        config.auto_snapshot_postgres = false;
+        config.auto_snapshot_mysql = false;
+        config.auto_snapshot_sqlite = false;
+        config.postgres_snapshot.database = "pg-app".to_string();
+        config.postgres_snapshot.host = "pg.internal".to_string();
+        config.postgres_snapshot.port = 5544;
+        config.postgres_snapshot.user = "pguser".to_string();
+        config.mysql_snapshot.database = "mysql-app".to_string();
+        config.mysql_snapshot.host = "mysql.internal".to_string();
+        config.mysql_snapshot.port = 4407;
+        config.mysql_snapshot.user = "mysqluser".to_string();
+        config.sqlite_snapshot_path = "db/app.sqlite".to_string();
+
+        let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config);
+
+        assert_eq!(
+            runtime_config.snapshot_policy,
+            crate::config::SnapshotPolicy::Full
+        );
+        assert!(runtime_config.auto_snapshot_git);
+        assert!(runtime_config.auto_snapshot_docker);
+        assert!(runtime_config.auto_snapshot_postgres);
+        assert!(runtime_config.auto_snapshot_mysql);
+        assert!(runtime_config.auto_snapshot_sqlite);
+        assert_eq!(runtime_config.postgres_snapshot, config.postgres_snapshot);
+        assert_eq!(runtime_config.mysql_snapshot, config.mysql_snapshot);
+        assert_eq!(
+            runtime_config.sqlite_snapshot_path,
+            config.sqlite_snapshot_path
+        );
+    }
+
+    #[test]
+    fn sqlite_relative_snapshot_path_is_applicable_from_command_cwd() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_dir = temp_dir.path().join("db");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        std::fs::write(db_dir.join("app.db"), b"sqlite-data").unwrap();
+
+        let mut config = Config::default();
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+        config.auto_snapshot_postgres = false;
+        config.auto_snapshot_mysql = false;
+        config.auto_snapshot_sqlite = true;
+        config.sqlite_snapshot_path = "db/app.db".to_string();
+
+        let registry = SnapshotRegistry::from_config(&config);
+
+        assert_eq!(registry.applicable_plugins(temp_dir.path()), vec!["sqlite"]);
     }
 }
