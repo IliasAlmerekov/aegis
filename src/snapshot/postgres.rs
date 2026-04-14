@@ -4,12 +4,23 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use tokio::process::Command;
 
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
 use crate::error::AegisError;
 use crate::snapshot::SnapshotPlugin;
 
 type Result<T> = std::result::Result<T, AegisError>;
 
 const SEP: char = '\t';
+const SNAPSHOT_ID_VERSION: &str = "v2";
+
+struct PostgresRollbackTarget {
+    host: String,
+    port: u16,
+    user: String,
+    dump_path: PathBuf,
+}
 
 /// Snapshot plugin for PostgreSQL databases.
 pub struct PostgresPlugin {
@@ -43,16 +54,20 @@ impl PostgresPlugin {
     }
 
     fn build_common_args(&self) -> Vec<String> {
+        Self::build_common_args_for_target(&self.host, self.port, &self.user)
+    }
+
+    fn build_common_args_for_target(host: &str, port: u16, user: &str) -> Vec<String> {
         let mut args = vec![
             "-h".to_string(),
-            self.host.clone(),
+            host.to_string(),
             "-p".to_string(),
-            self.port.to_string(),
+            port.to_string(),
         ];
 
-        if !self.user.is_empty() {
+        if !user.is_empty() {
             args.push("-U".to_string());
-            args.push(self.user.clone());
+            args.push(user.to_string());
         }
 
         args
@@ -100,18 +115,18 @@ impl PostgresPlugin {
             .collect()
     }
 
-    fn encode_database(database: &str) -> String {
-        database
+    fn encode_component(component: &str) -> String {
+        component
             .as_bytes()
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect()
     }
 
-    fn decode_database(encoded: &str) -> Result<String> {
+    fn decode_component(encoded: &str, label: &str) -> Result<String> {
         if !encoded.len().is_multiple_of(2) {
             return Err(AegisError::Snapshot(format!(
-                "malformed snapshot_id: invalid database encoding {encoded:?}"
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             )));
         }
 
@@ -120,12 +135,12 @@ impl PostgresPlugin {
         for pair in chars {
             let hex = std::str::from_utf8(pair).map_err(|_| {
                 AegisError::Snapshot(format!(
-                    "malformed snapshot_id: invalid database encoding {encoded:?}"
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             let byte = u8::from_str_radix(hex, 16).map_err(|_| {
                 AegisError::Snapshot(format!(
-                    "malformed snapshot_id: invalid database encoding {encoded:?}"
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             bytes.push(byte);
@@ -133,8 +148,124 @@ impl PostgresPlugin {
 
         String::from_utf8(bytes).map_err(|_| {
             AegisError::Snapshot(format!(
-                "malformed snapshot_id: invalid database encoding {encoded:?}"
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             ))
+        })
+    }
+
+    fn encode_database(database: &str) -> String {
+        Self::encode_component(database)
+    }
+
+    fn decode_database(encoded: &str) -> Result<String> {
+        Self::decode_component(encoded, "database")
+    }
+
+    fn encode_path(path: &Path) -> String {
+        #[cfg(unix)]
+        {
+            path.as_os_str()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        #[cfg(not(unix))]
+        {
+            Self::encode_component(&path.to_string_lossy())
+        }
+    }
+
+    fn decode_path(encoded: &str, label: &str) -> Result<PathBuf> {
+        if !encoded.len().is_multiple_of(2) {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+            )));
+        }
+
+        let mut bytes = Vec::with_capacity(encoded.len() / 2);
+        for pair in encoded.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair).map_err(|_| {
+                AegisError::Snapshot(format!(
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+                ))
+            })?;
+            let byte = u8::from_str_radix(hex, 16).map_err(|_| {
+                AegisError::Snapshot(format!(
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+                ))
+            })?;
+            bytes.push(byte);
+        }
+
+        #[cfg(unix)]
+        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+
+        #[cfg(not(unix))]
+        let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| {
+            AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+            ))
+        })?);
+
+        Self::validate_snapshot_path(&path, label)?;
+        Ok(path)
+    }
+
+    fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
+        if !path.is_absolute()
+            || path.file_name().is_none()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )
+            })
+        {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} {path:?}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn build_snapshot_id(&self, dump_path: &Path) -> String {
+        format!(
+            "{SNAPSHOT_ID_VERSION}{SEP}{}{SEP}{}{SEP}{}{SEP}{}{SEP}{}",
+            Self::encode_database(&self.database),
+            Self::encode_component(&self.host),
+            self.port,
+            Self::encode_component(&self.user),
+            Self::encode_path(dump_path)
+        )
+    }
+
+    fn parse_snapshot_id(snapshot_id: &str) -> Result<PostgresRollbackTarget> {
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
+        if parts.len() != 6 || parts[0] != SNAPSHOT_ID_VERSION {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: {snapshot_id:?}"
+            )));
+        }
+
+        let _database = Self::decode_database(parts[1])?;
+        let host = Self::decode_component(parts[2], "host")?;
+        let port = parts[3].parse::<u16>().map_err(|_| {
+            AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid port {:?}",
+                parts[3]
+            ))
+        })?;
+        let user = Self::decode_component(parts[4], "user")?;
+        let dump_path = Self::decode_path(parts[5], "dump path")?;
+
+        Ok(PostgresRollbackTarget {
+            host,
+            port,
+            user,
+            dump_path,
         })
     }
 }
@@ -187,36 +318,28 @@ impl SnapshotPlugin for PostgresPlugin {
             return Err(AegisError::Snapshot(format!("pg_dump failed: {stderr}")));
         }
 
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            Self::encode_database(&self.database),
-            dump_path.display()
-        );
+        let dump_path = dump_path.canonicalize()?;
+        let snapshot_id = self.build_snapshot_id(&dump_path);
         tracing::info!(%snapshot_id, "postgres snapshot created");
         Ok(snapshot_id)
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let (database_encoded, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
-        })?;
-        let _database = Self::decode_database(database_encoded)?;
-
-        let dump_path = Path::new(dump_str);
-        if !dump_path.exists() {
+        let target = Self::parse_snapshot_id(snapshot_id)?;
+        if !target.dump_path.exists() {
             return Err(AegisError::RollbackDumpNotFound {
-                path: dump_str.to_string(),
+                path: target.dump_path.to_string_lossy().to_string(),
             });
         }
 
-        let mut args = self.build_common_args();
+        let mut args = Self::build_common_args_for_target(&target.host, target.port, &target.user);
         args.extend([
             "--clean".to_string(),
             "--if-exists".to_string(),
             "--create".to_string(),
             "-d".to_string(),
             "postgres".to_string(),
-            dump_str.to_string(),
+            target.dump_path.to_string_lossy().to_string(),
         ]);
 
         let output = Command::new(&self.pg_restore_bin)
@@ -259,6 +382,46 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions).unwrap();
         path
+    }
+
+    fn hex_encode(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn encode_str(value: &str) -> String {
+        hex_encode(value.as_bytes())
+    }
+
+    fn decode_hex(encoded: &str) -> String {
+        let mut bytes = Vec::with_capacity(encoded.len() / 2);
+        for pair in encoded.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair).unwrap();
+            let byte = u8::from_str_radix(hex, 16).unwrap();
+            bytes.push(byte);
+        }
+
+        String::from_utf8(bytes).unwrap()
+    }
+
+    fn encode_path(path: &Path) -> String {
+        encode_str(&path.to_string_lossy())
+    }
+
+    fn snapshot_id_for(
+        database: &str,
+        host: &str,
+        port: u16,
+        user: &str,
+        dump_path: &Path,
+    ) -> String {
+        format!(
+            "v2{SEP}{}{SEP}{}{SEP}{}{SEP}{}{SEP}{}",
+            encode_str(database),
+            encode_str(host),
+            port,
+            encode_str(user),
+            encode_path(dump_path)
+        )
     }
 
     #[tokio::test]
@@ -363,17 +526,24 @@ mod tests {
     }
 
     #[test]
-    fn database_name_encoding_round_trips_for_snapshot_ids() {
-        let database = "app/\tname:prod";
-        let encoded = PostgresPlugin::encode_database(database);
-        let snapshot_id = format!("{encoded}{SEP}/tmp/example.dump");
-        let (encoded_database, dump_path) = snapshot_id.split_once(SEP).unwrap();
-
-        assert_eq!(
-            PostgresPlugin::decode_database(encoded_database).unwrap(),
-            database
+    fn snapshot_id_v2_round_trips_target_fields_and_dump_path() {
+        let dump_path = Path::new("/tmp/pg\tbackup.dump");
+        let snapshot_id = snapshot_id_for(
+            "app/\tname:prod",
+            "db\tprimary",
+            5_432,
+            "postgres\tadmin",
+            dump_path,
         );
-        assert_eq!(dump_path, "/tmp/example.dump");
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
+
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[0], "v2");
+        assert_eq!(decode_hex(parts[1]), "app/\tname:prod");
+        assert_eq!(decode_hex(parts[2]), "db\tprimary");
+        assert_eq!(parts[3], "5432");
+        assert_eq!(decode_hex(parts[4]), "postgres\tadmin");
+        assert_eq!(PathBuf::from(decode_hex(parts[5])), dump_path);
     }
 
     #[tokio::test]
@@ -381,11 +551,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let plugin = plugin_with_user(&temp_dir, "postgres");
         let missing_dump = temp_dir.path().join("missing.dump");
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            PostgresPlugin::encode_database("app"),
-            missing_dump.display()
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 5_432, "postgres", &missing_dump);
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
@@ -418,7 +584,12 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let plugin = plugin_with_user(&temp_dir, "postgres");
 
-        let err = plugin.rollback("xyz\t/tmp/example.dump").await.unwrap_err();
+        let err = plugin
+            .rollback(
+                "v2\txyz\t686f7374\t5432\t706f737467726573\t2f746d702f6578616d706c652e64756d70",
+            )
+            .await
+            .unwrap_err();
 
         match err {
             AegisError::Snapshot(msg) => assert!(msg.contains("invalid database encoding")),
@@ -445,13 +616,19 @@ mod tests {
             .snapshot(temp_dir.path(), "dangerous command")
             .await
             .unwrap();
-        let (database, dump_path) = snapshot_id.split_once(SEP).unwrap();
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
         let logged_args = fs::read_to_string(&log_path).unwrap();
 
-        assert_eq!(PostgresPlugin::decode_database(database).unwrap(), "app");
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[0], "v2");
+        assert_eq!(decode_hex(parts[1]), "app");
+        assert_eq!(decode_hex(parts[2]), "localhost");
+        assert_eq!(parts[3], "5432");
+        assert_eq!(decode_hex(parts[4]), "postgres");
         assert!(logged_args.lines().any(|line| line == "-Fc"));
         assert!(logged_args.lines().any(|line| line == "-f"));
         assert!(logged_args.lines().any(|line| line == "app"));
+        let dump_path = PathBuf::from(decode_hex(parts[5]));
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
@@ -497,11 +674,7 @@ mod tests {
         );
         let mut plugin = plugin_with_user(&temp_dir, "postgres");
         plugin.pg_restore_bin = pg_restore.display().to_string();
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            PostgresPlugin::encode_database("app"),
-            dump_path.display()
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 5_432, "postgres", &dump_path);
 
         plugin.rollback(&snapshot_id).await.unwrap();
 
@@ -520,6 +693,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rollback_uses_snapshot_time_target_instead_of_current_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let dump_log_path = temp_dir.path().join("pg_dump.args");
+        let restore_log_path = temp_dir.path().join("pg_restore.args");
+        let pg_dump = stub_bin(
+            &temp_dir,
+            "pg_dump",
+            &format!(
+                "log='{}'\nout=''\nprev=''\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\n  if [ \"$prev\" = '-f' ]; then out=\"$arg\"; fi\n  prev=\"$arg\"\ndone\nprintf 'dump-data' > \"$out\"",
+                dump_log_path.display()
+            ),
+        );
+        let pg_restore = stub_bin(
+            &temp_dir,
+            "pg_restore",
+            &format!(
+                "log='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone",
+                restore_log_path.display()
+            ),
+        );
+
+        let old_snaps = temp_dir.path().join("old-snaps");
+        let new_snaps = temp_dir.path().join("new-snaps");
+        let mut snapshot_plugin = PostgresPlugin::new(
+            "app".to_string(),
+            "snapshot-host".to_string(),
+            5_543,
+            "snapshot-user".to_string(),
+            old_snaps,
+        );
+        snapshot_plugin.pg_dump_bin = pg_dump.display().to_string();
+
+        let snapshot_id = snapshot_plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+
+        let mut rollback_plugin = PostgresPlugin::new(
+            "app".to_string(),
+            "drifted-host".to_string(),
+            6_432,
+            "drifted-user".to_string(),
+            new_snaps,
+        );
+        rollback_plugin.pg_restore_bin = pg_restore.display().to_string();
+
+        rollback_plugin.rollback(&snapshot_id).await.unwrap();
+
+        let logged_args = fs::read_to_string(&restore_log_path).unwrap();
+        assert!(logged_args.lines().any(|line| line == "snapshot-host"));
+        assert!(logged_args.lines().any(|line| line == "5543"));
+        assert!(logged_args.lines().any(|line| line == "snapshot-user"));
+        assert!(!logged_args.lines().any(|line| line == "drifted-host"));
+        assert!(!logged_args.lines().any(|line| line == "6432"));
+        assert!(!logged_args.lines().any(|line| line == "drifted-user"));
+    }
+
+    #[tokio::test]
+    async fn rollback_rejects_malformed_dump_path_encoding() {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin = plugin_with_user(&temp_dir, "postgres");
+
+        let err = plugin
+            .rollback("v2\t617070\t6c6f63616c686f7374\t5432\t706f737467726573\txyz")
+            .await
+            .unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump path encoding")),
+            other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn rollback_returns_stderr_when_pg_restore_fails() {
         let temp_dir = TempDir::new().unwrap();
         let dump_path = temp_dir.path().join("snaps").join("existing.dump");
@@ -532,11 +779,7 @@ mod tests {
         );
         let mut plugin = plugin_with_user(&temp_dir, "postgres");
         plugin.pg_restore_bin = pg_restore.display().to_string();
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            PostgresPlugin::encode_database("app"),
-            dump_path.display()
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 5_432, "postgres", &dump_path);
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
@@ -568,12 +811,14 @@ mod tests {
             .snapshot(temp_dir.path(), "dangerous command")
             .await
             .unwrap();
-        let (_, first_dump) = first_id.split_once(SEP).unwrap();
-        let (_, second_dump) = second_id.split_once(SEP).unwrap();
+        let first_parts: Vec<_> = first_id.split(SEP).collect();
+        let second_parts: Vec<_> = second_id.split(SEP).collect();
+        let first_dump = decode_hex(first_parts[5]);
+        let second_dump = decode_hex(second_parts[5]);
 
         assert_ne!(first_id, second_id);
         assert_ne!(first_dump, second_dump);
-        assert!(Path::new(first_dump).exists());
-        assert!(Path::new(second_dump).exists());
+        assert!(Path::new(&first_dump).exists());
+        assert!(Path::new(&second_dump).exists());
     }
 }

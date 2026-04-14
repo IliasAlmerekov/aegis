@@ -6,12 +6,23 @@ use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{ChildStderr, Command};
 use tokio::task::JoinHandle;
 
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
 use crate::error::AegisError;
 use crate::snapshot::SnapshotPlugin;
 
 type Result<T> = std::result::Result<T, AegisError>;
 
 const SEP: char = '\t';
+const SNAPSHOT_ID_VERSION: &str = "v2";
+
+struct MysqlRollbackTarget {
+    host: String,
+    port: u16,
+    user: String,
+    dump_path: PathBuf,
+}
 
 /// Snapshot plugin for MySQL databases.
 pub struct MysqlPlugin {
@@ -45,13 +56,14 @@ impl MysqlPlugin {
     }
 
     fn build_common_args(&self) -> Vec<String> {
-        let mut args = vec![
-            format!("--host={}", self.host),
-            format!("--port={}", self.port),
-        ];
+        Self::build_common_args_for_target(&self.host, self.port, &self.user)
+    }
 
-        if !self.user.is_empty() {
-            args.push(format!("--user={}", self.user));
+    fn build_common_args_for_target(host: &str, port: u16, user: &str) -> Vec<String> {
+        let mut args = vec![format!("--host={host}"), format!("--port={port}")];
+
+        if !user.is_empty() {
+            args.push(format!("--user={user}"));
         }
 
         args
@@ -144,56 +156,112 @@ impl MysqlPlugin {
         Self::decode_component(encoded, "database")
     }
 
-    fn encode_dump_reference(dump_file_name: &str) -> String {
-        Self::encode_component(dump_file_name)
+    fn encode_path(path: &Path) -> String {
+        #[cfg(unix)]
+        {
+            path.as_os_str()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        #[cfg(not(unix))]
+        {
+            Self::encode_component(&path.to_string_lossy())
+        }
     }
 
-    fn decode_dump_reference(encoded: &str) -> Result<String> {
-        let dump_file_name = Self::decode_component(encoded, "dump reference")?;
-        Self::validate_dump_file_name(&dump_file_name)?;
-        Ok(dump_file_name)
-    }
-
-    fn validate_dump_file_name(dump_file_name: &str) -> Result<()> {
-        let path = Path::new(dump_file_name);
-        let mut components = path.components();
-        let is_plain_file_name = matches!(
-            (components.next(), components.next()),
-            (Some(std::path::Component::Normal(name)), None)
-                if name.to_str() == Some(dump_file_name)
-        );
-        if !is_plain_file_name {
+    fn decode_path(encoded: &str, label: &str) -> Result<PathBuf> {
+        if !encoded.len().is_multiple_of(2) {
             return Err(AegisError::Snapshot(format!(
-                "malformed snapshot_id: invalid dump reference {dump_file_name:?}"
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+            )));
+        }
+
+        let mut bytes = Vec::with_capacity(encoded.len() / 2);
+        for pair in encoded.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair).map_err(|_| {
+                AegisError::Snapshot(format!(
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+                ))
+            })?;
+            let byte = u8::from_str_radix(hex, 16).map_err(|_| {
+                AegisError::Snapshot(format!(
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+                ))
+            })?;
+            bytes.push(byte);
+        }
+
+        #[cfg(unix)]
+        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+
+        #[cfg(not(unix))]
+        let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| {
+            AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+            ))
+        })?);
+
+        Self::validate_snapshot_path(&path, label)?;
+        Ok(path)
+    }
+
+    fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
+        if !path.is_absolute()
+            || path.file_name().is_none()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )
+            })
+        {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} {path:?}"
             )));
         }
 
         Ok(())
     }
 
-    fn build_snapshot_id(&self, dump_path: &Path) -> Result<String> {
-        let dump_file_name = dump_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                AegisError::Snapshot("failed to derive dump file name for snapshot".to_string())
-            })?;
-
-        Ok(format!(
-            "{}{SEP}{}",
+    fn build_snapshot_id(&self, dump_path: &Path) -> String {
+        format!(
+            "{SNAPSHOT_ID_VERSION}{SEP}{}{SEP}{}{SEP}{}{SEP}{}{SEP}{}",
             Self::encode_database(&self.database),
-            Self::encode_dump_reference(dump_file_name)
-        ))
+            Self::encode_component(&self.host),
+            self.port,
+            Self::encode_component(&self.user),
+            Self::encode_path(dump_path)
+        )
     }
 
-    fn parse_snapshot_id(&self, snapshot_id: &str) -> Result<(String, PathBuf)> {
-        let (database_encoded, dump_ref_encoded) =
-            snapshot_id.split_once(SEP).ok_or_else(|| {
-                AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
-            })?;
-        let database = Self::decode_database(database_encoded)?;
-        let dump_file_name = Self::decode_dump_reference(dump_ref_encoded)?;
-        Ok((database, self.snapshots_dir.join(dump_file_name)))
+    fn parse_snapshot_id(snapshot_id: &str) -> Result<MysqlRollbackTarget> {
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
+        if parts.len() != 6 || parts[0] != SNAPSHOT_ID_VERSION {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: {snapshot_id:?}"
+            )));
+        }
+
+        let _database = Self::decode_database(parts[1])?;
+        let host = Self::decode_component(parts[2], "host")?;
+        let port = parts[3].parse::<u16>().map_err(|_| {
+            AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid port {:?}",
+                parts[3]
+            ))
+        })?;
+        let user = Self::decode_component(parts[4], "user")?;
+        let dump_path = Self::decode_path(parts[5], "dump path")?;
+
+        Ok(MysqlRollbackTarget {
+            host,
+            port,
+            user,
+            dump_path,
+        })
     }
 
     async fn kill_and_reap_child(child: &mut tokio::process::Child) {
@@ -309,20 +377,21 @@ impl SnapshotPlugin for MysqlPlugin {
             return Err(AegisError::Snapshot(format!("mysqldump failed: {stderr}")));
         }
 
-        let snapshot_id = self.build_snapshot_id(&dump_path)?;
+        let dump_path = dump_path.canonicalize()?;
+        let snapshot_id = self.build_snapshot_id(&dump_path);
         tracing::info!(%snapshot_id, "mysql snapshot created");
         Ok(snapshot_id)
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let (_database, dump_path) = self.parse_snapshot_id(snapshot_id)?;
-        if !dump_path.exists() {
+        let target = Self::parse_snapshot_id(snapshot_id)?;
+        if !target.dump_path.exists() {
             return Err(AegisError::RollbackDumpNotFound {
-                path: dump_path.to_string_lossy().to_string(),
+                path: target.dump_path.to_string_lossy().to_string(),
             });
         }
 
-        let args = self.build_common_args();
+        let args = Self::build_common_args_for_target(&target.host, target.port, &target.user);
         let mut child = Command::new(&self.mysql_bin)
             .args(&args)
             .stdin(std::process::Stdio::piped())
@@ -331,7 +400,7 @@ impl SnapshotPlugin for MysqlPlugin {
             .spawn()
             .map_err(|e| AegisError::Snapshot(format!("failed to run mysql: {e}")))?;
 
-        let mut dump_file = tokio::fs::File::open(&dump_path).await?;
+        let mut dump_file = tokio::fs::File::open(&target.dump_path).await?;
         let stderr = child
             .stderr
             .take()
@@ -391,6 +460,46 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions).unwrap();
         path
+    }
+
+    fn hex_encode(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    fn encode_str(value: &str) -> String {
+        hex_encode(value.as_bytes())
+    }
+
+    fn decode_hex(encoded: &str) -> String {
+        let mut bytes = Vec::with_capacity(encoded.len() / 2);
+        for pair in encoded.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair).unwrap();
+            let byte = u8::from_str_radix(hex, 16).unwrap();
+            bytes.push(byte);
+        }
+
+        String::from_utf8(bytes).unwrap()
+    }
+
+    fn encode_path(path: &Path) -> String {
+        encode_str(&path.to_string_lossy())
+    }
+
+    fn snapshot_id_for(
+        database: &str,
+        host: &str,
+        port: u16,
+        user: &str,
+        dump_path: &Path,
+    ) -> String {
+        format!(
+            "v2{SEP}{}{SEP}{}{SEP}{}{SEP}{}{SEP}{}",
+            encode_str(database),
+            encode_str(host),
+            port,
+            encode_str(user),
+            encode_path(dump_path)
+        )
     }
 
     #[tokio::test]
@@ -483,49 +592,38 @@ mod tests {
     }
 
     #[test]
-    fn database_name_encoding_round_trips_for_snapshot_ids() {
-        let database = "app/\tname:prod";
-        let encoded = MysqlPlugin::encode_database(database);
-        let encoded_dump_ref = MysqlPlugin::encode_dump_reference("mysql-app-1234.sql");
-        let snapshot_id = format!("{encoded}{SEP}{encoded_dump_ref}");
-        let (encoded_database, encoded_dump_file_name) = snapshot_id.split_once(SEP).unwrap();
+    fn snapshot_id_v2_round_trips_target_fields_and_dump_path() {
+        let dump_path = Path::new("/tmp/mysql\tbackup.sql");
+        let snapshot_id = snapshot_id_for(
+            "app/\tname:prod",
+            "db\tprimary",
+            3_307,
+            "root\tadmin",
+            dump_path,
+        );
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
 
-        assert_eq!(
-            MysqlPlugin::decode_database(encoded_database).unwrap(),
-            database
-        );
-        assert_eq!(
-            MysqlPlugin::decode_dump_reference(encoded_dump_file_name).unwrap(),
-            "mysql-app-1234.sql"
-        );
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[0], "v2");
+        assert_eq!(decode_hex(parts[1]), "app/\tname:prod");
+        assert_eq!(decode_hex(parts[2]), "db\tprimary");
+        assert_eq!(parts[3], "3307");
+        assert_eq!(decode_hex(parts[4]), "root\tadmin");
+        assert_eq!(PathBuf::from(decode_hex(parts[5])), dump_path);
     }
 
     #[tokio::test]
-    async fn rollback_errors_on_malformed_dump_reference_encoding() {
+    async fn rollback_errors_on_malformed_dump_path_encoding() {
         let temp_dir = TempDir::new().unwrap();
         let plugin = plugin_with_user(&temp_dir, "root");
-
-        let err = plugin.rollback("617070\txyz").await.unwrap_err();
-
-        match err {
-            AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump reference encoding")),
-            other => panic!("expected malformed snapshot error, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn rollback_errors_on_invalid_dump_reference_path() {
-        let temp_dir = TempDir::new().unwrap();
-        let plugin = plugin_with_user(&temp_dir, "root");
-        let invalid_dump_ref = MysqlPlugin::encode_dump_reference("../escape.sql");
 
         let err = plugin
-            .rollback(&format!("617070{SEP}{invalid_dump_ref}"))
+            .rollback("v2\t617070\t6c6f63616c686f7374\t3306\t726f6f74\txyz")
             .await
             .unwrap_err();
 
         match err {
-            AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump reference")),
+            AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump path encoding")),
             other => panic!("expected malformed snapshot error, got {other:?}"),
         }
     }
@@ -535,11 +633,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let plugin = plugin_with_user(&temp_dir, "root");
         let missing_dump = plugin.snapshots_dir.join("missing.sql");
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            MysqlPlugin::encode_database("app"),
-            MysqlPlugin::encode_dump_reference("missing.sql")
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &missing_dump);
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
@@ -573,7 +667,9 @@ mod tests {
         let plugin = plugin_with_user(&temp_dir, "root");
 
         let err = plugin
-            .rollback("xyz\t6578616d706c652e73716c")
+            .rollback(
+                "v2\txyz\t6c6f63616c686f7374\t3306\t726f6f74\t2f746d702f6578616d706c652e73716c",
+            )
             .await
             .unwrap_err();
 
@@ -602,12 +698,15 @@ mod tests {
             .snapshot(temp_dir.path(), "dangerous command")
             .await
             .unwrap();
-        let (database, dump_ref) = snapshot_id.split_once(SEP).unwrap();
-        let dump_file_name = MysqlPlugin::decode_dump_reference(dump_ref).unwrap();
-        let dump_path = plugin.snapshots_dir.join(&dump_file_name);
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
         let logged_args = fs::read_to_string(&log_path).unwrap();
 
-        assert_eq!(MysqlPlugin::decode_database(database).unwrap(), "app");
+        assert_eq!(parts.len(), 6);
+        assert_eq!(parts[0], "v2");
+        assert_eq!(decode_hex(parts[1]), "app");
+        assert_eq!(decode_hex(parts[2]), "localhost");
+        assert_eq!(parts[3], "3306");
+        assert_eq!(decode_hex(parts[4]), "root");
         assert!(logged_args.lines().any(|line| line == "--databases"));
         assert!(
             logged_args
@@ -615,10 +714,7 @@ mod tests {
                 .any(|line| line == "--add-drop-database")
         );
         assert!(logged_args.lines().any(|line| line == "app"));
-        assert_eq!(
-            dump_file_name,
-            dump_path.file_name().unwrap().to_string_lossy()
-        );
+        let dump_path = PathBuf::from(decode_hex(parts[5]));
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
@@ -687,10 +783,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (_, dump_ref) = snapshot_id.split_once(SEP).unwrap();
-        let dump_path = plugin
-            .snapshots_dir
-            .join(MysqlPlugin::decode_dump_reference(dump_ref).unwrap());
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
+        let dump_path = PathBuf::from(decode_hex(parts[5]));
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
@@ -713,11 +807,7 @@ mod tests {
         );
         let mut plugin = plugin_with_user(&temp_dir, "root");
         plugin.mysql_bin = mysql.display().to_string();
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            MysqlPlugin::encode_database("app"),
-            MysqlPlugin::encode_dump_reference("existing.sql")
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
 
         plugin.rollback(&snapshot_id).await.unwrap();
 
@@ -726,6 +816,73 @@ mod tests {
         assert!(logged_args.lines().any(|line| line == "--port=3306"));
         assert!(logged_args.lines().any(|line| line == "--user=root"));
         assert!(!logged_args.lines().any(|line| line == "app"));
+        assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
+    }
+
+    #[tokio::test]
+    async fn rollback_uses_snapshot_time_target_and_dump_path_instead_of_current_config() {
+        let temp_dir = TempDir::new().unwrap();
+        let stdin_path = temp_dir.path().join("mysql.stdin");
+        let restore_log_path = temp_dir.path().join("mysql.args");
+        let mysqldump = stub_bin(&temp_dir, "mysqldump", "printf 'dump-data'");
+        let mysql = stub_bin(
+            &temp_dir,
+            "mysql",
+            &format!(
+                "log='{}'\nstdin_file='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone\ncat > \"$stdin_file\"",
+                restore_log_path.display(),
+                stdin_path.display()
+            ),
+        );
+
+        let mut snapshot_plugin = MysqlPlugin::new(
+            "app".to_string(),
+            "snapshot-host".to_string(),
+            3_307,
+            "snapshot-user".to_string(),
+            temp_dir.path().join("old-snaps"),
+        );
+        snapshot_plugin.mysqldump_bin = mysqldump.display().to_string();
+
+        let snapshot_id = snapshot_plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+
+        let mut rollback_plugin = MysqlPlugin::new(
+            "app".to_string(),
+            "drifted-host".to_string(),
+            4_321,
+            "drifted-user".to_string(),
+            temp_dir.path().join("new-snaps"),
+        );
+        rollback_plugin.mysql_bin = mysql.display().to_string();
+
+        rollback_plugin.rollback(&snapshot_id).await.unwrap();
+
+        let logged_args = fs::read_to_string(&restore_log_path).unwrap();
+        assert!(
+            logged_args
+                .lines()
+                .any(|line| line == "--host=snapshot-host")
+        );
+        assert!(logged_args.lines().any(|line| line == "--port=3307"));
+        assert!(
+            logged_args
+                .lines()
+                .any(|line| line == "--user=snapshot-user")
+        );
+        assert!(
+            !logged_args
+                .lines()
+                .any(|line| line == "--host=drifted-host")
+        );
+        assert!(!logged_args.lines().any(|line| line == "--port=4321"));
+        assert!(
+            !logged_args
+                .lines()
+                .any(|line| line == "--user=drifted-user")
+        );
         assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
     }
 
@@ -742,11 +899,7 @@ mod tests {
         );
         let mut plugin = plugin_with_user(&temp_dir, "root");
         plugin.mysql_bin = mysql.display().to_string();
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            MysqlPlugin::encode_database("app"),
-            MysqlPlugin::encode_dump_reference("existing.sql")
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
@@ -768,11 +921,7 @@ mod tests {
         let mysql = stub_bin(&temp_dir, "mysql", "exit 0");
         let mut plugin = plugin_with_user(&temp_dir, "root");
         plugin.mysql_bin = mysql.display().to_string();
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            MysqlPlugin::encode_database("app"),
-            MysqlPlugin::encode_dump_reference("existing.sql")
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
@@ -795,11 +944,7 @@ mod tests {
         );
         let mut plugin = plugin_with_user(&temp_dir, "root");
         plugin.mysql_bin = mysql.display().to_string();
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            MysqlPlugin::encode_database("app"),
-            MysqlPlugin::encode_dump_reference("existing.sql")
-        );
+        let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
 
         plugin.rollback(&snapshot_id).await.unwrap();
     }
@@ -819,14 +964,10 @@ mod tests {
             .snapshot(temp_dir.path(), "dangerous command")
             .await
             .unwrap();
-        let (_, first_dump_ref) = first_id.split_once(SEP).unwrap();
-        let (_, second_dump_ref) = second_id.split_once(SEP).unwrap();
-        let first_dump = plugin
-            .snapshots_dir
-            .join(MysqlPlugin::decode_dump_reference(first_dump_ref).unwrap());
-        let second_dump = plugin
-            .snapshots_dir
-            .join(MysqlPlugin::decode_dump_reference(second_dump_ref).unwrap());
+        let first_parts: Vec<_> = first_id.split(SEP).collect();
+        let second_parts: Vec<_> = second_id.split(SEP).collect();
+        let first_dump = PathBuf::from(decode_hex(first_parts[5]));
+        let second_dump = PathBuf::from(decode_hex(second_parts[5]));
 
         assert_ne!(first_id, second_id);
         assert_ne!(first_dump, second_dump);

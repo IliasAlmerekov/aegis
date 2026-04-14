@@ -4,12 +4,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 
+#[cfg(unix)]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
 use crate::error::AegisError;
 use crate::snapshot::SnapshotPlugin;
 
 type Result<T> = std::result::Result<T, AegisError>;
 
 const SEP: char = '\t';
+const SNAPSHOT_ID_VERSION: &str = "v2";
 
 /// Snapshot plugin for SQLite database files.
 pub struct SqlitePlugin {
@@ -33,6 +37,102 @@ impl SqlitePlugin {
             self.db_path.clone()
         }
     }
+
+    fn encode_path(path: &Path) -> String {
+        #[cfg(unix)]
+        {
+            path.as_os_str()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+
+        #[cfg(not(unix))]
+        {
+            path.to_string_lossy()
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        }
+    }
+
+    fn decode_path(encoded: &str, label: &str) -> Result<PathBuf> {
+        if !encoded.len().is_multiple_of(2) {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+            )));
+        }
+
+        let mut bytes = Vec::with_capacity(encoded.len() / 2);
+        for pair in encoded.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair).map_err(|_| {
+                AegisError::Snapshot(format!(
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+                ))
+            })?;
+            let byte = u8::from_str_radix(hex, 16).map_err(|_| {
+                AegisError::Snapshot(format!(
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+                ))
+            })?;
+            bytes.push(byte);
+        }
+
+        #[cfg(unix)]
+        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+
+        #[cfg(not(unix))]
+        let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| {
+            AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
+            ))
+        })?);
+
+        Self::validate_snapshot_path(&path, label)?;
+        Ok(path)
+    }
+
+    fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
+        if !path.is_absolute()
+            || path.file_name().is_none()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::CurDir | std::path::Component::ParentDir
+                )
+            })
+        {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid {label} {path:?}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn build_snapshot_id(original_path: &Path, dump_path: &Path) -> String {
+        format!(
+            "{SNAPSHOT_ID_VERSION}{SEP}{}{SEP}{}",
+            Self::encode_path(original_path),
+            Self::encode_path(dump_path)
+        )
+    }
+
+    fn parse_snapshot_id(snapshot_id: &str) -> Result<(PathBuf, PathBuf)> {
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
+        if parts.len() != 3 || parts[0] != SNAPSHOT_ID_VERSION {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: {snapshot_id:?}"
+            )));
+        }
+
+        Ok((
+            Self::decode_path(parts[1], "original path")?,
+            Self::decode_path(parts[2], "dump path")?,
+        ))
+    }
 }
 
 #[async_trait]
@@ -47,7 +147,7 @@ impl SnapshotPlugin for SqlitePlugin {
     }
 
     async fn snapshot(&self, cwd: &Path, _cmd: &str) -> Result<String> {
-        let db_path = self.resolve_db_path(cwd);
+        let db_path = self.resolve_db_path(cwd).canonicalize()?;
         fs::create_dir_all(&self.snapshots_dir)?;
 
         let timestamp = SystemTime::now()
@@ -68,25 +168,22 @@ impl SnapshotPlugin for SqlitePlugin {
         }
 
         fs::copy(&db_path, &dump_path)?;
+        let dump_path = dump_path.canonicalize()?;
 
-        let snapshot_id = format!("{}{SEP}{}", db_path.display(), dump_path.display());
+        let snapshot_id = Self::build_snapshot_id(&db_path, &dump_path);
         tracing::info!(%snapshot_id, "sqlite snapshot created");
         Ok(snapshot_id)
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let (original_str, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
-        })?;
-
-        let dump_path = Path::new(dump_str);
+        let (original_path, dump_path) = Self::parse_snapshot_id(snapshot_id)?;
         if !dump_path.exists() {
             return Err(AegisError::RollbackDumpNotFound {
-                path: dump_str.to_string(),
+                path: dump_path.to_string_lossy().to_string(),
             });
         }
 
-        fs::copy(dump_path, original_str)?;
+        fs::copy(dump_path, original_path)?;
         tracing::info!(snapshot_id = snapshot_id, "sqlite snapshot rolled back");
         Ok(())
     }
@@ -99,6 +196,17 @@ mod tests {
 
     fn write_db(path: &Path, contents: &[u8]) {
         fs::write(path, contents).unwrap();
+    }
+
+    fn decode_hex(encoded: &str) -> String {
+        let mut bytes = Vec::with_capacity(encoded.len() / 2);
+        for pair in encoded.as_bytes().chunks_exact(2) {
+            let hex = std::str::from_utf8(pair).unwrap();
+            let byte = u8::from_str_radix(hex, 16).unwrap();
+            bytes.push(byte);
+        }
+
+        String::from_utf8(bytes).unwrap()
     }
 
     #[tokio::test]
@@ -146,13 +254,13 @@ mod tests {
             .snapshot(temp_dir.path(), "sqlite-command")
             .await
             .unwrap();
-        let (original, dump) = snapshot_id.split_once(SEP).unwrap();
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
 
-        assert_eq!(original, db_path.to_string_lossy());
-        assert_eq!(
-            PathBuf::from(dump).parent().unwrap(),
-            snapshots_dir.as_path()
-        );
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "v2");
+        assert_eq!(decode_hex(parts[1]), db_path.to_string_lossy());
+        let dump = PathBuf::from(decode_hex(parts[2]));
+        assert_eq!(dump.parent().unwrap(), snapshots_dir.as_path());
         assert_eq!(fs::read(dump).unwrap(), b"before-snapshot");
     }
 
@@ -187,15 +295,39 @@ mod tests {
             .snapshot(temp_dir.path(), "sqlite-command")
             .await
             .unwrap();
-        let (_, dump_path) = snapshot_id.split_once(SEP).unwrap();
-        fs::remove_file(dump_path).unwrap();
+        let parts: Vec<_> = snapshot_id.split(SEP).collect();
+        let dump_path = PathBuf::from(decode_hex(parts[2]));
+        fs::remove_file(&dump_path).unwrap();
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
         match err {
-            AegisError::RollbackDumpNotFound { path } => assert_eq!(path, dump_path),
+            AegisError::RollbackDumpNotFound { path } => {
+                assert_eq!(path, dump_path.to_string_lossy())
+            }
             other => panic!("expected RollbackDumpNotFound, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn rollback_handles_tabs_in_snapshot_paths() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_dir = temp_dir.path().join("db\troot");
+        let snapshots_dir = temp_dir.path().join("snap\ts");
+        fs::create_dir_all(&db_dir).unwrap();
+        let db_path = db_dir.join("app.db");
+        write_db(&db_path, b"before-snapshot");
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+
+        let snapshot_id = plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap();
+        write_db(&db_path, b"after-change");
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        assert_eq!(fs::read(&db_path).unwrap(), b"before-snapshot");
     }
 
     #[tokio::test]
@@ -218,6 +350,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rollback_errors_when_path_encoding_is_malformed() {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin = SqlitePlugin::new(
+            temp_dir.path().join("app.db"),
+            temp_dir.path().join("snaps"),
+        );
+
+        let err = plugin
+            .rollback("v2\txyz\t2f746d702f64756d702e6462")
+            .await
+            .unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("invalid original path encoding")),
+            other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn snapshot_generates_distinct_ids_for_back_to_back_calls() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("app.db");
@@ -229,7 +380,8 @@ mod tests {
             .snapshot(temp_dir.path(), "sqlite-command")
             .await
             .unwrap();
-        let (_, first_dump) = first_id.split_once(SEP).unwrap();
+        let first_parts: Vec<_> = first_id.split(SEP).collect();
+        let first_dump = PathBuf::from(decode_hex(first_parts[2]));
 
         write_db(&db_path, b"after-first-snapshot");
 
@@ -237,7 +389,8 @@ mod tests {
             .snapshot(temp_dir.path(), "sqlite-command")
             .await
             .unwrap();
-        let (_, second_dump) = second_id.split_once(SEP).unwrap();
+        let second_parts: Vec<_> = second_id.split(SEP).collect();
+        let second_dump = PathBuf::from(decode_hex(second_parts[2]));
 
         assert_ne!(first_id, second_id);
         assert_ne!(first_dump, second_dump);
