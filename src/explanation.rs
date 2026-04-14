@@ -72,6 +72,22 @@ pub struct PolicyExplanation {
     pub block_reason: Option<BlockReason>,
 }
 
+impl PolicyExplanation {
+    /// Return the canonical concise reason label for consumer projections.
+    #[must_use]
+    pub fn concise_reason_label(&self) -> &'static str {
+        match self.rationale {
+            PolicyRationale::AuditMode => "audit mode auto-approved this command",
+            PolicyRationale::SafeCommand => "safe command",
+            PolicyRationale::AllowlistOverride => "allowlist override applied",
+            PolicyRationale::RequiresConfirmation => "requires confirmation",
+            PolicyRationale::IntrinsicRiskBlock => "blocked by intrinsic risk",
+            PolicyRationale::ProtectCiPolicy => "blocked by protect-mode CI policy",
+            PolicyRationale::StrictPolicy => "blocked by strict mode",
+        }
+    }
+}
+
 /// Execution-context facts already known during planning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionContextExplanation {
@@ -251,6 +267,37 @@ mod tests {
 
     use super::*;
 
+    fn test_explanation() -> CommandExplanation {
+        CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Warn,
+                decision_source: DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "GIT-001".to_string(),
+                    risk: RiskLevel::Warn,
+                    description: "hard reset".to_string(),
+                    matched_text: "git reset --hard".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: false,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: None,
+        }
+    }
+
     #[test]
     fn builds_base_explanation_from_existing_pipeline_facts() {
         let assessment = Assessment {
@@ -375,7 +422,6 @@ mod tests {
         assert_eq!(from_plan_inputs_call_count_for_tests(), 1);
     }
 
-
     #[test]
     fn appends_runtime_outcome_without_rewriting_existing_sections() {
         let base = CommandExplanation {
@@ -431,5 +477,32 @@ mod tests {
                 }],
             })
         );
+    }
+
+    #[test]
+    fn explanation_json_preserves_layer_boundaries() {
+        let explanation = test_explanation().with_runtime_outcome(ExecutionOutcomeExplanation {
+            decision: ExecutionDecisionExplanation::Approved,
+            snapshots: vec![SnapshotOutcomeExplanation {
+                plugin: "git".to_string(),
+                snapshot_id: "snap-123".to_string(),
+            }],
+        });
+
+        let json = serde_json::to_value(&explanation).expect("explanation should serialize");
+        let object = json
+            .as_object()
+            .expect("command explanation should serialize as a JSON object");
+        let keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(keys.len(), 4);
+        assert!(json.get("scan").is_some());
+        assert!(json.get("policy").is_some());
+        assert!(json.get("context").is_some());
+        assert!(json.get("outcome").is_some());
+        assert!(json.get("highest_risk").is_none());
+        assert!(json.get("action").is_none());
+        assert!(json.get("transport").is_none());
+        assert!(json.get("decision").is_none());
     }
 }

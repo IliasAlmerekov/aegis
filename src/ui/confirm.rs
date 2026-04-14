@@ -499,22 +499,22 @@ fn confirmation_reason_text(explanation: &CommandExplanation) -> String {
             rule.reason
         ),
         (crate::decision::PolicyRationale::RequiresConfirmation, None) => {
-            "requires explicit confirmation".to_string()
+            explanation.policy.concise_reason_label().to_string()
         }
         (crate::decision::PolicyRationale::AllowlistOverride, Some(rule)) => {
             format!("allowlist override approved: {}", rule.reason)
         }
         (crate::decision::PolicyRationale::AllowlistOverride, None) => {
-            "allowlist override approved".to_string()
+            explanation.policy.concise_reason_label().to_string()
         }
-        (crate::decision::PolicyRationale::SafeCommand, _) => "classified as safe".to_string(),
-        (crate::decision::PolicyRationale::AuditMode, _) => {
-            "audit mode records the command without blocking".to_string()
+        (crate::decision::PolicyRationale::SafeCommand, _)
+        | (crate::decision::PolicyRationale::AuditMode, _) => {
+            explanation.policy.concise_reason_label().to_string()
         }
         (crate::decision::PolicyRationale::IntrinsicRiskBlock, _)
         | (crate::decision::PolicyRationale::ProtectCiPolicy, _)
         | (crate::decision::PolicyRationale::StrictPolicy, _) => {
-            block_reason_text(explanation).to_string()
+            explanation.policy.concise_reason_label().to_string()
         }
     }
 }
@@ -526,7 +526,7 @@ fn block_reason_text(explanation: &CommandExplanation) -> &'static str {
         .or_else(|| explanation.policy.rationale.block_reason())
     {
         Some(crate::decision::BlockReason::IntrinsicRiskBlock) => {
-            "blocked by intrinsic risk policy (block-level scanner match)"
+            "blocked by an explicit danger/block pattern"
         }
         Some(crate::decision::BlockReason::StrictPolicy) => {
             "blocked by strict mode (non-safe commands require an allowlist override)"
@@ -1529,6 +1529,47 @@ mod tests {
         assert!(
             text.contains("Reason: blocked by CI policy (Protect mode + ci_policy=Block)"),
             "policy block output must use the CI policy reason from explanation; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn ui_rendering_does_not_need_to_synthesize_missing_optional_sections() {
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![]);
+        let explanation = make_explanation(
+            &assessment,
+            PolicyRationale::RequiresConfirmation,
+            None,
+            None,
+        );
+        let mut output = Vec::new();
+
+        let denied = show_confirmation_with_input(
+            &assessment,
+            &explanation,
+            &[],
+            false,
+            &mut b"yes\n".as_ref(),
+            &mut output,
+        );
+
+        assert!(!denied);
+
+        let rendered = strip_ansi(&String::from_utf8(output).expect("ui output should be utf8"));
+        assert!(
+            rendered.contains("Reason: requires confirmation"),
+            "ui should render the canonical concise policy reason; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("requires explicit confirmation"),
+            "ui should not synthesize an alternative reason label when optional sections are absent; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Snapshots created:"),
+            "ui should not synthesize missing runtime outcome sections; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("allowlist rule"),
+            "ui should not synthesize a missing allowlist section; got:\n{rendered}"
         );
     }
 
