@@ -10,6 +10,12 @@ use crate::interceptor::scanner::{Assessment, DecisionSource};
 use crate::planning::DecisionContext;
 use crate::snapshot::SnapshotRecord;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+static FROM_PLAN_INPUTS_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 /// Descriptive explanation assembled from existing planning and runtime facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandExplanation {
@@ -129,6 +135,9 @@ impl CommandExplanation {
         context: &DecisionContext,
         decision: PolicyDecision,
     ) -> Self {
+        #[cfg(test)]
+        FROM_PLAN_INPUTS_CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+
         Self {
             scan: ScanExplanation {
                 highest_risk: assessment.risk,
@@ -211,6 +220,16 @@ impl From<&AllowlistMatch> for AllowlistExplanation {
             source_layer: value.source_layer,
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_from_plan_inputs_call_count_for_tests() {
+    FROM_PLAN_INPUTS_CALL_COUNT.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn from_plan_inputs_call_count_for_tests() -> usize {
+    FROM_PLAN_INPUTS_CALL_COUNT.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]
@@ -321,6 +340,31 @@ mod tests {
             vec!["git".to_string(), "docker".to_string()]
         );
         assert_eq!(explanation.outcome, None);
+    }
+
+    #[test]
+    fn test_seam_counts_from_plan_inputs_calls() {
+        let assessment = crate::interceptor::assess("echo hello").unwrap();
+        let context = DecisionContext::new(
+            Mode::Protect,
+            ExecutionTransport::Shell,
+            false,
+            CwdState::Resolved(PathBuf::from(".")),
+            None,
+            Vec::new(),
+        );
+        let decision = PolicyDecision {
+            decision: PolicyAction::AutoApprove,
+            rationale: PolicyRationale::SafeCommand,
+            requires_confirmation: false,
+            snapshots_required: false,
+            allowlist_effective: false,
+        };
+
+        reset_from_plan_inputs_call_count_for_tests();
+        let _ = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
+
+        assert_eq!(from_plan_inputs_call_count_for_tests(), 1);
     }
 
     #[test]

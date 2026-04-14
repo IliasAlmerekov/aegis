@@ -359,7 +359,10 @@ mod tests {
     use crate::config::allowlist::AllowlistSourceLayer;
     use crate::decision::BlockReason;
     use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
-    use crate::explanation::CommandExplanation;
+    use crate::explanation::{
+        CommandExplanation, from_plan_inputs_call_count_for_tests,
+        reset_from_plan_inputs_call_count_for_tests,
+    };
     use crate::interceptor;
 
     #[test]
@@ -444,11 +447,12 @@ mod tests {
         };
         let expected_explanation =
             CommandExplanation::from_plan_inputs(&assessment, &decision_context, policy_decision);
+        reset_from_plan_inputs_call_count_for_tests();
 
         let plan = InterceptionPlan::from_policy(assessment, decision_context, policy_decision);
 
         assert_eq!(plan.explanation(), &expected_explanation);
-        assert!(std::ptr::eq(plan.explanation(), plan.explanation()));
+        assert_eq!(from_plan_inputs_call_count_for_tests(), 1);
     }
 
     #[test]
