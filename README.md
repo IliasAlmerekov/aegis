@@ -33,7 +33,7 @@ install -m 0755 aegis-linux-x86_64 /usr/local/bin/aegis
 ```
 
 Replace `aegis-linux-x86_64` with the release asset for your platform.
-Manual install only places the binary. You still need to configure your shell to use Aegis; see [Track all agent commands (global setup)](#track-all-agent-commands-global-setup) for details. The quick installer handles that managed shell setup for you.
+Manual install only places the binary. To use Aegis as a shell wrapper, you still need shell/session setup; see [Track all agent commands (global setup)](#track-all-agent-commands-global-setup) for details. The quick installer writes the managed bash/zsh rc exports for that setup.
 
 ### Quick install
 
@@ -41,7 +41,7 @@ Manual install only places the binary. You still need to configure your shell to
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and auto-manages bash/zsh shell setup. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. It fails closed on:
+The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and writes the managed bash/zsh rc exports used for shell-wrapper setup. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. It fails closed on:
 - missing checksum
 - checksum mismatch
 - missing supported checksum verifier tool
@@ -83,7 +83,7 @@ Then manually undo any shell or agent configuration you added yourself, if appli
 
 ## How it works
 
-If Aegis is configured as your shell wrapper or shell path, then in the default interactive Protect flow every command — from Claude Code, Codex, a script, or your terminal — passes through Aegis first:
+If Aegis is launched as the shell wrapper or shell path for a session, then in the default interactive Protect flow commands issued through that session are assessed by Aegis before execution:
 
 ```
 agent → $SHELL (aegis) → assess
@@ -130,14 +130,14 @@ It also does not:
 
 ## Track all agent commands (global setup)
 
-When Aegis is configured as your shell wrapper, the installer auto-manages bash/zsh shell setup by setting `$SHELL` to the Aegis binary and adding a managed block to your `~/.bashrc` / `~/.zshrc`. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. Open a new terminal or source the configured rc file to activate it for shells configured that way.
+When Aegis is configured as your shell wrapper, the installer writes a managed bash/zsh rc block that exports `$SHELL` to the Aegis binary and keeps that value available to shells started from those rc files. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. This helps tools and sessions that honor `$SHELL` or an explicit shell-path setting use Aegis, but it does not replace a terminal's actual login shell.
 
 **Claude Code** — set the shell path explicitly:
 
 1. Open Claude Code settings
 2. Set the shell field to `$(which aegis)`
 
-**Other AI agents** that respect `$SHELL` (Codex CLI, etc.) pick it up automatically.
+**Other AI agents** that respect `$SHELL` or an explicit shell path (Codex CLI, etc.) can use Aegis when configured that way.
 
 If Aegis is already being used as the shell wrapper, a project `.aegis.toml` can override policy for that directory or project:
 
@@ -208,7 +208,7 @@ Patterns are Rust regex strings. Use `(?i)` for case-insensitive matching.
 
 - [Config schema](docs/config-schema.md) — modes, allowlists, snapshot policy, `--output json`
 - [Platform support](docs/platform-support.md) — Linux and macOS only; Windows is out of scope
-- [CI and release](docs/ci.md) — workflow guarantees and pinned tool versions
+- [CI and release](docs/ci.md) — workflow guarantees and release notes
 
 ---
 
