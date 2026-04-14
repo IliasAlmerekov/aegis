@@ -58,19 +58,36 @@ impl PostgresPlugin {
         args
     }
 
-    fn build_dump_path(&self, timestamp: u64) -> PathBuf {
+    fn dump_path_candidate(&self, timestamp: u64, suffix: Option<usize>) -> PathBuf {
         let base_name = format!("pg-{}-{timestamp}", self.database);
-        let mut dump_path = self.snapshots_dir.join(format!("{base_name}.dump"));
-        let mut suffix = 1usize;
+        let file_name = match suffix {
+            Some(suffix) => format!("{base_name}-{suffix}.dump"),
+            None => format!("{base_name}.dump"),
+        };
 
-        while dump_path.exists() {
-            dump_path = self
-                .snapshots_dir
-                .join(format!("{base_name}-{suffix}.dump"));
-            suffix += 1;
+        self.snapshots_dir.join(file_name)
+    }
+
+    fn reserve_dump_path(&self, timestamp: u64) -> Result<PathBuf> {
+        let mut suffix = None;
+
+        loop {
+            let dump_path = self.dump_path_candidate(timestamp, suffix);
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&dump_path)
+            {
+                Ok(file) => {
+                    drop(file);
+                    return Ok(dump_path);
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    suffix = Some(suffix.map_or(1, |current| current + 1));
+                }
+                Err(err) => return Err(err.into()),
+            }
         }
-
-        dump_path
     }
 }
 
@@ -101,7 +118,7 @@ impl SnapshotPlugin for PostgresPlugin {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let dump_path = self.build_dump_path(timestamp);
+        let dump_path = self.reserve_dump_path(timestamp)?;
 
         let mut args = self.build_common_args();
         args.extend([
@@ -244,6 +261,29 @@ mod tests {
                 "-p".to_string(),
                 "5432".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn reserve_dump_path_creates_unique_files_atomically() {
+        let temp_dir = TempDir::new().unwrap();
+        let snapshots_dir = temp_dir.path().join("snaps");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        let plugin = plugin_with_user(&temp_dir, "postgres");
+
+        let first = plugin.reserve_dump_path(1_234).unwrap();
+        let second = plugin.reserve_dump_path(1_234).unwrap();
+
+        assert_ne!(first, second);
+        assert!(first.exists());
+        assert!(second.exists());
+        assert_eq!(
+            first.file_name().unwrap().to_string_lossy(),
+            "pg-app-1234.dump"
+        );
+        assert_eq!(
+            second.file_name().unwrap().to_string_lossy(),
+            "pg-app-1234-1.dump"
         );
     }
 
