@@ -456,12 +456,14 @@ mod tests {
     /// Write a shell script to `dir/docker` and make it executable.
     fn write_mock_docker(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
         let path = dir.join("docker");
-        fs::write(&path, format!("#!/bin/sh\n{script}")).unwrap();
+        let temp_path = dir.join("docker.tmp");
+        fs::write(&temp_path, format!("#!/bin/sh\n{script}")).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        fs::rename(&temp_path, &path).unwrap();
         path
     }
 
