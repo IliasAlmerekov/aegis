@@ -12,9 +12,13 @@ use crate::snapshot::SnapshotRecord;
 
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 #[cfg(test)]
 static FROM_PLAN_INPUTS_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static FROM_PLAN_INPUTS_COUNTER_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Descriptive explanation assembled from existing planning and runtime facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,6 +237,13 @@ pub(crate) fn from_plan_inputs_call_count_for_tests() -> usize {
 }
 
 #[cfg(test)]
+pub(crate) fn from_plan_inputs_counter_lock_for_tests() -> MutexGuard<'static, ()> {
+    FROM_PLAN_INPUTS_COUNTER_LOCK
+        .lock()
+        .expect("test-only explanation counter lock poisoned")
+}
+
+#[cfg(test)]
 mod tests {
     use std::borrow::Cow;
     use std::path::PathBuf;
@@ -342,30 +353,6 @@ mod tests {
         assert_eq!(explanation.outcome, None);
     }
 
-    #[test]
-    fn test_seam_counts_from_plan_inputs_calls() {
-        let assessment = crate::interceptor::assess("echo hello").unwrap();
-        let context = DecisionContext::new(
-            Mode::Protect,
-            ExecutionTransport::Shell,
-            false,
-            CwdState::Resolved(PathBuf::from(".")),
-            None,
-            Vec::new(),
-        );
-        let decision = PolicyDecision {
-            decision: PolicyAction::AutoApprove,
-            rationale: PolicyRationale::SafeCommand,
-            requires_confirmation: false,
-            snapshots_required: false,
-            allowlist_effective: false,
-        };
-
-        reset_from_plan_inputs_call_count_for_tests();
-        let _ = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
-
-        assert_eq!(from_plan_inputs_call_count_for_tests(), 1);
-    }
 
     #[test]
     fn appends_runtime_outcome_without_rewriting_existing_sections() {
