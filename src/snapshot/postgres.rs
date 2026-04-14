@@ -57,6 +57,21 @@ impl PostgresPlugin {
 
         args
     }
+
+    fn build_dump_path(&self, timestamp: u64) -> PathBuf {
+        let base_name = format!("pg-{}-{timestamp}", self.database);
+        let mut dump_path = self.snapshots_dir.join(format!("{base_name}.dump"));
+        let mut suffix = 1usize;
+
+        while dump_path.exists() {
+            dump_path = self
+                .snapshots_dir
+                .join(format!("{base_name}-{suffix}.dump"));
+            suffix += 1;
+        }
+
+        dump_path
+    }
 }
 
 #[async_trait]
@@ -86,9 +101,7 @@ impl SnapshotPlugin for PostgresPlugin {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let dump_path = self
-            .snapshots_dir
-            .join(format!("pg-{}-{timestamp}.dump", self.database));
+        let dump_path = self.build_dump_path(timestamp);
 
         let mut args = self.build_common_args();
         args.extend([
@@ -154,6 +167,8 @@ impl SnapshotPlugin for PostgresPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn plugin_with_user(temp_dir: &TempDir, user: &str) -> PostgresPlugin {
@@ -164,6 +179,15 @@ mod tests {
             user.to_string(),
             temp_dir.path().join("snaps"),
         )
+    }
+
+    fn stub_bin(dir: &TempDir, name: &str, body: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).unwrap();
+        path
     }
 
     #[tokio::test]
@@ -254,5 +278,146 @@ mod tests {
             AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
             other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn snapshot_uses_pg_dump_and_creates_dump_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("pg_dump.args");
+        let pg_dump = stub_bin(
+            &temp_dir,
+            "pg_dump",
+            &format!(
+                "log='{}'\nout=''\nprev=''\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\n  if [ \"$prev\" = '-f' ]; then out=\"$arg\"; fi\n  prev=\"$arg\"\ndone\nprintf 'dump-data' > \"$out\"",
+                log_path.display()
+            ),
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_dump_bin = pg_dump.display().to_string();
+
+        let snapshot_id = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+        let (database, dump_path) = snapshot_id.split_once(SEP).unwrap();
+        let logged_args = fs::read_to_string(&log_path).unwrap();
+
+        assert_eq!(database, "app");
+        assert!(logged_args.lines().any(|line| line == "-Fc"));
+        assert!(logged_args.lines().any(|line| line == "-f"));
+        assert!(logged_args.lines().any(|line| line == "app"));
+        assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
+    }
+
+    #[tokio::test]
+    async fn snapshot_returns_stderr_when_pg_dump_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let pg_dump = stub_bin(
+            &temp_dir,
+            "pg_dump",
+            "printf 'pg_dump exploded' >&2\nexit 12",
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_dump_bin = pg_dump.display().to_string();
+
+        let err = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => {
+                assert!(msg.contains("pg_dump failed"));
+                assert!(msg.contains("pg_dump exploded"));
+            }
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rollback_uses_pg_restore_with_expected_arguments() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("pg_restore.args");
+        let dump_path = temp_dir.path().join("snaps").join("existing.dump");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let pg_restore = stub_bin(
+            &temp_dir,
+            "pg_restore",
+            &format!(
+                "log='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone",
+                log_path.display()
+            ),
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_restore_bin = pg_restore.display().to_string();
+        let snapshot_id = format!("app{SEP}{}", dump_path.display());
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        let logged_args = fs::read_to_string(&log_path).unwrap();
+        assert!(logged_args.lines().any(|line| line == "--clean"));
+        assert!(logged_args.lines().any(|line| line == "--if-exists"));
+        assert!(logged_args.lines().any(|line| line == "-d"));
+        assert!(logged_args.lines().any(|line| line == "app"));
+        assert!(
+            logged_args
+                .lines()
+                .any(|line| line == dump_path.to_string_lossy())
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_returns_stderr_when_pg_restore_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let dump_path = temp_dir.path().join("snaps").join("existing.dump");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let pg_restore = stub_bin(
+            &temp_dir,
+            "pg_restore",
+            "printf 'pg_restore exploded' >&2\nexit 23",
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_restore_bin = pg_restore.display().to_string();
+        let snapshot_id = format!("app{SEP}{}", dump_path.display());
+
+        let err = plugin.rollback(&snapshot_id).await.unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => {
+                assert!(msg.contains("pg_restore failed"));
+                assert!(msg.contains("pg_restore exploded"));
+            }
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_generates_distinct_ids_for_back_to_back_calls() {
+        let temp_dir = TempDir::new().unwrap();
+        let pg_dump = stub_bin(
+            &temp_dir,
+            "pg_dump",
+            "out=''\nprev=''\nfor arg in \"$@\"; do\n  if [ \"$prev\" = '-f' ]; then out=\"$arg\"; fi\n  prev=\"$arg\"\ndone\nprintf '%s' \"$out\" > \"$out\"",
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_dump_bin = pg_dump.display().to_string();
+
+        let first_id = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+        let second_id = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+        let (_, first_dump) = first_id.split_once(SEP).unwrap();
+        let (_, second_dump) = second_id.split_once(SEP).unwrap();
+
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_dump, second_dump);
+        assert!(Path::new(first_dump).exists());
+        assert!(Path::new(second_dump).exists());
     }
 }
