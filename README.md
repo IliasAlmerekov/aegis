@@ -33,7 +33,7 @@ install -m 0755 aegis-linux-x86_64 /usr/local/bin/aegis
 ```
 
 Replace `aegis-linux-x86_64` with the release asset for your platform.
-Manual install only places the binary. You still need to configure your shell to use Aegis; the quick installer handles that managed shell setup for you.
+Manual install only places the binary. You still need to configure your shell to use Aegis; see [Track all agent commands (global setup)](#track-all-agent-commands-global-setup) for details. The quick installer handles that managed shell setup for you.
 
 ### Quick install
 
@@ -72,6 +72,8 @@ For source installs:
 ```bash
 cargo uninstall aegis
 ```
+
+Then manually undo any shell or agent configuration you added yourself, if applicable.
 
 ---
 
