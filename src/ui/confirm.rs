@@ -118,6 +118,14 @@ fn render_block<W: Write>(assessment: &Assessment, explanation: &CommandExplanat
     let _ = queue!(
         out,
         Print(format!("  Reason: {}\n", block_reason_text(explanation))),
+    );
+
+    if let Some(detail) = block_detail_text(explanation) {
+        let _ = queue!(out, Print(format!("  Detail: {detail}\n")));
+    }
+
+    let _ = queue!(
+        out,
         Print("  Hint: review the matched patterns below.\n"),
         Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
     );
@@ -526,7 +534,7 @@ fn block_reason_text(explanation: &CommandExplanation) -> &'static str {
         .or_else(|| explanation.policy.rationale.block_reason())
     {
         Some(crate::decision::BlockReason::IntrinsicRiskBlock) => {
-            "blocked by an explicit danger/block pattern"
+            "blocked by an explicit block-level pattern"
         }
         Some(crate::decision::BlockReason::StrictPolicy) => {
             "blocked by strict mode (non-safe commands require an allowlist override)"
@@ -535,6 +543,21 @@ fn block_reason_text(explanation: &CommandExplanation) -> &'static str {
             "blocked by CI policy (Protect mode + ci_policy=Block)"
         }
         None => "blocked by policy",
+    }
+}
+
+fn block_detail_text(explanation: &CommandExplanation) -> Option<&'static str> {
+    match explanation
+        .policy
+        .block_reason
+        .or_else(|| explanation.policy.rationale.block_reason())
+    {
+        Some(crate::decision::BlockReason::IntrinsicRiskBlock) => {
+            Some("legacy wording: blocked by an explicit danger/block pattern")
+        }
+        Some(crate::decision::BlockReason::StrictPolicy)
+        | Some(crate::decision::BlockReason::ProtectCiPolicy)
+        | None => None,
     }
 }
 
@@ -1547,14 +1570,18 @@ mod tests {
             &assessment,
             &explanation,
             &[],
-            false,
-            &mut b"yes\n".as_ref(),
+            true,
+            &mut b"no\n".as_ref(),
             &mut output,
         );
 
         assert!(!denied);
 
         let rendered = strip_ansi(&String::from_utf8(output).expect("ui output should be utf8"));
+        assert!(
+            rendered.contains("Execute suspicious command? [y/N]:"),
+            "test must exercise the interactive confirmation dialog path; got:\n{rendered}"
+        );
         assert!(
             rendered.contains("Reason: requires confirmation"),
             "ui should render the canonical concise policy reason; got:\n{rendered}"
@@ -1570,6 +1597,10 @@ mod tests {
         assert!(
             !rendered.contains("allowlist rule"),
             "ui should not synthesize a missing allowlist section; got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("outcome"),
+            "ui should not synthesize a missing runtime outcome section; got:\n{rendered}"
         );
     }
 
