@@ -170,16 +170,133 @@ download() {
     output="$2"
 
     if need_cmd curl; then
-        curl --fail --location --silent --show-error "$url" --output "$output"
-        return
+        if curl --fail --location --silent --show-error "$url" --output "$output"; then
+            return 0
+        fi
+        return 1
     fi
 
     if need_cmd wget; then
-        wget --quiet "$url" --output-document="$output"
+        if wget --quiet "$url" --output-document="$output"; then
+            return 0
+        fi
+        return 1
+    fi
+
+    return 1
+}
+
+download_or_fail() {
+    label="$1"
+    url="$2"
+    output="$3"
+
+    if download "${url}" "${output}"; then
+        return 0
+    fi
+
+    fail "${label} download failed"
+}
+
+select_checksum_tool() {
+    if need_cmd sha256sum; then
+        printf 'sha256sum\n'
         return
     fi
 
-    fail "curl or wget is required to download ${url}"
+    if need_cmd shasum; then
+        printf 'shasum\n'
+        return
+    fi
+
+    fail "no supported checksum tool found"
+}
+
+read_expected_checksum() {
+    checksum_path="$1"
+    asset_name="$2"
+    expected_checksum=""
+
+    if [ ! -r "${checksum_path}" ]; then
+        fail "checksum verification failed"
+    fi
+
+    if expected_checksum="$(awk -v asset="${asset_name}" '
+        NF >= 2 {
+            file = $2
+            sub(/^\*/, "", file)
+            if (file == asset) {
+                print $1
+                found = 1
+                exit 0
+            }
+        }
+        END {
+            if (found != 1) {
+                exit 1
+            }
+        }
+    ' "${checksum_path}")"; then
+        if [ -n "${expected_checksum}" ]; then
+            printf '%s\n' "${expected_checksum}"
+            return 0
+        fi
+    fi
+
+    fail "checksum verification failed"
+}
+
+compute_actual_checksum() {
+    checksum_tool="$1"
+    binary_path="$2"
+    checksum_output=""
+    actual_checksum=""
+
+    case "${checksum_tool}" in
+        sha256sum)
+            if checksum_output="$(sha256sum "${binary_path}")"; then
+                actual_checksum="${checksum_output%% *}"
+            else
+                fail "checksum verification failed"
+            fi
+            ;;
+        shasum)
+            if checksum_output="$(shasum -a 256 "${binary_path}")"; then
+                actual_checksum="${checksum_output%% *}"
+            else
+                fail "checksum verification failed"
+            fi
+            ;;
+        *)
+            fail "checksum verification failed"
+            ;;
+    esac
+
+    if [ -n "${actual_checksum}" ]; then
+        printf '%s\n' "${actual_checksum}"
+        return 0
+    fi
+
+    fail "checksum verification failed"
+}
+
+verify_downloaded_binary() {
+    binary_path="$1"
+    checksum_path="$2"
+    asset_name="$3"
+    checksum_tool=""
+    expected_checksum=""
+    actual_checksum=""
+
+    checksum_tool="$(select_checksum_tool)"
+    expected_checksum="$(read_expected_checksum "${checksum_path}" "${asset_name}")"
+    actual_checksum="$(compute_actual_checksum "${checksum_tool}" "${binary_path}")"
+
+    if [ "${expected_checksum}" = "${actual_checksum}" ]; then
+        return 0
+    fi
+
+    fail "checksum verification failed"
 }
 
 install_binary() {
@@ -237,7 +354,9 @@ main() {
     asset=""
     base_url=""
     download_url=""
+    checksum_url=""
     binary_path=""
+    checksum_path=""
     rc_file=""
 
     os="$(detect_os)"
@@ -245,12 +364,16 @@ main() {
     asset="aegis-${os}-${arch}"
     base_url="$(resolve_base_url)"
     download_url="${base_url}/${asset}"
+    checksum_url="${download_url}.sha256"
 
     TMPDIR_AEGIS="$(mktemp -d)"
     binary_path="${TMPDIR_AEGIS}/aegis"
+    checksum_path="${TMPDIR_AEGIS}/aegis.sha256"
 
     printf 'Downloading %s\n' "${download_url}"
-    download "${download_url}" "${binary_path}"
+    download_or_fail "binary" "${download_url}" "${binary_path}"
+    download_or_fail "checksum" "${checksum_url}" "${checksum_path}"
+    verify_downloaded_binary "${binary_path}" "${checksum_path}" "${asset}"
     chmod 0755 "${binary_path}"
     install_binary "${binary_path}"
 

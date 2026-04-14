@@ -1,46 +1,99 @@
 # Aegis
 
-> A shell proxy that intercepts AI agent commands and requires human confirmation before destructive operations.
+> A shell proxy that prompts for risky operations and hard-blocks catastrophic ones.
 
 [![CI](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](#install)
 
-Safe commands pass through instantly (< 2 ms). Dangerous ones — `rm -rf`, `terraform destroy`, `DROP TABLE`, and 60+ more — trigger a confirmation prompt before anything runs.
+Safe commands are assessed quickly. Depending on mode and policy, risky commands may prompt, require approval, or be blocked.
 
 ---
 
 ## Install
 
+### Recommended: verification-first install
+
+Download the binary and matching checksum for your target, verify them, then install the verified binary:
+
+```bash
+curl -fsSLO https://github.com/IliasAlmerekov/aegis/releases/latest/download/aegis-linux-x86_64
+curl -fsSLO https://github.com/IliasAlmerekov/aegis/releases/latest/download/aegis-linux-x86_64.sha256
+
+# Linux
+sha256sum -c aegis-linux-x86_64.sha256
+
+# macOS
+expected="$(awk '{print $1}' aegis-linux-x86_64.sha256)"
+actual="$(shasum -a 256 aegis-linux-x86_64 | awk '{print $1}')"
+[ "$expected" = "$actual" ]
+
+# Installing into /usr/local/bin may require sudo.
+install -m 0755 aegis-linux-x86_64 /usr/local/bin/aegis
+```
+
+Replace `aegis-linux-x86_64` with the release asset for your platform.
+Manual install only places the binary. To use Aegis as a shell wrapper, you still need shell/session setup; see [Track all agent commands (global setup)](#track-all-agent-commands-global-setup) for details. The quick installer writes the managed bash/zsh rc exports for that setup.
+
+### Quick install
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-Or from source:
+The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and writes the managed bash/zsh rc exports used for shell-wrapper setup. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. It fails closed on:
+- missing checksum
+- checksum mismatch
+- missing supported checksum verifier tool
+
+### Source install
+
+From source:
 
 ```bash
 cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 ```
 
-Uninstall:
+This only installs the binary. You still need to configure shell/agent activation yourself.
+
+### Uninstall
+
+For quick or script-managed installs:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 ```
 
+If you used a custom `AEGIS_SHELL_RC`, run uninstall with the same override so it removes the managed block from the same file.
+
+For manual verification-first binary installs:
+
+- remove the `aegis` binary you copied into your PATH
+- manually undo any shell configuration you added yourself
+
+For source installs:
+
+```bash
+cargo uninstall aegis
+```
+
+Then manually undo any shell or agent configuration you added yourself, if applicable.
+
 ---
 
 ## How it works
 
-Aegis sets itself as your `$SHELL`. Every command — from Claude Code, Codex, a script, or your terminal — passes through Aegis first:
+If Aegis is launched as the shell wrapper or shell path for a session, then in the default interactive Protect flow commands issued through that session are assessed by Aegis before execution:
 
 ```
 agent → $SHELL (aegis) → assess
                            ├── Safe   → exec immediately
-                           ├── Warn   → confirm (default Yes)
-                           ├── Danger → confirm (default No)
+                           ├── Warn   → confirm ([y/N])
+                           ├── Danger → confirm ([y/N])
                            └── Block  → refuse, exit 3
 ```
+
+Mode-specific behavior is configured in `.aegis.toml`; see the config docs below.
 
 ---
 
@@ -77,16 +130,16 @@ It also does not:
 
 ## Track all agent commands (global setup)
 
-The installer automatically sets `$SHELL` to the Aegis binary and adds a managed block to your `~/.bashrc` / `~/.zshrc`. Open a new terminal and Aegis is active.
+When Aegis is configured as your shell wrapper, the installer writes a managed bash/zsh rc block that exports `$SHELL` to the Aegis binary and keeps that value available to shells started from those rc files. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. This helps tools and sessions that honor `$SHELL` or an explicit shell-path setting use Aegis, but it does not replace a terminal's actual login shell.
 
 **Claude Code** — set the shell path explicitly:
 
 1. Open Claude Code settings
 2. Set the shell field to `$(which aegis)`
 
-**Other AI agents** that respect `$SHELL` (Codex CLI, etc.) pick it up automatically.
+**Other AI agents** that respect `$SHELL` or an explicit shell path (Codex CLI, etc.) can use Aegis when configured that way.
 
-To use Aegis only for a single project, add a `.aegis.toml` to the project root with the desired policy:
+If Aegis is already being used as the shell wrapper, a project `.aegis.toml` can override policy for that directory or project:
 
 ```toml
 mode = "Strict"  # block non-safe commands in this directory only
@@ -147,7 +200,7 @@ Patterns are Rust regex strings. Use `(?i)` for case-insensitive matching.
 
 ## Built-in pattern categories
 
-60 patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.
+60+ patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.
 
 ---
 
@@ -155,7 +208,7 @@ Patterns are Rust regex strings. Use `(?i)` for case-insensitive matching.
 
 - [Config schema](docs/config-schema.md) — modes, allowlists, snapshot policy, `--output json`
 - [Platform support](docs/platform-support.md) — Linux and macOS only; Windows is out of scope
-- [CI and release](docs/ci.md) — workflow guarantees and pinned tool versions
+- [CI and release](docs/ci.md) — workflow guarantees and release notes
 
 ---
 
