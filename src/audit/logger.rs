@@ -1092,6 +1092,7 @@ struct AuditIntegrityPayload<'a> {
     pattern_ids: &'a [String],
     decision: Decision,
     snapshots: &'a [AuditSnapshot],
+    explanation: Option<&'a CommandExplanation>,
     mode: Option<Mode>,
     ci_detected: Option<bool>,
     allowlist_matched: Option<bool>,
@@ -1116,6 +1117,7 @@ fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) -> Result<Str
         pattern_ids: &entry.pattern_ids,
         decision: entry.decision,
         snapshots: &entry.snapshots,
+        explanation: entry.explanation.as_ref(),
         mode: entry.mode,
         ci_detected: entry.ci_detected,
         allowlist_matched: entry.allowlist_matched,
@@ -1348,6 +1350,43 @@ mod tests {
             cwd: None,
             id: None,
             transport: None,
+        }
+    }
+
+    fn explanation_with_match_text(matched_text: &str) -> CommandExplanation {
+        CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Danger,
+                decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: matched_text.to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: Some(ExecutionOutcomeExplanation {
+                decision: ExecutionDecisionExplanation::Approved,
+                snapshots: vec![SnapshotOutcomeExplanation {
+                    plugin: "git".to_string(),
+                    snapshot_id: "snap-1".to_string(),
+                }],
+            }),
         }
     }
 
@@ -1851,6 +1890,19 @@ mod tests {
         assert!(entries[0].prev_hash.is_none());
         assert_eq!(entries[1].chain_alg.as_deref(), Some("sha256"));
         assert_eq!(entries[1].prev_hash, entries[0].entry_hash);
+    }
+
+    #[test]
+    fn compute_entry_hash_changes_when_explanation_changes() {
+        let base_entry =
+            entry(0, RiskLevel::Danger).with_explanation(explanation_with_match_text("rm -rf"));
+        let changed_entry =
+            entry(0, RiskLevel::Danger).with_explanation(explanation_with_match_text("rm -fr"));
+
+        let entry_hash = compute_entry_hash(&base_entry, None).unwrap();
+        let changed_hash = compute_entry_hash(&changed_entry, None).unwrap();
+
+        assert_ne!(entry_hash, changed_hash);
     }
 
     #[test]
