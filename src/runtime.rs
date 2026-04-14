@@ -56,6 +56,7 @@ pub struct RuntimeContext {
     audit_logger: AuditLogger,
 }
 
+#[derive(Clone, Copy)]
 pub struct AuditWriteOptions<'a> {
     pub allowlist_match: Option<&'a AllowlistMatch>,
     pub allowlist_effective: bool,
@@ -163,15 +164,7 @@ impl RuntimeContext {
         explanation: &CommandExplanation,
         options: AuditWriteOptions<'_>,
     ) {
-        let entry = self.build_audit_entry(
-            assessment,
-            decision,
-            snapshots,
-            explanation,
-            options.allowlist_match,
-            options.allowlist_effective,
-            options.ci_detected,
-        );
+        let entry = self.build_audit_entry(assessment, decision, snapshots, explanation, options);
 
         if let Err(err) = self.audit_logger.append(entry)
             && options.verbose
@@ -205,9 +198,12 @@ impl RuntimeContext {
                 decision,
                 snapshots,
                 explanation,
-                allowlist_match,
-                allowlist_effective,
-                ci_detected,
+                AuditWriteOptions {
+                    allowlist_match,
+                    allowlist_effective,
+                    ci_detected,
+                    verbose: false,
+                },
             )
             .with_watch_context(watch_source, watch_cwd, watch_id);
 
@@ -224,15 +220,13 @@ impl RuntimeContext {
         decision: Decision,
         snapshots: &[SnapshotRecord],
         explanation: &CommandExplanation,
-        allowlist_match: Option<&AllowlistMatch>,
-        allowlist_effective: bool,
-        ci_detected: bool,
+        options: AuditWriteOptions<'_>,
     ) -> AuditEntry {
-        let allowlist_pattern = (allowlist_effective)
-            .then(|| allowlist_match.map(|m| m.pattern.clone()))
+        let allowlist_pattern = (options.allowlist_effective)
+            .then(|| options.allowlist_match.map(|m| m.pattern.clone()))
             .flatten();
-        let allowlist_reason = (allowlist_effective)
-            .then(|| allowlist_match.map(|m| m.reason.clone()))
+        let allowlist_reason = (options.allowlist_effective)
+            .then(|| options.allowlist_match.map(|m| m.reason.clone()))
             .flatten();
 
         AuditEntry::new(
@@ -249,9 +243,9 @@ impl RuntimeContext {
         ))
         .with_policy_context(
             self.runtime_config.mode,
-            ci_detected,
-            allowlist_match.is_some(),
-            allowlist_effective,
+            options.ci_detected,
+            options.allowlist_match.is_some(),
+            options.allowlist_effective,
         )
     }
 }
@@ -710,9 +704,12 @@ expires_at = "2030-01-01T00:00:00Z"
             Decision::Approved,
             &snapshots,
             &explanation,
-            None,
-            false,
-            false,
+            AuditWriteOptions {
+                allowlist_match: None,
+                allowlist_effective: false,
+                ci_detected: false,
+                verbose: false,
+            },
         );
 
         let outcome = entry
@@ -781,9 +778,12 @@ expires_at = "2030-01-01T00:00:00Z"
             Decision::AutoApproved,
             &[],
             &explanation,
-            allowlist_match.as_ref(),
-            true,
-            false,
+            AuditWriteOptions {
+                allowlist_match: allowlist_match.as_ref(),
+                allowlist_effective: true,
+                ci_detected: false,
+                verbose: false,
+            },
         );
 
         assert_eq!(entry.allowlist_pattern.as_deref(), Some("rm -rf target"));

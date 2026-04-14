@@ -288,6 +288,7 @@ pub struct AuditFacts {
 }
 
 impl AuditFacts {
+    #[cfg(test)]
     pub(crate) fn from_plan_inputs(
         assessment: &Assessment,
         decision_context: &DecisionContext,
