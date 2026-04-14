@@ -88,6 +88,110 @@ Aegis is useful if you:
 
 See [Platform support](docs/platform-support.md) for the exact support policy.
 
+---
+
+## Make Aegis Intercept Agent Commands Automatically
+
+Installing the binary is only the first step.
+
+If you want Aegis to **listen to agent commands automatically**, your terminal
+or agent session must use `aegis` as its shell, or respect `$SHELL` after Aegis
+has been configured as the shell wrapper.
+
+### If you installed with `install.sh`
+
+For `bash` and `zsh`, the installer already does the important setup for you.
+
+It:
+
+- installs `aegis`
+- updates your shell rc file with a managed block
+- exports `SHELL` to the Aegis binary
+
+That means new shell sessions started from that rc file should route commands
+through Aegis automatically.
+
+### Step 1: open a new terminal
+
+After installation, close the current terminal and open a new one so the
+updated rc file is loaded.
+
+### Step 2: verify that your shell now points to Aegis
+
+Run:
+
+```bash
+echo "$SHELL"
+which aegis
+```
+
+You want both checks to make sense:
+
+- `which aegis` should print the installed Aegis path
+- `echo "$SHELL"` should point to that Aegis path
+
+### Step 3: make sure your agent tool uses that shell
+
+There are two common cases.
+
+#### Case A: the tool respects `$SHELL`
+
+Many agent tools launched from your terminal will use the current shell
+environment automatically.
+
+In that case:
+
+1. install with `install.sh`
+2. open a new terminal
+3. start the agent from that terminal
+
+#### Case B: the tool has an explicit shell path setting
+
+If the tool lets you choose the shell executable directly, set it to:
+
+```bash
+$(which aegis)
+```
+
+Examples:
+
+- **Claude Code**: set the shell path to `$(which aegis)`
+- **Codex CLI / other agent tools**: if they expose a shell executable setting, point it to the Aegis binary
+
+### If you installed manually or from source
+
+Manual binary install and `cargo install` give you the binary, but they do
+**not** fully set up automatic shell wrapping for you.
+
+The easiest fix is to run the installer-managed setup path:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
+```
+
+If you prefer to configure things yourself, then your shell or agent tool must
+launch `aegis` instead of the real shell.
+
+### Quick check: is Aegis actually intercepting commands?
+
+From the same terminal session where your agent runs:
+
+```bash
+aegis -c 'rm -rf /tmp/aegis-test'
+```
+
+If you see a confirmation prompt, Aegis is active in that session.
+
+### Troubleshooting
+
+If Aegis is installed but agent commands are not being intercepted:
+
+- open a fresh terminal after installation
+- run `echo "$SHELL"`
+- run `which aegis`
+- verify that your agent tool either respects `$SHELL` or is explicitly pointed at `aegis`
+- rerun `install.sh` if needed
+
 ### Manual install from a release
 
 If you prefer not to pipe the installer script to `sh`, open the
