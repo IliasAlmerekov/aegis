@@ -505,4 +505,45 @@ mod tests {
         assert!(json.get("transport").is_none());
         assert!(json.get("decision").is_none());
     }
+
+    #[test]
+    fn concise_reason_label_uses_canonical_policy_labels() {
+        let labels = [
+            (
+                PolicyRationale::AuditMode,
+                "audit mode auto-approved this command",
+            ),
+            (PolicyRationale::SafeCommand, "safe command"),
+            (
+                PolicyRationale::AllowlistOverride,
+                "allowlist override applied",
+            ),
+            (
+                PolicyRationale::RequiresConfirmation,
+                "requires confirmation",
+            ),
+            (
+                PolicyRationale::IntrinsicRiskBlock,
+                "blocked by intrinsic risk",
+            ),
+            (
+                PolicyRationale::ProtectCiPolicy,
+                "blocked by protect-mode CI policy",
+            ),
+            (PolicyRationale::StrictPolicy, "blocked by strict mode"),
+        ];
+
+        for (rationale, expected) in labels {
+            let explanation = PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale,
+                requires_confirmation: matches!(rationale, PolicyRationale::RequiresConfirmation),
+                snapshots_required: false,
+                allowlist_effective: false,
+                block_reason: rationale.block_reason(),
+            };
+
+            assert_eq!(explanation.concise_reason_label(), expected);
+        }
+    }
 }
