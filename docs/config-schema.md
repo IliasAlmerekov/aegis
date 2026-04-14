@@ -157,7 +157,9 @@ name_patterns = []
 
 ## Database snapshot options
 
-Database snapshot settings are opt-in and only matter when `snapshot_policy = "Selective"`.
+The per-plugin enable booleans are only honored when `snapshot_policy = "Selective"`.
+The connection and path settings are still consumed by the snapshot providers in
+`Selective` and `Full` mode, so keep them accurate whenever those providers may run.
 
 ### PostgreSQL snapshots
 
@@ -203,7 +205,7 @@ sqlite_snapshot_path = ""
 ```
 
 - `auto_snapshot_sqlite` enables SQLite snapshots before dangerous commands
-- `sqlite_snapshot_path` must point to the `.db` file, either relative to the project root or absolute
+- `sqlite_snapshot_path` must point to the `.db` file, either relative to the current working directory or absolute
 - SQLite snapshots do not use a username/password block; the database file path is the only required setting
 
 ## CI policy

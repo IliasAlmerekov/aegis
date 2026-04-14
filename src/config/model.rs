@@ -45,7 +45,7 @@ auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enabl
 auto_snapshot_postgres = false # PostgreSQL snapshot before dangerous commands. Requires pg_dump on PATH and [postgres_snapshot] config.
 auto_snapshot_mysql = false    # MySQL/MariaDB snapshot. Requires mysqldump on PATH and [mysql_snapshot] config.
 auto_snapshot_sqlite = false   # SQLite snapshot. Set sqlite_snapshot_path to your .db file path.
-sqlite_snapshot_path = ""      # Path to SQLite database file (relative to project root or absolute).
+sqlite_snapshot_path = ""      # Path to SQLite database file (relative to the current working directory or absolute).
 
 # PostgreSQL connection for snapshots. Credentials via PGPASSWORD env var or ~/.pgpass — never stored here.
 [postgres_snapshot]
