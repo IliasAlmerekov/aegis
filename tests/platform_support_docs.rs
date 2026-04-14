@@ -28,11 +28,14 @@ fn platform_support_doc_exists_and_declares_unix_only_matrix() {
         "## Support matrix",
         "| Linux |",
         "| macOS |",
+        "| Windows host via WSL2 terminal |",
         "| Windows |",
         "Supported",
+        "Expected to work",
         "Not supported",
         "bash",
         "zsh",
+        "WSL2",
         "PowerShell",
         "cmd.exe",
     ] {
@@ -49,6 +52,10 @@ fn readme_links_to_platform_support_policy() {
     assert!(
         readme.contains("[Platform support](docs/platform-support.md)"),
         "README must link to the explicit platform-support policy"
+    );
+    assert!(
+        readme.contains("WSL2") && readme.contains("native Windows"),
+        "README must distinguish WSL2 terminal usage from native Windows support"
     );
 }
 
