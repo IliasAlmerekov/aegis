@@ -1508,6 +1508,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn policy_block_renders_ci_policy_reason_from_explanation() {
+        let assessment = make_assessment(
+            "terraform destroy -target=module.prod.api",
+            RiskLevel::Danger,
+            vec![],
+        );
+        let explanation = make_explanation(
+            &assessment,
+            PolicyRationale::ProtectCiPolicy,
+            Some(BlockReason::ProtectCiPolicy),
+            None,
+        );
+        let mut output = Vec::new();
+
+        render_policy_block(&assessment, &explanation, &mut output);
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("Reason: blocked by CI policy (Protect mode + ci_policy=Block)"),
+            "policy block output must use the CI policy reason from explanation; got:\n{text}"
+        );
+    }
+
     // ── Highlighting ──────────────────────────────────────────────────────────
 
     #[test]

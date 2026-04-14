@@ -346,7 +346,10 @@ async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: Int
                 Some(BlockReason::StrictPolicy) => {
                     show_policy_block_via_tty(plan.assessment(), plan.explanation())
                 }
-                Some(BlockReason::ProtectCiPolicy) | None => {}
+                Some(BlockReason::ProtectCiPolicy) => {
+                    show_policy_block_via_tty(plan.assessment(), plan.explanation())
+                }
+                None => {}
             });
             Decision::Blocked
         }

@@ -718,12 +718,7 @@ fn append_shell_audit(
 fn show_block_for_plan(plan: &InterceptionPlan) {
     match plan.policy_decision().block_reason() {
         Some(BlockReason::ProtectCiPolicy) => {
-            eprintln!(
-                "aegis: blocked by CI policy (Protect mode + ci_policy=Block): {}",
-                plan.assessment().command.raw,
-            );
-            eprintln!("hint: inspect the allowlist or run aegis config validate.");
-            eprintln!("hint: rerun with --output json for machine-readable policy details.");
+            show_policy_block(plan.assessment(), plan.explanation())
         }
         Some(BlockReason::IntrinsicRiskBlock) => {
             show_confirmation(plan.assessment(), plan.explanation(), &[]);
@@ -835,16 +830,7 @@ fn execute_policy_decision(
         }
         PolicyAction::Block => {
             match policy_decision.block_reason() {
-                Some(BlockReason::ProtectCiPolicy) => {
-                    eprintln!(
-                        "aegis: blocked by CI policy (Protect mode + ci_policy=Block): {}",
-                        assessment.command.raw,
-                    );
-                    eprintln!("hint: inspect the allowlist or run aegis config validate.");
-                    eprintln!(
-                        "hint: rerun with --output json for machine-readable policy details."
-                    );
-                }
+                Some(BlockReason::ProtectCiPolicy) => show_policy_block(assessment, explanation),
                 Some(BlockReason::IntrinsicRiskBlock) => {
                     show_confirmation(assessment, explanation, &[]);
                 }
