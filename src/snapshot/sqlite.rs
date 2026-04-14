@@ -34,7 +34,7 @@ impl SnapshotPlugin for SqlitePlugin {
     }
 
     fn is_applicable(&self, _cwd: &Path) -> bool {
-        !self.db_path.as_os_str().is_empty() && self.db_path.exists()
+        !self.db_path.as_os_str().is_empty() && self.db_path.is_file()
     }
 
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
@@ -50,9 +50,15 @@ impl SnapshotPlugin for SqlitePlugin {
             .and_then(|stem| stem.to_str())
             .filter(|stem| !stem.is_empty())
             .unwrap_or("db");
-        let dump_path = self
-            .snapshots_dir
-            .join(format!("sqlite-{file_stem}-{timestamp}.db"));
+        let base_name = format!("sqlite-{file_stem}-{timestamp}");
+        let mut dump_path = self.snapshots_dir.join(format!("{base_name}.db"));
+        let mut suffix = 1usize;
+        while dump_path.exists() {
+            dump_path = self
+                .snapshots_dir
+                .join(format!("{base_name}-{suffix}.db"));
+            suffix += 1;
+        }
 
         fs::copy(&self.db_path, &dump_path)?;
 
@@ -106,6 +112,17 @@ mod tests {
             temp_dir.path().join("missing.db"),
             temp_dir.path().join("snaps"),
         );
+
+        assert!(!plugin.is_applicable(temp_dir.path()));
+    }
+
+    #[tokio::test]
+    async fn is_not_applicable_when_path_is_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_dir = temp_dir.path().join("app.db");
+        fs::create_dir_all(&db_dir).unwrap();
+
+        let plugin = SqlitePlugin::new(db_dir, temp_dir.path().join("snaps"));
 
         assert!(!plugin.is_applicable(temp_dir.path()));
     }
@@ -172,5 +189,49 @@ mod tests {
             AegisError::RollbackDumpNotFound { path } => assert_eq!(path, dump_path),
             other => panic!("expected RollbackDumpNotFound, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn rollback_errors_when_snapshot_id_is_malformed() {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin = SqlitePlugin::new(
+            temp_dir.path().join("app.db"),
+            temp_dir.path().join("snaps"),
+        );
+
+        let err = plugin.rollback("not-a-valid-snapshot-id").await.unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+            other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_generates_distinct_ids_for_back_to_back_calls() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        write_db(&db_path, b"before-snapshot");
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+
+        let first_id = plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap();
+        let (_, first_dump) = first_id.split_once(SEP).unwrap();
+
+        write_db(&db_path, b"after-first-snapshot");
+
+        let second_id = plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap();
+        let (_, second_dump) = second_id.split_once(SEP).unwrap();
+
+        assert_ne!(first_id, second_id);
+        assert_ne!(first_dump, second_dump);
+        assert_eq!(fs::read(first_dump).unwrap(), b"before-snapshot");
+        assert_eq!(fs::read(second_dump).unwrap(), b"after-first-snapshot");
     }
 }

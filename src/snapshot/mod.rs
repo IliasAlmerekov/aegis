@@ -1,6 +1,6 @@
 pub mod docker;
 pub mod git;
-pub mod sqlite;
+pub(crate) mod sqlite;
 
 pub use docker::DockerPlugin;
 pub use git::GitPlugin;
