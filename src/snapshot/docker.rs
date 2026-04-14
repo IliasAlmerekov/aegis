@@ -450,6 +450,7 @@ impl SnapshotPlugin for DockerPlugin {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io;
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
@@ -474,9 +475,26 @@ mod tests {
 
         write_mock_docker(dir.path(), "printf 'updated\\n'\n");
 
-        let output = StdCommand::new(&path).output().unwrap();
+        let output = output_with_etxtbsy_retry(&path).unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "updated\n");
+    }
+
+    fn output_with_etxtbsy_retry(path: &std::path::Path) -> io::Result<std::process::Output> {
+        const ATTEMPTS: usize = 20;
+        const DELAY_MS: u64 = 10;
+
+        for attempt in 0..ATTEMPTS {
+            match StdCommand::new(path).output() {
+                Ok(output) => return Ok(output),
+                Err(error) if is_executable_busy(&error) && attempt + 1 < ATTEMPTS => {
+                    std::thread::sleep(Duration::from_millis(DELAY_MS));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        unreachable!("retry loop must return or error")
     }
 
     fn single_quote_for_shell(path: &std::path::Path) -> String {
