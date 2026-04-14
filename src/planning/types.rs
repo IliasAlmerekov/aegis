@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::audit::MatchedPattern;
 use crate::config::{AllowlistMatch, Mode};
 use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyDecision};
+use crate::explanation::CommandExplanation;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::scanner::Assessment;
 
@@ -22,7 +23,7 @@ pub struct InterceptionPlan {
     approval_requirement: ApprovalRequirement,
     snapshot_plan: SnapshotPlan,
     execution_disposition: ExecutionDisposition,
-    audit_facts: Box<AuditFacts>,
+    explanation: Box<CommandExplanation>,
 }
 
 impl InterceptionPlan {
@@ -48,12 +49,8 @@ impl InterceptionPlan {
             PolicyAction::Prompt => ExecutionDisposition::RequiresApproval,
             PolicyAction::Block => ExecutionDisposition::Block,
         };
-        let audit_facts = AuditFacts::from_plan_inputs(
-            &assessment,
-            &decision_context,
-            policy_decision.block_reason(),
-            policy_decision.allowlist_effective,
-        );
+        let explanation =
+            CommandExplanation::from_plan_inputs(&assessment, &decision_context, policy_decision);
 
         Self {
             assessment: Box::new(assessment),
@@ -62,7 +59,7 @@ impl InterceptionPlan {
             approval_requirement,
             snapshot_plan,
             execution_disposition,
-            audit_facts: Box::new(audit_facts),
+            explanation: Box::new(explanation),
         }
     }
 
@@ -96,9 +93,9 @@ impl InterceptionPlan {
         self.execution_disposition
     }
 
-    /// Return audit-only facts derived during planning.
-    pub fn audit_facts(&self) -> &AuditFacts {
-        self.audit_facts.as_ref()
+    /// Return the descriptive explanation assembled during planning.
+    pub fn explanation(&self) -> &CommandExplanation {
+        self.explanation.as_ref()
     }
 }
 
@@ -361,6 +358,8 @@ mod tests {
     use super::*;
     use crate::config::allowlist::AllowlistSourceLayer;
     use crate::decision::BlockReason;
+    use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
+    use crate::explanation::CommandExplanation;
     use crate::interceptor;
 
     #[test]
@@ -422,6 +421,74 @@ mod tests {
         assert_eq!(
             audit_facts.block_reason(),
             Some(BlockReason::IntrinsicRiskBlock)
+        );
+    }
+
+    #[test]
+    fn from_policy_builds_command_explanation_once() {
+        let assessment = interceptor::assess("rm -rf ./tmp").unwrap();
+        let decision_context = DecisionContext::new(
+            Mode::Protect,
+            ExecutionTransport::Shell,
+            false,
+            CwdState::Resolved(PathBuf::from(".")),
+            None,
+            vec!["git"],
+        );
+        let policy_decision = PolicyDecision {
+            decision: PolicyAction::Prompt,
+            rationale: PolicyRationale::RequiresConfirmation,
+            requires_confirmation: true,
+            snapshots_required: true,
+            allowlist_effective: false,
+        };
+        let expected_explanation =
+            CommandExplanation::from_plan_inputs(&assessment, &decision_context, policy_decision);
+
+        let plan = InterceptionPlan::from_policy(assessment, decision_context, policy_decision);
+
+        assert_eq!(plan.explanation(), &expected_explanation);
+        assert!(std::ptr::eq(plan.explanation(), plan.explanation()));
+    }
+
+    #[test]
+    fn planning_keeps_allowlist_provenance_in_context_section() {
+        let assessment = interceptor::assess("cargo test --lib").unwrap();
+        let allowlist_match = AllowlistMatch {
+            pattern: "cargo test *".to_string(),
+            reason: "safe local verification".to_string(),
+            source_layer: AllowlistSourceLayer::Global,
+        };
+        let decision_context = DecisionContext::new(
+            Mode::Strict,
+            ExecutionTransport::Shell,
+            true,
+            CwdState::Resolved(PathBuf::from(".")),
+            Some(allowlist_match.clone()),
+            vec!["git", "docker"],
+        );
+        let policy_decision = PolicyDecision {
+            decision: PolicyAction::AutoApprove,
+            rationale: PolicyRationale::AllowlistOverride,
+            requires_confirmation: false,
+            snapshots_required: false,
+            allowlist_effective: true,
+        };
+
+        let plan = InterceptionPlan::from_policy(assessment, decision_context, policy_decision);
+
+        let explanation = plan.explanation();
+        let allowlist_explanation = explanation
+            .context
+            .allowlist_match
+            .as_ref()
+            .expect("planning should preserve allowlist provenance");
+
+        assert_eq!(allowlist_explanation.pattern, allowlist_match.pattern);
+        assert_eq!(allowlist_explanation.reason, allowlist_match.reason);
+        assert_eq!(
+            allowlist_explanation.source_layer,
+            allowlist_match.source_layer
         );
     }
 }
