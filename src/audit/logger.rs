@@ -1092,6 +1092,7 @@ struct AuditIntegrityPayload<'a> {
     pattern_ids: &'a [String],
     decision: Decision,
     snapshots: &'a [AuditSnapshot],
+    #[serde(skip_serializing_if = "Option::is_none")]
     explanation: Option<&'a CommandExplanation>,
     mode: Option<Mode>,
     ci_detected: Option<bool>,
@@ -1903,6 +1904,38 @@ mod tests {
         let changed_hash = compute_entry_hash(&changed_entry, None).unwrap();
 
         assert_ne!(entry_hash, changed_hash);
+    }
+
+    #[test]
+    fn integrity_payload_omits_explanation_key_when_absent() {
+        let entry = entry(0, RiskLevel::Warn);
+        let payload = AuditIntegrityPayload {
+            timestamp: entry.timestamp,
+            sequence: entry.sequence,
+            command: &entry.command,
+            risk: entry.risk,
+            matched_patterns: &entry.matched_patterns,
+            pattern_ids: &entry.pattern_ids,
+            decision: entry.decision,
+            snapshots: &entry.snapshots,
+            explanation: None,
+            mode: entry.mode,
+            ci_detected: entry.ci_detected,
+            allowlist_matched: entry.allowlist_matched,
+            allowlist_effective: entry.allowlist_effective,
+            chain_alg: CHAIN_ALG_SHA256,
+            prev_hash: None,
+            allowlist_pattern: entry.allowlist_pattern.as_ref(),
+            allowlist_reason: entry.allowlist_reason.as_ref(),
+            source: entry.source.as_ref(),
+            cwd: entry.cwd.as_ref(),
+            id: entry.id.as_ref(),
+            transport: entry.transport.as_ref(),
+        };
+
+        let json = serde_json::to_value(&payload).unwrap();
+
+        assert!(json.get("explanation").is_none());
     }
 
     #[test]
