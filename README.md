@@ -41,7 +41,7 @@ Manual install only places the binary. You still need to configure your shell to
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and fails closed on:
+The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and auto-manages bash/zsh shell setup. For other shells, set `AEGIS_SHELL_RC` or configure shell activation manually. It fails closed on:
 - missing checksum
 - checksum mismatch
 - missing supported checksum verifier tool
@@ -53,6 +53,8 @@ From source:
 ```bash
 cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 ```
+
+This only installs the binary. You still need to configure shell/agent activation yourself.
 
 ### Uninstall
 
@@ -126,7 +128,7 @@ It also does not:
 
 ## Track all agent commands (global setup)
 
-The installer automatically sets `$SHELL` to the Aegis binary and adds a managed block to your `~/.bashrc` / `~/.zshrc`. Open a new terminal and Aegis is active.
+When Aegis is configured as your shell wrapper, the installer auto-manages bash/zsh shell setup by setting `$SHELL` to the Aegis binary and adding a managed block to your `~/.bashrc` / `~/.zshrc`. For other shells, set `AEGIS_SHELL_RC` or configure shell activation manually. Open a new terminal and Aegis is active.
 
 **Claude Code** — set the shell path explicitly:
 
