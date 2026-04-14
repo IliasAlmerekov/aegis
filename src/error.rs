@@ -26,9 +26,28 @@ pub enum AegisError {
         details: String,
     },
 
+    /// The dump file that was recorded at snapshot time no longer exists.
+    #[error("rollback failed: dump file not found at '{path}'. The file may have been deleted manually.")]
+    RollbackDumpNotFound { path: String },
+
     #[error("config error: {0}")]
     Config(String),
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rollback_dump_not_found_message_contains_path() {
+        let err = AegisError::RollbackDumpNotFound {
+            path: "/home/user/.aegis/snapshots/pg-myapp-1234.dump".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("/home/user/.aegis/snapshots/pg-myapp-1234.dump"));
+        assert!(msg.contains("not found"));
+    }
 }
