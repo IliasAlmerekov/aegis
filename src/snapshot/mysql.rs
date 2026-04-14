@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{self, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::error::AegisError;
@@ -98,18 +98,18 @@ impl MysqlPlugin {
             .collect()
     }
 
-    fn encode_database(database: &str) -> String {
-        database
+    fn encode_component(component: &str) -> String {
+        component
             .as_bytes()
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect()
     }
 
-    fn decode_database(encoded: &str) -> Result<String> {
+    fn decode_component(encoded: &str, label: &str) -> Result<String> {
         if !encoded.len().is_multiple_of(2) {
             return Err(AegisError::Snapshot(format!(
-                "malformed snapshot_id: invalid database encoding {encoded:?}"
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             )));
         }
 
@@ -117,12 +117,12 @@ impl MysqlPlugin {
         for pair in encoded.as_bytes().chunks_exact(2) {
             let hex = std::str::from_utf8(pair).map_err(|_| {
                 AegisError::Snapshot(format!(
-                    "malformed snapshot_id: invalid database encoding {encoded:?}"
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             let byte = u8::from_str_radix(hex, 16).map_err(|_| {
                 AegisError::Snapshot(format!(
-                    "malformed snapshot_id: invalid database encoding {encoded:?}"
+                    "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             bytes.push(byte);
@@ -130,9 +130,74 @@ impl MysqlPlugin {
 
         String::from_utf8(bytes).map_err(|_| {
             AegisError::Snapshot(format!(
-                "malformed snapshot_id: invalid database encoding {encoded:?}"
+                "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             ))
         })
+    }
+
+    fn encode_database(database: &str) -> String {
+        Self::encode_component(database)
+    }
+
+    fn decode_database(encoded: &str) -> Result<String> {
+        Self::decode_component(encoded, "database")
+    }
+
+    fn encode_dump_reference(dump_file_name: &str) -> String {
+        Self::encode_component(dump_file_name)
+    }
+
+    fn decode_dump_reference(encoded: &str) -> Result<String> {
+        let dump_file_name = Self::decode_component(encoded, "dump reference")?;
+        Self::validate_dump_file_name(&dump_file_name)?;
+        Ok(dump_file_name)
+    }
+
+    fn validate_dump_file_name(dump_file_name: &str) -> Result<()> {
+        let path = Path::new(dump_file_name);
+        let mut components = path.components();
+        let is_plain_file_name = matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(name)), None)
+                if name.to_str() == Some(dump_file_name)
+        );
+        if !is_plain_file_name {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid dump reference {dump_file_name:?}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn build_snapshot_id(&self, dump_path: &Path) -> Result<String> {
+        let dump_file_name = dump_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                AegisError::Snapshot("failed to derive dump file name for snapshot".to_string())
+            })?;
+
+        Ok(format!(
+            "{}{SEP}{}",
+            Self::encode_database(&self.database),
+            Self::encode_dump_reference(dump_file_name)
+        ))
+    }
+
+    fn parse_snapshot_id(&self, snapshot_id: &str) -> Result<(String, PathBuf)> {
+        let (database_encoded, dump_ref_encoded) =
+            snapshot_id.split_once(SEP).ok_or_else(|| {
+                AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+            })?;
+        let database = Self::decode_database(database_encoded)?;
+        let dump_file_name = Self::decode_dump_reference(dump_ref_encoded)?;
+        Ok((database, self.snapshots_dir.join(dump_file_name)))
+    }
+
+    async fn kill_and_reap_child(child: &mut tokio::process::Child) {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
     }
 }
 
@@ -172,11 +237,40 @@ impl SnapshotPlugin for MysqlPlugin {
             "--add-drop-database".to_string(),
         ]);
 
-        let output = Command::new(&self.mysqldump_bin)
+        let mut child = Command::new(&self.mysqldump_bin)
             .args(&args)
-            .output()
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&dump_path);
+                AegisError::Snapshot(format!("failed to run mysqldump: {e}"))
+            })?;
+
+        let mut stdout = child.stdout.take().ok_or_else(|| {
+            let _ = std::fs::remove_file(&dump_path);
+            AegisError::Snapshot("failed to capture mysqldump stdout".to_string())
+        })?;
+        let mut dump_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&dump_path)
+            .await?;
+        if let Err(err) = io::copy(&mut stdout, &mut dump_file).await {
+            Self::kill_and_reap_child(&mut child).await;
+            let _ = std::fs::remove_file(&dump_path);
+            return Err(AegisError::Snapshot(format!(
+                "failed to stream mysqldump output: {err}"
+            )));
+        }
+        drop(stdout);
+        dump_file.flush().await?;
+        drop(dump_file);
+
+        let output = child
+            .wait_with_output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to run mysqldump: {e}")))?;
+            .map_err(|e| AegisError::Snapshot(format!("failed to wait for mysqldump: {e}")))?;
 
         if !output.status.success() {
             let _ = std::fs::remove_file(&dump_path);
@@ -184,34 +278,18 @@ impl SnapshotPlugin for MysqlPlugin {
             return Err(AegisError::Snapshot(format!("mysqldump failed: {stderr}")));
         }
 
-        if let Err(err) = std::fs::write(&dump_path, &output.stdout) {
-            let _ = std::fs::remove_file(&dump_path);
-            return Err(err.into());
-        }
-
-        let snapshot_id = format!(
-            "{}{SEP}{}",
-            Self::encode_database(&self.database),
-            dump_path.display()
-        );
+        let snapshot_id = self.build_snapshot_id(&dump_path)?;
         tracing::info!(%snapshot_id, "mysql snapshot created");
         Ok(snapshot_id)
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let (database_encoded, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
-        })?;
-        let _database = Self::decode_database(database_encoded)?;
-
-        let dump_path = Path::new(dump_str);
+        let (_database, dump_path) = self.parse_snapshot_id(snapshot_id)?;
         if !dump_path.exists() {
             return Err(AegisError::RollbackDumpNotFound {
-                path: dump_str.to_string(),
+                path: dump_path.to_string_lossy().to_string(),
             });
         }
-
-        let dump_bytes = std::fs::read(dump_path)?;
 
         let args = self.build_common_args();
         let mut child = Command::new(&self.mysql_bin)
@@ -222,14 +300,18 @@ impl SnapshotPlugin for MysqlPlugin {
             .spawn()
             .map_err(|e| AegisError::Snapshot(format!("failed to run mysql: {e}")))?;
 
+        let mut dump_file = tokio::fs::File::open(&dump_path).await?;
         let mut stdin = child
             .stdin
             .take()
             .ok_or_else(|| AegisError::Snapshot("failed to open mysql stdin".to_string()))?;
-        stdin
-            .write_all(&dump_bytes)
-            .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to write mysql stdin: {e}")))?;
+        if let Err(err) = io::copy(&mut dump_file, &mut stdin).await {
+            drop(stdin);
+            Self::kill_and_reap_child(&mut child).await;
+            return Err(AegisError::Snapshot(format!(
+                "failed to write mysql stdin: {err}"
+            )));
+        }
         drop(stdin);
 
         let output = child
@@ -366,25 +448,59 @@ mod tests {
     fn database_name_encoding_round_trips_for_snapshot_ids() {
         let database = "app/\tname:prod";
         let encoded = MysqlPlugin::encode_database(database);
-        let snapshot_id = format!("{encoded}{SEP}/tmp/example.sql");
-        let (encoded_database, dump_path) = snapshot_id.split_once(SEP).unwrap();
+        let encoded_dump_ref = MysqlPlugin::encode_dump_reference("mysql-app-1234.sql");
+        let snapshot_id = format!("{encoded}{SEP}{encoded_dump_ref}");
+        let (encoded_database, encoded_dump_file_name) = snapshot_id.split_once(SEP).unwrap();
 
         assert_eq!(
             MysqlPlugin::decode_database(encoded_database).unwrap(),
             database
         );
-        assert_eq!(dump_path, "/tmp/example.sql");
+        assert_eq!(
+            MysqlPlugin::decode_dump_reference(encoded_dump_file_name).unwrap(),
+            "mysql-app-1234.sql"
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_errors_on_malformed_dump_reference_encoding() {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin = plugin_with_user(&temp_dir, "root");
+
+        let err = plugin.rollback("617070\txyz").await.unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump reference encoding")),
+            other => panic!("expected malformed snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rollback_errors_on_invalid_dump_reference_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let plugin = plugin_with_user(&temp_dir, "root");
+        let invalid_dump_ref = MysqlPlugin::encode_dump_reference("../escape.sql");
+
+        let err = plugin
+            .rollback(&format!("617070{SEP}{invalid_dump_ref}"))
+            .await
+            .unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump reference")),
+            other => panic!("expected malformed snapshot error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
     async fn rollback_errors_when_dump_file_missing() {
         let temp_dir = TempDir::new().unwrap();
         let plugin = plugin_with_user(&temp_dir, "root");
-        let missing_dump = temp_dir.path().join("missing.sql");
+        let missing_dump = plugin.snapshots_dir.join("missing.sql");
         let snapshot_id = format!(
             "{}{SEP}{}",
             MysqlPlugin::encode_database("app"),
-            missing_dump.display()
+            MysqlPlugin::encode_dump_reference("missing.sql")
         );
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
@@ -418,7 +534,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let plugin = plugin_with_user(&temp_dir, "root");
 
-        let err = plugin.rollback("xyz\t/tmp/example.sql").await.unwrap_err();
+        let err = plugin
+            .rollback("xyz\t6578616d706c652e73716c")
+            .await
+            .unwrap_err();
 
         match err {
             AegisError::Snapshot(msg) => assert!(msg.contains("invalid database encoding")),
@@ -445,7 +564,9 @@ mod tests {
             .snapshot(temp_dir.path(), "dangerous command")
             .await
             .unwrap();
-        let (database, dump_path) = snapshot_id.split_once(SEP).unwrap();
+        let (database, dump_ref) = snapshot_id.split_once(SEP).unwrap();
+        let dump_file_name = MysqlPlugin::decode_dump_reference(dump_ref).unwrap();
+        let dump_path = plugin.snapshots_dir.join(&dump_file_name);
         let logged_args = fs::read_to_string(&log_path).unwrap();
 
         assert_eq!(MysqlPlugin::decode_database(database).unwrap(), "app");
@@ -456,6 +577,10 @@ mod tests {
                 .any(|line| line == "--add-drop-database")
         );
         assert!(logged_args.lines().any(|line| line == "app"));
+        assert_eq!(
+            dump_file_name,
+            dump_path.file_name().unwrap().to_string_lossy()
+        );
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
@@ -485,6 +610,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_removes_reserved_dump_when_mysqldump_spawn_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysqldump_bin = temp_dir
+            .path()
+            .join("missing-mysqldump")
+            .display()
+            .to_string();
+
+        let err = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("failed to run mysqldump")),
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+        assert!(snapshots_dir.exists());
+        assert!(fs::read_dir(&snapshots_dir).unwrap().next().is_none());
+    }
+
+    #[tokio::test]
     async fn rollback_uses_mysql_with_expected_arguments_and_dump_on_stdin() {
         let temp_dir = TempDir::new().unwrap();
         let log_path = temp_dir.path().join("mysql.args");
@@ -506,7 +655,7 @@ mod tests {
         let snapshot_id = format!(
             "{}{SEP}{}",
             MysqlPlugin::encode_database("app"),
-            dump_path.display()
+            MysqlPlugin::encode_dump_reference("existing.sql")
         );
 
         plugin.rollback(&snapshot_id).await.unwrap();
@@ -531,7 +680,7 @@ mod tests {
         let snapshot_id = format!(
             "{}{SEP}{}",
             MysqlPlugin::encode_database("app"),
-            dump_path.display()
+            MysqlPlugin::encode_dump_reference("existing.sql")
         );
 
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
@@ -541,6 +690,29 @@ mod tests {
                 assert!(msg.contains("mysql failed"));
                 assert!(msg.contains("mysql exploded"));
             }
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rollback_errors_when_mysql_stdin_streaming_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let dump_path = temp_dir.path().join("snaps").join("existing.sql");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, vec![b'x'; 512 * 1024]).unwrap();
+        let mysql = stub_bin(&temp_dir, "mysql", "exit 0");
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysql_bin = mysql.display().to_string();
+        let snapshot_id = format!(
+            "{}{SEP}{}",
+            MysqlPlugin::encode_database("app"),
+            MysqlPlugin::encode_dump_reference("existing.sql")
+        );
+
+        let err = plugin.rollback(&snapshot_id).await.unwrap_err();
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("failed to write mysql stdin")),
             other => panic!("expected snapshot error, got {other:?}"),
         }
     }
@@ -560,12 +732,18 @@ mod tests {
             .snapshot(temp_dir.path(), "dangerous command")
             .await
             .unwrap();
-        let (_, first_dump) = first_id.split_once(SEP).unwrap();
-        let (_, second_dump) = second_id.split_once(SEP).unwrap();
+        let (_, first_dump_ref) = first_id.split_once(SEP).unwrap();
+        let (_, second_dump_ref) = second_id.split_once(SEP).unwrap();
+        let first_dump = plugin
+            .snapshots_dir
+            .join(MysqlPlugin::decode_dump_reference(first_dump_ref).unwrap());
+        let second_dump = plugin
+            .snapshots_dir
+            .join(MysqlPlugin::decode_dump_reference(second_dump_ref).unwrap());
 
         assert_ne!(first_id, second_id);
         assert_ne!(first_dump, second_dump);
-        assert!(Path::new(first_dump).exists());
-        assert!(Path::new(second_dump).exists());
+        assert!(first_dump.exists());
+        assert!(second_dump.exists());
     }
 }
