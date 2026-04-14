@@ -2,6 +2,7 @@ pub mod audit;
 pub mod config;
 pub mod decision;
 pub mod error;
+pub mod explanation;
 pub mod interceptor;
 pub mod planning;
 pub mod runtime;

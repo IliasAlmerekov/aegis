@@ -1,9 +1,10 @@
 use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 use crate::interceptor::RiskLevel;
 use crate::interceptor::scanner::Assessment;
+use serde::{Deserialize, Serialize};
 
 /// Identifies the caller path that is asking policy for a decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExecutionTransport {
     /// Normal shell-wrapper execution from `aegis -c ...`.
     Shell,
@@ -65,7 +66,7 @@ pub struct PolicyInput<'a> {
 }
 
 /// The action Aegis should take after evaluating policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyAction {
     AutoApprove,
     Prompt,
@@ -73,7 +74,7 @@ pub enum PolicyAction {
 }
 
 /// The reason a command was hard-blocked by policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlockReason {
     /// The command matched a `RiskLevel::Block` pattern — never bypassable.
     IntrinsicRiskBlock,
@@ -84,7 +85,7 @@ pub enum BlockReason {
 }
 
 /// Human-readable policy rationale classified for runtime/UI handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyRationale {
     /// Audit mode bypasses normal approval flow.
     AuditMode,
