@@ -42,6 +42,24 @@ allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Dan
 snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin flags below, Full = all plugins.
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
 auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
+auto_snapshot_postgres = false # PostgreSQL snapshot before dangerous commands. Requires pg_dump on PATH and [postgres_snapshot] config.
+auto_snapshot_mysql = false    # MySQL/MariaDB snapshot. Requires mysqldump on PATH and [mysql_snapshot] config.
+auto_snapshot_sqlite = false   # SQLite snapshot. Set sqlite_snapshot_path to your .db file path.
+sqlite_snapshot_path = ""      # Path to SQLite database file (relative to project root or absolute).
+
+# PostgreSQL connection for snapshots. Credentials via PGPASSWORD env var or ~/.pgpass — never stored here.
+[postgres_snapshot]
+database = ""        # Database name to dump. Required when auto_snapshot_postgres = true.
+host = "localhost"
+port = 5432
+user = ""            # Leave empty to use PGUSER env var or OS user.
+
+# MySQL/MariaDB connection for snapshots. Credentials via MYSQL_PWD env var or ~/.my.cnf.
+[mysql_snapshot]
+database = ""        # Database name to dump. Required when auto_snapshot_mysql = true.
+host = "localhost"
+port = 3306
+user = ""            # Leave empty to use MYSQL_USER env var or ~/.my.cnf.
 
 # Which Docker containers to include in snapshots.
 # mode: Labeled (default) = only containers with opt-in label, All = every running container, Names = match by name pattern.
@@ -1485,6 +1503,30 @@ expires_at = "2030-01-01T00:00:00Z"
         assert!(
             template.contains("Block never bypasses in Protect/Strict"),
             "template must state that Block cannot be bypassed"
+        );
+        assert!(
+            template.contains("auto_snapshot_postgres = false"),
+            "template must surface PostgreSQL snapshot toggles"
+        );
+        assert!(
+            template.contains("[postgres_snapshot]"),
+            "template must include the PostgreSQL snapshot section"
+        );
+        assert!(
+            template.contains("auto_snapshot_mysql = false"),
+            "template must surface MySQL snapshot toggles"
+        );
+        assert!(
+            template.contains("[mysql_snapshot]"),
+            "template must include the MySQL snapshot section"
+        );
+        assert!(
+            template.contains("auto_snapshot_sqlite = false"),
+            "template must surface SQLite snapshot toggles"
+        );
+        assert!(
+            template.contains("sqlite_snapshot_path = \"\""),
+            "template must include the SQLite snapshot file path"
         );
     }
 

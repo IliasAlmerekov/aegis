@@ -42,6 +42,10 @@ allowlist_override_level = "Warn"
 snapshot_policy = "Selective"
 auto_snapshot_git = true
 auto_snapshot_docker = false
+auto_snapshot_postgres = false
+auto_snapshot_mysql = false
+auto_snapshot_sqlite = false
+sqlite_snapshot_path = ""
 ci_policy = "Block"
 ```
 
@@ -129,6 +133,7 @@ Snapshot requests matter only for `Danger` flows.
 
 - `None` never requests snapshots
 - `Selective` honors `auto_snapshot_git` / `auto_snapshot_docker`
+- `Selective` also honors `auto_snapshot_postgres` / `auto_snapshot_mysql` / `auto_snapshot_sqlite`
 - `Full` requests all applicable snapshot plugins regardless of per-plugin flags
 
 Important details:
@@ -149,6 +154,57 @@ mode = "Labeled"
 label = "aegis.snapshot"
 name_patterns = []
 ```
+
+## Database snapshot options
+
+Database snapshot settings are opt-in and only matter when `snapshot_policy = "Selective"`.
+
+### PostgreSQL snapshots
+
+```toml
+auto_snapshot_postgres = false
+
+[postgres_snapshot]
+database = ""
+host = "localhost"
+port = 5432
+user = ""
+```
+
+- `auto_snapshot_postgres` enables PostgreSQL snapshots before dangerous commands
+- `postgres_snapshot.database` is required when PostgreSQL snapshots are enabled
+- `postgres_snapshot.host` and `postgres_snapshot.port` select the database endpoint
+- `postgres_snapshot.user` may be left empty to use `PGUSER` or the current OS user
+- credentials must come from `PGPASSWORD` or `~/.pgpass`; never store passwords in config
+
+### MySQL/MariaDB snapshots
+
+```toml
+auto_snapshot_mysql = false
+
+[mysql_snapshot]
+database = ""
+host = "localhost"
+port = 3306
+user = ""
+```
+
+- `auto_snapshot_mysql` enables MySQL/MariaDB snapshots before dangerous commands
+- `mysql_snapshot.database` is required when MySQL/MariaDB snapshots are enabled
+- `mysql_snapshot.host` and `mysql_snapshot.port` select the database endpoint
+- `mysql_snapshot.user` may be left empty to use `MYSQL_USER` or `~/.my.cnf`
+- credentials must come from `MYSQL_PWD` or `~/.my.cnf`; never store passwords in config
+
+### SQLite snapshots
+
+```toml
+auto_snapshot_sqlite = false
+sqlite_snapshot_path = ""
+```
+
+- `auto_snapshot_sqlite` enables SQLite snapshots before dangerous commands
+- `sqlite_snapshot_path` must point to the `.db` file, either relative to the project root or absolute
+- SQLite snapshots do not use a username/password block; the database file path is the only required setting
 
 ## CI policy
 

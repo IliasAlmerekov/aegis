@@ -22,6 +22,11 @@ fn config_schema_doc_exists_and_describes_versioning_and_migration() {
         "cwd or user scope",
         "readable for migration, invalid for runtime",
         "mode semantics",
+        "postgres_snapshot",
+        "mysql_snapshot",
+        "sqlite_snapshot_path",
+        "PGPASSWORD",
+        "MYSQL_PWD",
         "deprecated fields",
         "migration",
     ] {
