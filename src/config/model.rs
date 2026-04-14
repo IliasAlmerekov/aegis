@@ -154,6 +154,62 @@ impl Default for DockerScope {
     }
 }
 
+/// Connection settings for a PostgreSQL snapshot plugin.
+///
+/// Credentials are provided externally via `PGPASSWORD` or `~/.pgpass`.
+/// The plugin is a no-op when [`database`](Self::database) is empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PostgresSnapshotConfig {
+    /// PostgreSQL database name to snapshot.
+    pub database: String,
+    /// PostgreSQL host name or address.
+    pub host: String,
+    /// PostgreSQL port.
+    pub port: u16,
+    /// PostgreSQL user name.
+    pub user: String,
+}
+
+impl Default for PostgresSnapshotConfig {
+    fn default() -> Self {
+        Self {
+            database: String::new(),
+            host: "localhost".to_string(),
+            port: 5432,
+            user: String::new(),
+        }
+    }
+}
+
+/// Connection settings for a MySQL snapshot plugin.
+///
+/// Credentials are provided externally via `MYSQL_PWD` or `~/.my.cnf`.
+/// The plugin is a no-op when [`database`](Self::database) is empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MysqlSnapshotConfig {
+    /// MySQL database name to snapshot.
+    pub database: String,
+    /// MySQL host name or address.
+    pub host: String,
+    /// MySQL port.
+    pub port: u16,
+    /// MySQL user name.
+    pub user: String,
+}
+
+impl Default for MysqlSnapshotConfig {
+    fn default() -> Self {
+        Self {
+            database: String::new(),
+            host: "localhost".to_string(),
+            port: 3306,
+            user: String::new(),
+        }
+    }
+}
+
 /// Controls when and how snapshot plugins run before dangerous commands.
 ///
 /// - `None`      — never snapshot.
@@ -259,6 +315,19 @@ pub struct AegisConfig {
     pub snapshot_policy: SnapshotPolicy,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
+    /// Enable PostgreSQL snapshots before dangerous commands.
+    pub auto_snapshot_postgres: bool,
+    /// PostgreSQL connection details used when snapshotting is enabled.
+    pub postgres_snapshot: PostgresSnapshotConfig,
+    /// Enable MySQL snapshots before dangerous commands.
+    pub auto_snapshot_mysql: bool,
+    /// MySQL connection details used when snapshotting is enabled.
+    pub mysql_snapshot: MysqlSnapshotConfig,
+    /// Enable SQLite snapshots before dangerous commands.
+    pub auto_snapshot_sqlite: bool,
+    /// Path to a SQLite database file, relative to the current working
+    /// directory or absolute.
+    pub sqlite_snapshot_path: String,
     pub docker_scope: DockerScope,
     pub ci_policy: CiPolicy,
     pub audit: AuditConfig,
@@ -325,6 +394,12 @@ impl AegisConfig {
             snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
+            auto_snapshot_postgres: false,
+            postgres_snapshot: PostgresSnapshotConfig::default(),
+            auto_snapshot_mysql: false,
+            mysql_snapshot: MysqlSnapshotConfig::default(),
+            auto_snapshot_sqlite: false,
+            sqlite_snapshot_path: String::new(),
             docker_scope: DockerScope::default(),
             ci_policy: CiPolicy::Block,
             audit: AuditConfig::default(),
@@ -479,6 +554,20 @@ impl AegisConfig {
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
                 .unwrap_or(base.auto_snapshot_docker),
+            auto_snapshot_postgres: overlay
+                .auto_snapshot_postgres
+                .unwrap_or(base.auto_snapshot_postgres),
+            postgres_snapshot: overlay.postgres_snapshot.unwrap_or(base.postgres_snapshot),
+            auto_snapshot_mysql: overlay
+                .auto_snapshot_mysql
+                .unwrap_or(base.auto_snapshot_mysql),
+            mysql_snapshot: overlay.mysql_snapshot.unwrap_or(base.mysql_snapshot),
+            auto_snapshot_sqlite: overlay
+                .auto_snapshot_sqlite
+                .unwrap_or(base.auto_snapshot_sqlite),
+            sqlite_snapshot_path: overlay
+                .sqlite_snapshot_path
+                .unwrap_or(base.sqlite_snapshot_path),
             docker_scope: overlay.docker_scope.unwrap_or(base.docker_scope),
             ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
             audit: AuditConfig {
@@ -586,6 +675,12 @@ struct PartialConfig {
     snapshot_policy: Option<SnapshotPolicy>,
     auto_snapshot_git: Option<bool>,
     auto_snapshot_docker: Option<bool>,
+    auto_snapshot_postgres: Option<bool>,
+    postgres_snapshot: Option<PostgresSnapshotConfig>,
+    auto_snapshot_mysql: Option<bool>,
+    mysql_snapshot: Option<MysqlSnapshotConfig>,
+    auto_snapshot_sqlite: Option<bool>,
+    sqlite_snapshot_path: Option<String>,
     docker_scope: Option<DockerScope>,
     ci_policy: Option<CiPolicy>,
     audit: PartialAuditConfig,
@@ -817,6 +912,76 @@ reason = "ephemeral test teardown"
         assert!(config.allowlist.is_empty());
         assert!(config.auto_snapshot_git);
         assert!(!config.auto_snapshot_docker); // default is false (opt-in)
+    }
+
+    #[test]
+    fn postgres_snapshot_config_deserializes() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+auto_snapshot_postgres = true
+
+[postgres_snapshot]
+database = "myapp"
+host = "db.local"
+port = 5433
+user = "appuser"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.auto_snapshot_postgres);
+        assert_eq!(config.postgres_snapshot.database, "myapp");
+        assert_eq!(config.postgres_snapshot.host, "db.local");
+        assert_eq!(config.postgres_snapshot.port, 5433);
+        assert_eq!(config.postgres_snapshot.user, "appuser");
+    }
+
+    #[test]
+    fn mysql_snapshot_config_deserializes() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+auto_snapshot_mysql = true
+
+[mysql_snapshot]
+database = "shop"
+host = "127.0.0.1"
+port = 3307
+user = "root"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.auto_snapshot_mysql);
+        assert_eq!(config.mysql_snapshot.database, "shop");
+        assert_eq!(config.mysql_snapshot.host, "127.0.0.1");
+        assert_eq!(config.mysql_snapshot.port, 3307);
+        assert_eq!(config.mysql_snapshot.user, "root");
+    }
+
+    #[test]
+    fn sqlite_snapshot_config_deserializes() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+auto_snapshot_sqlite = true
+sqlite_snapshot_path = "db/app.db"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.auto_snapshot_sqlite);
+        assert_eq!(config.sqlite_snapshot_path, "db/app.db");
+    }
+
+    #[test]
+    fn db_snapshot_defaults_are_disabled() {
+        let config = AegisConfig::defaults();
+
+        assert!(!config.auto_snapshot_postgres);
+        assert!(!config.auto_snapshot_mysql);
+        assert!(!config.auto_snapshot_sqlite);
+        assert!(config.postgres_snapshot.database.is_empty());
+        assert!(config.mysql_snapshot.database.is_empty());
+        assert!(config.sqlite_snapshot_path.is_empty());
     }
 
     #[test]
