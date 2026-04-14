@@ -79,7 +79,7 @@ Then manually undo any shell or agent configuration you added yourself, if appli
 
 ## How it works
 
-Aegis sets itself as your `$SHELL`. Every command — from Claude Code, Codex, a script, or your terminal — passes through Aegis first:
+By default in Protect mode, Aegis sets itself as your `$SHELL`. Every command — from Claude Code, Codex, a script, or your terminal — passes through Aegis first:
 
 ```
 agent → $SHELL (aegis) → assess
@@ -88,6 +88,8 @@ agent → $SHELL (aegis) → assess
                            ├── Danger → confirm ([y/N])
                            └── Block  → refuse, exit 3
 ```
+
+Mode-specific behavior is configured in `.aegis.toml`; see the config section below.
 
 ---
 
