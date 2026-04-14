@@ -1,12 +1,12 @@
 # Aegis
 
-> A shell proxy that intercepts AI agent commands and requires human confirmation before destructive operations.
+> A shell proxy that prompts for risky operations and hard-blocks catastrophic ones.
 
 [![CI](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](#install)
 
-Safe commands pass through instantly (< 2 ms). Dangerous ones — `rm -rf`, `terraform destroy`, `DROP TABLE`, and 60+ more — trigger a confirmation prompt before anything runs.
+Safe commands are assessed quickly. Depending on mode and policy, risky commands may prompt, require approval, or be blocked.
 
 ---
 
