@@ -213,7 +213,9 @@ impl Default for MysqlSnapshotConfig {
 /// Controls when and how snapshot plugins run before dangerous commands.
 ///
 /// - `None`      — never snapshot.
-/// - `Selective` — only plugins enabled by `auto_snapshot_git` / `auto_snapshot_docker`.
+/// - `Selective` — only plugins enabled by `auto_snapshot_git` /
+///   `auto_snapshot_docker` / `auto_snapshot_postgres` /
+///   `auto_snapshot_mysql` / `auto_snapshot_sqlite`.
 /// - `Full`      — run every registered plugin regardless of per-plugin flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
@@ -982,6 +984,109 @@ sqlite_snapshot_path = "db/app.db"
         assert!(config.postgres_snapshot.database.is_empty());
         assert!(config.mysql_snapshot.database.is_empty());
         assert!(config.sqlite_snapshot_path.is_empty());
+    }
+
+    #[test]
+    fn db_snapshot_fields_merge_by_replacement_and_scalar_override() {
+        let base = AegisConfig {
+            auto_snapshot_postgres: false,
+            postgres_snapshot: PostgresSnapshotConfig {
+                database: "base_pg".to_string(),
+                host: "base-pg.local".to_string(),
+                port: 6001,
+                user: "base_pg_user".to_string(),
+            },
+            auto_snapshot_mysql: false,
+            mysql_snapshot: MysqlSnapshotConfig {
+                database: "base_mysql".to_string(),
+                host: "base-mysql.local".to_string(),
+                port: 6002,
+                user: "base_mysql_user".to_string(),
+            },
+            auto_snapshot_sqlite: false,
+            sqlite_snapshot_path: "base/db.sqlite".to_string(),
+            ..AegisConfig::defaults()
+        };
+
+        let overlay = PartialConfig {
+            auto_snapshot_postgres: Some(true),
+            postgres_snapshot: Some(PostgresSnapshotConfig {
+                database: "overlay_pg".to_string(),
+                host: "db.local".to_string(),
+                port: 5433,
+                user: "appuser".to_string(),
+            }),
+            auto_snapshot_mysql: Some(true),
+            mysql_snapshot: Some(MysqlSnapshotConfig {
+                database: "shop".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: 3307,
+                user: "root".to_string(),
+            }),
+            auto_snapshot_sqlite: Some(true),
+            sqlite_snapshot_path: Some("db/app.db".to_string()),
+            ..PartialConfig::default()
+        };
+
+        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+
+        assert!(merged.auto_snapshot_postgres);
+        assert_eq!(merged.postgres_snapshot.database, "overlay_pg");
+        assert_eq!(merged.postgres_snapshot.host, "db.local");
+        assert_eq!(merged.postgres_snapshot.port, 5433);
+        assert_eq!(merged.postgres_snapshot.user, "appuser");
+
+        assert!(merged.auto_snapshot_mysql);
+        assert_eq!(merged.mysql_snapshot.database, "shop");
+        assert_eq!(merged.mysql_snapshot.host, "127.0.0.1");
+        assert_eq!(merged.mysql_snapshot.port, 3307);
+        assert_eq!(merged.mysql_snapshot.user, "root");
+
+        assert!(merged.auto_snapshot_sqlite);
+        assert_eq!(merged.sqlite_snapshot_path, "db/app.db");
+    }
+
+    #[test]
+    fn db_snapshot_nested_tables_do_not_inherit_base_values_on_overlay_replacement() {
+        let base = AegisConfig {
+            postgres_snapshot: PostgresSnapshotConfig {
+                database: "base_pg".to_string(),
+                host: "base-pg.local".to_string(),
+                port: 6001,
+                user: "base_pg_user".to_string(),
+            },
+            mysql_snapshot: MysqlSnapshotConfig {
+                database: "base_mysql".to_string(),
+                host: "base-mysql.local".to_string(),
+                port: 6002,
+                user: "base_mysql_user".to_string(),
+            },
+            ..AegisConfig::defaults()
+        };
+
+        let overlay = PartialConfig {
+            postgres_snapshot: Some(PostgresSnapshotConfig {
+                database: "overlay_pg".to_string(),
+                ..PostgresSnapshotConfig::default()
+            }),
+            mysql_snapshot: Some(MysqlSnapshotConfig {
+                host: "mysql.overlay".to_string(),
+                ..MysqlSnapshotConfig::default()
+            }),
+            ..PartialConfig::default()
+        };
+
+        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+
+        assert_eq!(merged.postgres_snapshot.database, "overlay_pg");
+        assert_eq!(merged.postgres_snapshot.host, "localhost");
+        assert_eq!(merged.postgres_snapshot.port, 5432);
+        assert!(merged.postgres_snapshot.user.is_empty());
+
+        assert_eq!(merged.mysql_snapshot.database, "");
+        assert_eq!(merged.mysql_snapshot.host, "mysql.overlay");
+        assert_eq!(merged.mysql_snapshot.port, 3306);
+        assert!(merged.mysql_snapshot.user.is_empty());
     }
 
     #[test]
