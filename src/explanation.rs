@@ -11,14 +11,12 @@ use crate::planning::DecisionContext;
 use crate::snapshot::SnapshotRecord;
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(test)]
-use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::cell::Cell;
 
 #[cfg(test)]
-static FROM_PLAN_INPUTS_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
-#[cfg(test)]
-static FROM_PLAN_INPUTS_COUNTER_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+thread_local! {
+    static FROM_PLAN_INPUTS_CALL_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 /// Descriptive explanation assembled from existing planning and runtime facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,7 +138,7 @@ impl CommandExplanation {
         decision: PolicyDecision,
     ) -> Self {
         #[cfg(test)]
-        FROM_PLAN_INPUTS_CALL_COUNT.fetch_add(1, Ordering::SeqCst);
+        FROM_PLAN_INPUTS_CALL_COUNT.with(|count| count.set(count.get() + 1));
 
         Self {
             scan: ScanExplanation {
@@ -228,19 +226,12 @@ impl From<&AllowlistMatch> for AllowlistExplanation {
 
 #[cfg(test)]
 pub(crate) fn reset_from_plan_inputs_call_count_for_tests() {
-    FROM_PLAN_INPUTS_CALL_COUNT.store(0, Ordering::SeqCst);
+    FROM_PLAN_INPUTS_CALL_COUNT.with(|count| count.set(0));
 }
 
 #[cfg(test)]
 pub(crate) fn from_plan_inputs_call_count_for_tests() -> usize {
-    FROM_PLAN_INPUTS_CALL_COUNT.load(Ordering::SeqCst)
-}
-
-#[cfg(test)]
-pub(crate) fn from_plan_inputs_counter_lock_for_tests() -> MutexGuard<'static, ()> {
-    FROM_PLAN_INPUTS_COUNTER_LOCK
-        .lock()
-        .expect("test-only explanation counter lock poisoned")
+    FROM_PLAN_INPUTS_CALL_COUNT.with(Cell::get)
 }
 
 #[cfg(test)]
@@ -248,6 +239,7 @@ mod tests {
     use std::borrow::Cow;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::thread;
 
     use crate::audit::Decision;
     use crate::config::{AllowlistMatch, AllowlistSourceLayer, Mode};
@@ -351,6 +343,36 @@ mod tests {
             vec!["git".to_string(), "docker".to_string()]
         );
         assert_eq!(explanation.outcome, None);
+    }
+
+    #[test]
+    fn from_plan_inputs_counter_is_isolated_per_thread() {
+        let assessment = crate::interceptor::assess("echo hello").unwrap();
+        let context = DecisionContext::new(
+            Mode::Protect,
+            ExecutionTransport::Shell,
+            false,
+            CwdState::Resolved(PathBuf::from(".")),
+            None,
+            Vec::new(),
+        );
+        let decision = PolicyDecision {
+            decision: PolicyAction::AutoApprove,
+            rationale: PolicyRationale::SafeCommand,
+            requires_confirmation: false,
+            snapshots_required: false,
+            allowlist_effective: false,
+        };
+
+        reset_from_plan_inputs_call_count_for_tests();
+        let _ = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
+        thread::spawn(move || {
+            let _ = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
+        })
+        .join()
+        .unwrap();
+
+        assert_eq!(from_plan_inputs_call_count_for_tests(), 1);
     }
 
 

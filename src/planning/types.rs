@@ -361,7 +361,6 @@ mod tests {
     use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
     use crate::explanation::{
         CommandExplanation, from_plan_inputs_call_count_for_tests,
-        from_plan_inputs_counter_lock_for_tests,
         reset_from_plan_inputs_call_count_for_tests,
     };
     use crate::interceptor;
@@ -430,7 +429,6 @@ mod tests {
 
     #[test]
     fn from_policy_builds_command_explanation_once() {
-        let _counter_guard = from_plan_inputs_counter_lock_for_tests();
         let assessment = interceptor::assess("rm -rf ./tmp").unwrap();
         let decision_context = DecisionContext::new(
             Mode::Protect,
