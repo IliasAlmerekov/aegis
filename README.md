@@ -84,8 +84,8 @@ Aegis sets itself as your `$SHELL`. Every command — from Claude Code, Codex, a
 ```
 agent → $SHELL (aegis) → assess
                            ├── Safe   → exec immediately
-                           ├── Warn   → confirm (default Yes)
-                           ├── Danger → confirm (default No)
+                           ├── Warn   → confirm ([y/N])
+                           ├── Danger → confirm ([y/N])
                            └── Block  → refuse, exit 3
 ```
 
@@ -194,7 +194,7 @@ Patterns are Rust regex strings. Use `(?i)` for case-insensitive matching.
 
 ## Built-in pattern categories
 
-60 patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.
+60+ patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.
 
 ---
 
