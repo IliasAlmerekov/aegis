@@ -56,11 +56,16 @@ cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 
 ### Uninstall
 
-For manual binary installs:
+For quick or script-managed installs:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 ```
+
+For manual verification-first binary installs:
+
+- remove the `aegis` binary you copied into your PATH
+- manually undo any shell configuration you added yourself
 
 For source installs:
 
