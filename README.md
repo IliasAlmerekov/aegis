@@ -12,17 +12,47 @@ Safe commands pass through instantly (< 2 ms). Dangerous ones — `rm -rf`, `ter
 
 ## Install
 
+### Recommended: verification-first install
+
+Download the binary and matching checksum for your target, verify them, then install the verified binary:
+
+```bash
+curl -fsSLO https://github.com/IliasAlmerekov/aegis/releases/latest/download/aegis-linux-x86_64
+curl -fsSLO https://github.com/IliasAlmerekov/aegis/releases/latest/download/aegis-linux-x86_64.sha256
+
+# Linux
+sha256sum -c aegis-linux-x86_64.sha256
+
+# macOS
+expected="$(awk '{print $1}' aegis-linux-x86_64.sha256)"
+actual="$(shasum -a 256 aegis-linux-x86_64 | awk '{print $1}')"
+[ "$expected" = "$actual" ]
+
+install -m 0755 aegis-linux-x86_64 /usr/local/bin/aegis
+```
+
+Replace `aegis-linux-x86_64` with the release asset for your platform.
+
+### Quick install
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-Or from source:
+The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and fails closed on:
+- missing checksum
+- checksum mismatch
+- missing supported checksum verifier tool
+
+### Source install
+
+From source:
 
 ```bash
 cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 ```
 
-Uninstall:
+### Uninstall
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
