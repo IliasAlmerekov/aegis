@@ -4,7 +4,7 @@
 
 - Rust toolchain: `1.94.0`
 - `cargo-audit`: `0.22.1`
-- `cargo-deny`: `0.19.1`
+- `cargo-deny`: `0.18.2`
 - `cross`: `0.2.5`
 - GitHub Actions used by `.github/workflows/ci.yml` and `.github/workflows/release.yml` are pinned by full commit SHA with readable release comments.
 
@@ -12,9 +12,10 @@
 
 Current GitHub Actions workflows run these jobs:
 
-- `CI / check`: formatting, clippy, tests, `cargo-audit`, and `cargo-deny`
-- `CI / build`: release builds on Ubuntu and macOS
-- `CI / performance`: `scanner_bench` plus benchmark policy evaluation
+- `Quality (fmt, clippy, test)`: formatting, clippy, and tests
+- `Security (audit, deny)`: `cargo-audit` and `cargo-deny`
+- `Release build`: release builds on Ubuntu and macOS
+- `Performance baseline (scanner bench)`: `scanner_bench` plus benchmark policy evaluation
 - `Release / build`: tagged release binaries for:
   - `x86_64-unknown-linux-gnu`
   - `aarch64-unknown-linux-gnu`

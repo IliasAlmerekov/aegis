@@ -4,72 +4,130 @@
 
 [![CI](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](#install)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](docs/platform-support.md)
 
-Safe commands are assessed quickly. Depending on mode and policy, risky commands may prompt, require approval, or be blocked.
+Aegis sits in front of your shell, inspects commands before they run, and can:
+
+- let safe commands pass through instantly
+- ask for confirmation on risky commands
+- hard-block catastrophic commands
+- record decisions in an audit log
 
 ---
 
-## Install
+## How it Works
 
-### Recommended: verification-first install
+If Aegis is configured as the shell wrapper for your terminal or agent session,
+commands are checked **before** they reach the real shell.
 
-Download the binary and matching checksum for your target, verify them, then install the verified binary:
+<p align="center">
+  <img src="src/assets/howitwork.png" alt="Aegis intercepts commands before they reach the real shell and classifies them as Safe, Warn, Danger, or Block." width="900" />
+</p>
 
-```bash
-curl -fsSLO https://github.com/IliasAlmerekov/aegis/releases/latest/download/aegis-linux-x86_64
-curl -fsSLO https://github.com/IliasAlmerekov/aegis/releases/latest/download/aegis-linux-x86_64.sha256
+In the default interactive Protect flow:
 
-# Linux
-sha256sum -c aegis-linux-x86_64.sha256
+- `Safe` → runs immediately
+- `Warn` → asks for confirmation
+- `Danger` → asks for confirmation and may create snapshots when configured
+- `Block` → refuses to run
 
-# macOS
-expected="$(awk '{print $1}' aegis-linux-x86_64.sha256)"
-actual="$(shasum -a 256 aegis-linux-x86_64 | awk '{print $1}')"
-[ "$expected" = "$actual" ]
+Mode-specific behavior is configured in `.aegis.toml`; see [Config schema](docs/config-schema.md).
 
-# Installing into /usr/local/bin may require sudo.
-install -m 0755 aegis-linux-x86_64 /usr/local/bin/aegis
-```
+---
 
-Replace `aegis-linux-x86_64` with the release asset for your platform.
-Manual install only places the binary. To use Aegis as a shell wrapper, you still need shell/session setup; see [Track all agent commands (global setup)](#track-all-agent-commands-global-setup) for details. The quick installer writes the managed bash/zsh rc exports for that setup.
+## Install in One Command
 
-### Quick install
+### Recommended: one-command install
+
+If you just want to get started, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-The installer downloads the selected binary and its matching `.sha256`, verifies the checksum before installation, and writes the managed bash/zsh rc exports used for shell-wrapper setup. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. It fails closed on:
+What this installer does:
+
+1. detects your platform
+2. downloads the matching release binary
+3. downloads the matching `.sha256`
+4. verifies the checksum before installation
+5. installs `aegis`
+6. writes the managed shell-wrapper setup for `bash` or `zsh`
+
+The installer fails closed on:
+
 - missing checksum
 - checksum mismatch
-- missing supported checksum verifier tool
+- missing supported checksum tool
+- unsupported platform
+
+### If the installer returns 404
+
+That usually means a GitHub release has not been published yet for the version
+you are trying to install.
+
+In that case, use the source install path below temporarily, or install from
+the published GitHub Releases page once release assets exist.
+
+---
+
+## Why You Might Want It
+
+Aegis is useful if you:
+
+- use Claude Code, Codex CLI, or other AI agents that run terminal commands
+- want a second chance before destructive shell commands execute
+- want command decisions logged instead of silently trusting the session
+
+### Supported install environments
+
+- Linux: supported
+- macOS: supported
+- Windows host via WSL2 terminal: expected to work as a Linux environment
+- native Windows shells (`PowerShell`, `cmd.exe`): unsupported
+
+See [Platform support](docs/platform-support.md) for the exact support policy.
+
+### Manual install from a release
+
+If you prefer not to pipe the installer script to `sh`, open the
+[GitHub Releases page](https://github.com/IliasAlmerekov/aegis/releases),
+download the binary and matching `.sha256` for your platform, verify the
+checksum, then place the binary on your `PATH` as `aegis`.
+
+Current release asset names are:
+
+- `aegis-linux-x86_64`
+- `aegis-linux-aarch64`
+- `aegis-macos-x86_64`
+- `aegis-macos-aarch64`
 
 ### Source install
 
-From source:
+If you are installing before the first release is published, or you prefer to
+build from source:
 
 ```bash
 cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 ```
 
-This only installs the binary. You still need to configure shell/agent activation yourself.
+This installs only the binary. You still need shell/session setup yourself.
 
 ### Uninstall
 
-For quick or script-managed installs:
+For installer-managed installs:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 ```
 
-If you used a custom `AEGIS_SHELL_RC`, run uninstall with the same override so it removes the managed block from the same file.
+If you used a custom `AEGIS_SHELL_RC`, run uninstall with the same override so
+it removes the managed block from the same file.
 
-For manual verification-first binary installs:
+For manual installs:
 
-- remove the `aegis` binary you copied into your PATH
-- manually undo any shell configuration you added yourself
+- remove the `aegis` binary from your `PATH`
+- remove any shell configuration you added manually
 
 For source installs:
 
@@ -77,27 +135,68 @@ For source installs:
 cargo uninstall aegis
 ```
 
-Then manually undo any shell or agent configuration you added yourself, if applicable.
+---
+
+## Try It Now
+
+After installation, verify that Aegis is available:
+
+```bash
+aegis --help
+```
+
+Then try:
+
+```bash
+# Should show a confirmation prompt — type n to deny
+aegis -c 'rm -rf /tmp/aegis-test'
+
+# Should pass through instantly with no prompt
+aegis -c 'echo hello'
+```
 
 ---
 
-## How it works
+## Shell / Agent Setup
 
-If Aegis is launched as the shell wrapper or shell path for a session, then in the default interactive Protect flow commands issued through that session are assessed by Aegis before execution:
+If you installed with `install.sh`, the shell-wrapper setup for `bash` / `zsh`
+should already be written for you.
 
+If you installed manually or from source, you still need to point your session
+or agent tooling at `aegis`.
+
+### Track all agent commands (global setup)
+
+When Aegis is configured as your shell wrapper, the installer writes a managed
+bash/zsh rc block that exports `$SHELL` to the Aegis binary and keeps that value
+available to shells started from those rc files.
+
+For other shells, manual setup may be required; if you want the
+installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`.
+
+This helps tools and sessions that honor `$SHELL` or an explicit shell-path
+setting use Aegis, but it does not replace a terminal's actual login shell.
+
+**Claude Code**
+
+1. Open Claude Code settings
+2. Set the shell field to `$(which aegis)`
+
+**Other AI agents**
+
+Tools that respect `$SHELL` or an explicit shell path (Codex CLI, etc.) can use
+Aegis when configured that way.
+
+If Aegis is already being used as the shell wrapper, a project `.aegis.toml`
+can override policy for that directory or project:
+
+```toml
+mode = "Strict"  # block non-safe commands in this directory only
 ```
-agent → $SHELL (aegis) → assess
-                           ├── Safe   → exec immediately
-                           ├── Warn   → confirm ([y/N])
-                           ├── Danger → confirm ([y/N])
-                           └── Block  → refuse, exit 3
-```
-
-Mode-specific behavior is configured in `.aegis.toml`; see the config docs below.
 
 ---
 
-## Security model
+## Security Model
 
 Aegis is a **heuristic command guardrail** for common destructive shell commands.
 
@@ -107,7 +206,11 @@ Aegis is a **heuristic command guardrail** for common destructive shell commands
 - Detection is based on the **raw command text**, not full shell execution tracing
 - Snapshots and rollback are **best-effort** when configured
 
-Aegis is designed to reduce accidental damage from direct, recognisable commands. It should not be treated as protection against a determined bypass.
+Aegis is designed to reduce accidental damage from direct, recognisable
+commands. It should not be treated as protection against a determined bypass.
+
+See [Threat model](docs/threat-model.md) for the fuller security-positioning
+document.
 
 ---
 
@@ -124,42 +227,12 @@ It also does not:
 
 - restrict filesystem, network, or syscall access after you approve a command
 - guarantee lossless snapshots or perfect rollback fidelity
-- support Windows; current support is Linux and macOS only
+- support native Windows shells; Linux and macOS are supported, and WSL2 terminal
+  usage is expected to work as a Linux environment
 
 ---
 
-## Track all agent commands (global setup)
-
-When Aegis is configured as your shell wrapper, the installer writes a managed bash/zsh rc block that exports `$SHELL` to the Aegis binary and keeps that value available to shells started from those rc files. For other shells, manual setup may be required; if you want the installer/uninstaller to edit a POSIX-style rc file, set `AEGIS_SHELL_RC`. This helps tools and sessions that honor `$SHELL` or an explicit shell-path setting use Aegis, but it does not replace a terminal's actual login shell.
-
-**Claude Code** — set the shell path explicitly:
-
-1. Open Claude Code settings
-2. Set the shell field to `$(which aegis)`
-
-**Other AI agents** that respect `$SHELL` or an explicit shell path (Codex CLI, etc.) can use Aegis when configured that way.
-
-If Aegis is already being used as the shell wrapper, a project `.aegis.toml` can override policy for that directory or project:
-
-```toml
-mode = "Strict"  # block non-safe commands in this directory only
-```
-
----
-
-## Quick verification
-
-```bash
-# Should show a confirmation prompt — type n to deny
-aegis -c 'rm -rf /tmp/aegis-test'
-
-# Should pass through instantly with no prompt
-aegis -c 'echo hello'
-```
-
----
-
-## Key commands
+## Key Commands
 
 ```bash
 # Policy evaluation (no execution, no audit entry)
@@ -180,7 +253,7 @@ aegis rollback '<snapshot-id>'  # restore a snapshot taken before a Danger comma
 
 ---
 
-## Custom patterns
+## Custom Patterns
 
 Add your own rules to `~/.config/aegis/config.toml` or `.aegis.toml`:
 
@@ -198,16 +271,18 @@ Patterns are Rust regex strings. Use `(?i)` for case-insensitive matching.
 
 ---
 
-## Built-in pattern categories
+## Built-in Pattern Categories
 
-60+ patterns across 7 categories: **Filesystem**, **Git**, **Database**, **Cloud**, **Docker**, **Process**, **Package**.
+60+ patterns across 7 categories: **Filesystem**, **Git**, **Database**,
+**Cloud**, **Docker**, **Process**, **Package**.
 
 ---
 
 ## Docs
 
 - [Config schema](docs/config-schema.md) — modes, allowlists, snapshot policy, `--output json`
-- [Platform support](docs/platform-support.md) — Linux and macOS only; Windows is out of scope
+- [Threat model](docs/threat-model.md) — security boundaries, attacker model, mitigations, residual risk
+- [Platform support](docs/platform-support.md) — Linux and macOS supported; WSL2 expected to work as Linux; native Windows unsupported
 - [CI and release](docs/ci.md) — workflow guarantees and release notes
 
 ---
