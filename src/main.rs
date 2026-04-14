@@ -699,6 +699,7 @@ fn append_shell_audit(
             plan.assessment(),
             decision,
             snapshots,
+            plan.explanation(),
             AuditWriteOptions {
                 allowlist_match: plan.decision_context().allowlist_match(),
                 allowlist_effective: plan.policy_decision().allowlist_effective,

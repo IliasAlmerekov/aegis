@@ -15,6 +15,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::config::{AuditConfig, AuditIntegrityMode, Mode};
 use crate::error::AegisError;
+use crate::explanation::CommandExplanation;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::Category;
 use crate::interceptor::patterns::PatternSource;
@@ -124,6 +125,9 @@ pub struct AuditEntry {
     pub pattern_ids: Vec<String>,
     pub decision: Decision,
     pub snapshots: Vec<AuditSnapshot>,
+    /// Nested consumer-facing explanation view built from planning/runtime facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<CommandExplanation>,
     /// Effective Aegis operating mode for this policy decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<Mode>,
@@ -323,6 +327,7 @@ impl AuditEntry {
             matched_patterns,
             decision,
             snapshots,
+            explanation: None,
             mode: None,
             ci_detected: None,
             allowlist_matched: Some(false),
@@ -337,6 +342,12 @@ impl AuditEntry {
             id: None,
             transport: None,
         }
+    }
+
+    /// Attach the nested explanation view without altering legacy top-level fields.
+    pub fn with_explanation(mut self, explanation: CommandExplanation) -> Self {
+        self.explanation = Some(explanation);
+        self
     }
 
     /// Attach watch-mode context fields and set `transport = "watch"`.
@@ -1289,6 +1300,12 @@ fn next_sequence() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decision::{ExecutionTransport, PolicyAction, PolicyRationale};
+    use crate::explanation::{
+        CommandExplanation, ExecutionContextExplanation, ExecutionDecisionExplanation,
+        ExecutionOutcomeExplanation, ExplainedPatternMatch, PolicyExplanation, ScanExplanation,
+        SnapshotOutcomeExplanation,
+    };
     use tempfile::TempDir;
 
     fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
@@ -1317,6 +1334,7 @@ mod tests {
                 plugin: "git".to_string(),
                 snapshot_id: format!("snap-{index}"),
             }],
+            explanation: None,
             mode: None,
             ci_detected: None,
             allowlist_matched: Some(false),
@@ -1641,6 +1659,149 @@ mod tests {
         assert_eq!(json["pattern_ids"], serde_json::json!(["PAT-000"]));
         assert_eq!(json["allowlist_matched"], serde_json::json!(false));
         assert_eq!(json["allowlist_effective"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn audit_entry_serializes_nested_explanation_sections() {
+        let explanation = CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Danger,
+                decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: "rm -rf".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: Some(ExecutionOutcomeExplanation {
+                decision: ExecutionDecisionExplanation::Approved,
+                snapshots: vec![SnapshotOutcomeExplanation {
+                    plugin: "git".to_string(),
+                    snapshot_id: "snap-1".to_string(),
+                }],
+            }),
+        };
+
+        let entry = AuditEntry::new(
+            "rm -rf target",
+            RiskLevel::Danger,
+            vec![MatchedPattern {
+                id: "FS-001".to_string(),
+                risk: RiskLevel::Danger,
+                description: "recursive delete".to_string(),
+                safe_alt: Some("rm -ri target".to_string()),
+                category: Some(Category::Filesystem),
+                matched_text: Some("rm -rf".to_string()),
+                source: Some(PatternSource::Builtin),
+            }],
+            Decision::Approved,
+            vec![AuditSnapshot {
+                plugin: "git".to_string(),
+                snapshot_id: "snap-1".to_string(),
+            }],
+            None,
+            None,
+        )
+        .with_explanation(explanation);
+
+        let json = serde_json::to_value(&entry).unwrap();
+
+        assert_eq!(json["explanation"]["scan"]["highest_risk"], "Danger");
+        assert_eq!(
+            json["explanation"]["scan"]["matched_patterns"][0]["id"],
+            "FS-001"
+        );
+        assert_eq!(json["explanation"]["policy"]["action"], "Prompt");
+        assert_eq!(json["explanation"]["context"]["transport"], "Shell");
+        assert_eq!(json["explanation"]["outcome"]["decision"], "Approved");
+        assert_eq!(
+            json["explanation"]["outcome"]["snapshots"][0]["snapshot_id"],
+            "snap-1"
+        );
+    }
+
+    #[test]
+    fn audit_entry_keeps_existing_top_level_fields_for_backward_compatibility() {
+        let entry = AuditEntry::new(
+            "rm -rf target",
+            RiskLevel::Danger,
+            vec![MatchedPattern {
+                id: "FS-001".to_string(),
+                risk: RiskLevel::Danger,
+                description: "recursive delete".to_string(),
+                safe_alt: Some("rm -ri target".to_string()),
+                category: Some(Category::Filesystem),
+                matched_text: Some("rm -rf".to_string()),
+                source: Some(PatternSource::Builtin),
+            }],
+            Decision::Approved,
+            vec![AuditSnapshot {
+                plugin: "git".to_string(),
+                snapshot_id: "snap-1".to_string(),
+            }],
+            None,
+            None,
+        )
+        .with_explanation(CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Danger,
+                decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: "rm -rf".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: Some(ExecutionOutcomeExplanation {
+                decision: ExecutionDecisionExplanation::Approved,
+                snapshots: vec![SnapshotOutcomeExplanation {
+                    plugin: "git".to_string(),
+                    snapshot_id: "snap-1".to_string(),
+                }],
+            }),
+        });
+
+        let json = serde_json::to_value(&entry).unwrap();
+
+        assert_eq!(json["command"], "rm -rf target");
+        assert_eq!(json["risk"], "Danger");
+        assert_eq!(json["matched_patterns"][0]["id"], "FS-001");
+        assert_eq!(json["pattern_ids"], serde_json::json!(["FS-001"]));
+        assert_eq!(json["decision"], "Approved");
+        assert_eq!(json["snapshots"][0]["plugin"], "git");
+        assert!(json.get("explanation").is_some());
     }
 
     #[test]

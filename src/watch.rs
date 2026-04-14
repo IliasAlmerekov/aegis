@@ -356,6 +356,7 @@ async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: Int
         plan.assessment(),
         runtime_decision,
         &snapshots,
+        plan.explanation(),
         plan.decision_context().allowlist_match(),
         plan.policy_decision().allowlist_effective,
         frame.source.clone(),
