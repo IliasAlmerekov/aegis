@@ -7,6 +7,7 @@ use crossterm::{
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
 };
 
+use crate::explanation::CommandExplanation;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::PatternSource;
 #[cfg(test)]
@@ -21,7 +22,11 @@ use crate::snapshot::SnapshotRecord;
 /// Writes to stderr and reads from stdin.
 ///
 /// Returns `true` if the command should proceed, `false` if it was denied or blocked.
-pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool {
+pub fn show_confirmation(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+    snapshots: &[SnapshotRecord],
+) -> bool {
     use std::io::IsTerminal;
     // `AEGIS_FORCE_INTERACTIVE=1` lets test harnesses and scripted setups
     // opt into interactive mode even when stdin is a pipe.  It must never
@@ -32,6 +37,7 @@ pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) 
     let is_interactive = forced || io::stdin().is_terminal();
     show_confirmation_with_input(
         assessment,
+        explanation,
         snapshots,
         is_interactive,
         &mut io::stdin().lock(),
@@ -40,9 +46,9 @@ pub fn show_confirmation(assessment: &Assessment, snapshots: &[SnapshotRecord]) 
 }
 
 /// Show a focused policy-block message for runtime policy decisions.
-pub fn show_policy_block(assessment: &Assessment, reason: &str) {
+pub fn show_policy_block(assessment: &Assessment, explanation: &CommandExplanation) {
     let mut stderr = io::stderr();
-    render_policy_block(assessment, reason, &mut stderr);
+    render_policy_block(assessment, explanation, &mut stderr);
 }
 
 /// Testable inner version — accepts any `BufRead` for input and `Write` for output.
@@ -64,6 +70,7 @@ pub fn show_policy_block(assessment: &Assessment, reason: &str) {
 /// - `Safe`   → auto-approves without rendering anything (should not normally reach here).
 pub fn show_confirmation_with_input<R: BufRead, W: Write>(
     assessment: &Assessment,
+    explanation: &CommandExplanation,
     snapshots: &[SnapshotRecord],
     is_interactive: bool,
     input: &mut R,
@@ -71,22 +78,22 @@ pub fn show_confirmation_with_input<R: BufRead, W: Write>(
 ) -> bool {
     match assessment.risk {
         RiskLevel::Block => {
-            render_block(assessment, output);
+            render_block(assessment, explanation, output);
             false
         }
         // Fail-closed: without a human at the keyboard, deny anything that
         // would normally require a prompt.  This prevents an AI agent from
         // running dangerous commands unattended in CI.
         RiskLevel::Danger | RiskLevel::Warn if !is_interactive => {
-            render_noninteractive_denial(assessment, output);
+            render_noninteractive_denial(assessment, explanation, output);
             false
         }
         RiskLevel::Danger => {
-            render_dialog(assessment, snapshots, output);
+            render_dialog(assessment, explanation, snapshots, output);
             prompt_danger(input, output)
         }
         RiskLevel::Warn => {
-            render_dialog(assessment, snapshots, output);
+            render_dialog(assessment, explanation, snapshots, output);
             prompt_warn(input, output)
         }
         // Safe commands should not reach the dialog — auto-approve.
@@ -97,7 +104,7 @@ pub fn show_confirmation_with_input<R: BufRead, W: Write>(
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 /// Print a hard-blocked message.  No prompt is shown; the command is rejected.
-fn render_block<W: Write>(assessment: &Assessment, out: &mut W) {
+fn render_block<W: Write>(assessment: &Assessment, explanation: &CommandExplanation, out: &mut W) {
     let _ = queue!(
         out,
         SetForegroundColor(Color::Red),
@@ -110,7 +117,7 @@ fn render_block<W: Write>(assessment: &Assessment, out: &mut W) {
 
     let _ = queue!(
         out,
-        Print("  Reason: blocked by an explicit danger/block pattern.\n"),
+        Print(format!("  Reason: {}\n", block_reason_text(explanation))),
         Print("  Hint: review the matched patterns below.\n"),
         Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
     );
@@ -139,7 +146,11 @@ fn render_block<W: Write>(assessment: &Assessment, out: &mut W) {
 ///
 /// We use Yellow (not Red) to distinguish from Block, which is truly
 /// catastrophic.  This denial is policy-driven, not a safety absolute.
-fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) {
+fn render_noninteractive_denial<W: Write>(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+    out: &mut W,
+) {
     let risk_label = match assessment.risk {
         RiskLevel::Danger => "dangerous",
         RiskLevel::Warn => "suspicious",
@@ -160,6 +171,10 @@ fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) 
 
     let _ = queue!(
         out,
+        Print(format!(
+            "  Reason: {}\n",
+            confirmation_reason_text(explanation)
+        )),
         Print("  Hint: add the command to the allowlist for CI use.\n"),
         Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
     );
@@ -167,7 +182,11 @@ fn render_noninteractive_denial<W: Write>(assessment: &Assessment, out: &mut W) 
     let _ = out.flush();
 }
 
-fn render_policy_block<W: Write>(assessment: &Assessment, reason: &str, out: &mut W) {
+fn render_policy_block<W: Write>(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+    out: &mut W,
+) {
     let _ = queue!(
         out,
         SetForegroundColor(Color::Yellow),
@@ -180,7 +199,7 @@ fn render_policy_block<W: Write>(assessment: &Assessment, reason: &str, out: &mu
 
     let _ = queue!(
         out,
-        Print(format!("  Reason: {reason}\n")),
+        Print(format!("  Reason: {}\n", block_reason_text(explanation))),
         Print("  Hint: inspect the allowlist or run aegis config validate.\n"),
         Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
     );
@@ -188,7 +207,12 @@ fn render_policy_block<W: Write>(assessment: &Assessment, reason: &str, out: &mu
 }
 
 /// Print the interactive confirmation dialog (used for Danger and Warn).
-fn render_dialog<W: Write>(assessment: &Assessment, snapshots: &[SnapshotRecord], out: &mut W) {
+fn render_dialog<W: Write>(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+    snapshots: &[SnapshotRecord],
+    out: &mut W,
+) {
     let (color, label) = match assessment.risk {
         RiskLevel::Danger => (Color::Red, "AEGIS INTERCEPTED A DANGEROUS COMMAND"),
         RiskLevel::Warn => (Color::Yellow, "AEGIS INTERCEPTED A SUSPICIOUS COMMAND"),
@@ -204,6 +228,13 @@ fn render_dialog<W: Write>(assessment: &Assessment, snapshots: &[SnapshotRecord]
     );
 
     print_command_line(assessment, out);
+    let _ = queue!(
+        out,
+        Print(format!(
+            "  Reason: {}\n",
+            confirmation_reason_text(explanation)
+        )),
+    );
 
     if assessment.risk == RiskLevel::Danger {
         print_dangerous_action(assessment, out);
@@ -458,6 +489,55 @@ fn dangerous_action_text(assessment: &Assessment) -> String {
     format!("\x1b[1;31m{fragment}\x1b[0m")
 }
 
+fn confirmation_reason_text(explanation: &CommandExplanation) -> String {
+    match (
+        explanation.policy.rationale,
+        explanation.context.allowlist_match.as_ref(),
+    ) {
+        (crate::decision::PolicyRationale::RequiresConfirmation, Some(rule)) => format!(
+            "requires confirmation despite matching allowlist rule: {}",
+            rule.reason
+        ),
+        (crate::decision::PolicyRationale::RequiresConfirmation, None) => {
+            "requires explicit confirmation".to_string()
+        }
+        (crate::decision::PolicyRationale::AllowlistOverride, Some(rule)) => {
+            format!("allowlist override approved: {}", rule.reason)
+        }
+        (crate::decision::PolicyRationale::AllowlistOverride, None) => {
+            "allowlist override approved".to_string()
+        }
+        (crate::decision::PolicyRationale::SafeCommand, _) => "classified as safe".to_string(),
+        (crate::decision::PolicyRationale::AuditMode, _) => {
+            "audit mode records the command without blocking".to_string()
+        }
+        (crate::decision::PolicyRationale::IntrinsicRiskBlock, _)
+        | (crate::decision::PolicyRationale::ProtectCiPolicy, _)
+        | (crate::decision::PolicyRationale::StrictPolicy, _) => {
+            block_reason_text(explanation).to_string()
+        }
+    }
+}
+
+fn block_reason_text(explanation: &CommandExplanation) -> &'static str {
+    match explanation
+        .policy
+        .block_reason
+        .or_else(|| explanation.policy.rationale.block_reason())
+    {
+        Some(crate::decision::BlockReason::IntrinsicRiskBlock) => {
+            "blocked by intrinsic risk policy (block-level scanner match)"
+        }
+        Some(crate::decision::BlockReason::StrictPolicy) => {
+            "blocked by strict mode (non-safe commands require an allowlist override)"
+        }
+        Some(crate::decision::BlockReason::ProtectCiPolicy) => {
+            "blocked by CI policy (Protect mode + ci_policy=Block)"
+        }
+        None => "blocked by policy",
+    }
+}
+
 // ── Label helpers ─────────────────────────────────────────────────────────────
 
 fn pattern_source_label(source: PatternSource) -> &'static str {
@@ -491,7 +571,11 @@ pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {
 /// Opens `/dev/tty` for both input (keystrokes) and output (dialog
 /// rendering).  If the device cannot be opened, returns
 /// `tty_unavailable_decision(assessment)` — fail-closed for Warn/Danger.
-pub fn show_confirmation_via_tty(assessment: &Assessment, snapshots: &[SnapshotRecord]) -> bool {
+pub fn show_confirmation_via_tty(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+    snapshots: &[SnapshotRecord],
+) -> bool {
     use std::fs::OpenOptions;
 
     let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
@@ -505,6 +589,7 @@ pub fn show_confirmation_via_tty(assessment: &Assessment, snapshots: &[SnapshotR
 
     show_confirmation_with_input(
         assessment,
+        explanation,
         snapshots,
         true, // /dev/tty is always interactive
         &mut io::BufReader::new(tty),
@@ -516,11 +601,11 @@ pub fn show_confirmation_via_tty(assessment: &Assessment, snapshots: &[SnapshotR
 ///
 /// If `/dev/tty` cannot be opened, does nothing — the caller must still
 /// emit the correct NDJSON result frame.
-pub fn show_policy_block_via_tty(assessment: &Assessment, reason: &str) {
+pub fn show_policy_block_via_tty(assessment: &Assessment, explanation: &CommandExplanation) {
     use std::fs::OpenOptions;
 
     if let Ok(mut tty) = OpenOptions::new().write(true).open("/dev/tty") {
-        render_policy_block(assessment, reason, &mut tty);
+        render_policy_block(assessment, explanation, &mut tty);
     }
 }
 
@@ -528,11 +613,11 @@ pub fn show_policy_block_via_tty(assessment: &Assessment, reason: &str) {
 ///
 /// Uses the same `render_block` path as the shell-wrapper mode but routes
 /// output to the tty device.  If `/dev/tty` cannot be opened, silent.
-pub fn show_block_via_tty(assessment: &Assessment) {
+pub fn show_block_via_tty(assessment: &Assessment, explanation: &CommandExplanation) {
     use std::fs::OpenOptions;
 
     if let Ok(mut tty) = OpenOptions::new().write(true).open("/dev/tty") {
-        render_block(assessment, &mut tty);
+        render_block(assessment, explanation, &mut tty);
     }
 }
 
@@ -545,6 +630,12 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::config::{AllowlistSourceLayer, Mode};
+    use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyRationale};
+    use crate::explanation::{
+        AllowlistExplanation, CommandExplanation, ExecutionContextExplanation, PolicyExplanation,
+        ScanExplanation,
+    };
     use crate::interceptor::parser::Parser;
     use crate::interceptor::patterns::{Category, Pattern, PatternSource};
     use crate::interceptor::scanner::MatchResult;
@@ -630,6 +721,60 @@ mod tests {
         }
     }
 
+    fn make_explanation(
+        assessment: &Assessment,
+        rationale: PolicyRationale,
+        block_reason: Option<BlockReason>,
+        allowlist_match: Option<AllowlistExplanation>,
+    ) -> CommandExplanation {
+        CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: assessment.risk,
+                decision_source: assessment.decision_source(),
+                matched_patterns: Vec::new(),
+            },
+            policy: PolicyExplanation {
+                action: match block_reason {
+                    Some(_) => PolicyAction::Block,
+                    None => PolicyAction::Prompt,
+                },
+                rationale,
+                requires_confirmation: block_reason.is_none(),
+                snapshots_required: assessment.risk == RiskLevel::Danger,
+                allowlist_effective: false,
+                block_reason,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match,
+                applicable_snapshot_plugins: Vec::new(),
+            },
+            outcome: None,
+        }
+    }
+
+    fn default_explanation_for_assessment(assessment: &Assessment) -> CommandExplanation {
+        match assessment.risk {
+            RiskLevel::Safe => {
+                make_explanation(assessment, PolicyRationale::SafeCommand, None, None)
+            }
+            RiskLevel::Warn | RiskLevel::Danger => make_explanation(
+                assessment,
+                PolicyRationale::RequiresConfirmation,
+                None,
+                None,
+            ),
+            RiskLevel::Block => make_explanation(
+                assessment,
+                PolicyRationale::IntrinsicRiskBlock,
+                Some(BlockReason::IntrinsicRiskBlock),
+                None,
+            ),
+        }
+    }
+
     /// Strip ANSI escape sequences from a string so we can do plain-text assertions.
     fn strip_ansi(s: &str) -> String {
         let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
@@ -652,6 +797,7 @@ mod tests {
         // Even if the user somehow types "yes", Block must return false.
         let result = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"yes\n".as_ref(),
@@ -672,7 +818,14 @@ mod tests {
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -687,7 +840,14 @@ mod tests {
         let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -711,6 +871,7 @@ mod tests {
 
         let approved = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"yes\n".as_ref(),
@@ -732,6 +893,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"y\n".as_ref(),
@@ -753,6 +915,7 @@ mod tests {
 
         let approved = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"Y\n".as_ref(),
@@ -774,6 +937,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"\n".as_ref(),
@@ -796,6 +960,7 @@ mod tests {
         for input in [b"nope\n".as_ref(), b"ok\n".as_ref(), b"cancel\n".as_ref()] {
             let denied = show_confirmation_with_input(
                 &assessment,
+                &default_explanation_for_assessment(&assessment),
                 &[],
                 true,
                 &mut { input },
@@ -818,6 +983,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"no\n".as_ref(),
@@ -839,6 +1005,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"NO\n".as_ref(),
@@ -856,6 +1023,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"\n".as_ref(),
@@ -871,6 +1039,7 @@ mod tests {
 
         let approved = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"y\n".as_ref(),
@@ -886,6 +1055,7 @@ mod tests {
 
         let approved = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"Y\n".as_ref(),
@@ -901,6 +1071,7 @@ mod tests {
 
         let approved = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b" yes \n".as_ref(),
@@ -916,6 +1087,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"n\n".as_ref(),
@@ -931,6 +1103,7 @@ mod tests {
 
         let denied = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             true,
             &mut b"no\n".as_ref(),
@@ -947,6 +1120,7 @@ mod tests {
         for input in [b"maybe\n".as_ref(), b"1\n".as_ref(), b"ok\n".as_ref()] {
             let denied = show_confirmation_with_input(
                 &assessment,
+                &default_explanation_for_assessment(&assessment),
                 &[],
                 true,
                 &mut { input },
@@ -962,7 +1136,14 @@ mod tests {
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -985,7 +1166,14 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -1006,7 +1194,14 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -1031,7 +1226,14 @@ mod tests {
         let assessment = make_assessment("sudo rm -rf /var/tmp/cache", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -1056,7 +1258,14 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], true, &mut b"no\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -1083,6 +1292,7 @@ mod tests {
         let mut output = Vec::new();
         show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[snap],
             true,
             &mut b"no\n".as_ref(),
@@ -1115,6 +1325,7 @@ mod tests {
         // Even with an "approving" response on stdin, is_interactive=false must deny.
         let result = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             false,
             &mut b"\n".as_ref(),
@@ -1136,6 +1347,7 @@ mod tests {
 
         let result = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             false,
             &mut b"yes\n".as_ref(),
@@ -1151,6 +1363,7 @@ mod tests {
 
         let result = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             false,
             &mut b"yes\n".as_ref(),
@@ -1171,7 +1384,14 @@ mod tests {
         let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
         let mut output = Vec::new();
-        show_confirmation_with_input(&assessment, &[], false, &mut b"yes\n".as_ref(), &mut output);
+        show_confirmation_with_input(
+            &assessment,
+            &default_explanation_for_assessment(&assessment),
+            &[],
+            false,
+            &mut b"yes\n".as_ref(),
+            &mut output,
+        );
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -1190,6 +1410,7 @@ mod tests {
         let assessment = make_assessment("ls -la", RiskLevel::Safe, vec![]);
         let result = show_confirmation_with_input(
             &assessment,
+            &default_explanation_for_assessment(&assessment),
             &[],
             false,
             &mut b"".as_ref(),
@@ -1204,13 +1425,15 @@ mod tests {
     #[test]
     fn render_policy_block_mentions_reason() {
         let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![]);
+        let explanation = make_explanation(
+            &assessment,
+            PolicyRationale::StrictPolicy,
+            Some(BlockReason::StrictPolicy),
+            None,
+        );
         let mut output = Vec::new();
 
-        render_policy_block(
-            &assessment,
-            "strict mode blocks warned commands",
-            &mut output,
-        );
+        render_policy_block(&assessment, &explanation, &mut output);
 
         let text = strip_ansi(&String::from_utf8_lossy(&output));
         assert!(
@@ -1218,8 +1441,70 @@ mod tests {
             "policy block output must contain the headline; got:\n{text}"
         );
         assert!(
-            text.contains("Reason: strict mode blocks warned commands"),
+            text.contains(
+                "Reason: blocked by strict mode (non-safe commands require an allowlist override)"
+            ),
             "policy block output must contain the reason; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn confirmation_renders_policy_reason_from_explanation() {
+        let matched = make_match(
+            "FS-001",
+            RiskLevel::Danger,
+            r"rm\s+",
+            "Recursive delete",
+            None,
+        );
+        let assessment = make_assessment("rm -rf /tmp/demo", RiskLevel::Danger, vec![matched]);
+        let explanation = make_explanation(
+            &assessment,
+            PolicyRationale::RequiresConfirmation,
+            None,
+            Some(AllowlistExplanation {
+                pattern: "rm -rf /tmp/*".to_string(),
+                reason: "temporary workspace cleanup".to_string(),
+                source_layer: AllowlistSourceLayer::Project,
+            }),
+        );
+
+        let mut output = Vec::new();
+        show_confirmation_with_input(
+            &assessment,
+            &explanation,
+            &[],
+            true,
+            &mut b"no\n".as_ref(),
+            &mut output,
+        );
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains("Reason: requires confirmation despite matching allowlist rule: temporary workspace cleanup"),
+            "confirmation output must use the canonical explanation reason; got:\n{text}"
+        );
+    }
+
+    #[test]
+    fn policy_block_renders_from_canonical_block_reason() {
+        let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![]);
+        let explanation = make_explanation(
+            &assessment,
+            PolicyRationale::StrictPolicy,
+            Some(BlockReason::StrictPolicy),
+            None,
+        );
+        let mut output = Vec::new();
+
+        render_policy_block(&assessment, &explanation, &mut output);
+
+        let text = strip_ansi(&String::from_utf8_lossy(&output));
+        assert!(
+            text.contains(
+                "Reason: blocked by strict mode (non-safe commands require an allowlist override)"
+            ),
+            "policy block output must use the canonical block reason; got:\n{text}"
         );
     }
 

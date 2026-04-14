@@ -8,6 +8,11 @@ use aegis::audit::{
 use aegis::config::{AllowlistMatch, Config, ValidationReport, validate_config_layers};
 use aegis::decision::{BlockReason, ExecutionTransport};
 use aegis::error::AegisError;
+#[cfg(test)]
+use aegis::explanation::{
+    AllowlistExplanation, CommandExplanation, ExecutionContextExplanation, PolicyExplanation,
+    ScanExplanation,
+};
 use aegis::interceptor::RiskLevel;
 use aegis::interceptor::scanner::{Assessment, DecisionSource};
 use aegis::planning::{
@@ -641,7 +646,7 @@ fn run_planned_shell_command(
         }
         ExecutionDisposition::RequiresApproval => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
-            let approved = show_confirmation(plan.assessment(), &snapshots);
+            let approved = show_confirmation(plan.assessment(), plan.explanation(), &snapshots);
             let decision = if approved {
                 Decision::Approved
             } else {
@@ -721,13 +726,10 @@ fn show_block_for_plan(plan: &InterceptionPlan) {
             eprintln!("hint: rerun with --output json for machine-readable policy details.");
         }
         Some(BlockReason::IntrinsicRiskBlock) => {
-            show_confirmation(plan.assessment(), &[]);
+            show_confirmation(plan.assessment(), plan.explanation(), &[]);
         }
         Some(BlockReason::StrictPolicy) => {
-            show_policy_block(
-                plan.assessment(),
-                "blocked by strict mode (non-safe commands require an allowlist override)",
-            );
+            show_policy_block(plan.assessment(), plan.explanation());
         }
         None => {}
     }
@@ -773,7 +775,7 @@ fn decide_command(
     allowlist_match: Option<&AllowlistMatch>,
     in_ci: bool,
 ) -> (Decision, Vec<SnapshotRecord>, bool) {
-    let (policy_decision, _) = evaluate_policy_decision(
+    let (policy_decision, applicable_snapshot_plugins) = evaluate_policy_decision(
         context,
         assessment,
         cwd,
@@ -781,7 +783,23 @@ fn decide_command(
         in_ci,
         ExecutionTransport::Shell,
     );
-    execute_policy_decision(context, assessment, cwd, policy_decision, verbose)
+    let explanation = test_command_explanation(
+        context,
+        assessment,
+        policy_decision,
+        allowlist_match,
+        in_ci,
+        ExecutionTransport::Shell,
+        &applicable_snapshot_plugins,
+    );
+    execute_policy_decision(
+        context,
+        assessment,
+        cwd,
+        policy_decision,
+        &explanation,
+        verbose,
+    )
 }
 
 #[cfg(test)]
@@ -790,6 +808,7 @@ fn execute_policy_decision(
     assessment: &Assessment,
     cwd: &Path,
     policy_decision: PolicyDecision,
+    explanation: &CommandExplanation,
     verbose: bool,
 ) -> (Decision, Vec<SnapshotRecord>, bool) {
     let snapshots = if policy_decision.snapshots_required {
@@ -805,7 +824,7 @@ fn execute_policy_decision(
             policy_decision.allowlist_effective,
         ),
         PolicyAction::Prompt => {
-            let approved = show_confirmation(assessment, &snapshots);
+            let approved = show_confirmation(assessment, explanation, &snapshots);
             let decision = if approved {
                 Decision::Approved
             } else {
@@ -827,13 +846,10 @@ fn execute_policy_decision(
                     );
                 }
                 Some(BlockReason::IntrinsicRiskBlock) => {
-                    show_confirmation(assessment, &[]);
+                    show_confirmation(assessment, explanation, &[]);
                 }
                 Some(BlockReason::StrictPolicy) => {
-                    show_policy_block(
-                        assessment,
-                        "blocked by strict mode (non-safe commands require an allowlist override)",
-                    );
+                    show_policy_block(assessment, explanation);
                 }
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
             }
@@ -844,6 +860,57 @@ fn execute_policy_decision(
                 policy_decision.allowlist_effective,
             )
         }
+    }
+}
+
+#[cfg(test)]
+fn test_command_explanation(
+    context: &RuntimeContext,
+    assessment: &Assessment,
+    policy_decision: PolicyDecision,
+    allowlist_match: Option<&AllowlistMatch>,
+    in_ci: bool,
+    transport: ExecutionTransport,
+    applicable_snapshot_plugins: &[&'static str],
+) -> CommandExplanation {
+    CommandExplanation {
+        scan: ScanExplanation {
+            highest_risk: assessment.risk,
+            decision_source: assessment.decision_source(),
+            matched_patterns: assessment
+                .matched
+                .iter()
+                .map(|matched| aegis::explanation::ExplainedPatternMatch {
+                    id: matched.pattern.id.to_string(),
+                    risk: matched.pattern.risk,
+                    description: matched.pattern.description.to_string(),
+                    matched_text: matched.matched_text.clone(),
+                })
+                .collect(),
+        },
+        policy: PolicyExplanation {
+            action: policy_decision.decision,
+            rationale: policy_decision.rationale,
+            requires_confirmation: policy_decision.requires_confirmation,
+            snapshots_required: policy_decision.snapshots_required,
+            allowlist_effective: policy_decision.allowlist_effective,
+            block_reason: policy_decision.block_reason(),
+        },
+        context: ExecutionContextExplanation {
+            mode: context.config().mode,
+            transport,
+            ci_detected: in_ci,
+            allowlist_match: allowlist_match.map(|rule| AllowlistExplanation {
+                pattern: rule.pattern.clone(),
+                reason: rule.reason.clone(),
+                source_layer: rule.source_layer,
+            }),
+            applicable_snapshot_plugins: applicable_snapshot_plugins
+                .iter()
+                .map(|plugin| (*plugin).to_string())
+                .collect(),
+        },
+        outcome: None,
     }
 }
 
