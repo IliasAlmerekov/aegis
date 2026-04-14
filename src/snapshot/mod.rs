@@ -1,9 +1,12 @@
 pub mod docker;
 pub mod git;
+pub(crate) mod postgres;
 pub(crate) mod sqlite;
 
 pub use docker::DockerPlugin;
 pub use git::GitPlugin;
+pub use postgres::PostgresPlugin;
+pub use sqlite::SqlitePlugin;
 
 use std::path::Path;
 
