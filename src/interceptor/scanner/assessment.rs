@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::interceptor::RiskLevel;
 use crate::interceptor::nested::RecursiveScanLimit;
 use crate::interceptor::parser::ParsedCommand;
@@ -18,7 +20,7 @@ pub struct MatchResult {
 }
 
 /// What ultimately caused the final interception decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecisionSource {
     /// Matched one or more built-in patterns compiled into the binary.
     BuiltinPattern,

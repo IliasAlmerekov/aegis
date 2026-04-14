@@ -11,6 +11,7 @@ use crate::config::{
     Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config, SnapshotPolicy,
 };
 use crate::error::AegisError;
+use crate::explanation::{CommandExplanation, ExecutionOutcomeExplanation};
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
@@ -55,6 +56,7 @@ pub struct RuntimeContext {
     audit_logger: AuditLogger,
 }
 
+#[derive(Clone, Copy)]
 pub struct AuditWriteOptions<'a> {
     pub allowlist_match: Option<&'a AllowlistMatch>,
     pub allowlist_effective: bool,
@@ -159,30 +161,10 @@ impl RuntimeContext {
         assessment: &Assessment,
         decision: Decision,
         snapshots: &[SnapshotRecord],
+        explanation: &CommandExplanation,
         options: AuditWriteOptions<'_>,
     ) {
-        let allowlist_pattern = (options.allowlist_effective)
-            .then(|| options.allowlist_match.map(|m| m.pattern.clone()))
-            .flatten();
-        let allowlist_reason = (options.allowlist_effective)
-            .then(|| options.allowlist_match.map(|m| m.reason.clone()))
-            .flatten();
-
-        let entry = AuditEntry::new(
-            assessment.command.raw.clone(),
-            assessment.risk,
-            assessment.matched.iter().map(Into::into).collect(),
-            decision,
-            snapshots.iter().map(Into::into).collect(),
-            allowlist_pattern,
-            allowlist_reason,
-        )
-        .with_policy_context(
-            self.runtime_config.mode,
-            options.ci_detected,
-            options.allowlist_match.is_some(),
-            options.allowlist_effective,
-        );
+        let entry = self.build_audit_entry(assessment, decision, snapshots, explanation, options);
 
         if let Err(err) = self.audit_logger.append(entry)
             && options.verbose
@@ -201,6 +183,7 @@ impl RuntimeContext {
         assessment: &Assessment,
         decision: Decision,
         snapshots: &[SnapshotRecord],
+        explanation: &CommandExplanation,
         allowlist_match: Option<&AllowlistMatch>,
         allowlist_effective: bool,
         watch_source: Option<String>,
@@ -209,14 +192,44 @@ impl RuntimeContext {
         ci_detected: bool,
         verbose: bool,
     ) {
-        let allowlist_pattern = (allowlist_effective)
-            .then(|| allowlist_match.map(|m| m.pattern.clone()))
+        let entry = self
+            .build_audit_entry(
+                assessment,
+                decision,
+                snapshots,
+                explanation,
+                AuditWriteOptions {
+                    allowlist_match,
+                    allowlist_effective,
+                    ci_detected,
+                    verbose: false,
+                },
+            )
+            .with_watch_context(watch_source, watch_cwd, watch_id);
+
+        if let Err(err) = self.audit_logger.append(entry)
+            && verbose
+        {
+            eprintln!("warning: failed to append watch audit log entry: {err}");
+        }
+    }
+
+    fn build_audit_entry(
+        &self,
+        assessment: &Assessment,
+        decision: Decision,
+        snapshots: &[SnapshotRecord],
+        explanation: &CommandExplanation,
+        options: AuditWriteOptions<'_>,
+    ) -> AuditEntry {
+        let allowlist_pattern = (options.allowlist_effective)
+            .then(|| options.allowlist_match.map(|m| m.pattern.clone()))
             .flatten();
-        let allowlist_reason = (allowlist_effective)
-            .then(|| allowlist_match.map(|m| m.reason.clone()))
+        let allowlist_reason = (options.allowlist_effective)
+            .then(|| options.allowlist_match.map(|m| m.reason.clone()))
             .flatten();
 
-        let entry = AuditEntry::new(
+        AuditEntry::new(
             assessment.command.raw.clone(),
             assessment.risk,
             assessment.matched.iter().map(Into::into).collect(),
@@ -225,19 +238,15 @@ impl RuntimeContext {
             allowlist_pattern,
             allowlist_reason,
         )
+        .with_explanation(explanation.clone().with_runtime_outcome(
+            ExecutionOutcomeExplanation::from_runtime(decision, snapshots),
+        ))
         .with_policy_context(
             self.runtime_config.mode,
-            ci_detected,
-            allowlist_match.is_some(),
-            allowlist_effective,
+            options.ci_detected,
+            options.allowlist_match.is_some(),
+            options.allowlist_effective,
         )
-        .with_watch_context(watch_source, watch_cwd, watch_id);
-
-        if let Err(err) = self.audit_logger.append(entry)
-            && verbose
-        {
-            eprintln!("warning: failed to append watch audit log entry: {err}");
-        }
     }
 }
 
@@ -278,6 +287,11 @@ mod tests {
 
     use super::*;
     use crate::config::{CiPolicy, UserPattern};
+    use crate::decision::{ExecutionTransport, PolicyAction, PolicyRationale};
+    use crate::explanation::{
+        CommandExplanation, ExecutionContextExplanation, ExplainedPatternMatch, PolicyExplanation,
+        ScanExplanation,
+    };
     use crate::interceptor::RiskLevel;
     use crate::interceptor::patterns::Category;
     use tempfile::TempDir;
@@ -646,6 +660,136 @@ expires_at = "2030-01-01T00:00:00Z"
 
         // Must compile with two arguments.
         let _context = RuntimeContext::new(config, handle).unwrap();
+    }
+
+    #[test]
+    fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
+        let context = RuntimeContext::new(Config::default(), test_handle()).unwrap();
+        let assessment = context.assess("rm -rf target");
+        let snapshots = vec![SnapshotRecord {
+            plugin: "git",
+            snapshot_id: "snap-1".to_string(),
+        }];
+        let explanation = CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: assessment.risk,
+                decision_source: assessment.decision_source(),
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: "rm -rf".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: context.config().mode,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: None,
+        };
+
+        let entry = context.build_audit_entry(
+            &assessment,
+            Decision::Approved,
+            &snapshots,
+            &explanation,
+            AuditWriteOptions {
+                allowlist_match: None,
+                allowlist_effective: false,
+                ci_detected: false,
+                verbose: false,
+            },
+        );
+
+        let outcome = entry
+            .explanation
+            .as_ref()
+            .and_then(|value| value.outcome.as_ref());
+        assert_eq!(
+            outcome.map(|value| value.decision),
+            Some(crate::explanation::ExecutionDecisionExplanation::Approved)
+        );
+        assert_eq!(
+            outcome
+                .and_then(|value| value.snapshots.first())
+                .map(|value| value.plugin.as_str()),
+            Some("git")
+        );
+    }
+
+    #[test]
+    fn append_audit_entry_preserves_allowlist_context_fields() {
+        let mut config = Config::default();
+        config.allowlist = vec![crate::config::AllowlistRule {
+            pattern: "rm -rf target".to_string(),
+            cwd: Some(".".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "approved cleanup".to_string(),
+        }];
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+        let assessment = context.assess("rm -rf target");
+        let allowlist_match =
+            context.allowlist_match_for_command("rm -rf target", Some(Path::new(".")));
+        let explanation = CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: assessment.risk,
+                decision_source: assessment.decision_source(),
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: "rm -rf".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::AutoApprove,
+                rationale: PolicyRationale::AllowlistOverride,
+                requires_confirmation: false,
+                snapshots_required: false,
+                allowlist_effective: true,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: context.config().mode,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: allowlist_match
+                    .as_ref()
+                    .map(crate::explanation::AllowlistExplanation::from),
+                applicable_snapshot_plugins: Vec::new(),
+            },
+            outcome: None,
+        };
+
+        let entry = context.build_audit_entry(
+            &assessment,
+            Decision::AutoApproved,
+            &[],
+            &explanation,
+            AuditWriteOptions {
+                allowlist_match: allowlist_match.as_ref(),
+                allowlist_effective: true,
+                ci_detected: false,
+                verbose: false,
+            },
+        );
+
+        assert_eq!(entry.allowlist_pattern.as_deref(), Some("rm -rf target"));
+        assert_eq!(entry.allowlist_reason.as_deref(), Some("approved cleanup"));
+        assert_eq!(entry.allowlist_matched, Some(true));
+        assert_eq!(entry.allowlist_effective, Some(true));
     }
 
     fn now_utc() -> OffsetDateTime {

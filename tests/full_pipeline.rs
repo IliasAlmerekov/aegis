@@ -665,7 +665,7 @@ reason = "test block allowlist"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("blocked by an explicit danger/block pattern"),
+        stderr.contains("blocked by an explicit block-level pattern"),
         "explicit block must explain the reason precisely; stderr:\n{stderr}"
     );
     assert!(

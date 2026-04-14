@@ -15,6 +15,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::config::{AuditConfig, AuditIntegrityMode, Mode};
 use crate::error::AegisError;
+use crate::explanation::CommandExplanation;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::patterns::Category;
 use crate::interceptor::patterns::PatternSource;
@@ -124,6 +125,9 @@ pub struct AuditEntry {
     pub pattern_ids: Vec<String>,
     pub decision: Decision,
     pub snapshots: Vec<AuditSnapshot>,
+    /// Nested consumer-facing explanation view built from planning/runtime facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<CommandExplanation>,
     /// Effective Aegis operating mode for this policy decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<Mode>,
@@ -323,6 +327,7 @@ impl AuditEntry {
             matched_patterns,
             decision,
             snapshots,
+            explanation: None,
             mode: None,
             ci_detected: None,
             allowlist_matched: Some(false),
@@ -337,6 +342,12 @@ impl AuditEntry {
             id: None,
             transport: None,
         }
+    }
+
+    /// Attach the nested explanation view without altering legacy top-level fields.
+    pub fn with_explanation(mut self, explanation: CommandExplanation) -> Self {
+        self.explanation = Some(explanation);
+        self
     }
 
     /// Attach watch-mode context fields and set `transport = "watch"`.
@@ -1081,6 +1092,8 @@ struct AuditIntegrityPayload<'a> {
     pattern_ids: &'a [String],
     decision: Decision,
     snapshots: &'a [AuditSnapshot],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explanation: Option<&'a CommandExplanation>,
     mode: Option<Mode>,
     ci_detected: Option<bool>,
     allowlist_matched: Option<bool>,
@@ -1105,6 +1118,7 @@ fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) -> Result<Str
         pattern_ids: &entry.pattern_ids,
         decision: entry.decision,
         snapshots: &entry.snapshots,
+        explanation: entry.explanation.as_ref(),
         mode: entry.mode,
         ci_detected: entry.ci_detected,
         allowlist_matched: entry.allowlist_matched,
@@ -1289,6 +1303,12 @@ fn next_sequence() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decision::{ExecutionTransport, PolicyAction, PolicyRationale};
+    use crate::explanation::{
+        CommandExplanation, ExecutionContextExplanation, ExecutionDecisionExplanation,
+        ExecutionOutcomeExplanation, ExplainedPatternMatch, PolicyExplanation, ScanExplanation,
+        SnapshotOutcomeExplanation,
+    };
     use tempfile::TempDir;
 
     fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
@@ -1317,6 +1337,7 @@ mod tests {
                 plugin: "git".to_string(),
                 snapshot_id: format!("snap-{index}"),
             }],
+            explanation: None,
             mode: None,
             ci_detected: None,
             allowlist_matched: Some(false),
@@ -1330,6 +1351,43 @@ mod tests {
             cwd: None,
             id: None,
             transport: None,
+        }
+    }
+
+    fn explanation_with_match_text(matched_text: &str) -> CommandExplanation {
+        CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Danger,
+                decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: matched_text.to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: Some(ExecutionOutcomeExplanation {
+                decision: ExecutionDecisionExplanation::Approved,
+                snapshots: vec![SnapshotOutcomeExplanation {
+                    plugin: "git".to_string(),
+                    snapshot_id: "snap-1".to_string(),
+                }],
+            }),
         }
     }
 
@@ -1644,6 +1702,149 @@ mod tests {
     }
 
     #[test]
+    fn audit_entry_serializes_nested_explanation_sections() {
+        let explanation = CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Danger,
+                decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: "rm -rf".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: Some(ExecutionOutcomeExplanation {
+                decision: ExecutionDecisionExplanation::Approved,
+                snapshots: vec![SnapshotOutcomeExplanation {
+                    plugin: "git".to_string(),
+                    snapshot_id: "snap-1".to_string(),
+                }],
+            }),
+        };
+
+        let entry = AuditEntry::new(
+            "rm -rf target",
+            RiskLevel::Danger,
+            vec![MatchedPattern {
+                id: "FS-001".to_string(),
+                risk: RiskLevel::Danger,
+                description: "recursive delete".to_string(),
+                safe_alt: Some("rm -ri target".to_string()),
+                category: Some(Category::Filesystem),
+                matched_text: Some("rm -rf".to_string()),
+                source: Some(PatternSource::Builtin),
+            }],
+            Decision::Approved,
+            vec![AuditSnapshot {
+                plugin: "git".to_string(),
+                snapshot_id: "snap-1".to_string(),
+            }],
+            None,
+            None,
+        )
+        .with_explanation(explanation);
+
+        let json = serde_json::to_value(&entry).unwrap();
+
+        assert_eq!(json["explanation"]["scan"]["highest_risk"], "Danger");
+        assert_eq!(
+            json["explanation"]["scan"]["matched_patterns"][0]["id"],
+            "FS-001"
+        );
+        assert_eq!(json["explanation"]["policy"]["action"], "Prompt");
+        assert_eq!(json["explanation"]["context"]["transport"], "Shell");
+        assert_eq!(json["explanation"]["outcome"]["decision"], "Approved");
+        assert_eq!(
+            json["explanation"]["outcome"]["snapshots"][0]["snapshot_id"],
+            "snap-1"
+        );
+    }
+
+    #[test]
+    fn audit_entry_keeps_existing_top_level_fields_for_backward_compatibility() {
+        let entry = AuditEntry::new(
+            "rm -rf target",
+            RiskLevel::Danger,
+            vec![MatchedPattern {
+                id: "FS-001".to_string(),
+                risk: RiskLevel::Danger,
+                description: "recursive delete".to_string(),
+                safe_alt: Some("rm -ri target".to_string()),
+                category: Some(Category::Filesystem),
+                matched_text: Some("rm -rf".to_string()),
+                source: Some(PatternSource::Builtin),
+            }],
+            Decision::Approved,
+            vec![AuditSnapshot {
+                plugin: "git".to_string(),
+                snapshot_id: "snap-1".to_string(),
+            }],
+            None,
+            None,
+        )
+        .with_explanation(CommandExplanation {
+            scan: ScanExplanation {
+                highest_risk: RiskLevel::Danger,
+                decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+                matched_patterns: vec![ExplainedPatternMatch {
+                    id: "FS-001".to_string(),
+                    risk: RiskLevel::Danger,
+                    description: "recursive delete".to_string(),
+                    matched_text: "rm -rf".to_string(),
+                }],
+            },
+            policy: PolicyExplanation {
+                action: PolicyAction::Prompt,
+                rationale: PolicyRationale::RequiresConfirmation,
+                requires_confirmation: true,
+                snapshots_required: true,
+                allowlist_effective: false,
+                block_reason: None,
+            },
+            context: ExecutionContextExplanation {
+                mode: Mode::Protect,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+                allowlist_match: None,
+                applicable_snapshot_plugins: vec!["git".to_string()],
+            },
+            outcome: Some(ExecutionOutcomeExplanation {
+                decision: ExecutionDecisionExplanation::Approved,
+                snapshots: vec![SnapshotOutcomeExplanation {
+                    plugin: "git".to_string(),
+                    snapshot_id: "snap-1".to_string(),
+                }],
+            }),
+        });
+
+        let json = serde_json::to_value(&entry).unwrap();
+
+        assert_eq!(json["command"], "rm -rf target");
+        assert_eq!(json["risk"], "Danger");
+        assert_eq!(json["matched_patterns"][0]["id"], "FS-001");
+        assert_eq!(json["pattern_ids"], serde_json::json!(["FS-001"]));
+        assert_eq!(json["decision"], "Approved");
+        assert_eq!(json["snapshots"][0]["plugin"], "git");
+        assert!(json.get("explanation").is_some());
+    }
+
+    #[test]
     fn new_does_not_create_files_or_directories() {
         let dir = TempDir::new().unwrap();
         let logger = AuditLogger::new(dir.path().join("nested/audit.jsonl"));
@@ -1690,6 +1891,51 @@ mod tests {
         assert!(entries[0].prev_hash.is_none());
         assert_eq!(entries[1].chain_alg.as_deref(), Some("sha256"));
         assert_eq!(entries[1].prev_hash, entries[0].entry_hash);
+    }
+
+    #[test]
+    fn compute_entry_hash_changes_when_explanation_changes() {
+        let base_entry =
+            entry(0, RiskLevel::Danger).with_explanation(explanation_with_match_text("rm -rf"));
+        let changed_entry =
+            entry(0, RiskLevel::Danger).with_explanation(explanation_with_match_text("rm -fr"));
+
+        let entry_hash = compute_entry_hash(&base_entry, None).unwrap();
+        let changed_hash = compute_entry_hash(&changed_entry, None).unwrap();
+
+        assert_ne!(entry_hash, changed_hash);
+    }
+
+    #[test]
+    fn integrity_payload_omits_explanation_key_when_absent() {
+        let entry = entry(0, RiskLevel::Warn);
+        let payload = AuditIntegrityPayload {
+            timestamp: entry.timestamp,
+            sequence: entry.sequence,
+            command: &entry.command,
+            risk: entry.risk,
+            matched_patterns: &entry.matched_patterns,
+            pattern_ids: &entry.pattern_ids,
+            decision: entry.decision,
+            snapshots: &entry.snapshots,
+            explanation: None,
+            mode: entry.mode,
+            ci_detected: entry.ci_detected,
+            allowlist_matched: entry.allowlist_matched,
+            allowlist_effective: entry.allowlist_effective,
+            chain_alg: CHAIN_ALG_SHA256,
+            prev_hash: None,
+            allowlist_pattern: entry.allowlist_pattern.as_ref(),
+            allowlist_reason: entry.allowlist_reason.as_ref(),
+            source: entry.source.as_ref(),
+            cwd: entry.cwd.as_ref(),
+            id: entry.id.as_ref(),
+            transport: entry.transport.as_ref(),
+        };
+
+        let json = serde_json::to_value(&payload).unwrap();
+
+        assert!(json.get("explanation").is_none());
     }
 
     #[test]

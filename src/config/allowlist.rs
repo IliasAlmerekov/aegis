@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use crate::config::AllowlistRule;
@@ -9,7 +10,7 @@ use crate::error::AegisError;
 type Result<T> = std::result::Result<T, AegisError>;
 
 /// Configuration layer that supplied an allowlist rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AllowlistSourceLayer {
     /// Rule loaded from the global config file.
     Global,

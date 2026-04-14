@@ -330,7 +330,7 @@ async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: Int
         ExecutionDisposition::Execute => Decision::AutoApproved,
         ExecutionDisposition::RequiresApproval => {
             let approved = tokio::task::block_in_place(|| {
-                show_confirmation_via_tty(plan.assessment(), &snapshots)
+                show_confirmation_via_tty(plan.assessment(), plan.explanation(), &snapshots)
             });
             if approved {
                 Decision::Approved
@@ -340,13 +340,16 @@ async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: Int
         }
         ExecutionDisposition::Block => {
             tokio::task::block_in_place(|| match plan.policy_decision().block_reason() {
-                Some(BlockReason::IntrinsicRiskBlock) => show_block_via_tty(plan.assessment()),
-                Some(BlockReason::StrictPolicy) => show_policy_block_via_tty(
-                    plan.assessment(),
-                    "strict mode blocks non-safe commands unless the command \
-                     matches the allowlist and the override level permits it",
-                ),
-                Some(BlockReason::ProtectCiPolicy) | None => {}
+                Some(BlockReason::IntrinsicRiskBlock) => {
+                    show_block_via_tty(plan.assessment(), plan.explanation())
+                }
+                Some(BlockReason::StrictPolicy) => {
+                    show_policy_block_via_tty(plan.assessment(), plan.explanation())
+                }
+                Some(BlockReason::ProtectCiPolicy) => {
+                    show_policy_block_via_tty(plan.assessment(), plan.explanation())
+                }
+                None => {}
             });
             Decision::Blocked
         }
@@ -356,6 +359,7 @@ async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: Int
         plan.assessment(),
         runtime_decision,
         &snapshots,
+        plan.explanation(),
         plan.decision_context().allowlist_match(),
         plan.policy_decision().allowlist_effective,
         frame.source.clone(),
