@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use tokio::io::{self, AsyncWriteExt};
-use tokio::process::Command;
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{ChildStderr, Command};
+use tokio::task::JoinHandle;
 
 use crate::error::AegisError;
 use crate::snapshot::SnapshotPlugin;
@@ -199,6 +200,29 @@ impl MysqlPlugin {
         let _ = child.kill().await;
         let _ = child.wait().await;
     }
+
+    fn spawn_stderr_drain(stderr: ChildStderr) -> JoinHandle<std::io::Result<Vec<u8>>> {
+        tokio::spawn(async move {
+            let mut stderr = stderr;
+            let mut bytes = Vec::new();
+            stderr.read_to_end(&mut bytes).await?;
+            Ok(bytes)
+        })
+    }
+
+    async fn collect_stderr(
+        stderr_task: JoinHandle<std::io::Result<Vec<u8>>>,
+        command_name: &str,
+    ) -> Result<Vec<u8>> {
+        stderr_task
+            .await
+            .map_err(|err| {
+                AegisError::Snapshot(format!("failed to join {command_name} stderr task: {err}"))
+            })?
+            .map_err(|err| {
+                AegisError::Snapshot(format!("failed to read {command_name} stderr: {err}"))
+            })
+    }
 }
 
 #[async_trait]
@@ -251,6 +275,11 @@ impl SnapshotPlugin for MysqlPlugin {
             let _ = std::fs::remove_file(&dump_path);
             AegisError::Snapshot("failed to capture mysqldump stdout".to_string())
         })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            let _ = std::fs::remove_file(&dump_path);
+            AegisError::Snapshot("failed to capture mysqldump stderr".to_string())
+        })?;
+        let stderr_task = Self::spawn_stderr_drain(stderr);
         let mut dump_file = tokio::fs::OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -258,6 +287,7 @@ impl SnapshotPlugin for MysqlPlugin {
             .await?;
         if let Err(err) = io::copy(&mut stdout, &mut dump_file).await {
             Self::kill_and_reap_child(&mut child).await;
+            let _ = Self::collect_stderr(stderr_task, "mysqldump").await;
             let _ = std::fs::remove_file(&dump_path);
             return Err(AegisError::Snapshot(format!(
                 "failed to stream mysqldump output: {err}"
@@ -267,14 +297,15 @@ impl SnapshotPlugin for MysqlPlugin {
         dump_file.flush().await?;
         drop(dump_file);
 
-        let output = child
-            .wait_with_output()
+        let status = child
+            .wait()
             .await
             .map_err(|e| AegisError::Snapshot(format!("failed to wait for mysqldump: {e}")))?;
+        let stderr = Self::collect_stderr(stderr_task, "mysqldump").await?;
 
-        if !output.status.success() {
+        if !status.success() {
             let _ = std::fs::remove_file(&dump_path);
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
             return Err(AegisError::Snapshot(format!("mysqldump failed: {stderr}")));
         }
 
@@ -295,12 +326,17 @@ impl SnapshotPlugin for MysqlPlugin {
         let mut child = Command::new(&self.mysql_bin)
             .args(&args)
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| AegisError::Snapshot(format!("failed to run mysql: {e}")))?;
 
         let mut dump_file = tokio::fs::File::open(&dump_path).await?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| AegisError::Snapshot("failed to capture mysql stderr".to_string()))?;
+        let stderr_task = Self::spawn_stderr_drain(stderr);
         let mut stdin = child
             .stdin
             .take()
@@ -308,19 +344,21 @@ impl SnapshotPlugin for MysqlPlugin {
         if let Err(err) = io::copy(&mut dump_file, &mut stdin).await {
             drop(stdin);
             Self::kill_and_reap_child(&mut child).await;
+            let _ = Self::collect_stderr(stderr_task, "mysql").await;
             return Err(AegisError::Snapshot(format!(
                 "failed to write mysql stdin: {err}"
             )));
         }
         drop(stdin);
 
-        let output = child
-            .wait_with_output()
+        let status = child
+            .wait()
             .await
             .map_err(|e| AegisError::Snapshot(format!("failed to wait for mysql: {e}")))?;
+        let stderr = Self::collect_stderr(stderr_task, "mysql").await?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
             return Err(AegisError::Snapshot(format!("mysql failed: {stderr}")));
         }
 
@@ -634,6 +672,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_drains_large_stderr_without_deadlocking() {
+        let temp_dir = TempDir::new().unwrap();
+        let mysqldump = stub_bin(
+            &temp_dir,
+            "mysqldump",
+            "i=0\nwhile [ \"$i\" -lt 5000 ]; do\n  printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\n' >&2\n  i=$((i + 1))\ndone\nprintf 'dump-data'",
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysqldump_bin = mysqldump.display().to_string();
+
+        let snapshot_id = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+
+        let (_, dump_ref) = snapshot_id.split_once(SEP).unwrap();
+        let dump_path = plugin
+            .snapshots_dir
+            .join(MysqlPlugin::decode_dump_reference(dump_ref).unwrap());
+        assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
+    }
+
+    #[tokio::test]
     async fn rollback_uses_mysql_with_expected_arguments_and_dump_on_stdin() {
         let temp_dir = TempDir::new().unwrap();
         let log_path = temp_dir.path().join("mysql.args");
@@ -674,7 +735,11 @@ mod tests {
         let dump_path = temp_dir.path().join("snaps").join("existing.sql");
         fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
         fs::write(&dump_path, "dump-data").unwrap();
-        let mysql = stub_bin(&temp_dir, "mysql", "printf 'mysql exploded' >&2\nexit 23");
+        let mysql = stub_bin(
+            &temp_dir,
+            "mysql",
+            "cat > /dev/null\nprintf 'mysql exploded' >&2\nexit 23",
+        );
         let mut plugin = plugin_with_user(&temp_dir, "root");
         plugin.mysql_bin = mysql.display().to_string();
         let snapshot_id = format!(
@@ -715,6 +780,28 @@ mod tests {
             AegisError::Snapshot(msg) => assert!(msg.contains("failed to write mysql stdin")),
             other => panic!("expected snapshot error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn rollback_drains_large_stderr_without_deadlocking() {
+        let temp_dir = TempDir::new().unwrap();
+        let dump_path = temp_dir.path().join("snaps").join("existing.sql");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let mysql = stub_bin(
+            &temp_dir,
+            "mysql",
+            "i=0\nwhile [ \"$i\" -lt 5000 ]; do\n  printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\n' >&2\n  i=$((i + 1))\ndone\ncat > /dev/null",
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysql_bin = mysql.display().to_string();
+        let snapshot_id = format!(
+            "{}{SEP}{}",
+            MysqlPlugin::encode_database("app"),
+            MysqlPlugin::encode_dump_reference("existing.sql")
+        );
+
+        plugin.rollback(&snapshot_id).await.unwrap();
     }
 
     #[tokio::test]
