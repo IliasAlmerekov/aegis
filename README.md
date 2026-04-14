@@ -28,10 +28,12 @@ expected="$(awk '{print $1}' aegis-linux-x86_64.sha256)"
 actual="$(shasum -a 256 aegis-linux-x86_64 | awk '{print $1}')"
 [ "$expected" = "$actual" ]
 
+# Installing into /usr/local/bin may require sudo.
 install -m 0755 aegis-linux-x86_64 /usr/local/bin/aegis
 ```
 
 Replace `aegis-linux-x86_64` with the release asset for your platform.
+Manual install only places the binary. You still need to configure your shell to use Aegis; the quick installer handles that managed shell setup for you.
 
 ### Quick install
 
@@ -54,8 +56,16 @@ cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 
 ### Uninstall
 
+For manual binary installs:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
+```
+
+For source installs:
+
+```bash
+cargo uninstall aegis
 ```
 
 ---
