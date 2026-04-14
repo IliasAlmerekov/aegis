@@ -145,7 +145,7 @@ impl SnapshotPlugin for PostgresPlugin {
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let (database, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
+        let (_database, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
             AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
         })?;
 
@@ -160,8 +160,9 @@ impl SnapshotPlugin for PostgresPlugin {
         args.extend([
             "--clean".to_string(),
             "--if-exists".to_string(),
+            "--create".to_string(),
             "-d".to_string(),
-            database.to_string(),
+            "postgres".to_string(),
             dump_str.to_string(),
         ]);
 
@@ -398,8 +399,10 @@ mod tests {
         let logged_args = fs::read_to_string(&log_path).unwrap();
         assert!(logged_args.lines().any(|line| line == "--clean"));
         assert!(logged_args.lines().any(|line| line == "--if-exists"));
+        assert!(logged_args.lines().any(|line| line == "--create"));
         assert!(logged_args.lines().any(|line| line == "-d"));
-        assert!(logged_args.lines().any(|line| line == "app"));
+        assert!(logged_args.lines().any(|line| line == "postgres"));
+        assert!(!logged_args.lines().any(|line| line == "app"));
         assert!(
             logged_args
                 .lines()
