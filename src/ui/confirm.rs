@@ -118,14 +118,6 @@ fn render_block<W: Write>(assessment: &Assessment, explanation: &CommandExplanat
     let _ = queue!(
         out,
         Print(format!("  Reason: {}\n", block_reason_text(explanation))),
-    );
-
-    if let Some(detail) = block_detail_text(explanation) {
-        let _ = queue!(out, Print(format!("  Detail: {detail}\n")));
-    }
-
-    let _ = queue!(
-        out,
         Print("  Hint: review the matched patterns below.\n"),
         Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
     );
@@ -543,21 +535,6 @@ fn block_reason_text(explanation: &CommandExplanation) -> &'static str {
             "blocked by CI policy (Protect mode + ci_policy=Block)"
         }
         None => "blocked by policy",
-    }
-}
-
-fn block_detail_text(explanation: &CommandExplanation) -> Option<&'static str> {
-    match explanation
-        .policy
-        .block_reason
-        .or_else(|| explanation.policy.rationale.block_reason())
-    {
-        Some(crate::decision::BlockReason::IntrinsicRiskBlock) => {
-            Some("legacy wording: blocked by an explicit danger/block pattern")
-        }
-        Some(crate::decision::BlockReason::StrictPolicy)
-        | Some(crate::decision::BlockReason::ProtectCiPolicy)
-        | None => None,
     }
 }
 
