@@ -156,6 +156,23 @@ impl MysqlPlugin {
         Self::decode_component(encoded, "database")
     }
 
+    fn validate_dump_file_name(dump_file_name: &str) -> Result<()> {
+        let path = Path::new(dump_file_name);
+        let mut components = path.components();
+        let is_plain_file_name = matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(name)), None)
+                if name.to_str() == Some(dump_file_name)
+        );
+        if !is_plain_file_name {
+            return Err(AegisError::Snapshot(format!(
+                "malformed snapshot_id: invalid dump reference {dump_file_name:?}"
+            )));
+        }
+
+        Ok(())
+    }
+
     fn encode_path(path: &Path) -> String {
         #[cfg(unix)]
         {
@@ -237,7 +254,15 @@ impl MysqlPlugin {
         )
     }
 
-    fn parse_snapshot_id(snapshot_id: &str) -> Result<MysqlRollbackTarget> {
+    fn parse_snapshot_id(&self, snapshot_id: &str) -> Result<MysqlRollbackTarget> {
+        if snapshot_id.starts_with(&format!("{SNAPSHOT_ID_VERSION}{SEP}")) {
+            return Self::parse_v2_snapshot_id(snapshot_id);
+        }
+
+        self.parse_legacy_snapshot_id(snapshot_id)
+    }
+
+    fn parse_v2_snapshot_id(snapshot_id: &str) -> Result<MysqlRollbackTarget> {
         let parts: Vec<_> = snapshot_id.split(SEP).collect();
         if parts.len() != 6 || parts[0] != SNAPSHOT_ID_VERSION {
             return Err(AegisError::Snapshot(format!(
@@ -261,6 +286,23 @@ impl MysqlPlugin {
             port,
             user,
             dump_path,
+        })
+    }
+
+    fn parse_legacy_snapshot_id(&self, snapshot_id: &str) -> Result<MysqlRollbackTarget> {
+        let (database_encoded, dump_ref_encoded) =
+            snapshot_id.split_once(SEP).ok_or_else(|| {
+                AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+            })?;
+        let _database = Self::decode_database(database_encoded)?;
+        let dump_file_name = Self::decode_component(dump_ref_encoded, "dump reference")?;
+        Self::validate_dump_file_name(&dump_file_name)?;
+
+        Ok(MysqlRollbackTarget {
+            host: self.host.clone(),
+            port: self.port,
+            user: self.user.clone(),
+            dump_path: self.snapshots_dir.join(dump_file_name),
         })
     }
 
@@ -384,7 +426,7 @@ impl SnapshotPlugin for MysqlPlugin {
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let target = Self::parse_snapshot_id(snapshot_id)?;
+        let target = self.parse_snapshot_id(snapshot_id)?;
         if !target.dump_path.exists() {
             return Err(AegisError::RollbackDumpNotFound {
                 path: target.dump_path.to_string_lossy().to_string(),
@@ -816,6 +858,40 @@ mod tests {
         assert!(logged_args.lines().any(|line| line == "--port=3306"));
         assert!(logged_args.lines().any(|line| line == "--user=root"));
         assert!(!logged_args.lines().any(|line| line == "app"));
+        assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
+    }
+
+    #[tokio::test]
+    async fn rollback_accepts_legacy_snapshot_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("mysql.args");
+        let stdin_path = temp_dir.path().join("mysql.stdin");
+        let dump_path = temp_dir.path().join("snaps").join("legacy.sql");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let mysql = stub_bin(
+            &temp_dir,
+            "mysql",
+            &format!(
+                "log='{}'\nstdin_file='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone\ncat > \"$stdin_file\"",
+                log_path.display(),
+                stdin_path.display()
+            ),
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysql_bin = mysql.display().to_string();
+        let snapshot_id = format!(
+            "{}{SEP}{}",
+            MysqlPlugin::encode_database("app"),
+            MysqlPlugin::encode_component("legacy.sql")
+        );
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        let logged_args = fs::read_to_string(&log_path).unwrap();
+        assert!(logged_args.lines().any(|line| line == "--host=localhost"));
+        assert!(logged_args.lines().any(|line| line == "--port=3306"));
+        assert!(logged_args.lines().any(|line| line == "--user=root"));
         assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
     }
 

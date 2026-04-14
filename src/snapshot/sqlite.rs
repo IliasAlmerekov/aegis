@@ -121,6 +121,14 @@ impl SqlitePlugin {
     }
 
     fn parse_snapshot_id(snapshot_id: &str) -> Result<(PathBuf, PathBuf)> {
+        if snapshot_id.starts_with(&format!("{SNAPSHOT_ID_VERSION}{SEP}")) {
+            return Self::parse_v2_snapshot_id(snapshot_id);
+        }
+
+        Self::parse_legacy_snapshot_id(snapshot_id)
+    }
+
+    fn parse_v2_snapshot_id(snapshot_id: &str) -> Result<(PathBuf, PathBuf)> {
         let parts: Vec<_> = snapshot_id.split(SEP).collect();
         if parts.len() != 3 || parts[0] != SNAPSHOT_ID_VERSION {
             return Err(AegisError::Snapshot(format!(
@@ -132,6 +140,17 @@ impl SqlitePlugin {
             Self::decode_path(parts[1], "original path")?,
             Self::decode_path(parts[2], "dump path")?,
         ))
+    }
+
+    fn parse_legacy_snapshot_id(snapshot_id: &str) -> Result<(PathBuf, PathBuf)> {
+        let (original_str, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
+            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+        })?;
+        let original_path = PathBuf::from(original_str);
+        let dump_path = PathBuf::from(dump_str);
+        Self::validate_snapshot_path(&original_path, "original path")?;
+        Self::validate_snapshot_path(&dump_path, "dump path")?;
+        Ok((original_path, dump_path))
     }
 }
 
@@ -328,6 +347,22 @@ mod tests {
         plugin.rollback(&snapshot_id).await.unwrap();
 
         assert_eq!(fs::read(&db_path).unwrap(), b"before-snapshot");
+    }
+
+    #[tokio::test]
+    async fn rollback_accepts_legacy_snapshot_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let dump_path = temp_dir.path().join("snaps").join("legacy.db");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        write_db(&db_path, b"before-snapshot");
+        write_db(&dump_path, b"legacy-snapshot");
+        let plugin = SqlitePlugin::new(db_path.clone(), temp_dir.path().join("snaps"));
+        let snapshot_id = format!("{}{SEP}{}", db_path.display(), dump_path.display());
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        assert_eq!(fs::read(&db_path).unwrap(), b"legacy-snapshot");
     }
 
     #[tokio::test]

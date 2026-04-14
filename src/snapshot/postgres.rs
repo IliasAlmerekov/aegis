@@ -242,7 +242,15 @@ impl PostgresPlugin {
         )
     }
 
-    fn parse_snapshot_id(snapshot_id: &str) -> Result<PostgresRollbackTarget> {
+    fn parse_snapshot_id(&self, snapshot_id: &str) -> Result<PostgresRollbackTarget> {
+        if snapshot_id.starts_with(&format!("{SNAPSHOT_ID_VERSION}{SEP}")) {
+            return Self::parse_v2_snapshot_id(snapshot_id);
+        }
+
+        self.parse_legacy_snapshot_id(snapshot_id)
+    }
+
+    fn parse_v2_snapshot_id(snapshot_id: &str) -> Result<PostgresRollbackTarget> {
         let parts: Vec<_> = snapshot_id.split(SEP).collect();
         if parts.len() != 6 || parts[0] != SNAPSHOT_ID_VERSION {
             return Err(AegisError::Snapshot(format!(
@@ -265,6 +273,22 @@ impl PostgresPlugin {
             host,
             port,
             user,
+            dump_path,
+        })
+    }
+
+    fn parse_legacy_snapshot_id(&self, snapshot_id: &str) -> Result<PostgresRollbackTarget> {
+        let (database_encoded, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
+            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+        })?;
+        let _database = Self::decode_database(database_encoded)?;
+        let dump_path = PathBuf::from(dump_str);
+        Self::validate_snapshot_path(&dump_path, "dump path")?;
+
+        Ok(PostgresRollbackTarget {
+            host: self.host.clone(),
+            port: self.port,
+            user: self.user.clone(),
             dump_path,
         })
     }
@@ -325,7 +349,7 @@ impl SnapshotPlugin for PostgresPlugin {
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let target = Self::parse_snapshot_id(snapshot_id)?;
+        let target = self.parse_snapshot_id(snapshot_id)?;
         if !target.dump_path.exists() {
             return Err(AegisError::RollbackDumpNotFound {
                 path: target.dump_path.to_string_lossy().to_string(),
@@ -685,6 +709,42 @@ mod tests {
         assert!(logged_args.lines().any(|line| line == "-d"));
         assert!(logged_args.lines().any(|line| line == "postgres"));
         assert!(!logged_args.lines().any(|line| line == "app"));
+        assert!(
+            logged_args
+                .lines()
+                .any(|line| line == dump_path.to_string_lossy())
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_accepts_legacy_snapshot_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("pg_restore.args");
+        let dump_path = temp_dir.path().join("snaps").join("legacy.dump");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let pg_restore = stub_bin(
+            &temp_dir,
+            "pg_restore",
+            &format!(
+                "log='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone",
+                log_path.display()
+            ),
+        );
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_restore_bin = pg_restore.display().to_string();
+        let snapshot_id = format!(
+            "{}{SEP}{}",
+            PostgresPlugin::encode_database("app"),
+            dump_path.display()
+        );
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        let logged_args = fs::read_to_string(&log_path).unwrap();
+        assert!(logged_args.lines().any(|line| line == "localhost"));
+        assert!(logged_args.lines().any(|line| line == "5432"));
+        assert!(logged_args.lines().any(|line| line == "postgres"));
         assert!(
             logged_args
                 .lines()
