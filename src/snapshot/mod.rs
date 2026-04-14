@@ -1,28 +1,39 @@
-pub mod docker;
-pub mod git;
-pub(crate) mod mysql;
-pub(crate) mod postgres;
-pub(crate) mod sqlite;
-
-pub use docker::DockerPlugin;
-pub use git::GitPlugin;
-pub use mysql::MysqlPlugin;
-pub use postgres::PostgresPlugin;
-pub use sqlite::SqlitePlugin;
-
-use std::path::Path;
+use std::env;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
 use crate::config::Config;
 use crate::error::AegisError;
 
+/// Built-in Docker snapshot provider implementation.
+pub mod docker;
+/// Built-in Git snapshot provider implementation.
+pub mod git;
+/// Built-in MySQL snapshot provider implementation.
+pub mod mysql;
+/// Built-in PostgreSQL snapshot provider implementation.
+pub mod postgres;
+/// Built-in SQLite snapshot provider implementation.
+pub mod sqlite;
+
+/// Built-in Docker snapshot provider.
+pub use docker::DockerPlugin;
+/// Built-in Git snapshot provider.
+pub use git::GitPlugin;
+/// Built-in MySQL snapshot provider.
+pub use mysql::MysqlPlugin;
+/// Built-in PostgreSQL snapshot provider.
+pub use postgres::PostgresPlugin;
+/// Built-in SQLite snapshot provider.
+pub use sqlite::SqlitePlugin;
+
 #[cfg(test)]
 use std::cell::Cell;
 
 type Result<T> = std::result::Result<T, AegisError>;
 
-const BUILTIN_SNAPSHOT_PROVIDER_NAMES: &[&str] = &["git", "docker"];
+const BUILTIN_SNAPSHOT_PROVIDER_NAMES: &[&str] = &["git", "docker", "postgres", "mysql", "sqlite"];
 
 #[cfg(test)]
 thread_local! {
@@ -44,24 +55,47 @@ pub fn available_provider_names() -> &'static [&'static str] {
     BUILTIN_SNAPSHOT_PROVIDER_NAMES
 }
 
+fn default_snapshots_dir() -> PathBuf {
+    let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
+    PathBuf::from(home).join(".aegis").join("snapshots")
+}
+
 fn materialize_builtin_plugin(
     name: &str,
-    docker_scope: &crate::config::DockerScope,
+    config: &SnapshotRegistryConfig,
 ) -> Box<dyn SnapshotPlugin> {
     match name {
         "git" => Box::new(GitPlugin),
-        "docker" => Box::new(DockerPlugin::new().with_scope(docker_scope.clone())),
+        "docker" => Box::new(DockerPlugin::new().with_scope(config.docker_scope.clone())),
+        "postgres" => Box::new(PostgresPlugin::new(
+            config.postgres_snapshot.database.clone(),
+            config.postgres_snapshot.host.clone(),
+            config.postgres_snapshot.port,
+            config.postgres_snapshot.user.clone(),
+            config.snapshots_dir.clone(),
+        )),
+        "mysql" => Box::new(MysqlPlugin::new(
+            config.mysql_snapshot.database.clone(),
+            config.mysql_snapshot.host.clone(),
+            config.mysql_snapshot.port,
+            config.mysql_snapshot.user.clone(),
+            config.snapshots_dir.clone(),
+        )),
+        "sqlite" => Box::new(SqlitePlugin::new(
+            PathBuf::from(&config.sqlite_snapshot_path),
+            config.snapshots_dir.clone(),
+        )),
         _ => panic!("unknown built-in snapshot provider {name:?}"),
     }
 }
 
 fn materialize_builtin_plugins(
     names: &[&str],
-    docker_scope: &crate::config::DockerScope,
+    config: &SnapshotRegistryConfig,
 ) -> Vec<Box<dyn SnapshotPlugin>> {
     names
         .iter()
-        .map(|name| materialize_builtin_plugin(name, docker_scope))
+        .map(|name| materialize_builtin_plugin(name, config))
         .collect()
 }
 
@@ -110,6 +144,13 @@ pub struct SnapshotRegistryConfig {
     pub snapshot_policy: crate::config::SnapshotPolicy,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
+    pub auto_snapshot_postgres: bool,
+    pub postgres_snapshot: crate::config::model::PostgresSnapshotConfig,
+    pub auto_snapshot_mysql: bool,
+    pub mysql_snapshot: crate::config::model::MysqlSnapshotConfig,
+    pub auto_snapshot_sqlite: bool,
+    pub sqlite_snapshot_path: String,
+    pub snapshots_dir: PathBuf,
     pub docker_scope: crate::config::DockerScope,
 }
 
@@ -119,6 +160,13 @@ impl From<&Config> for SnapshotRegistryConfig {
             snapshot_policy: config.snapshot_policy,
             auto_snapshot_git: config.auto_snapshot_git,
             auto_snapshot_docker: config.auto_snapshot_docker,
+            auto_snapshot_postgres: config.auto_snapshot_postgres,
+            postgres_snapshot: config.postgres_snapshot.clone(),
+            auto_snapshot_mysql: config.auto_snapshot_mysql,
+            mysql_snapshot: config.mysql_snapshot.clone(),
+            auto_snapshot_sqlite: config.auto_snapshot_sqlite,
+            sqlite_snapshot_path: config.sqlite_snapshot_path.clone(),
+            snapshots_dir: default_snapshots_dir(),
             docker_scope: config.docker_scope.clone(),
         }
     }
@@ -158,14 +206,16 @@ impl SnapshotRegistry {
                     .filter(|name| match *name {
                         "git" => config.auto_snapshot_git,
                         "docker" => config.auto_snapshot_docker,
+                        "postgres" => config.auto_snapshot_postgres,
+                        "mysql" => config.auto_snapshot_mysql,
+                        "sqlite" => config.auto_snapshot_sqlite,
                         _ => false,
                     })
                     .collect();
-                plugins = materialize_builtin_plugins(&enabled_names, &config.docker_scope);
+                plugins = materialize_builtin_plugins(&enabled_names, config);
             }
             SnapshotPolicy::Full => {
-                plugins =
-                    materialize_builtin_plugins(available_provider_names(), &config.docker_scope);
+                plugins = materialize_builtin_plugins(available_provider_names(), config);
             }
         }
 
@@ -178,12 +228,21 @@ impl SnapshotRegistry {
     /// able to restore previously recorded snapshots even if snapshot creation
     /// is disabled in the current config.
     pub fn for_rollback() -> Self {
-        Self {
-            plugins: materialize_builtin_plugins(
-                available_provider_names(),
-                &crate::config::DockerScope::default(),
-            ),
-        }
+        let config = SnapshotRegistryConfig {
+            snapshot_policy: crate::config::SnapshotPolicy::Full,
+            auto_snapshot_git: true,
+            auto_snapshot_docker: true,
+            auto_snapshot_postgres: true,
+            postgres_snapshot: crate::config::model::PostgresSnapshotConfig::default(),
+            auto_snapshot_mysql: true,
+            mysql_snapshot: crate::config::model::MysqlSnapshotConfig::default(),
+            auto_snapshot_sqlite: true,
+            sqlite_snapshot_path: String::new(),
+            snapshots_dir: default_snapshots_dir(),
+            docker_scope: crate::config::DockerScope::default(),
+        };
+
+        Self::from_runtime_config(&config)
     }
 
     /// Return the names of providers materialized into this registry instance.
@@ -472,8 +531,11 @@ mod tests {
     }
 
     #[test]
-    fn available_provider_names_report_builtins_independent_of_runtime_config() {
-        assert_eq!(available_provider_names(), ["git", "docker"]);
+    fn available_provider_names_include_db_plugins() {
+        assert_eq!(
+            available_provider_names(),
+            ["git", "docker", "postgres", "mysql", "sqlite"]
+        );
     }
 
     #[test]
@@ -502,7 +564,7 @@ mod tests {
     fn materialize_builtin_plugins_fails_closed_for_unknown_builtin_name() {
         let _ = materialize_builtin_plugins(
             &["git", "unknown-provider"],
-            &crate::config::DockerScope::default(),
+            &SnapshotRegistryConfig::from(&Config::default()),
         );
     }
 
@@ -539,6 +601,44 @@ mod tests {
     }
 
     #[test]
+    fn selective_policy_enables_postgres_when_configured() {
+        use crate::config::SnapshotPolicy;
+
+        let mut config = Config::default();
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+        config.auto_snapshot_postgres = true;
+        config.auto_snapshot_mysql = false;
+        config.auto_snapshot_sqlite = false;
+        config.postgres_snapshot.database = "app".to_string();
+
+        let registry = SnapshotRegistry::from_config(&config);
+        let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
+
+        assert_eq!(names, vec!["postgres"]);
+    }
+
+    #[test]
+    fn selective_policy_disables_postgres_when_flag_off() {
+        use crate::config::SnapshotPolicy;
+
+        let mut config = Config::default();
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = false;
+        config.auto_snapshot_docker = false;
+        config.auto_snapshot_postgres = false;
+        config.auto_snapshot_mysql = false;
+        config.auto_snapshot_sqlite = false;
+        config.postgres_snapshot.database = "app".to_string();
+
+        let registry = SnapshotRegistry::from_config(&config);
+        let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
+
+        assert!(!names.contains(&"postgres"));
+    }
+
+    #[test]
     fn policy_full_enables_all_plugins() {
         use crate::config::SnapshotPolicy;
 
@@ -549,6 +649,16 @@ mod tests {
 
         let registry = SnapshotRegistry::from_config(&config);
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
-        assert_eq!(names, vec!["git", "docker"]);
+        assert_eq!(names, vec!["git", "docker", "postgres", "mysql", "sqlite"]);
+    }
+
+    #[test]
+    fn for_rollback_includes_db_plugins() {
+        let registry = SnapshotRegistry::for_rollback();
+
+        assert_eq!(
+            registry.configured_provider_names(),
+            vec!["git", "docker", "postgres", "mysql", "sqlite"]
+        );
     }
 }
