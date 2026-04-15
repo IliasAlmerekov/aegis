@@ -1285,6 +1285,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rollback_rejects_malformed_snapshot_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
+        let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
+
+        let mut config = SupabaseSnapshotConfig::default();
+        config.project_ref = "proj_123".to_string();
+        config.db.database = "postgres".to_string();
+        config.db.host = "db.supabase.co".to_string();
+        config.db.port = 5432;
+        config.db.user = "postgres".to_string();
+
+        let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
+        plugin.pg_dump_bin = pg_dump.display().to_string();
+        plugin.pg_restore_bin = pg_restore.display().to_string();
+
+        let err = plugin
+            .rollback("v1\x00invalid")
+            .await
+            .expect_err("malformed snapshot id should fail");
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rollback_denies_when_manifest_dump_is_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let manifest_path = write_phase1_manifest_fixture(&temp_dir, &valid_db_dump_checksum());
+        let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
+        let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
+
+        let dump_path = manifest_path.parent().unwrap().join("artifacts/db.dump");
+        fs::remove_file(&dump_path).unwrap();
+
+        let mut config = SupabaseSnapshotConfig::default();
+        config.project_ref = "proj_123".to_string();
+        config.db.database = "postgres".to_string();
+        config.db.host = "db.supabase.co".to_string();
+        config.db.port = 5432;
+        config.db.user = "postgres".to_string();
+
+        let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
+        plugin.pg_dump_bin = pg_dump.display().to_string();
+        plugin.pg_restore_bin = pg_restore.display().to_string();
+
+        let snapshot_id = SupabasePlugin::build_snapshot_id(&manifest_path);
+        let err = plugin.rollback(&snapshot_id).await.unwrap_err();
+
+        match err {
+            AegisError::RollbackDumpNotFound { path } => {
+                assert!(path.ends_with("artifacts/db.dump"));
+            }
+            other => panic!("expected rollback dump missing error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn rollback_denies_when_checksum_mismatch() {
         let temp_dir = TempDir::new().unwrap();
         let manifest_path = write_phase1_manifest_fixture(&temp_dir, &"0".repeat(64));

@@ -954,6 +954,34 @@ esac"#
         );
     }
 
+    #[tokio::test]
+    async fn rollback_fails_when_image_is_missing_from_runtime() {
+        let dir = TempDir::new().unwrap();
+        write_mock_docker(
+            dir.path(),
+            r#"case "$1" in
+  stop) exit 0 ;;
+  rm)   exit 0 ;;
+  run)  printf "Error: No such image\n" >&2; exit 1 ;;
+  *)    exit 1 ;;
+esac"#,
+        );
+
+        let record = minimal_record("abc123", "missing-image");
+        let result = plugin(&dir.path().join("docker")).rollback(&record).await;
+
+        assert!(result.is_err(), "rollback should fail on missing image");
+        if let Err(err) = result {
+            match err {
+                AegisError::Snapshot(msg) => {
+                    assert!(msg.contains("docker run missing-image failed"));
+                    assert!(msg.contains("No such image"));
+                }
+                other => panic!("expected snapshot error, got: {other:?}"),
+            }
+        }
+    }
+
     // ── build_run_args unit tests ───────────────────────────────────────────────
 
     #[test]
