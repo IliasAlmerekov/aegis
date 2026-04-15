@@ -39,6 +39,9 @@ The installer will:
 - install `aegis` on your PATH
 - add the shell wrapper to `~/.bashrc` or `~/.zshrc`
 
+If you're on Windows, run Aegis inside a WSL2 terminal; native Windows shells
+like `PowerShell` and `cmd.exe` are not supported yet.
+
 > **Getting a 404?** The release hasn't been published yet. Install from source instead:
 > ```bash
 > cargo install --git https://github.com/IliasAlmerekov/aegis aegis
