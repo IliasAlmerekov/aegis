@@ -309,6 +309,24 @@ Notes:
 - `block_reason` is optional and uses values such as `intrinsic_risk_block`, `strict_policy`, and `protect_ci_policy`
 - `decision_source` is one of `builtin_pattern`, `custom_pattern`, or `fallback`
 
+## Exit-code compatibility contract
+
+Exit codes are part of the public contract and should not change without a
+release compatibility decision.
+
+Current mapping:
+
+- `0` — command approved/executed successfully or `aegis` command completed successfully
+- `2` — user denied in a prompt path (`prompt` decision)
+- `3` — hard block (`block` decision)
+- `4` — internal/config error (`aegis` error state, validation failure, runtime/setup failure)
+- `1..=255` (except 2, 3, 4) — propagated exit code from the wrapped command
+
+These values are also reflected in JSON output:
+
+- `exit_code` in `--output json` always matches the process-level exit for the same run.
+- for non-blocking prompt/deny outcomes the JSON exit code matches `2` (prompt) and `3` (block).
+
 ## Compatibility policy
 
 - new releases should preserve compatibility for schema version `1`
