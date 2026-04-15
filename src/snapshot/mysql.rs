@@ -16,6 +16,9 @@ type Result<T> = std::result::Result<T, AegisError>;
 
 const SEP: char = '\t';
 const SNAPSHOT_ID_VERSION: &str = "v2";
+const EXECUTABLE_BUSY_ERRNO: i32 = 26;
+const BUSY_RETRY_ATTEMPTS: usize = 12;
+const BUSY_RETRY_DELAY_MS: u64 = 25;
 
 struct MysqlRollbackTarget {
     host: String,
@@ -97,6 +100,30 @@ impl MysqlPlugin {
                     suffix = Some(suffix.map_or(1, |current| current + 1));
                 }
                 Err(err) => return Err(err.into()),
+            }
+        }
+    }
+
+    async fn spawn_with_busy_retry(
+        command: &mut Command,
+        context: &str,
+    ) -> Result<tokio::process::Child> {
+        let mut attempt = 0usize;
+        loop {
+            match command.spawn() {
+                Ok(child) => return Ok(child),
+                Err(error) if Self::is_executable_busy(&error) && attempt < BUSY_RETRY_ATTEMPTS => {
+                    attempt += 1;
+                    tracing::warn!(
+                        context,
+                        attempt,
+                        "mysql binary busy during command launch, retrying"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(BUSY_RETRY_DELAY_MS));
+                }
+                Err(error) => {
+                    return Err(AegisError::Snapshot(format!("{context}: {error}")));
+                }
             }
         }
     }
@@ -223,6 +250,10 @@ impl MysqlPlugin {
 
         Self::validate_snapshot_path(&path, label)?;
         Ok(path)
+    }
+
+    fn is_executable_busy(error: &std::io::Error) -> bool {
+        error.raw_os_error() == Some(EXECUTABLE_BUSY_ERRNO)
     }
 
     fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
@@ -368,15 +399,19 @@ impl SnapshotPlugin for MysqlPlugin {
             "--add-drop-database".to_string(),
         ]);
 
-        let mut child = Command::new(&self.mysqldump_bin)
+        let mut command = Command::new(&self.mysqldump_bin);
+        command
             .args(&args)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&dump_path);
-                AegisError::Snapshot(format!("failed to run mysqldump: {e}"))
-            })?;
+            .stderr(std::process::Stdio::piped());
+        let mut child =
+            match Self::spawn_with_busy_retry(&mut command, "failed to run mysqldump").await {
+                Ok(child) => child,
+                Err(err) => {
+                    let _ = std::fs::remove_file(&dump_path);
+                    return Err(err);
+                }
+            };
 
         let mut stdout = child.stdout.take().ok_or_else(|| {
             let _ = std::fs::remove_file(&dump_path);
@@ -431,13 +466,13 @@ impl SnapshotPlugin for MysqlPlugin {
         }
 
         let args = Self::build_common_args_for_target(&target.host, target.port, &target.user);
-        let mut child = Command::new(&self.mysql_bin)
+        let mut command = Command::new(&self.mysql_bin);
+        command
             .args(&args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| AegisError::Snapshot(format!("failed to run mysql: {e}")))?;
+            .stderr(std::process::Stdio::piped());
+        let mut child = Self::spawn_with_busy_retry(&mut command, "failed to run mysql").await?;
 
         let mut dump_file = tokio::fs::File::open(&target.dump_path).await?;
         let stderr = child
@@ -480,6 +515,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
     fn plugin_with_user(temp_dir: &TempDir, user: &str) -> MysqlPlugin {
@@ -499,6 +535,19 @@ mod tests {
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions).unwrap();
         path
+    }
+
+    fn single_quote_for_shell(path: &Path) -> String {
+        path.to_string_lossy().replace('\'', r"'\''")
+    }
+
+    fn hold_file_open_for_writing(path: &Path) -> std::process::Child {
+        let quoted_path = single_quote_for_shell(path);
+        StdCommand::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("exec 3>>'{quoted_path}'; sleep 0.3"))
+            .spawn()
+            .unwrap()
     }
 
     fn hex_encode(bytes: &[u8]) -> String {
@@ -758,6 +807,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_retries_when_mysqldump_binary_is_temporarily_busy() {
+        let temp_dir = TempDir::new().unwrap();
+        let mysqldump = stub_bin(&temp_dir, "mysqldump", "exit 0");
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysqldump_bin = mysqldump.display().to_string();
+
+        let mut holder = hold_file_open_for_writing(&mysqldump);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        let snapshot_id = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+
+        let _ = holder.wait();
+        assert!(snapshot_id.starts_with("v2\t"));
+    }
+
+    #[tokio::test]
     async fn snapshot_returns_stderr_when_mysqldump_fails() {
         let temp_dir = TempDir::new().unwrap();
         let mysqldump = stub_bin(
@@ -856,6 +924,25 @@ mod tests {
         assert!(logged_args.lines().any(|line| line == "--user=root"));
         assert!(!logged_args.lines().any(|line| line == "app"));
         assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
+    }
+
+    #[tokio::test]
+    async fn rollback_retries_when_mysql_binary_is_temporarily_busy() {
+        let temp_dir = TempDir::new().unwrap();
+        let dump_path = temp_dir.path().join("snaps").join("existing.sql");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let mysql = stub_bin(&temp_dir, "mysql", "exit 0");
+        let mut plugin = plugin_with_user(&temp_dir, "root");
+        plugin.mysql_bin = mysql.display().to_string();
+        let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
+
+        let mut holder = hold_file_open_for_writing(&mysql);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        let _ = holder.wait();
     }
 
     #[tokio::test]

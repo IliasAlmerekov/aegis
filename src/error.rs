@@ -27,7 +27,9 @@ pub enum AegisError {
     },
 
     /// The dump file that was recorded at snapshot time no longer exists.
-    #[error("rollback failed: dump file not found at '{path}'. The file may have been deleted manually.")]
+    #[error(
+        "rollback failed: dump file not found at '{path}'. The file may have been deleted manually."
+    )]
     RollbackDumpNotFound { path: String },
 
     #[error("config error: {0}")]

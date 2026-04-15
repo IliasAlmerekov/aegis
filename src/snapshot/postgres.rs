@@ -14,6 +14,9 @@ type Result<T> = std::result::Result<T, AegisError>;
 
 const SEP: char = '\t';
 const SNAPSHOT_ID_VERSION: &str = "v2";
+const EXECUTABLE_BUSY_ERRNO: i32 = 26;
+const BUSY_RETRY_ATTEMPTS: usize = 12;
+const BUSY_RETRY_DELAY_MS: u64 = 25;
 
 struct PostgresRollbackTarget {
     host: String,
@@ -101,6 +104,30 @@ impl PostgresPlugin {
                     suffix = Some(suffix.map_or(1, |current| current + 1));
                 }
                 Err(err) => return Err(err.into()),
+            }
+        }
+    }
+
+    async fn output_with_busy_retry(
+        command: &mut Command,
+        context: &str,
+    ) -> Result<std::process::Output> {
+        let mut attempt = 0usize;
+        loop {
+            match command.output().await {
+                Ok(output) => return Ok(output),
+                Err(error) if Self::is_executable_busy(&error) && attempt < BUSY_RETRY_ATTEMPTS => {
+                    attempt += 1;
+                    tracing::warn!(
+                        context,
+                        attempt,
+                        "postgres binary busy during command launch, retrying"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(BUSY_RETRY_DELAY_MS));
+                }
+                Err(error) => {
+                    return Err(AegisError::Snapshot(format!("{context}: {error}")));
+                }
             }
         }
     }
@@ -211,6 +238,10 @@ impl PostgresPlugin {
 
         Self::validate_snapshot_path(&path, label)?;
         Ok(path)
+    }
+
+    fn is_executable_busy(error: &std::io::Error) -> bool {
+        error.raw_os_error() == Some(EXECUTABLE_BUSY_ERRNO)
     }
 
     fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
@@ -328,11 +359,9 @@ impl SnapshotPlugin for PostgresPlugin {
             self.database.clone(),
         ]);
 
-        let output = Command::new(&self.pg_dump_bin)
-            .args(&args)
-            .output()
-            .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to run pg_dump: {e}")))?;
+        let mut command = Command::new(&self.pg_dump_bin);
+        command.args(&args);
+        let output = Self::output_with_busy_retry(&mut command, "failed to run pg_dump").await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -363,11 +392,9 @@ impl SnapshotPlugin for PostgresPlugin {
             target.dump_path.to_string_lossy().to_string(),
         ]);
 
-        let output = Command::new(&self.pg_restore_bin)
-            .args(&args)
-            .output()
-            .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to run pg_restore: {e}")))?;
+        let mut command = Command::new(&self.pg_restore_bin);
+        command.args(&args);
+        let output = Self::output_with_busy_retry(&mut command, "failed to run pg_restore").await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -384,6 +411,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+    use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
     fn plugin_with_user(temp_dir: &TempDir, user: &str) -> PostgresPlugin {
@@ -653,6 +681,38 @@ mod tests {
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
+    fn single_quote_for_shell(path: &Path) -> String {
+        path.to_string_lossy().replace('\'', r"'\''")
+    }
+
+    fn hold_file_open_for_writing(path: &Path) -> std::process::Child {
+        let quoted_path = single_quote_for_shell(path);
+        StdCommand::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("exec 3>>'{quoted_path}'; sleep 0.3"))
+            .spawn()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn snapshot_retries_when_pg_dump_binary_is_temporarily_busy() {
+        let temp_dir = TempDir::new().unwrap();
+        let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_dump_bin = pg_dump.display().to_string();
+
+        let mut holder = hold_file_open_for_writing(&pg_dump);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        let snapshot_id = plugin
+            .snapshot(temp_dir.path(), "dangerous command")
+            .await
+            .unwrap();
+
+        let _ = holder.wait();
+        assert!(snapshot_id.starts_with("v2\t"));
+    }
+
     #[tokio::test]
     async fn snapshot_returns_stderr_when_pg_dump_fails() {
         let temp_dir = TempDir::new().unwrap();
@@ -711,6 +771,25 @@ mod tests {
                 .lines()
                 .any(|line| line == dump_path.to_string_lossy())
         );
+    }
+
+    #[tokio::test]
+    async fn rollback_retries_when_pg_restore_binary_is_temporarily_busy() {
+        let temp_dir = TempDir::new().unwrap();
+        let dump_path = temp_dir.path().join("snaps").join("existing.dump");
+        fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
+        fs::write(&dump_path, "dump-data").unwrap();
+        let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
+        let mut plugin = plugin_with_user(&temp_dir, "postgres");
+        plugin.pg_restore_bin = pg_restore.display().to_string();
+        let snapshot_id = snapshot_id_for("app", "localhost", 5_432, "postgres", &dump_path);
+
+        let mut holder = hold_file_open_for_writing(&pg_restore);
+        std::thread::sleep(std::time::Duration::from_millis(25));
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        let _ = holder.wait();
     }
 
     #[tokio::test]
