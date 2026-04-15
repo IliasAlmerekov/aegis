@@ -1667,6 +1667,100 @@ exit 0
 }
 
 #[test]
+fn danger_command_denied_records_supabase_snapshot_in_audit() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let bin_dir = workspace.path().join("bin");
+    let sentinel = workspace.path().join("sentinel_supabase.txt");
+
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(&sentinel, "keep me\n").unwrap();
+
+    write_executable(
+        &bin_dir.join("pg_dump"),
+        r#"#!/bin/sh
+dump_path=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-f" ]; then
+    dump_path="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+
+if [ -z "$dump_path" ]; then
+  echo "missing -f dump path" >&2
+  exit 1
+fi
+
+printf 'supabase phase1 dump\n' > "$dump_path"
+"#,
+    );
+    write_executable(&bin_dir.join("pg_restore"), "#!/bin/sh\nexit 0\n");
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+auto_snapshot_postgres = false
+auto_snapshot_mysql = false
+auto_snapshot_sqlite = false
+auto_snapshot_supabase = true
+
+[supabase_snapshot]
+project_ref = "proj_e2e"
+require_config_target_match_on_rollback = true
+
+[supabase_snapshot.db]
+database = "postgres"
+host = "db.supabase.co"
+port = 5432
+user = "postgres"
+"#,
+    )
+    .unwrap();
+
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("PATH", &path)
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
+        .args(["-c", &format!("rm -rf {}", sentinel.display())])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    child.stdin.as_mut().unwrap().write_all(b"no\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(sentinel.exists(), "denied danger command must not run");
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["decision"], "Denied");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert_eq!(entries[0]["snapshots"].as_array().map(Vec::len), Some(1));
+    assert_eq!(entries[0]["snapshots"][0]["plugin"], "supabase");
+    let snapshot_id = entries[0]["snapshots"][0]["snapshot_id"]
+        .as_str()
+        .expect("snapshot_id must be a string");
+    assert!(
+        snapshot_id.starts_with("supabase-v1\t"),
+        "expected a supabase v1 snapshot id, got {snapshot_id:?}"
+    );
+}
+
+#[test]
 fn config_show_prints_effective_allowlist_override_level() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();

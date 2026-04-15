@@ -44,6 +44,7 @@ auto_snapshot_git = true # Create a Git snapshot before dangerous commands when 
 auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
 auto_snapshot_postgres = false # PostgreSQL snapshot before dangerous commands. Requires pg_dump on PATH and [postgres_snapshot] config.
 auto_snapshot_mysql = false    # MySQL/MariaDB snapshot. Requires mysqldump on PATH and [mysql_snapshot] config.
+auto_snapshot_supabase = false # Supabase project-level snapshot. Phase 1 captures a DB-only manifest bundle.
 auto_snapshot_sqlite = false   # SQLite snapshot. Set sqlite_snapshot_path to your .db file path.
 sqlite_snapshot_path = ""      # Path to SQLite database file (relative to the current working directory or absolute).
 
@@ -60,6 +61,17 @@ database = ""        # Database name to dump. Required when auto_snapshot_mysql 
 host = "localhost"
 port = 3306
 user = ""            # Leave empty to use MYSQL_USER env var or ~/.my.cnf.
+
+# Supabase project-level snapshot settings. Phase 1 uses the direct PostgreSQL transport.
+[supabase_snapshot]
+project_ref = "" # Advisory-only project ref for audit/UI/future phases.
+require_config_target_match_on_rollback = true # Fail closed if current config target differs from the manifest target.
+
+[supabase_snapshot.db]
+database = ""    # Direct PostgreSQL database name used by the Supabase provider.
+host = "localhost"
+port = 5432
+user = ""
 
 # Which Docker containers to include in snapshots.
 # mode: Labeled (default) = only containers with opt-in label, All = every running container, Names = match by name pattern.
@@ -200,6 +212,33 @@ impl Default for PostgresSnapshotConfig {
     }
 }
 
+/// Configuration settings for the Supabase snapshot provider.
+///
+/// `project_ref` is advisory-only for audit/UI and future phases. The
+/// rollback target-match setting is part of the bundle definition for later
+/// rollback flows that compare the active config target with the manifest
+/// target. Phase 1 uses the direct PostgreSQL transport in [`db`](Self::db).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SupabaseSnapshotConfig {
+    /// Advisory-only Supabase project reference for audit/UI and future phases.
+    pub project_ref: String,
+    /// Target-match preference for rollback flows that compare config targets.
+    pub require_config_target_match_on_rollback: bool,
+    /// Phase 1 direct PostgreSQL transport for Supabase snapshots.
+    pub db: PostgresSnapshotConfig,
+}
+
+impl Default for SupabaseSnapshotConfig {
+    fn default() -> Self {
+        Self {
+            project_ref: String::new(),
+            require_config_target_match_on_rollback: true,
+            db: PostgresSnapshotConfig::default(),
+        }
+    }
+}
+
 /// Connection settings for a MySQL snapshot plugin.
 ///
 /// Credentials are provided externally via `MYSQL_PWD` or `~/.my.cnf`.
@@ -233,7 +272,8 @@ impl Default for MysqlSnapshotConfig {
 /// - `None`      — never snapshot.
 /// - `Selective` — only plugins enabled by `auto_snapshot_git` /
 ///   `auto_snapshot_docker` / `auto_snapshot_postgres` /
-///   `auto_snapshot_mysql` / `auto_snapshot_sqlite`.
+///   `auto_snapshot_mysql` / `auto_snapshot_supabase` /
+///   `auto_snapshot_sqlite`.
 /// - `Full`      — run every registered plugin regardless of per-plugin flags.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
@@ -343,6 +383,11 @@ pub struct AegisConfig {
     pub auto_snapshot_mysql: bool,
     /// MySQL connection details used when snapshotting is enabled.
     pub mysql_snapshot: MysqlSnapshotConfig,
+    /// Enable Supabase snapshots before dangerous commands.
+    pub auto_snapshot_supabase: bool,
+    /// Supabase snapshot provider settings used when snapshotting is enabled.
+    /// Layered config replaces this provider config as a whole.
+    pub supabase_snapshot: SupabaseSnapshotConfig,
     /// Enable SQLite snapshots before dangerous commands.
     pub auto_snapshot_sqlite: bool,
     /// Path to a SQLite database file, relative to the current working
@@ -418,6 +463,8 @@ impl AegisConfig {
             postgres_snapshot: PostgresSnapshotConfig::default(),
             auto_snapshot_mysql: false,
             mysql_snapshot: MysqlSnapshotConfig::default(),
+            auto_snapshot_supabase: false,
+            supabase_snapshot: SupabaseSnapshotConfig::default(),
             auto_snapshot_sqlite: false,
             sqlite_snapshot_path: String::new(),
             docker_scope: DockerScope::default(),
@@ -582,6 +629,10 @@ impl AegisConfig {
                 .auto_snapshot_mysql
                 .unwrap_or(base.auto_snapshot_mysql),
             mysql_snapshot: overlay.mysql_snapshot.unwrap_or(base.mysql_snapshot),
+            auto_snapshot_supabase: overlay
+                .auto_snapshot_supabase
+                .unwrap_or(base.auto_snapshot_supabase),
+            supabase_snapshot: overlay.supabase_snapshot.unwrap_or(base.supabase_snapshot),
             auto_snapshot_sqlite: overlay
                 .auto_snapshot_sqlite
                 .unwrap_or(base.auto_snapshot_sqlite),
@@ -699,6 +750,8 @@ struct PartialConfig {
     postgres_snapshot: Option<PostgresSnapshotConfig>,
     auto_snapshot_mysql: Option<bool>,
     mysql_snapshot: Option<MysqlSnapshotConfig>,
+    auto_snapshot_supabase: Option<bool>,
+    supabase_snapshot: Option<SupabaseSnapshotConfig>,
     auto_snapshot_sqlite: Option<bool>,
     sqlite_snapshot_path: Option<String>,
     docker_scope: Option<DockerScope>,
@@ -957,6 +1010,38 @@ user = "appuser"
     }
 
     #[test]
+    fn supabase_snapshot_config_deserializes() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+auto_snapshot_supabase = true
+
+[supabase_snapshot]
+project_ref = "proj_123"
+require_config_target_match_on_rollback = false
+
+[supabase_snapshot.db]
+database = "postgres"
+host = "db.supabase.co"
+port = 6543
+user = "postgres"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.auto_snapshot_supabase);
+        assert_eq!(config.supabase_snapshot.project_ref, "proj_123");
+        assert!(
+            !config
+                .supabase_snapshot
+                .require_config_target_match_on_rollback
+        );
+        assert_eq!(config.supabase_snapshot.db.database, "postgres");
+        assert_eq!(config.supabase_snapshot.db.host, "db.supabase.co");
+        assert_eq!(config.supabase_snapshot.db.port, 6543);
+        assert_eq!(config.supabase_snapshot.db.user, "postgres");
+    }
+
+    #[test]
     fn mysql_snapshot_config_deserializes() {
         let config: AegisConfig = toml::from_str(
             r#"
@@ -993,6 +1078,23 @@ sqlite_snapshot_path = "db/app.db"
     }
 
     #[test]
+    fn supabase_snapshot_defaults_are_disabled() {
+        let config = AegisConfig::defaults();
+
+        assert!(!config.auto_snapshot_supabase);
+        assert!(config.supabase_snapshot.project_ref.is_empty());
+        assert!(
+            config
+                .supabase_snapshot
+                .require_config_target_match_on_rollback
+        );
+        assert_eq!(
+            config.supabase_snapshot.db,
+            PostgresSnapshotConfig::default()
+        );
+    }
+
+    #[test]
     fn db_snapshot_defaults_are_disabled() {
         let config = AegisConfig::defaults();
 
@@ -1002,6 +1104,91 @@ sqlite_snapshot_path = "db/app.db"
         assert!(config.postgres_snapshot.database.is_empty());
         assert!(config.mysql_snapshot.database.is_empty());
         assert!(config.sqlite_snapshot_path.is_empty());
+    }
+
+    #[test]
+    fn supabase_snapshot_fields_merge_by_replacement_and_scalar_override() {
+        let base = AegisConfig {
+            auto_snapshot_supabase: false,
+            supabase_snapshot: SupabaseSnapshotConfig {
+                project_ref: "base_proj".to_string(),
+                require_config_target_match_on_rollback: true,
+                db: PostgresSnapshotConfig {
+                    database: "base_db".to_string(),
+                    host: "base.supabase.co".to_string(),
+                    port: 6001,
+                    user: "base_user".to_string(),
+                },
+            },
+            ..AegisConfig::defaults()
+        };
+
+        let overlay = PartialConfig {
+            auto_snapshot_supabase: Some(true),
+            supabase_snapshot: Some(SupabaseSnapshotConfig {
+                project_ref: "overlay_proj".to_string(),
+                require_config_target_match_on_rollback: false,
+                db: PostgresSnapshotConfig {
+                    database: "overlay_db".to_string(),
+                    host: "overlay.supabase.co".to_string(),
+                    port: 6543,
+                    user: "overlay_user".to_string(),
+                },
+            }),
+            ..PartialConfig::default()
+        };
+
+        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+
+        assert!(merged.auto_snapshot_supabase);
+        assert_eq!(merged.supabase_snapshot.project_ref, "overlay_proj");
+        assert!(
+            !merged
+                .supabase_snapshot
+                .require_config_target_match_on_rollback
+        );
+        assert_eq!(merged.supabase_snapshot.db.database, "overlay_db");
+        assert_eq!(merged.supabase_snapshot.db.host, "overlay.supabase.co");
+        assert_eq!(merged.supabase_snapshot.db.port, 6543);
+        assert_eq!(merged.supabase_snapshot.db.user, "overlay_user");
+    }
+
+    #[test]
+    fn partial_supabase_snapshot_overlay_replaces_entire_bundle() {
+        let base = AegisConfig {
+            supabase_snapshot: SupabaseSnapshotConfig {
+                project_ref: "base_proj".to_string(),
+                require_config_target_match_on_rollback: false,
+                db: PostgresSnapshotConfig {
+                    database: "base_db".to_string(),
+                    host: "base.supabase.co".to_string(),
+                    port: 6001,
+                    user: "base_user".to_string(),
+                },
+            },
+            ..AegisConfig::defaults()
+        };
+
+        let overlay = PartialConfig {
+            supabase_snapshot: Some(SupabaseSnapshotConfig {
+                project_ref: "overlay_proj".to_string(),
+                ..SupabaseSnapshotConfig::default()
+            }),
+            ..PartialConfig::default()
+        };
+
+        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+
+        assert_eq!(merged.supabase_snapshot.project_ref, "overlay_proj");
+        assert!(
+            merged
+                .supabase_snapshot
+                .require_config_target_match_on_rollback
+        );
+        assert_eq!(
+            merged.supabase_snapshot.db,
+            PostgresSnapshotConfig::default()
+        );
     }
 
     #[test]
@@ -1519,6 +1706,18 @@ expires_at = "2030-01-01T00:00:00Z"
         assert!(
             template.contains("[mysql_snapshot]"),
             "template must include the MySQL snapshot section"
+        );
+        assert!(
+            template.contains("auto_snapshot_supabase = false"),
+            "template must surface Supabase snapshot toggles"
+        );
+        assert!(
+            template.contains("[supabase_snapshot]"),
+            "template must include the Supabase snapshot section"
+        );
+        assert!(
+            template.contains("[supabase_snapshot.db]"),
+            "template must include the Supabase PostgreSQL transport section"
         );
         assert!(
             template.contains("auto_snapshot_sqlite = false"),

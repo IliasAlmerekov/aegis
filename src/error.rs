@@ -32,6 +32,16 @@ pub enum AegisError {
     )]
     RollbackDumpNotFound { path: String },
 
+    /// The persisted rollback artifact no longer matches the manifest checksum.
+    #[error(
+        "rollback failed: artifact integrity verification failed for '{path}' (expected SHA-256 {expected_sha256}, got {actual_sha256})"
+    )]
+    RollbackIntegrityCheckFailed {
+        path: String,
+        expected_sha256: String,
+        actual_sha256: String,
+    },
+
     #[error("config error: {0}")]
     Config(String),
 
@@ -51,5 +61,19 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("/home/user/.aegis/snapshots/pg-myapp-1234.dump"));
         assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn rollback_integrity_check_failed_message_contains_path() {
+        let err = AegisError::RollbackIntegrityCheckFailed {
+            path: "/home/user/.aegis/snapshots/supabase-123/artifacts/db.dump".to_string(),
+            expected_sha256: "abc123".to_string(),
+            actual_sha256: "def456".to_string(),
+        };
+        let msg = err.to_string();
+
+        assert!(msg.contains("/home/user/.aegis/snapshots/supabase-123/artifacts/db.dump"));
+        assert!(msg.contains("expected SHA-256 abc123"));
+        assert!(msg.contains("got def456"));
     }
 }

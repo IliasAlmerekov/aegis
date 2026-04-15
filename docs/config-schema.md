@@ -45,6 +45,7 @@ auto_snapshot_docker = false
 auto_snapshot_postgres = false
 auto_snapshot_mysql = false
 auto_snapshot_sqlite = false
+auto_snapshot_supabase = false
 sqlite_snapshot_path = ""
 ci_policy = "Block"
 ```
@@ -133,7 +134,7 @@ Snapshot requests matter only for `Danger` flows.
 
 - `None` never requests snapshots
 - `Selective` honors `auto_snapshot_git` / `auto_snapshot_docker`
-- `Selective` also honors `auto_snapshot_postgres` / `auto_snapshot_mysql` / `auto_snapshot_sqlite`
+- `Selective` also honors `auto_snapshot_postgres` / `auto_snapshot_mysql` / `auto_snapshot_sqlite` / `auto_snapshot_supabase`
 - `Full` requests all applicable snapshot plugins regardless of per-plugin flags
 
 Important details:
@@ -207,6 +208,29 @@ sqlite_snapshot_path = ""
 - `auto_snapshot_sqlite` enables SQLite snapshots before dangerous commands
 - `sqlite_snapshot_path` must point to the `.db` file, either relative to the current working directory or absolute
 - SQLite snapshots do not use a username/password block; the database file path is the only required setting
+
+### Supabase snapshots
+
+```toml
+auto_snapshot_supabase = false
+
+[supabase_snapshot]
+project_ref = ""
+require_config_target_match_on_rollback = true
+
+[supabase_snapshot.db]
+database = ""
+host = "localhost"
+port = 5432
+user = ""
+```
+
+- `auto_snapshot_supabase` enables the project-level Supabase provider for dangerous-command snapshot planning, but the provider only applies when `supabase_snapshot.db.database` is set and both `pg_dump` and `pg_restore` are available
+- in Phase 1, the effective captured scope is a **db-only manifest snapshot**
+- `project_ref` is advisory-only metadata stored in the snapshot manifest for future audit/UI use
+- `require_config_target_match_on_rollback` fail-closes rollback if current config disagrees with the manifest target
+- `supabase_snapshot.db` configures the direct PostgreSQL transport used by Phase 1
+- credentials must come from `PGPASSWORD` or `~/.pgpass`; never store passwords in config
 
 ## CI policy
 
