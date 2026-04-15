@@ -298,12 +298,9 @@ impl MysqlPlugin {
         let dump_file_name = Self::decode_component(dump_ref_encoded, "dump reference")?;
         Self::validate_dump_file_name(&dump_file_name)?;
 
-        Ok(MysqlRollbackTarget {
-            host: self.host.clone(),
-            port: self.port,
-            user: self.user.clone(),
-            dump_path: self.snapshots_dir.join(dump_file_name),
-        })
+        Err(AegisError::Snapshot(
+            "legacy mysql snapshot IDs cannot be safely restored after v2 hardening because the original target server/account was not recorded".to_string(),
+        ))
     }
 
     async fn kill_and_reap_child(child: &mut tokio::process::Child) {
@@ -862,37 +859,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rollback_accepts_legacy_snapshot_ids() {
+    async fn rollback_rejects_legacy_snapshot_ids() {
         let temp_dir = TempDir::new().unwrap();
-        let log_path = temp_dir.path().join("mysql.args");
-        let stdin_path = temp_dir.path().join("mysql.stdin");
         let dump_path = temp_dir.path().join("snaps").join("legacy.sql");
         fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
         fs::write(&dump_path, "dump-data").unwrap();
-        let mysql = stub_bin(
-            &temp_dir,
-            "mysql",
-            &format!(
-                "log='{}'\nstdin_file='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone\ncat > \"$stdin_file\"",
-                log_path.display(),
-                stdin_path.display()
-            ),
-        );
-        let mut plugin = plugin_with_user(&temp_dir, "root");
-        plugin.mysql_bin = mysql.display().to_string();
+        let plugin = plugin_with_user(&temp_dir, "root");
         let snapshot_id = format!(
             "{}{SEP}{}",
             MysqlPlugin::encode_database("app"),
             MysqlPlugin::encode_component("legacy.sql")
         );
 
-        plugin.rollback(&snapshot_id).await.unwrap();
+        let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
-        let logged_args = fs::read_to_string(&log_path).unwrap();
-        assert!(logged_args.lines().any(|line| line == "--host=localhost"));
-        assert!(logged_args.lines().any(|line| line == "--port=3306"));
-        assert!(logged_args.lines().any(|line| line == "--user=root"));
-        assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
+        match err {
+            AegisError::Snapshot(msg) => {
+                assert!(msg.contains("legacy"));
+                assert!(msg.contains("cannot be safely restored"));
+                assert!(msg.contains("original target server/account was not recorded"));
+            }
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
     }
 
     #[tokio::test]

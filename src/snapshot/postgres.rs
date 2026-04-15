@@ -285,12 +285,9 @@ impl PostgresPlugin {
         let dump_path = PathBuf::from(dump_str);
         Self::validate_snapshot_path(&dump_path, "dump path")?;
 
-        Ok(PostgresRollbackTarget {
-            host: self.host.clone(),
-            port: self.port,
-            user: self.user.clone(),
-            dump_path,
-        })
+        Err(AegisError::Snapshot(
+            "legacy postgres snapshot IDs cannot be safely restored after v2 hardening because the original target server/account was not recorded".to_string(),
+        ))
     }
 }
 
@@ -717,39 +714,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rollback_accepts_legacy_snapshot_ids() {
+    async fn rollback_rejects_legacy_snapshot_ids() {
         let temp_dir = TempDir::new().unwrap();
-        let log_path = temp_dir.path().join("pg_restore.args");
         let dump_path = temp_dir.path().join("snaps").join("legacy.dump");
         fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
         fs::write(&dump_path, "dump-data").unwrap();
-        let pg_restore = stub_bin(
-            &temp_dir,
-            "pg_restore",
-            &format!(
-                "log='{}'\n: > \"$log\"\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\" >> \"$log\"\ndone",
-                log_path.display()
-            ),
-        );
-        let mut plugin = plugin_with_user(&temp_dir, "postgres");
-        plugin.pg_restore_bin = pg_restore.display().to_string();
+        let plugin = plugin_with_user(&temp_dir, "postgres");
         let snapshot_id = format!(
             "{}{SEP}{}",
             PostgresPlugin::encode_database("app"),
             dump_path.display()
         );
 
-        plugin.rollback(&snapshot_id).await.unwrap();
+        let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
-        let logged_args = fs::read_to_string(&log_path).unwrap();
-        assert!(logged_args.lines().any(|line| line == "localhost"));
-        assert!(logged_args.lines().any(|line| line == "5432"));
-        assert!(logged_args.lines().any(|line| line == "postgres"));
-        assert!(
-            logged_args
-                .lines()
-                .any(|line| line == dump_path.to_string_lossy())
-        );
+        match err {
+            AegisError::Snapshot(msg) => {
+                assert!(msg.contains("legacy"));
+                assert!(msg.contains("cannot be safely restored"));
+                assert!(msg.contains("original target server/account was not recorded"));
+            }
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
