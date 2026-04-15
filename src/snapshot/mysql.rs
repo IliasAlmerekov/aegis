@@ -932,7 +932,7 @@ mod tests {
         let dump_path = temp_dir.path().join("snaps").join("existing.sql");
         fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
         fs::write(&dump_path, "dump-data").unwrap();
-        let mysql = stub_bin(&temp_dir, "mysql", "exit 0");
+        let mysql = stub_bin(&temp_dir, "mysql", "cat > /dev/null");
         let mut plugin = plugin_with_user(&temp_dir, "root");
         plugin.mysql_bin = mysql.display().to_string();
         let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
