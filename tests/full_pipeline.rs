@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use aegis::audit::{AuditEntry, AuditLogger, AuditSnapshot, Decision};
+use aegis::interceptor::RiskLevel;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -1666,6 +1668,24 @@ exit 0
     assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
 }
 
+fn append_audit_entry(home: &Path, plugin: &str, snapshot_id: &str) {
+    let logger = AuditLogger::new(home.join(".aegis").join("audit.jsonl"));
+    logger
+        .append(AuditEntry::new(
+            "manual test command",
+            RiskLevel::Safe,
+            Vec::new(),
+            Decision::Approved,
+            vec![AuditSnapshot {
+                plugin: plugin.to_string(),
+                snapshot_id: snapshot_id.to_string(),
+            }],
+            None,
+            None,
+        ))
+        .unwrap();
+}
+
 #[test]
 fn danger_command_denied_records_supabase_snapshot_in_audit() {
     let home = TempDir::new().unwrap();
@@ -3127,4 +3147,42 @@ fn rollback_with_malformed_project_config_uses_standard_config_load_error_format
         !stderr.contains("error: rollback failed:"),
         "rollback config failures should not use the generic rollback-failed wrapper: {stderr}"
     );
+}
+
+#[test]
+fn rollback_with_known_provider_but_malformed_id_fails_closed() {
+    let home = TempDir::new().unwrap();
+    let snapshot_id = "malformed-id-format";
+
+    append_audit_entry(home.path(), "git", snapshot_id);
+
+    let output = base_command(home.path())
+        .args(["rollback", snapshot_id])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("malformed snapshot_id"));
+    assert!(stderr.contains("error: rollback failed:"));
+}
+
+#[test]
+fn rollback_with_unknown_plugin_is_rejected_without_fallback() {
+    let home = TempDir::new().unwrap();
+    let snapshot_id = "not-known\tabcdef";
+
+    append_audit_entry(home.path(), "legacy-provider", snapshot_id);
+
+    let output = base_command(home.path())
+        .args(["rollback", snapshot_id])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(4));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("snapshot plugin \"legacy-provider\" is not available for rollback"));
+    assert!(!stderr.contains("snapshot id was not found"));
 }

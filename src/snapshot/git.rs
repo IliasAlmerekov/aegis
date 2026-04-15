@@ -541,4 +541,37 @@ mod tests {
             other => panic!("expected RollbackConflict, got: {other:?}"),
         }
     }
+
+    #[tokio::test]
+    async fn rollback_rejects_malformed_snapshot_id() {
+        let err = GitPlugin
+            .rollback("not-a-valid-snapshot-id")
+            .await
+            .expect_err("malformed snapshot id should fail");
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rollback_errors_when_stash_entry_not_found() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path()).await;
+
+        let snapshot_id = format!(
+            "{}\t0000000000000000000000000000000000000000",
+            dir.path().display()
+        );
+        let err = GitPlugin
+            .rollback(&snapshot_id)
+            .await
+            .expect_err("missing stash hash should fail");
+
+        match err {
+            AegisError::Snapshot(msg) => assert!(msg.contains("stash entry not found")),
+            other => panic!("expected snapshot error, got {other:?}"),
+        }
+    }
 }
