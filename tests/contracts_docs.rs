@@ -44,7 +44,7 @@ fn threat_model_is_current_and_documents_non_goals_honestly() {
         "Security invariants",
         "Explicit non-goals",
         "Verification maturity note",
-        "Current fuzzing coverage is intentionally partial",
+        "Current fuzzing coverage includes parser and scanner harnesses",
     ] {
         assert!(
             contents.contains(needle),

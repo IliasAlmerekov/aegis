@@ -1,0 +1,4 @@
+bash <<'EOF'
+echo 'prepare'
+rm -rf /tmp/aegis-fuzz-shell-regression
+EOF

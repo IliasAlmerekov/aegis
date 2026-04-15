@@ -1,0 +1,1 @@
+printf "safe token: rm -rf /tmp/aegis-quoted-regression" && true

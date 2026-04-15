@@ -16,6 +16,7 @@ Current GitHub Actions workflows run these jobs:
 - `Security (audit, deny)`: `cargo-audit` and `cargo-deny`
 - `Release build`: release builds on Ubuntu and macOS
 - `Performance baseline (scanner bench)`: `scanner_bench` plus benchmark policy evaluation
+- `Fuzzing (parser + scanner)`: `cargo +nightly fuzz run parser` and `cargo +nightly fuzz run scanner` with bounded `-runs`
 - `Release / build`: tagged release binaries for:
   - `x86_64-unknown-linux-gnu`
   - `aarch64-unknown-linux-gnu`
@@ -27,6 +28,7 @@ Current GitHub Actions workflows run these jobs:
 
 - the workflow definitions do not depend on floating toolchain, tool, or action refs
 - CI runs formatting, linting, tests, dependency audit, deny policy checks, release builds, and benchmark policy checks exactly as defined in the pinned workflows
+- CI additionally verifies parser and scanner fuzzing with bounded corpus-backed runs.
 - release artifacts are checksumed and uploaded by the pinned release workflow
 
 ## What CI Does Not Guarantee

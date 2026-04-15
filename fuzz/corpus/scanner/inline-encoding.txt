@@ -1,0 +1,1 @@
+bash -lc "python3 -c 'import os; os.system(\"rm -rf /tmp/aegis-inline-regression\")'"

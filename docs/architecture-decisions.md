@@ -194,10 +194,12 @@ and JSON evaluation flows.
 
 ## ADR-009: Fuzz testing for parser and scanner
 
-**Decision:** Aegis uses `cargo-fuzz` (libFuzzer) for security-sensitive shell-input fuzzing. In phase 1, the repository implements a dedicated parser fuzz target; scanner fuzzing remains a required follow-on phase.
+**Decision:** Aegis uses `cargo-fuzz` (libFuzzer) for security-sensitive shell-input fuzzing. Parser and scanner fuzz targets are both implemented; parser fuzzing remains the initial focus for bug discovery cadence, while scanner fuzzing shares the same CI-backed release policy.
 
 **Rationale:** The parser handles untrusted shell command strings that may contain heredoc bodies, inline Python/Node scripts, nested quotes, and escape sequences. This is the highest-complexity, highest-risk code in the project — the exact profile where fuzzing reliably finds bugs that hand-written tests miss. The scanner is the next surface in the same rollout, but it is intentionally deferred so parser failures are easier to triage first.
 
-The phase-1 parser target lives at `fuzz/fuzz_targets/parser.rs`. Run it with `cargo +nightly fuzz run parser fuzz/corpus/parser`.
+Current targets live at:
+- `fuzz/fuzz_targets/parser.rs` (run with `cargo +nightly fuzz run parser fuzz/corpus/parser`);
+- `fuzz/fuzz_targets/scanner.rs` (run with `cargo +nightly fuzz run scanner fuzz/corpus/scanner`).
 
-**Status:** Parser fuzz target implemented in this phase; scanner fuzz target not yet implemented in this phase. Fuzzing remains required before v1.0 release.
+**Status:** Both parser and scanner fuzz targets exist; fuzzing runs are now part of CI release validation.

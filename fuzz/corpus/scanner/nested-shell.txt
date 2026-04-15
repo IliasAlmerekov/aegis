@@ -1,0 +1,1 @@
+( echo start; bash -lc 'cat /etc/passwd | python3 -c "import os; os.system(\"rm -rf /tmp/aegis-nested-regression\")"' )

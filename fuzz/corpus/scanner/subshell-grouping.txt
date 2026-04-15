@@ -1,0 +1,4 @@
+{
+    echo start
+    rm -rf /tmp/aegis-subshell-regression
+}

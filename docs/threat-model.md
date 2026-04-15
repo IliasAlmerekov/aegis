@@ -197,14 +197,12 @@ Aegis does not aim to provide:
 
 ## Verification maturity note
 
-Current fuzzing coverage is intentionally partial:
+Current fuzzing coverage includes parser and scanner harnesses under:
 
-- parser fuzzing exists under `fuzz/fuzz_targets/parser.rs`
-- scanner fuzzing is still a follow-on gap
+- `fuzz/fuzz_targets/parser.rs`
+- `fuzz/fuzz_targets/scanner.rs`
 
-That is acceptable for an early `0.1.x` local-guardrail positioning, but it is
-not enough to justify stronger security or production-maturity claims on its
-own.
+Both targets are integrated into CI with bounded runs and corpus-backed seed inputs.
 
 ## Operational guidance
 
