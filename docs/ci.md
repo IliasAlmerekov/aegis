@@ -4,7 +4,7 @@
 
 - Rust toolchain: `1.94.0`
 - `cargo-audit`: `0.22.1`
-- `cargo-deny`: `0.18.2`
+- `cargo-deny`: `0.19.0`
 - `cross`: `0.2.5`
 - GitHub Actions used by `.github/workflows/ci.yml` and `.github/workflows/release.yml` are pinned by full commit SHA with readable release comments.
 
