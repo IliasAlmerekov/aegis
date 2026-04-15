@@ -1340,7 +1340,7 @@ mod tests {
         config.auto_snapshot_git = true;
         config.auto_snapshot_docker = false;
         let context = RuntimeContext::new(config, test_handle()).unwrap();
-        let prepared = PreparedPlanner::Ready(context);
+        let prepared = PreparedPlanner::Ready(Box::new(context));
         let outcome = prepare_and_plan(
             &prepared,
             aegis::planning::PlanningRequest {
