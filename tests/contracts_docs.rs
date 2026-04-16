@@ -75,7 +75,8 @@ fn readme_links_to_contract_docs() {
         "aegis --help",
         "These checks prove that `aegis` is installed and runnable, but they do not",
         "prove that command routing is active",
-        "actually running the wrapper",
+        "confirm the routing",
+        "configuration by checking",
         "SHELL` points to the absolute",
         "AEGIS_REAL_SHELL` points to your real shell",
         "agent setting itself points",
@@ -84,6 +85,8 @@ fn readme_links_to_contract_docs() {
         "paste the absolute path it prints into that",
         "the absolute path printed by `command -v aegis`",
         "preserve the real shell with `AEGIS_REAL_SHELL`",
+        "that the wrapper binary can prompt for a risky command and pass through a safe",
+        "the wrapper prompt/allow flow is working",
     ] {
         assert!(
             readme.contains(needle),

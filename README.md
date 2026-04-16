@@ -79,9 +79,9 @@ prove that command routing is active.
 
 To verify the active routing setup:
 
-- **Convenience installer or `$SHELL`-based setup**: confirm your shell is
-  actually running the wrapper by checking that `SHELL` points to the absolute
-  `aegis` path and `AEGIS_REAL_SHELL` points to your real shell:
+- **Convenience installer or `$SHELL`-based setup**: confirm the routing
+  configuration by checking that `SHELL` points to the absolute `aegis` path
+  and `AEGIS_REAL_SHELL` points to your real shell:
 
   ```bash
   echo "$SHELL"            # should print the absolute path to aegis
@@ -123,8 +123,9 @@ command -v aegis
 ## Step 4 — Test it
 
 Run these two commands in the same terminal where your agent runs. They prove
-the wrapper binary is working, but they still do not by themselves prove the
-agent is routed through it:
+that the wrapper binary can prompt for a risky command and pass through a safe
+command, but they still do not by themselves prove the agent is routed through
+it:
 
 ```bash
 # Should show a confirmation prompt — press n to deny
@@ -134,7 +135,8 @@ aegis -c 'rm -rf /tmp/aegis-test'
 aegis -c 'echo hello'
 ```
 
-If the first command shows a dialog — Aegis is active and working.
+If the first command shows a dialog and the second command passes through
+cleanly — the wrapper prompt/allow flow is working.
 
 ---
 
