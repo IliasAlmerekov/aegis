@@ -43,6 +43,20 @@ This page covers common operational failures and practical recovery steps.
 1. Install one of them (`sha256sum` preferred).
 2. Re-run install once tool is available.
 
+### Manual checksum verification fails
+
+**Why:** The downloaded release asset and `.sha256` sidecar do not match, or
+one of the files was changed in transit.
+
+**Fix:**
+
+1. Re-download both files from the same release tag.
+2. Make sure you are checking the checksum file for the exact asset name.
+3. Verify with one of the supported commands:
+   - `sha256sum -c <asset-name>.sha256`
+   - `shasum -a 256 -c <asset-name>.sha256`
+4. Do not install the binary until the checksum check passes.
+
 ### Cannot write binary / rc file during install
 
 **Why:** Insufficient permissions for `BINDIR` or shell RC path.
@@ -63,6 +77,22 @@ This page covers common operational failures and practical recovery steps.
 
 1. Export the real shell explicitly: `export AEGIS_REAL_SHELL=$(command -v bash)` (or `zsh`).
 2. Re-run installer with `AEGIS_REAL_SHELL` set.
+
+## Audit integrity verification
+
+### `aegis audit --verify-integrity` fails
+
+**Why:** The integrity chain was never enabled, a rotated segment is missing,
+or the log files were altered.
+
+**Fix:**
+
+1. Confirm `[audit] integrity_mode = "ChainSha256"` was enabled before the log
+   entries you want to verify were written.
+2. Make sure the active audit file and any rotated archives are present.
+3. Re-run `aegis audit --verify-integrity` against the full log set.
+4. Treat the failure as a sign that the log should not be trusted until you
+   inspect the files.
 
 ## Uninstall recovery
 

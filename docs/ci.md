@@ -65,3 +65,7 @@ The current release workflow is triggered by tags matching `v*` and:
 - publishes a GitHub Release with generated release notes and the built artifacts
 
 This is a deterministic workflow-input contract, not a formal reproducible-build guarantee.
+
+For users who want to validate a downloaded release asset before installing it,
+see [Release readiness](release-readiness.md). That document also splits launch
+blockers from longer-term security hardening items.

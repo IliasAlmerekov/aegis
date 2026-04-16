@@ -250,6 +250,33 @@ Current runtime behavior:
 - `Audit` remains non-blocking
 - `Block` risk remains blocked regardless of CI policy
 
+## Audit integrity mode
+
+The audit log integrity mode is a runtime choice, not a required launch
+default.
+
+Current default:
+
+```toml
+[audit]
+integrity_mode = "Off"
+```
+
+Recommended for security-conscious deployments:
+
+```toml
+[audit]
+rotation_enabled = true
+integrity_mode = "ChainSha256"
+```
+
+Guidance:
+
+- `Off` keeps the current low-overhead default and is acceptable for lighter
+  deployments.
+- `ChainSha256` makes audit entries and rotated segments tamper-evident.
+- verify the active and rotated logs with `aegis audit --verify-integrity`.
+
 ## JSON output contract
 
 `aegis --output json` currently emits schema version `1`.

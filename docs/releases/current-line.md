@@ -24,11 +24,14 @@ boundary, or release properties not already documented elsewhere.
 - Current crate version: `0.2.0`
 - Supported platforms are documented in [Platform support](../platform-support.md).
 - Release and CI behavior are documented in [CI and Release Guarantees](../ci.md).
+- Launch checklists and the verification-first/manual install path are
+  documented in [Release readiness](../release-readiness.md).
 - Threat and limitation language is documented in [Threat model](../threat-model.md).
 
 ## What is not claimed
 
 - no claim that a `v1.0.0` release has already been published;
+- no claim that the release-readiness checklist has already been completed;
 - no claim of SBOM, provenance, or attestation coverage unless the release
   workflow adds it;
 - no claim of byte-for-byte reproducible builds across all environments.

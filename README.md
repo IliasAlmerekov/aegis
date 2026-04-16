@@ -27,7 +27,9 @@ When an AI agent (like Claude Code) runs a shell command, Aegis intercepts it fi
 
 ## Step 1 — Install
 
-Open a terminal and run one command:
+There are two install paths:
+
+### Option A — convenience installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
@@ -38,6 +40,13 @@ The installer will:
 - download the binary and verify its checksum
 - install `aegis` on your PATH
 - add the shell wrapper to `~/.bashrc` or `~/.zshrc`
+
+### Option B — verification-first manual install
+
+Prefer to verify the release asset yourself first? Follow the manual
+checksum-first path in [Release readiness](docs/release-readiness.md). It shows
+how to download the release asset, fetch the matching `.sha256` sidecar, verify
+it with `sha256sum` or `shasum -a 256`, and then install the verified binary.
 
 If you're on Windows, the best-effort path is to run Aegis inside a WSL2
 terminal; native Windows shells like `PowerShell` and `cmd.exe` are not
@@ -167,6 +176,7 @@ Full details: [Threat model](docs/threat-model.md)
 - [Changelog](CHANGELOG.md)
 - [Current release line](docs/releases/current-line.md)
 - [Config schema](docs/config-schema.md)
+- [Release readiness](docs/release-readiness.md)
 - [Threat model](docs/threat-model.md)
 - [Platform support](docs/platform-support.md)
 - [CI and releases](docs/ci.md)

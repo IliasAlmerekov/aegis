@@ -64,4 +64,66 @@ fn readme_links_to_contract_docs() {
         readme.contains("[Threat model](docs/threat-model.md)"),
         "README must link to threat model contract document"
     );
+    assert!(
+        readme.contains("[Release readiness](docs/release-readiness.md)"),
+        "README must link to release-readiness contract document"
+    );
+}
+
+#[test]
+fn release_readiness_doc_separates_launch_and_security_checklists() {
+    let path = repo_path("docs/release-readiness.md");
+    let contents = fs::read_to_string(&path).expect("docs/release-readiness.md must exist");
+
+    for needle in [
+        "## Minimum Launch Checklist",
+        "## Security-Grade Checklist",
+        "## Verification-first manual install path",
+        "sha256sum -c <asset-name>.sha256",
+        "shasum -a 256 -c <asset-name>.sha256",
+        "integrity_mode = \"ChainSha256\"",
+        "aegis audit --verify-integrity",
+    ] {
+        assert!(
+            contents.contains(needle),
+            "release-readiness doc must include `{needle}`"
+        );
+    }
+}
+
+#[test]
+fn config_schema_recommends_chain_sha256_for_security_conscious_deployments() {
+    let path = repo_path("docs/config-schema.md");
+    let contents = fs::read_to_string(&path).expect("docs/config-schema.md must exist");
+
+    for needle in [
+        "## Audit integrity mode",
+        "integrity_mode = \"Off\"",
+        "integrity_mode = \"ChainSha256\"",
+        "aegis audit --verify-integrity",
+    ] {
+        assert!(
+            contents.contains(needle),
+            "config schema doc must include `{needle}`"
+        );
+    }
+}
+
+#[test]
+fn troubleshooting_covers_manual_checksum_and_integrity_verification() {
+    let path = repo_path("docs/troubleshooting.md");
+    let contents = fs::read_to_string(&path).expect("docs/troubleshooting.md must exist");
+
+    for needle in [
+        "Manual checksum verification fails",
+        "sha256sum -c <asset-name>.sha256",
+        "shasum -a 256 -c <asset-name>.sha256",
+        "Audit integrity verification",
+        "aegis audit --verify-integrity",
+    ] {
+        assert!(
+            contents.contains(needle),
+            "troubleshooting doc must include `{needle}`"
+        );
+    }
 }
