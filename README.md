@@ -163,6 +163,7 @@ Full details: [Threat model](docs/threat-model.md)
 
 ## Docs
 
+- [Changelog](CHANGELOG.md)
 - [Config schema](docs/config-schema.md)
 - [Threat model](docs/threat-model.md)
 - [Platform support](docs/platform-support.md)

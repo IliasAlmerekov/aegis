@@ -19,5 +19,4 @@ fuzz/corpus/parser/*
 !fuzz/corpus/parser/nested-shell.txt
 docs/claude-source-borrowings.md
 docs/CODEX-*.md
-docs/superpowers/
 docs/tickets/
