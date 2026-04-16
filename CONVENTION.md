@@ -9,7 +9,7 @@ It consolidates the current enforced rules from:
 - `docs/architecture-decisions.md`
 - `.github/workflows/ci.yml`
 - `CONTRIBUTING.md`
-- `TODO.md`
+- `ROADMAP.md`
 
 If these documents ever disagree, treat this precedence as authoritative:
 
@@ -236,7 +236,7 @@ Additional production-readiness gates:
 - release automation is exercised end-to-end
 - threat model and limitations documents exist and are current
 
-## 13. Future Mandatory Changes from `TODO.md`
+## 13. Future Mandatory Changes from the Roadmap
 
 These are not all complete today, but they are part of the intended project contract
 and should guide all new work so we do not build in the wrong direction.
@@ -332,7 +332,7 @@ High-risk changes must be reviewed for:
 The project can be described as production-ready only when all of the following are true:
 
 - all current security invariants in this document are implemented and tested
-- all release-blocking items from `TODO.md` are complete or explicitly retired
+- all release-blocking items tracked in the roadmap are complete or explicitly retired
 - supported platforms and environment assumptions are documented
 - config, audit log, and exit-code compatibility policy is documented
 - release workflow is reproducible and verified

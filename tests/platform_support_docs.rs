@@ -31,7 +31,7 @@ fn platform_support_doc_exists_and_declares_unix_only_matrix() {
         "| Windows host via WSL2 terminal |",
         "| Windows |",
         "Supported",
-        "Expected to work",
+        "Best-effort / not separately validated",
         "Not supported",
         "bash",
         "zsh",

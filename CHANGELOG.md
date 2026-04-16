@@ -1,12 +1,13 @@
 # Changelog
 
-This changelog records the release documentation state for Aegis. It is intended
+This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
-## v1.0.0
+## v0.2.0
 
-Release documentation for the `v1.0.0` tag / release line.
+Release documentation for the current pre-1.0 line tracked by `Cargo.toml`
+version `0.2.0`.
 
 ### Highlights documented for this release line
 
@@ -32,7 +33,8 @@ Release documentation for the `v1.0.0` tag / release line.
 
 ### Reference docs
 
-- [v1.0.0 release summary](docs/releases/v1.0.0.md)
+- [Current release line](docs/releases/current-line.md)
+- [Planned v1.0.0 release summary](docs/releases/v1.0.0.md)
 - [Release and CI guarantees](docs/ci.md)
 - [Platform support](docs/platform-support.md)
 - [Threat model](docs/threat-model.md)

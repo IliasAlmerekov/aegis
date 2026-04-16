@@ -74,16 +74,18 @@ Not:
 
 The review found internal inconsistencies that reduce trust:
 
-- `Cargo.toml` says `1.0.0`;
+- `Cargo.toml` says `0.2.0`;
 - `SECURITY.md` still says “pre-1.0”;
-- `CONVENTION.md` references `TODO.md`, which is not present;
-- repository instructions reference `RTK.md`, which is not present.
+- `CONVENTION.md` now uses roadmap language instead of a missing backlog
+  concept;
+- repository instructions reference `RTK.md`, now present as the root helper
+  doc.
 
 ### Actions
 
 - update `SECURITY.md` to match the current versioning and release posture;
 - remove, replace, or restore broken references to:
-  - `TODO.md`
+  - roadmap/backlog language
   - `RTK.md`
 - review and align these documents:
   - `README.md`
@@ -91,6 +93,7 @@ The review found internal inconsistencies that reduce trust:
   - `docs/threat-model.md`
   - `docs/platform-support.md`
   - `docs/ci.md`
+  - `docs/releases/current-line.md`
   - `docs/releases/v1.0.0.md`
   - `CHANGELOG.md`
 
@@ -357,7 +360,7 @@ Audit logging is one of the project’s core trust surfaces, but integrity mode 
 
 ### Why
 
-Linux and macOS support look credible. WSL is documented as “expected to work” rather than explicitly validated.
+Linux and macOS support look credible. WSL is documented as best-effort rather than explicitly validated.
 
 ### Actions
 
@@ -369,7 +372,8 @@ Linux and macOS support look credible. WSL is documented as “expected to work�
 ### Exit Criteria
 
 - platform-support claims are based on repeatable checks, not just assumptions;
-- WSL language matches actual validation reality.
+- WSL language matches actual validation reality and avoids overclaiming
+  validation that does not exist.
 
 ### Blocker Level
 

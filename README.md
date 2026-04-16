@@ -39,13 +39,14 @@ The installer will:
 - install `aegis` on your PATH
 - add the shell wrapper to `~/.bashrc` or `~/.zshrc`
 
-If you're on Windows, run Aegis inside a WSL2 terminal; native Windows shells
-like `PowerShell` and `cmd.exe` are not supported yet.
+If you're on Windows, the best-effort path is to run Aegis inside a WSL2
+terminal; native Windows shells like `PowerShell` and `cmd.exe` are not
+supported yet.
 
 If install fails, see [Troubleshooting](docs/troubleshooting.md), especially
 for checksum and shell-wrapper issues.
 
-> **Getting a 404?** The release hasn't been published yet. Install from source instead:
+> **Getting a 404?** The release asset for the version you need isn't available yet. Install from source instead:
 > ```bash
 > cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 > ```
@@ -164,6 +165,7 @@ Full details: [Threat model](docs/threat-model.md)
 ## Docs
 
 - [Changelog](CHANGELOG.md)
+- [Current release line](docs/releases/current-line.md)
 - [Config schema](docs/config-schema.md)
 - [Threat model](docs/threat-model.md)
 - [Platform support](docs/platform-support.md)
