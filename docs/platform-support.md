@@ -26,7 +26,7 @@ That means the supported runtime boundary is:
 
 ## WSL2 guidance
 
-If you use Windows, the supported path is to run Aegis **inside a WSL2 Linux
+If you use Windows, the best-effort path is to run Aegis **inside a WSL2 Linux
 terminal**, where it uses the same Unix-like shell and process assumptions as
 on Linux.
 

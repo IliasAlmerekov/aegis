@@ -20,7 +20,7 @@ When an AI agent (like Claude Code) runs a shell command, Aegis intercepts it fi
 |-------|-------------|
 | **Safe** | Command runs instantly, no questions asked |
 | **Warn** | Aegis asks: "Allow this?" |
-| **Danger** | Aegis asks, and can take a snapshot for rollback (Git, Docker, DB providers, including a Supabase db-only manifest provider in v1) |
+| **Danger** | Aegis asks, and can take a snapshot for rollback when configured (Git, Docker, and database providers) |
 | **Block** | Command is refused, always |
 
 ---
