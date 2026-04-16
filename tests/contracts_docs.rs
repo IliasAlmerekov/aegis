@@ -76,6 +76,7 @@ fn readme_links_to_contract_docs() {
         "Find the `shell` field",
         "paste the absolute path it prints into that",
         "the absolute path printed by `command -v aegis`",
+        "preserve the real shell with `AEGIS_REAL_SHELL`",
     ] {
         assert!(
             readme.contains(needle),
@@ -103,7 +104,8 @@ fn release_readiness_doc_separates_launch_and_security_checklists() {
         "export PATH=\"$HOME/.local/bin:$PATH\"",
         "Claude Code: run `command -v aegis`, then paste the absolute path it",
         "shell-based launchers that honor `$SHELL`",
-        "export `SHELL=/absolute/path/to/aegis`",
+        "SHELL=/absolute/path/to/aegis",
+        "AEGIS_REAL_SHELL=/absolute/path/to/your-real-shell",
         "integrity_mode = \"ChainSha256\"",
         "aegis audit --verify-integrity",
     ] {

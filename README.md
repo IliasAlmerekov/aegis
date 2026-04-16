@@ -90,8 +90,10 @@ For Aegis to watch **every agent command**, the agent needs to use `aegis` as it
 ### Other agents (Codex CLI, etc.)
 
 If the agent respects the `$SHELL` environment variable — set it to
-the absolute path printed by `command -v aegis` in your shell profile, or
-launch the agent from a shell where `SHELL` already points to `aegis`.
+the absolute path printed by `command -v aegis` in your shell profile, and
+preserve the real shell with `AEGIS_REAL_SHELL` as described in
+[Release readiness](docs/release-readiness.md), or launch the agent from a
+shell where both variables are already set correctly.
 
 If the agent has an explicit shell path setting — set it to the output of:
 

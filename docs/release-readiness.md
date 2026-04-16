@@ -82,9 +82,11 @@ line.
 
    - Claude Code: run `command -v aegis`, then paste the absolute path it
      prints into the `shell` setting
-   - shell-based launchers that honor `$SHELL`: export `SHELL=/absolute/path/to/aegis`
-     in your shell profile, or start them from a shell where `SHELL` already
-     points to the installed binary
+   - shell-based launchers that honor `$SHELL`: export
+     `SHELL=/absolute/path/to/aegis` and
+     `AEGIS_REAL_SHELL=/absolute/path/to/your-real-shell` in your shell
+     profile, or start them from a shell where both values already point to
+     the installed binary and the preserved real shell respectively
 
 6. If you want the convenience wrapper behavior too, follow the wrapper
    instructions in `README.md` or use the convenience installer path instead.
