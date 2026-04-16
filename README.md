@@ -84,13 +84,14 @@ For Aegis to watch **every agent command**, the agent needs to use `aegis` as it
 
 1. Open Claude Code settings
 2. Find the `shell` field
-3. Set it to: `$(command -v aegis)`
+3. Run `command -v aegis`, then paste the absolute path it prints into that
+   field
 
 ### Other agents (Codex CLI, etc.)
 
 If the agent respects the `$SHELL` environment variable — set it to
-`$(command -v aegis)` in your shell profile or launch the agent from a shell
-where `SHELL` already points to `aegis`.
+the absolute path printed by `command -v aegis` in your shell profile, or
+launch the agent from a shell where `SHELL` already points to `aegis`.
 
 If the agent has an explicit shell path setting — set it to the output of:
 

@@ -74,7 +74,8 @@ fn readme_links_to_contract_docs() {
         "command -v aegis",
         "aegis --help",
         "Find the `shell` field",
-        "SHELL` already points to `aegis`",
+        "paste the absolute path it prints into that",
+        "the absolute path printed by `command -v aegis`",
     ] {
         assert!(
             readme.contains(needle),
@@ -95,12 +96,14 @@ fn release_readiness_doc_separates_launch_and_security_checklists() {
         "sha256sum -c <asset-name>.sha256",
         "shasum -a 256 -c <asset-name>.sha256",
         "make the binary available on your `PATH`",
-        "mkdir -p \"$HOME/.local/bin\"",
-        "chmod +x ./aegis",
-        "mv ./aegis \"$HOME/.local/bin/aegis\"",
+        "asset=aegis-linux-x86_64",
+        "chmod +x \"./$asset\"",
+        "mv \"./$asset\" \"$HOME/.local/bin/aegis\"",
+        "Replace `aegis-linux-x86_64` with your platform asset name",
         "export PATH=\"$HOME/.local/bin:$PATH\"",
-        "Claude Code: point the `shell` setting at",
+        "Claude Code: run `command -v aegis`, then paste the absolute path it",
         "shell-based launchers that honor `$SHELL`",
+        "export `SHELL=/absolute/path/to/aegis`",
         "integrity_mode = \"ChainSha256\"",
         "aegis audit --verify-integrity",
     ] {

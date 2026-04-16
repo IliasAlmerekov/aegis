@@ -65,21 +65,26 @@ line.
    ```
 
 4. If verification passes, make the binary available on your `PATH`.
-   For example:
+   For example, on Linux x86_64:
 
    ```bash
+   asset=aegis-linux-x86_64
    mkdir -p "$HOME/.local/bin"
-   chmod +x ./aegis
-   mv ./aegis "$HOME/.local/bin/aegis"
+   chmod +x "./$asset"
+   mv "./$asset" "$HOME/.local/bin/aegis"
    export PATH="$HOME/.local/bin:$PATH"
    ```
 
-   Add the `PATH` line to your shell profile if you want it to persist.
+   Replace `aegis-linux-x86_64` with your platform asset name, such as
+   `aegis-macos-aarch64`. Add the `PATH` line to your shell profile if you
+   want it to persist.
 5. Make your shell or agent use the installed binary:
 
-   - Claude Code: point the `shell` setting at `$(command -v aegis)`
-   - shell-based launchers that honor `$SHELL`: start them from a shell where
-     `SHELL="$(command -v aegis)"`, or export that value in your shell profile
+   - Claude Code: run `command -v aegis`, then paste the absolute path it
+     prints into the `shell` setting
+   - shell-based launchers that honor `$SHELL`: export `SHELL=/absolute/path/to/aegis`
+     in your shell profile, or start them from a shell where `SHELL` already
+     points to the installed binary
 
 6. If you want the convenience wrapper behavior too, follow the wrapper
    instructions in `README.md` or use the convenience installer path instead.
