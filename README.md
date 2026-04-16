@@ -67,12 +67,29 @@ for checksum and shell-wrapper issues.
 
 Close the current terminal window and open a new one. This loads the updated shell config.
 
-Then confirm the install worked:
+Then confirm the binary install worked:
 
 ```bash
 command -v aegis  # should print the path, e.g. /usr/local/bin/aegis
 aegis --help      # should print the CLI help text
 ```
+
+These checks prove that `aegis` is installed and runnable, but they do not
+prove that command routing is active.
+
+To verify the active routing setup:
+
+- **Convenience installer or `$SHELL`-based setup**: confirm your shell is
+  actually running the wrapper by checking that `SHELL` points to the absolute
+  `aegis` path and `AEGIS_REAL_SHELL` points to your real shell:
+
+  ```bash
+  echo "$SHELL"            # should print the absolute path to aegis
+  echo "$AEGIS_REAL_SHELL"  # should print your real shell path
+  ```
+
+- **Explicit agent shell-path setup**: confirm the agent setting itself points
+  to the absolute `aegis` path printed by `command -v aegis`.
 
 ---
 
@@ -105,7 +122,9 @@ command -v aegis
 
 ## Step 4 — Test it
 
-Run these two commands in the same terminal where your agent runs:
+Run these two commands in the same terminal where your agent runs. They prove
+the wrapper binary is working, but they still do not by themselves prove the
+agent is routed through it:
 
 ```bash
 # Should show a confirmation prompt — press n to deny

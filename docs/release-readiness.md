@@ -64,6 +64,11 @@ line.
    shasum -a 256 -c <asset-name>.sha256
    ```
 
+   This verifies the downloaded binary against the checksum sidecar published
+   with the same release asset. It proves integrity of the file you downloaded,
+   but it does **not** authenticate the publisher or provide signature /
+   attestation verification. Those artifacts are not published yet.
+
 4. If verification passes, make the binary available on your `PATH`.
    For example, on Linux x86_64:
 

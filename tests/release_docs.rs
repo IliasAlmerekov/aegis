@@ -51,6 +51,9 @@ fn planned_v1_release_doc_is_explicitly_future_facing() {
         "forward-looking".to_owned(),
         format!("current crate version is `{version}`"),
         "future `v1.0.0` tag".to_owned(),
+        "manual checksum-first flow in".to_owned(),
+        "verification story:".to_owned(),
+        "install script remains a convenience path".to_owned(),
     ] {
         assert!(
             contents.contains(&needle),
