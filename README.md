@@ -46,7 +46,8 @@ The installer will:
 Prefer to verify the release asset yourself first? Follow the manual
 checksum-first path in [Release readiness](docs/release-readiness.md). It shows
 how to download the release asset, fetch the matching `.sha256` sidecar, verify
-it with `sha256sum` or `shasum -a 256`, and then install the verified binary.
+it with `sha256sum` or `shasum -a 256`, place the verified binary on your
+`PATH`, and point your shell or agent at `aegis` afterward.
 
 If you're on Windows, the best-effort path is to run Aegis inside a WSL2
 terminal; native Windows shells like `PowerShell` and `cmd.exe` are not
@@ -69,8 +70,8 @@ Close the current terminal window and open a new one. This loads the updated she
 Then confirm the install worked:
 
 ```bash
-which aegis      # should print the path, e.g. /usr/local/bin/aegis
-echo "$SHELL"    # should point to aegis
+command -v aegis  # should print the path, e.g. /usr/local/bin/aegis
+aegis --help      # should print the CLI help text
 ```
 
 ---
@@ -83,16 +84,18 @@ For Aegis to watch **every agent command**, the agent needs to use `aegis` as it
 
 1. Open Claude Code settings
 2. Find the `shell` field
-3. Set it to: `$(which aegis)`
+3. Set it to: `$(command -v aegis)`
 
 ### Other agents (Codex CLI, etc.)
 
-If the agent respects the `$SHELL` environment variable — it already works after the `install.sh` setup.
+If the agent respects the `$SHELL` environment variable — set it to
+`$(command -v aegis)` in your shell profile or launch the agent from a shell
+where `SHELL` already points to `aegis`.
 
 If the agent has an explicit shell path setting — set it to the output of:
 
 ```bash
-which aegis
+command -v aegis
 ```
 
 ---

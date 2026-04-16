@@ -68,6 +68,19 @@ fn readme_links_to_contract_docs() {
         readme.contains("[Release readiness](docs/release-readiness.md)"),
         "README must link to release-readiness contract document"
     );
+    for needle in [
+        "place the verified binary on your",
+        "`PATH`",
+        "command -v aegis",
+        "aegis --help",
+        "Find the `shell` field",
+        "SHELL` already points to `aegis`",
+    ] {
+        assert!(
+            readme.contains(needle),
+            "README manual-install flow must stay end-to-end and mention `{needle}`"
+        );
+    }
 }
 
 #[test]
@@ -81,6 +94,13 @@ fn release_readiness_doc_separates_launch_and_security_checklists() {
         "## Verification-first manual install path",
         "sha256sum -c <asset-name>.sha256",
         "shasum -a 256 -c <asset-name>.sha256",
+        "make the binary available on your `PATH`",
+        "mkdir -p \"$HOME/.local/bin\"",
+        "chmod +x ./aegis",
+        "mv ./aegis \"$HOME/.local/bin/aegis\"",
+        "export PATH=\"$HOME/.local/bin:$PATH\"",
+        "Claude Code: point the `shell` setting at",
+        "shell-based launchers that honor `$SHELL`",
         "integrity_mode = \"ChainSha256\"",
         "aegis audit --verify-integrity",
     ] {

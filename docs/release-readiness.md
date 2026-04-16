@@ -64,10 +64,25 @@ line.
    shasum -a 256 -c <asset-name>.sha256
    ```
 
-4. If verification passes, install the verified binary wherever you keep
-   command-line tools on your `PATH`.
-5. If you want the shell-wrapper setup as well, follow the same wrapper
-   instructions used by the convenience installer in `README.md`.
+4. If verification passes, make the binary available on your `PATH`.
+   For example:
+
+   ```bash
+   mkdir -p "$HOME/.local/bin"
+   chmod +x ./aegis
+   mv ./aegis "$HOME/.local/bin/aegis"
+   export PATH="$HOME/.local/bin:$PATH"
+   ```
+
+   Add the `PATH` line to your shell profile if you want it to persist.
+5. Make your shell or agent use the installed binary:
+
+   - Claude Code: point the `shell` setting at `$(command -v aegis)`
+   - shell-based launchers that honor `$SHELL`: start them from a shell where
+     `SHELL="$(command -v aegis)"`, or export that value in your shell profile
+
+6. If you want the convenience wrapper behavior too, follow the wrapper
+   instructions in `README.md` or use the convenience installer path instead.
 
 If the checksum does not match, stop and re-download both files from the same
 release. Do not install a binary whose checksum you could not verify.
