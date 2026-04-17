@@ -43,7 +43,7 @@ When an AI agent runs a shell command, Aegis intercepts it and decides what to d
 
 ## Install
 
-One command. Works on **Linux**, **macOS**, and **Windows (WSL)**.
+One command. Works on **Linux**, **macOS**, and **Windows (WSL2)**.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
@@ -93,7 +93,7 @@ cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 
 ### Windows
 
-Aegis works on Windows through **WSL** (Windows Subsystem for Linux). Open a WSL terminal and run the install command above. Native PowerShell and cmd.exe are not supported.
+Aegis works on Windows through **WSL2** (Windows Subsystem for Linux). Open a WSL2 terminal and run the install command above. native Windows shells like PowerShell and cmd.exe are not supported.
 
 ---
 
