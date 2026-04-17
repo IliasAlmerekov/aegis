@@ -160,7 +160,7 @@ jobs:
         with:
           name: scanner-bench-artifacts
           path: |
-          benchmark-report.txt
+            benchmark-report.txt
             target/criterion
 
   fuzz:
