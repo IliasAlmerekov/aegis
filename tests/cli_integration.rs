@@ -47,6 +47,27 @@ fn shell_wrapper_command_flag_executes_command_with_stdio_and_exit_code() {
 }
 
 #[test]
+fn shell_compat_dash_lc_executes_command_and_appends_audit_entry() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(home.path())
+        .args(["-lc", "printf compat"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(output.stdout, b"compat");
+    assert!(output.stderr.is_empty());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["command"], "printf compat");
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Safe");
+}
+
+#[test]
 fn shell_wrapper_command_flag_preserves_child_exit_status() {
     let home = TempDir::new().unwrap();
 
