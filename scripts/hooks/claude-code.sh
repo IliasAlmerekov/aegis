@@ -22,7 +22,10 @@ if [ -z "$input_json" ]; then
   exit 0
 fi
 
-command_value=$(printf '%s' "$input_json" | jq -r '.tool_input.command // empty')
+command_value=$(printf '%s' "$input_json" | jq -r '.tool_input.command // empty' 2>/dev/null) || {
+  echo "[aegis] WARNING: malformed JSON input. Hook cannot rewrite commands." >&2
+  exit 0
+}
 
 if [ -z "$command_value" ]; then
   exit 0
