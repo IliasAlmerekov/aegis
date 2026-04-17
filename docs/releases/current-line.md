@@ -1,7 +1,7 @@
-# Aegis current release line (v0.2.0)
+# Aegis current release line (v0.3.0)
 
 This document summarizes the live pre-1.0 release line described by
-`Cargo.toml` version `0.2.0`.
+`Cargo.toml` version `0.3.0`.
 
 It is the current public / MVP posture, not the future `v1.0.0` target.
 
@@ -21,7 +21,7 @@ boundary, or release properties not already documented elsewhere.
 
 ## Current release-line notes
 
-- Current crate version: `0.2.0`
+- Current crate version: `0.3.0`
 - Supported platforms are documented in [Platform support](../platform-support.md).
 - Release and CI behavior are documented in [CI and Release Guarantees](../ci.md).
 - Launch checklists and the verification-first/manual install path are
