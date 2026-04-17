@@ -258,34 +258,28 @@ fn write_settings_atomically(path: &Path, settings: &Value) -> Result<(), String
         .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
 
     let temp_path = temporary_settings_path(parent);
-    let mut temp = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)
-        .map_err(|err| {
-            format!(
-                "failed to create temporary file {}: {err}",
-                temp_path.display()
-            )
-        })?;
+    {
+        let mut temp = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|err| {
+                format!(
+                    "failed to create temporary file {}: {err}",
+                    temp_path.display()
+                )
+            })?;
 
-    let write_result = (|| -> Result<(), String> {
         serde_json::to_writer_pretty(&mut temp, settings)
             .map_err(|err| format!("failed to serialize JSON for {}: {err}", path.display()))?;
         temp.write_all(b"\n")
             .map_err(|err| format!("failed to finish writing {}: {err}", path.display()))?;
         temp.sync_all()
             .map_err(|err| format!("failed to flush {}: {err}", temp_path.display()))?;
-        fs::rename(&temp_path, path)
-            .map_err(|err| format!("failed to replace {}: {err}", path.display()))?;
-        Ok(())
-    })();
-
-    if write_result.is_err() {
-        let _ = fs::remove_file(&temp_path);
     }
 
-    write_result?;
+    fs::rename(&temp_path, path)
+        .map_err(|err| format!("failed to replace {}: {err}", path.display()))?;
 
     Ok(())
 }
