@@ -642,7 +642,6 @@ fn install_script_falls_back_to_shasum_when_sha256sum_is_missing() {
 }
 
 #[test]
-#[test]
 fn install_script_binary_mode_skips_shell_setup() {
     let temp = TempDir::new().unwrap();
     let bindir = temp.path().join("bin");

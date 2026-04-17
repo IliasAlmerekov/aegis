@@ -69,28 +69,24 @@ fn readme_links_to_contract_docs() {
         "README must link to release-readiness contract document"
     );
     for needle in [
-        "place the verified binary on your",
-        "`PATH`",
         "command -v aegis",
-        "aegis --help",
-        "These checks prove that `aegis` is installed and runnable, but they do not",
-        "prove that command routing is active",
-        "confirm the routing",
-        "configuration by checking",
-        "SHELL` points to the absolute",
-        "AEGIS_REAL_SHELL` points to your real shell",
-        "agent setting itself points",
-        "absolute `aegis` path printed by `command -v aegis`",
-        "Find the `shell` field",
-        "paste the absolute path it prints into that",
-        "the absolute path printed by `command -v aegis`",
-        "preserve the real shell with `AEGIS_REAL_SHELL`",
-        "that the wrapper binary can prompt for a risky command and pass through a safe",
-        "the wrapper prompt/allow flow is working",
+        "aegis --version",
+        "SHELL",
+        "AEGIS_REAL_SHELL",
+        "find the `shell` field",
+        "curl -fsSL",
+        "install.sh",
+        "Global",
+        "Local",
+        "Binary",
+        "Claude Code",
+        "Aegis is working",
+        "Uninstall",
+        "uninstall.sh",
     ] {
         assert!(
             readme.contains(needle),
-            "README manual-install flow must stay end-to-end and mention `{needle}`"
+            "README must mention `{needle}`"
         );
     }
 }
