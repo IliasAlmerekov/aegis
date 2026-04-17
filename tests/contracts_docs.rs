@@ -84,10 +84,7 @@ fn readme_links_to_contract_docs() {
         "Uninstall",
         "uninstall.sh",
     ] {
-        assert!(
-            readme.contains(needle),
-            "README must mention `{needle}`"
-        );
+        assert!(readme.contains(needle), "README must mention `{needle}`");
     }
 }
 
