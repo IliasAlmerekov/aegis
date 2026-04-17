@@ -4,6 +4,32 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
+## v0.3.0
+
+### Highlights
+
+- **Interactive installer with three setup modes**: the install script now asks
+  the user to choose Global, Local (project-only), or Binary-only setup.
+- **Local mode**: creates `.aegis/enter.sh` in the project directory and
+  immediately launches a protected shell — no manual activation needed.
+- **ASCII banner**: the installer displays an Aegis banner on startup.
+- **Simplified README**: rewritten for clarity with a "Why Aegis exists" section
+  explaining the motivation (vibe coders, full-permission agents, accidental
+  data loss). Installation is now a single command with an interactive prompt.
+- **`AEGIS_SETUP_MODE` env var**: allows CI and scripts to select the setup mode
+  non-interactively (`global`, `local`, or `binary`).
+- **Supabase snapshot provider**: Aegis can now snapshot and rollback Supabase
+  databases before dangerous commands, alongside existing Git, Docker, MySQL,
+  and PostgreSQL providers.
+
+### Internal
+
+- Updated contract tests to match the new README structure.
+- Fixed duplicate `#[test]` attribute in installer tests.
+- Added three new installer integration tests covering all setup modes.
+
+---
+
 ## v0.2.0
 
 Release documentation for the current pre-1.0 line tracked by `Cargo.toml`
