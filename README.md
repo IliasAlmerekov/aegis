@@ -149,6 +149,11 @@ command -v aegis
 # e.g. /usr/local/bin/aegis
 ```
 
+Aegis accepts the common shell-launcher forms agents use internally, including
+`-lc`, `-ic`, and separate `-l -c` / `-i -c` flag pairs. That means you can
+point the agent directly at the `aegis` binary instead of relying on a wrapper
+script just to translate shell flags.
+
 ---
 
 ## Useful commands

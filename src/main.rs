@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 
@@ -221,16 +222,57 @@ const EXIT_BLOCKED: i32 = 3;
 /// Aegis/config failure prevented execution or validation from succeeding.
 const EXIT_INTERNAL: i32 = 4;
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ShellLaunchOptions {
+    login: bool,
+    interactive: bool,
+    positional_args: Vec<OsString>,
+}
+
+impl ShellLaunchOptions {
+    fn command_flag(&self, shell: &Path) -> String {
+        let mut flag = String::from("-");
+        if self.login && shell_supports_login_flag(shell) {
+            flag.push('l');
+        }
+        if self.interactive {
+            flag.push('i');
+        }
+        flag.push('c');
+        flag
+    }
+
+    fn session_flags(&self, shell: &Path) -> Vec<&'static str> {
+        let mut flags = Vec::new();
+        if self.login && shell_supports_login_flag(shell) {
+            flags.push("-l");
+        }
+        if self.interactive {
+            flags.push("-i");
+        }
+        flags
+    }
+}
+
+enum InvocationMode {
+    Cli(Cli),
+    ShellCompatCommand {
+        command: String,
+        launch: ShellLaunchOptions,
+    },
+    ShellCompatSession {
+        launch: ShellLaunchOptions,
+    },
+}
+
 fn main() {
-    let Cli {
-        command,
-        output,
-        verbosity,
-        quiet,
-        verbose,
-        subcommand,
-    } = Cli::parse();
-    let verbosity = OutputVerbosity::from_cli(verbosity, quiet, verbose);
+    let invocation = match parse_invocation_mode() {
+        Ok(invocation) => invocation,
+        Err(message) => {
+            eprintln!("error: {message}");
+            process::exit(2);
+        }
+    };
 
     // Build one Tokio runtime for the entire process lifetime.
     let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -245,10 +287,131 @@ fn main() {
     };
     let handle = rt.handle().clone();
 
-    let exit_code = match subcommand {
+    let exit_code = match invocation {
+        InvocationMode::Cli(cli) => run_cli(cli, &rt, handle),
+        InvocationMode::ShellCompatCommand { command, launch } => run_shell_wrapper(
+            &command,
+            CommandOutputFormat::Text,
+            OutputVerbosity::Standard,
+            handle,
+            &launch,
+        ),
+        InvocationMode::ShellCompatSession { launch } => exec_shell_session(&launch),
+    };
+
+    process::exit(exit_code);
+}
+
+fn parse_invocation_mode() -> Result<InvocationMode, String> {
+    let argv: Vec<OsString> = env::args_os().collect();
+
+    if let Some(invocation) = parse_shell_compat_invocation(&argv[1..])? {
+        return Ok(invocation);
+    }
+
+    match Cli::try_parse_from(argv) {
+        Ok(cli) => Ok(InvocationMode::Cli(cli)),
+        Err(err) => err.exit(),
+    }
+}
+
+fn parse_shell_compat_invocation(args: &[OsString]) -> Result<Option<InvocationMode>, String> {
+    if args.is_empty() || !starts_with_shell_compat_flags(args[0].as_os_str()) {
+        return Ok(None);
+    }
+
+    let mut launch = ShellLaunchOptions::default();
+    let mut index = 0;
+
+    while index < args.len() {
+        let Some(arg) = args[index].to_str() else {
+            return Ok(None);
+        };
+
+        match arg {
+            "-l" => {
+                launch.login = true;
+                index += 1;
+            }
+            "-i" => {
+                launch.interactive = true;
+                index += 1;
+            }
+            "-c" => {
+                let command = parse_shell_compat_command(args, index + 1)?;
+                launch.positional_args = args[index + 2..].to_vec();
+                return Ok(Some(InvocationMode::ShellCompatCommand { command, launch }));
+            }
+            _ if arg.starts_with('-') && !arg.starts_with("--") => {
+                let Some(bundle) = arg.strip_prefix('-') else {
+                    return Ok(None);
+                };
+
+                for (position, flag) in bundle.chars().enumerate() {
+                    match flag {
+                        'l' => launch.login = true,
+                        'i' => launch.interactive = true,
+                        'c' if position == bundle.len() - 1 => {
+                            let command = parse_shell_compat_command(args, index + 1)?;
+                            launch.positional_args = args[index + 2..].to_vec();
+                            return Ok(Some(InvocationMode::ShellCompatCommand {
+                                command,
+                                launch,
+                            }));
+                        }
+                        _ => return Ok(None),
+                    }
+                }
+
+                index += 1;
+            }
+            _ => {
+                launch.positional_args = args[index..].to_vec();
+                return Ok(Some(InvocationMode::ShellCompatSession { launch }));
+            }
+        }
+    }
+
+    Ok(Some(InvocationMode::ShellCompatSession { launch }))
+}
+
+fn starts_with_shell_compat_flags(arg: &std::ffi::OsStr) -> bool {
+    let Some(text) = arg.to_str() else {
+        return false;
+    };
+
+    matches!(
+        text,
+        "-l" | "-i" | "-lc" | "-ic" | "-il" | "-li" | "-ilc" | "-lic"
+    )
+}
+
+fn parse_shell_compat_command(args: &[OsString], index: usize) -> Result<String, String> {
+    let Some(command) = args.get(index) else {
+        return Err("shell compatibility mode requires a command after -c".to_string());
+    };
+
+    command
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "shell compatibility mode only supports UTF-8 command strings".to_string())
+}
+
+fn run_cli(cli: Cli, runtime: &tokio::runtime::Runtime, handle: Handle) -> i32 {
+    let Cli {
+        command,
+        output,
+        verbosity,
+        quiet,
+        verbose,
+        subcommand,
+    } = cli;
+    let verbosity = OutputVerbosity::from_cli(verbosity, quiet, verbose);
+
+    match subcommand {
         Some(Commands::Watch) => {
             let prepared = prepare_planner(verbosity.is_verbose(), handle);
-            rt.block_on(aegis::watch::run(&prepared))
+            runtime.block_on(aegis::watch::run(&prepared))
         }
         Some(Commands::Audit(args)) => {
             if args.summary && matches!(args.format, AuditOutputFormat::Ndjson) {
@@ -317,18 +480,22 @@ fn main() {
                 }
             }
         }
-        Some(Commands::Rollback(args)) => handle_rollback_command(args, &rt),
+        Some(Commands::Rollback(args)) => handle_rollback_command(args, runtime),
         Some(Commands::Config(args)) => handle_config_command(args),
         None => {
             if let Some(cmd) = command {
-                run_shell_wrapper(&cmd, output, verbosity, handle)
+                run_shell_wrapper(
+                    &cmd,
+                    output,
+                    verbosity,
+                    handle,
+                    &ShellLaunchOptions::default(),
+                )
             } else {
                 0
             }
         }
-    };
-
-    process::exit(exit_code);
+    }
 }
 
 fn parse_risk_level(value: &str) -> Result<RiskLevel, String> {
@@ -386,6 +553,7 @@ fn run_shell_wrapper(
     output: CommandOutputFormat,
     verbosity: OutputVerbosity,
     handle: Handle,
+    launch: &ShellLaunchOptions,
 ) -> i32 {
     let prepared = prepare_planner(verbosity.is_verbose(), handle);
     let in_ci = is_ci_environment();
@@ -423,7 +591,7 @@ fn run_shell_wrapper(
         return render_json_outcome(&prepared, &outcome);
     }
 
-    run_shell_text_outcome(cmd, verbosity, &prepared, outcome)
+    run_shell_text_outcome(cmd, verbosity, &prepared, outcome, launch)
 }
 
 /// Returns `true` when aegis is running inside a CI environment.
@@ -623,11 +791,12 @@ fn run_shell_text_outcome(
     verbosity: OutputVerbosity,
     prepared: &PreparedPlanner,
     outcome: PlanningOutcome,
+    launch: &ShellLaunchOptions,
 ) -> i32 {
     match outcome {
         PlanningOutcome::SetupFailure(plan) => report_setup_failure(&plan),
         PlanningOutcome::Planned(plan) => {
-            run_planned_shell_command(cmd, verbosity.is_verbose(), prepared, &plan)
+            run_planned_shell_command(cmd, verbosity.is_verbose(), prepared, &plan, launch)
         }
     }
 }
@@ -637,12 +806,13 @@ fn run_planned_shell_command(
     verbose: bool,
     prepared: &PreparedPlanner,
     plan: &InterceptionPlan,
+    launch: &ShellLaunchOptions,
 ) -> i32 {
     match plan.execution_disposition() {
         ExecutionDisposition::Execute => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
             append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots, verbose);
-            exec_command(cmd)
+            exec_command(cmd, launch)
         }
         ExecutionDisposition::RequiresApproval => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
@@ -654,7 +824,7 @@ fn run_planned_shell_command(
             };
             append_shell_audit(prepared, plan, decision, &snapshots, verbose);
             if approved {
-                exec_command(cmd)
+                exec_command(cmd, launch)
             } else {
                 EXIT_DENIED
             }
@@ -950,20 +1120,22 @@ fn emit_policy_evaluation_json(plan: &InterceptionPlan, ci_policy: aegis::config
     }
 }
 
-fn exec_command(cmd: &str) -> i32 {
+fn exec_command(cmd: &str, launch: &ShellLaunchOptions) -> i32 {
     let shell = resolve_shell();
 
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
 
-        let err = Command::new(&shell)
-            .arg("-c")
+        let mut command = Command::new(&shell);
+        command
+            .arg(launch.command_flag(&shell))
             .arg(cmd)
+            .args(&launch.positional_args)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .exec();
+            .stderr(Stdio::inherit());
+        let err = command.exec();
 
         eprintln!("error: failed to exec shell {}: {err}", shell.display());
         EXIT_INTERNAL
@@ -971,14 +1143,15 @@ fn exec_command(cmd: &str) -> i32 {
 
     #[cfg(not(unix))]
     {
-        match Command::new(&shell)
-            .arg("-c")
+        let mut command = Command::new(&shell);
+        command
+            .arg(launch.command_flag(&shell))
             .arg(cmd)
+            .args(&launch.positional_args)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-        {
+            .stderr(Stdio::inherit());
+        match command.status() {
             Ok(status) => status.code().unwrap_or(EXIT_INTERNAL),
             Err(err) => {
                 eprintln!("error: failed to spawn shell {}: {err}", shell.display());
@@ -986,6 +1159,53 @@ fn exec_command(cmd: &str) -> i32 {
             }
         }
     }
+}
+
+fn exec_shell_session(launch: &ShellLaunchOptions) -> i32 {
+    let shell = resolve_shell();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new(&shell);
+        command
+            .args(launch.session_flags(&shell))
+            .args(&launch.positional_args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        let err = command.exec();
+
+        eprintln!("error: failed to exec shell {}: {err}", shell.display());
+        EXIT_INTERNAL
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut command = Command::new(&shell);
+        command
+            .args(launch.session_flags(&shell))
+            .args(&launch.positional_args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        match command.status() {
+            Ok(status) => status.code().unwrap_or(EXIT_INTERNAL),
+            Err(err) => {
+                eprintln!("error: failed to spawn shell {}: {err}", shell.display());
+                EXIT_INTERNAL
+            }
+        }
+    }
+}
+
+fn shell_supports_login_flag(shell: &Path) -> bool {
+    shell
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| !matches!(name, "sh" | "dash"))
+        .unwrap_or(true)
 }
 
 fn resolve_shell() -> PathBuf {
@@ -1088,6 +1308,72 @@ mod tests {
     fn snapshot_runtime_failure_fallback_returns_empty_vec() {
         let fallback: Vec<SnapshotRecord> = Vec::new();
         assert!(fallback.is_empty());
+    }
+
+    #[test]
+    fn shell_compat_parser_handles_dash_lc_command() {
+        let args = vec![
+            std::ffi::OsString::from("-lc"),
+            std::ffi::OsString::from("printf compat"),
+        ];
+
+        let parsed = parse_shell_compat_invocation(&args).unwrap();
+        let Some(InvocationMode::ShellCompatCommand { command, launch }) = parsed else {
+            panic!("expected shell compatibility command invocation");
+        };
+
+        assert_eq!(command, "printf compat");
+        assert!(launch.login);
+        assert!(!launch.interactive);
+        assert!(launch.positional_args.is_empty());
+    }
+
+    #[test]
+    fn shell_compat_parser_handles_separate_login_and_command_flags() {
+        let args = vec![
+            std::ffi::OsString::from("-l"),
+            std::ffi::OsString::from("-c"),
+            std::ffi::OsString::from("printf compat"),
+        ];
+
+        let parsed = parse_shell_compat_invocation(&args).unwrap();
+        let Some(InvocationMode::ShellCompatCommand { command, launch }) = parsed else {
+            panic!("expected shell compatibility command invocation");
+        };
+
+        assert_eq!(command, "printf compat");
+        assert!(launch.login);
+        assert!(!launch.interactive);
+        assert!(launch.positional_args.is_empty());
+    }
+
+    #[test]
+    fn shell_compat_parser_does_not_capture_native_aegis_command_mode() {
+        let args = vec![
+            std::ffi::OsString::from("-c"),
+            std::ffi::OsString::from("printf compat"),
+            std::ffi::OsString::from("--output"),
+            std::ffi::OsString::from("json"),
+        ];
+
+        assert!(parse_shell_compat_invocation(&args).unwrap().is_none());
+    }
+
+    #[test]
+    fn shell_launch_options_drop_login_flag_for_posix_sh() {
+        let launch = ShellLaunchOptions {
+            login: true,
+            interactive: false,
+            positional_args: Vec::new(),
+        };
+
+        assert_eq!(launch.command_flag(Path::new("/bin/sh")), "-c");
+        assert_eq!(launch.command_flag(Path::new("/bin/bash")), "-lc");
+        assert_eq!(
+            launch.session_flags(Path::new("/bin/sh")),
+            Vec::<&str>::new()
+        );
+        assert_eq!(launch.session_flags(Path::new("/bin/zsh")), vec!["-l"]);
     }
 
     // ── Shell resolution — resolve_shell_inner ────────────────────────────────
