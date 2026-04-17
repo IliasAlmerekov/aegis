@@ -8,6 +8,7 @@ OS_OVERRIDE="${AEGIS_OS:-}"
 ARCH_OVERRIDE="${AEGIS_ARCH:-}"
 SHELL_RC_OVERRIDE="${AEGIS_SHELL_RC:-}"
 SKIP_SHELL_SETUP="${AEGIS_SKIP_SHELL_SETUP:-0}"
+SETUP_MODE="${AEGIS_SETUP_MODE:-}"
 
 BEGIN_MARKER="# >>> aegis shell setup >>>"
 END_MARKER="# <<< aegis shell setup <<<"
@@ -65,6 +66,126 @@ export AEGIS_REAL_SHELL="${real_shell}"
 export SHELL="${aegis_path}"
 ${END_MARKER}
 EOF
+}
+
+prompt_setup_mode() {
+    if [ -n "${SETUP_MODE}" ]; then
+        printf '%s\n' "${SETUP_MODE}"
+        return
+    fi
+
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        printf 'global\n'
+        return
+    fi
+
+    printf '\n'
+    printf 'How would you like to set up Aegis?\n'
+    printf '\n'
+    printf '  [1] Global    — protect all shells (writes to ~/.bashrc or ~/.zshrc)\n'
+    printf '  [2] Local     — protect this project only (starts a shielded shell now)\n'
+    printf '  [3] Binary    — install the binary, skip shell setup\n'
+    printf '\n'
+    printf 'Choose [1/2/3]: '
+    read -r choice </dev/tty
+
+    case "${choice}" in
+        1|global|Global)
+            printf 'global\n'
+            ;;
+        2|local|Local)
+            printf 'local\n'
+            ;;
+        3|binary|Binary)
+            printf 'binary\n'
+            ;;
+        *)
+            printf 'global\n'
+            ;;
+    esac
+}
+
+setup_local_project() {
+    real_shell="$1"
+    aegis_path="$2"
+    project_dir="$(pwd)"
+    aegis_dir="${project_dir}/.aegis"
+
+    mkdir -p "${aegis_dir}"
+
+    cat > "${aegis_dir}/enter.sh" <<ENTER_EOF
+#!/bin/sh
+# Aegis — enter a protected shell for this project.
+# Run this script to re-enter the aegis-shielded session.
+
+AEGIS_BIN="${aegis_path}"
+REAL_SHELL="${real_shell}"
+
+if [ ! -x "\${AEGIS_BIN}" ]; then
+    printf 'error: aegis binary not found at %s\\n' "\${AEGIS_BIN}" >&2
+    printf 'Re-run the installer or set AEGIS_BIN.\\n' >&2
+    exit 1
+fi
+
+export AEGIS_REAL_SHELL="\${REAL_SHELL}"
+export SHELL="\${AEGIS_BIN}"
+
+exec "\${REAL_SHELL}"
+ENTER_EOF
+
+    chmod 0755 "${aegis_dir}/enter.sh"
+
+    if [ ! -f "${project_dir}/.aegis.toml" ]; then
+        if "${aegis_path}" config init >/dev/null 2>&1; then
+            :
+        fi
+    fi
+}
+
+enter_local_shell() {
+    real_shell="$1"
+    aegis_path="$2"
+
+    export AEGIS_REAL_SHELL="${real_shell}"
+    export SHELL="${aegis_path}"
+
+    exec "${real_shell}"
+}
+
+print_local_post_install() {
+    project_dir="$(pwd)"
+
+    cat <<'EOF'
+
+Aegis is now protecting this project.
+
+You are inside an aegis-shielded shell. AI agents (Claude Code,
+Codex, etc.) launched here will have their commands intercepted.
+
+To re-enter this protected shell later, run:
+EOF
+    printf '  %s/.aegis/enter.sh\n' "${project_dir}"
+    cat <<'EOF'
+
+To stop protection, simply exit this shell (Ctrl-D or `exit`).
+
+Rollback:
+  curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
+EOF
+}
+
+print_banner() {
+    cat <<'BANNER'
+
+     _    _____ ____ ___ ____
+    / \  | ____/ ___|_ _/ ___|
+   / _ \ |  _|| |  _ | |\___ \
+  / ___ \| |__| |_| || | ___) |
+ /_/   \_\_____\____|___|____/
+
+ Shield your terminal from AI agents
+
+BANNER
 }
 
 detect_real_shell() {
@@ -349,6 +470,8 @@ EOF
 }
 
 main() {
+    print_banner
+
     os=""
     arch=""
     asset=""
@@ -357,7 +480,7 @@ main() {
     checksum_url=""
     binary_path=""
     checksum_path=""
-    rc_file=""
+    mode=""
 
     os="$(detect_os)"
     arch="$(detect_arch)"
@@ -377,23 +500,37 @@ main() {
     chmod 0755 "${binary_path}"
     install_binary "${binary_path}"
 
-    if [ "${SKIP_SHELL_SETUP}" != "1" ]; then
-        real_shell="$(detect_real_shell)"
-        rc_file="$(resolve_rc_file "${real_shell}")"
-        write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
-    fi
-
     printf 'Installed aegis to %s/aegis\n' "${BINDIR}"
 
     if "$(target_path)" --version >/dev/null 2>&1; then
         printf 'Installed version: %s\n' "$("$(target_path)" --version)"
     fi
 
-    if [ -n "${rc_file}" ]; then
-        print_post_install "${rc_file}"
-    else
-        printf 'Skipped shell wrapper setup because AEGIS_SKIP_SHELL_SETUP=1\n'
+    if [ "${SKIP_SHELL_SETUP}" = "1" ]; then
+        printf 'Skipped shell setup because AEGIS_SKIP_SHELL_SETUP=1\n'
+        return
     fi
+
+    real_shell="$(detect_real_shell)"
+    mode="$(prompt_setup_mode)"
+
+    case "${mode}" in
+        global)
+            rc_file="$(resolve_rc_file "${real_shell}")"
+            write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
+            print_post_install "${rc_file}"
+            ;;
+        local)
+            setup_local_project "${real_shell}" "$(target_path)"
+            print_local_post_install
+            enter_local_shell "${real_shell}" "$(target_path)"
+            ;;
+        binary)
+            printf 'Binary installed. Shell setup skipped.\n'
+            printf 'Set SHELL=%s and AEGIS_REAL_SHELL=%s manually to activate.\n' \
+                "$(target_path)" "${real_shell}"
+            ;;
+    esac
 }
 
 main "$@"

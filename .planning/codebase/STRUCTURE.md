@@ -1,146 +1,61 @@
-# Aegis Repository Structure Scan
+# STRUCTURE
 
-Last refreshed: 2026-04-12
+Generated: 2026-04-17
 Focus: tech+arch
 
-## Top-level layout
+## Top-level repository shape
+- `src/` — product code
+- `tests/` — integration and contract coverage
+- `docs/` — threat model, release, config, platform, troubleshooting docs
+- `scripts/` — install/uninstall/helper scripts
+- `fuzz/` — parser/scanner fuzzing targets and corpora
+- `perf/` — benchmark baseline policy
+- `.github/workflows/` — CI and release automation
 
-### Core source
-
-- `src/main.rs` — CLI entrypoint and orchestration
-- `src/lib.rs` — public module exports
-- `src/decision.rs` — policy engine
-- `src/runtime.rs` — runtime dependency container
-- `src/watch.rs` — NDJSON watch mode
-- `src/policy_output.rs` — evaluation-only JSON rendering
-- `src/rollback.rs` — rollback command support
-- `src/error.rs` — shared typed errors
-
-### Subsystems
-
+## Source modules
+- `src/lib.rs` — library module exports
+- `src/main.rs` — CLI entrypoint and command dispatch
 - `src/interceptor/`
-  - `parser.rs`
-  - `scanner.rs`
-  - `patterns.rs`
-  - `nested.rs`
-- `src/config/`
-  - `model.rs`
-  - `allowlist.rs`
-  - `validate.rs`
+  - parser split into tokenizer / segmentation / nested / embedded-script helpers
+  - scanner split into assessment / keywords / recursive / pipeline semantics / highlighting
 - `src/planning/`
-  - `core.rs`
-  - `prepare.rs`
-  - `types.rs`
+  - typed planning boundary (`prepare`, `core`, `types`)
+- `src/runtime.rs`
+  - runtime context, scanner binding, allowlist binding, snapshot/audit wiring
+- `src/config/`
+  - allowlist, model, validation
 - `src/snapshot/`
-  - `git.rs`
-  - `docker.rs`
-  - `mod.rs`
+  - registry + providers: git, docker, postgres, mysql, sqlite, supabase
 - `src/audit/`
-  - `logger.rs`
-  - `mod.rs`
+  - logger + audit model behavior
 - `src/ui/`
-  - `confirm.rs`
-  - `mod.rs`
-- `src/bin/`
-  - `aegis_benchcheck.rs`
+  - confirmation and policy-block presentation
+- `src/watch.rs`
+  - NDJSON watch-mode transport
 
-## Test / benchmark structure
-
-Integration-style suites under `tests/`:
-
-- `full_pipeline.rs`
-- `cli_integration.rs`
-- `config_integration.rs`
-- `snapshot_integration.rs`
-- `docker_integration.rs`
-- `security_regression.rs`
-- `audit_concurrency.rs`
-- `audit_integrity.rs`
-- `watch_mode.rs`
+## Test structure
+Representative test groups:
+- `full_pipeline.rs` — end-to-end shell-wrapper behavior
+- `cli_integration.rs`, `config_integration.rs`, `watch_mode.rs`
+- `security_regression.rs` — bypass/security regression corpus
+- `audit_integrity.rs`, `audit_concurrency.rs`
+- `snapshot_integration.rs`, `docker_integration.rs`
 - `installer_flow.rs`
-- `platform_support_docs.rs`
-- `config_schema_docs.rs`
-- `benchcheck_cli.rs`
+- doc contract tests:
+  - `contracts_docs.rs`
+  - `release_docs.rs`
+  - `platform_support_docs.rs`
+  - `config_schema_docs.rs`
+- performance policy test: `benchcheck_cli.rs`
 
-Fixtures:
+## Structural observations
+- The repo is unusually documentation-heavy for a pre-1.0 CLI, which is a strength
+- The repo is also unusually feature-broad for a pre-1.0 CLI, which raises maintenance burden
+- Structure is coherent overall, but file-size concentration indicates refactoring debt in core/security-sensitive modules
 
-- `tests/fixtures/security_bypass_corpus.toml`
-
-Benchmarks:
-
-- `benches/scanner_bench.rs`
-- `perf/scanner_bench_baseline.toml`
-
-Fuzzing structure now present:
-
-- `fuzz/Cargo.toml`
-- `fuzz/fuzz_targets/parser.rs`
-- `fuzz/corpus/parser/*`
-
-## Documentation / release assets
-
-Public-facing docs present:
-
-- `README.md`
-- `CONTRIBUTING.md`
-- `CODE_OF_CONDUCT.md`
-- `LICENSE`
-- `CONVENTION.md`
-- `docs/architecture-decisions.md`
-- `docs/config-schema.md`
-- `docs/platform-support.md`
-- `docs/ci.md`
-- `docs/performance-baseline.md`
-
-Release/distribution files present:
-
-- `.github/workflows/ci.yml`
-- `.github/workflows/release.yml`
-- `scripts/install.sh`
-- `scripts/uninstall.sh`
-- `scripts/setup-git-hooks.sh`
-
-## Structural improvements since the earlier scan
-
-- `fuzz/` now exists in-repo instead of only in planning docs.
-- `Cargo.toml` now excludes internal agent/planning directories and stray text files from crate packaging.
-- Versioning is structurally aligned with an initial release (`0.1.0`).
-- README structure now includes honest security-model and limitations sections.
-
-## Structural cautions still visible
-
-### Missing threat-model artifact
-
-No `docs/threat-model.md` exists.
-
-### Installer trust path still incomplete
-
-The structure contains:
-
-- release checksum generation
-- install script
-
-but not a checksum-verifying install flow artifact.
-
-### Crate package is cleaner, but still broad
-
-`cargo package --list --allow-dirty` verified successfully, but the package still includes a large internal documentation footprint under `docs/` and `docs/superpowers/`.
-
-That is not a release blocker by itself; it is just worth knowing.
-
-### Working tree is not pristine
-
-At scan time, `rtk git status --short` showed concurrent local changes:
-
-- `D file.txt`
-- `D hello.txt`
-- `D staged.txt`
-- `?? docs/claude-source-borrowings.md`
-
-This did not block the scan, but it means the repository is being actively edited and release preparation should account for unrelated in-flight changes.
-
-## Structural verdict
-
-- **Public repo:** structure is ready.
-- **First GitHub release:** structure is ready.
-- **Stable production/security positioning:** structure is close, but still wants a threat-model artifact and a verification-first install story.
+## Suggested structural priorities
+1. Split `src/main.rs` into focused command handlers
+2. Split `src/audit/logger.rs` into entry/integrity/query/rotation/writer units
+3. Split `src/config/model.rs` into schema/loading/merge/serialization pieces
+4. Split `src/ui/confirm.rs` into rendering/input/tty/highlighting flows
+5. Re-tier snapshot providers into core vs extended/experimental in docs and code ownership expectations

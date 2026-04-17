@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml/badge.svg)](https://github.com/IliasAlmerekov/aegis/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos-lightgrey)](docs/platform-support.md)
+[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20wsl-lightgrey)](docs/platform-support.md)
 
 <p align="center">
   <img src="src/assets/howitwork.png" alt="Aegis intercepts commands before they reach the real shell and classifies them as Safe, Warn, Danger, or Block." width="900" />
@@ -12,131 +12,135 @@
 
 ---
 
-## What does Aegis do?
+## Why Aegis exists
 
-When an AI agent (like Claude Code) runs a shell command, Aegis intercepts it first and decides what to do:
+AI coding agents (Claude Code, Codex, Cursor, etc.) are powerful — but they can also delete your database, wipe your files, or break your project in a single command.
 
-| Level | What happens |
-|-------|-------------|
-| **Safe** | Command runs instantly, no questions asked |
-| **Warn** | Aegis asks: "Allow this?" |
-| **Danger** | Aegis asks, and can take a snapshot for rollback when configured (Git, Docker, and database providers) |
-| **Block** | Command is refused, always |
+This happens more often than you'd think:
+
+- You give the agent **full permission** and just keep pressing Enter without reading what it's doing
+- You're **vibe coding** — you don't fully understand what the agent is trying to do, and it drops a table or removes a directory before you notice
+- The agent makes a mistake, and there's **nothing between it and your terminal**
+
+**Aegis is that something.** It's a free, open-source shell proxy that sits between the AI agent and your real terminal. Every command the agent tries to run goes through Aegis first. Safe commands pass through instantly. Dangerous commands get stopped, and you see a clear prompt: "This command wants to delete X. Allow it?"
+
+Think of it as a seatbelt for AI-assisted coding. You probably won't crash — but if you do, you'll be glad it was there.
 
 ---
 
-## Step 1 — Install
+## What does Aegis do?
 
-There are two install paths:
+When an AI agent runs a shell command, Aegis intercepts it and decides what to do:
 
-### Option A — convenience installer
+| Level | What happens | Example |
+|-------|-------------|---------|
+| **Safe** | Runs instantly, no questions asked | `ls`, `echo hello`, `git status` |
+| **Warn** | Aegis asks: "Allow this?" | `git push --force`, `npm publish` |
+| **Danger** | Aegis asks, and can snapshot for rollback | `rm -rf ./src`, `DROP TABLE users` |
+| **Block** | Refused, always | `rm -rf /`, `mkfs.ext4 /dev/sda` |
+
+---
+
+## Install
+
+One command. Works on **Linux**, **macOS**, and **Windows (WSL)**.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
 The installer will:
-- detect your platform (Linux / macOS)
-- download the binary and verify its checksum
-- install `aegis` on your PATH
-- add the shell wrapper to `~/.bashrc` or `~/.zshrc`
 
-### Option B — verification-first manual install
+1. Download the right binary for your system
+2. Verify its checksum (so you know it hasn't been tampered with)
+3. Ask you how you want to set it up:
 
-Prefer to verify the release asset yourself first? Follow the manual
-checksum-first path in [Release readiness](docs/release-readiness.md). It shows
-how to download the release asset, fetch the matching `.sha256` sidecar, verify
-it with `sha256sum` or `shasum -a 256`, place the verified binary on your
-`PATH`, and point your shell or agent at `aegis` afterward.
+```
+     _    _____ ____ ___ ____
+    / \  | ____/ ___|_ _/ ___|
+   / _ \ |  _|| |  _ | |\___ \
+  / ___ \| |__| |_| || | ___) |
+ /_/   \_\_____\____|___|____/
 
-If you're on Windows, the best-effort path is to run Aegis inside a WSL2
-terminal; native Windows shells like `PowerShell` and `cmd.exe` are not
-supported yet.
+ Shield your terminal from AI agents
 
-If install fails, see [Troubleshooting](docs/troubleshooting.md), especially
-for checksum and shell-wrapper issues.
+How would you like to set up Aegis?
 
-> **Getting a 404?** The release asset for the version you need isn't available yet. Install from source instead:
-> ```bash
-> cargo install --git https://github.com/IliasAlmerekov/aegis aegis
-> ```
+  [1] Global    — protect all shells (writes to ~/.bashrc or ~/.zshrc)
+  [2] Local     — protect this project only (starts a shielded shell now)
+  [3] Binary    — install the binary, skip shell setup
 
----
-
-## Step 2 — Restart your terminal
-
-Close the current terminal window and open a new one. This loads the updated shell config.
-
-Then confirm the binary install worked:
-
-```bash
-command -v aegis  # should print the path, e.g. /usr/local/bin/aegis
-aegis --help      # should print the CLI help text
+Choose [1/2/3]:
 ```
 
-These checks prove that `aegis` is installed and runnable, but they do not
-prove that command routing is active.
+### Which option should I pick?
 
-To verify the active routing setup:
+| Option | Best for | What it does |
+|--------|----------|-------------|
+| **Global** | Most users | Every terminal you open will be protected. Commands from any AI agent, in any project, go through Aegis. |
+| **Local** | Trying it out on one project | Opens a protected shell right now, only for the current project. Your other terminals are not affected. To re-enter later, run `.aegis/enter.sh`. |
+| **Binary** | Advanced users | Just installs the binary. You set up `$SHELL` and `$AEGIS_REAL_SHELL` yourself. |
 
-- **Convenience installer or `$SHELL`-based setup**: confirm the routing
-  configuration by checking that `SHELL` points to the absolute `aegis` path
-  and `AEGIS_REAL_SHELL` points to your real shell:
+That's it. No config files to edit, no environment variables to copy, no second step.
 
-  ```bash
-  echo "$SHELL"            # should print the absolute path to aegis
-  echo "$AEGIS_REAL_SHELL"  # should print your real shell path
-  ```
+### Alternative: install from source
 
-- **Explicit agent shell-path setup**: confirm the agent setting itself points
-  to the absolute `aegis` path printed by `command -v aegis`.
-
----
-
-## Step 3 — Connect to your AI agent
-
-For Aegis to watch **every agent command**, the agent needs to use `aegis` as its shell.
-
-### Claude Code
-
-1. Open Claude Code settings
-2. Find the `shell` field
-3. Run `command -v aegis`, then paste the absolute path it prints into that
-   field
-
-### Other agents (Codex CLI, etc.)
-
-If the agent respects the `$SHELL` environment variable — set it to
-the absolute path printed by `command -v aegis` in your shell profile, and
-preserve the real shell with `AEGIS_REAL_SHELL` as described in
-[Release readiness](docs/release-readiness.md), or launch the agent from a
-shell where both variables are already set correctly.
-
-If the agent has an explicit shell path setting — set it to the output of:
+If the pre-built binary is not available for your platform:
 
 ```bash
-command -v aegis
+cargo install --git https://github.com/IliasAlmerekov/aegis aegis
 ```
 
+### Windows
+
+Aegis works on Windows through **WSL** (Windows Subsystem for Linux). Open a WSL terminal and run the install command above. Native PowerShell and cmd.exe are not supported.
+
 ---
 
-## Step 4 — Test it
+## Verify it works
 
-Run these two commands in the same terminal where your agent runs. They prove
-that the wrapper binary can prompt for a risky command and pass through a safe
-command, but they still do not by themselves prove the agent is routed through
-it:
+Open a new terminal (or, if you chose Local, you're already in a protected shell).
 
 ```bash
-# Should show a confirmation prompt — press n to deny
+# Check the binary is installed
+aegis --version
+
+# This should show a confirmation prompt — press n to deny
 aegis -c 'rm -rf /tmp/aegis-test'
 
-# Should pass through instantly with no prompt
+# This should pass through instantly, no prompt
 aegis -c 'echo hello'
 ```
 
-If the first command shows a dialog and the second command passes through
-cleanly — the wrapper prompt/allow flow is working.
+If the first command shows a dialog and the second passes through — Aegis is working.
+
+### Verify routing is active
+
+```bash
+echo "$SHELL"             # should print the path to aegis
+echo "$AEGIS_REAL_SHELL"  # should print your real shell (e.g. /bin/zsh)
+```
+
+---
+
+## Connect to your AI agent
+
+### Claude Code
+
+If you chose **Global** or **Local** install — Claude Code will automatically use Aegis, because `$SHELL` already points to it.
+
+If you chose **Binary** — open Claude Code settings, find the `shell` field, and paste the output of `command -v aegis`.
+
+### Codex, Cursor, and other agents
+
+If the agent respects `$SHELL` — it works automatically with Global or Local install.
+
+If the agent has its own shell setting — set it to:
+
+```bash
+command -v aegis
+# e.g. /usr/local/bin/aegis
+```
 
 ---
 
@@ -163,7 +167,7 @@ aegis config show    # print the active config
 aegis rollback '<snapshot-id>'
 ```
 
-### Add your own block rules
+### Add your own rules
 
 Add to `~/.config/aegis/config.toml` or `.aegis.toml`:
 
@@ -184,15 +188,17 @@ safe_alt    = "my-nuke-script.sh --dry-run"
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 ```
 
+If you used **Local** mode, also delete the `.aegis/` directory in your project.
+
 ---
 
 ## Limitations
 
 Aegis is a heuristic text filter, **not a sandbox**. It will not catch:
 
-- obfuscated or encoded commands
+- Obfuscated or encoded commands
 - `eval "$(something)"` — commands assembled at runtime
-- indirect execution: write a script first, run it later
+- Indirect execution: write a script first, run it later
 
 Full details: [Threat model](docs/threat-model.md)
 
@@ -210,6 +216,10 @@ Full details: [Threat model](docs/threat-model.md)
 - [Troubleshooting and recovery](docs/troubleshooting.md)
 
 ---
+
+## Contributing
+
+Aegis is open source under the MIT license. Contributions, issues, and feature requests are welcome.
 
 ## License
 

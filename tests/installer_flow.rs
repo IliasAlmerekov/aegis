@@ -642,6 +642,197 @@ fn install_script_falls_back_to_shasum_when_sha256sum_is_missing() {
 }
 
 #[test]
+#[test]
+fn install_script_binary_mode_skips_shell_setup() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+
+    let output = run_script(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("AEGIS_SETUP_MODE", "binary"),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "binary mode must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        bindir.join("aegis").exists(),
+        "binary mode must still install the binary"
+    );
+
+    let rc_contents = fs::read_to_string(&rc_file).unwrap();
+    assert_eq!(
+        rc_contents, "export FOO=bar\n",
+        "binary mode must not modify the rc file"
+    );
+}
+
+#[test]
+fn install_script_global_mode_via_env_writes_shell_setup() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+
+    fs::write(&rc_file, "").unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+
+    let output = run_script(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("AEGIS_SETUP_MODE", "global"),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "global mode must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rc_contents = fs::read_to_string(&rc_file).unwrap();
+    let aegis_path = bindir.join("aegis");
+    let expected_block = managed_block(Path::new("/bin/bash"), &aegis_path);
+    assert!(
+        rc_contents.contains(&expected_block),
+        "global mode must write managed block; rc contents:\n{rc_contents}"
+    );
+}
+
+#[test]
+fn install_script_local_mode_creates_enter_script() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let project_dir = temp.path().join("myproject");
+    let stub_dir = temp.path().join("stub-bin");
+
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+
+    // Local mode calls exec, which replaces the process. To test it without
+    // losing the test harness, we wrap the installer call in a subshell that
+    // overrides exec to just exit 0 after setup_local_project runs.
+    //
+    // Instead, we test setup_local_project indirectly: run in local mode
+    // but the exec at the end will fail because the real_shell path is
+    // fake — but we can still verify that enter.sh was created.
+    //
+    // Actually, the simplest approach: the exec replaces the shell process,
+    // so from the test perspective the script "succeeds" (exit 0 from the
+    // new shell). But since we're in a non-interactive test, the exec'd
+    // shell will exit immediately.
+    let output = Command::new("/bin/sh")
+        .arg(script_path("install.sh"))
+        .current_dir(&project_dir)
+        .env("AEGIS_BINDIR", &bindir_str)
+        .env("AEGIS_SHELL_RC", &rc_file_str)
+        .env("AEGIS_OS", "linux")
+        .env("AEGIS_ARCH", "x86_64")
+        .env("AEGIS_SETUP_MODE", "local")
+        .env("PATH", &path_value)
+        .env("SHELL", "/bin/bash")
+        .env("TEST_BINARY_ASSET", &binary_asset_str)
+        .env("TEST_CHECKSUM_ASSET", &checksum_asset_str)
+        .env("TEST_BINARY_DIGEST", &binary_digest)
+        .output()
+        .unwrap();
+
+    // The exec at the end replaces the process with bash, which exits
+    // immediately in non-interactive mode — success is expected.
+    assert!(
+        output.status.success(),
+        "local mode must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        bindir.join("aegis").exists(),
+        "local mode must install the binary"
+    );
+
+    let enter_script = project_dir.join(".aegis").join("enter.sh");
+    assert!(
+        enter_script.exists(),
+        "local mode must create .aegis/enter.sh"
+    );
+
+    #[cfg(unix)]
+    {
+        let metadata = fs::metadata(&enter_script).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o755,
+            "enter.sh must be executable (0755), got {mode:o}"
+        );
+    }
+
+    let enter_contents = fs::read_to_string(&enter_script).unwrap();
+    assert!(
+        enter_contents.contains("AEGIS_REAL_SHELL"),
+        "enter.sh must set AEGIS_REAL_SHELL"
+    );
+    assert!(
+        enter_contents.contains(&bindir_str),
+        "enter.sh must reference the aegis binary path"
+    );
+
+    // rc file must NOT be modified in local mode
+    let rc_contents = fs::read_to_string(&rc_file).unwrap();
+    assert_eq!(
+        rc_contents, "export FOO=bar\n",
+        "local mode must not modify the rc file"
+    );
+}
+
+#[test]
 fn uninstall_script_removes_managed_block_and_binary() {
     let temp = TempDir::new().unwrap();
     let bindir = temp.path().join("bin");
