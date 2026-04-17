@@ -29,7 +29,7 @@ if [ -z "$command_value" ]; then
 fi
 
 case "$command_value" in
-  aegis*)
+  aegis\ *)
     exit 0
     ;;
 esac
