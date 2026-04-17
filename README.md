@@ -73,6 +73,13 @@ How would you like to set up Aegis?
 Choose [1/2/3]:
 ```
 
+If you want to preselect a mode without the prompt:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh \
+  | AEGIS_SETUP_MODE=binary sh
+```
+
 ### Which option should I pick?
 
 | Option | Best for | What it does |

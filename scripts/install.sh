@@ -68,26 +68,50 @@ ${END_MARKER}
 EOF
 }
 
+has_prompt_tty() {
+    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+        return 1
+    fi
+
+    if ( : </dev/tty >/dev/tty ) >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
 prompt_setup_mode() {
+    prompt_device=""
+    read_device=""
+
     if [ -n "${SETUP_MODE}" ]; then
         printf '%s\n' "${SETUP_MODE}"
         return
     fi
 
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
+    if has_prompt_tty; then
+        prompt_device="/dev/tty"
+        read_device="/dev/tty"
+    elif [ -t 0 ] && [ -t 1 ]; then
+        prompt_device="/dev/stdout"
+        read_device="/dev/stdin"
+    else
+        printf '%s\n' 'No interactive terminal detected; defaulting to Global setup.' >&2
+        printf '%s\n' \
+            'To choose explicitly, rerun with AEGIS_SETUP_MODE=global|local|binary or download the script first and run it directly.' >&2
         printf 'global\n'
         return
     fi
 
-    printf '\n'
-    printf 'How would you like to set up Aegis?\n'
-    printf '\n'
-    printf '  [1] Global    — protect all shells (writes to ~/.bashrc or ~/.zshrc)\n'
-    printf '  [2] Local     — protect this project only (starts a shielded shell now)\n'
-    printf '  [3] Binary    — install the binary, skip shell setup\n'
-    printf '\n'
-    printf 'Choose [1/2/3]: '
-    read -r choice </dev/tty
+    printf '\n' >"${prompt_device}"
+    printf 'How would you like to set up Aegis?\n' >"${prompt_device}"
+    printf '\n' >"${prompt_device}"
+    printf '  [1] Global    — protect all shells (writes to ~/.bashrc or ~/.zshrc)\n' >"${prompt_device}"
+    printf '  [2] Local     — protect this project only (starts a shielded shell now)\n' >"${prompt_device}"
+    printf '  [3] Binary    — install the binary, skip shell setup\n' >"${prompt_device}"
+    printf '\n' >"${prompt_device}"
+    printf 'Choose [1/2/3]: ' >"${prompt_device}"
+    read -r choice <"${read_device}"
 
     case "${choice}" in
         1|global|Global)

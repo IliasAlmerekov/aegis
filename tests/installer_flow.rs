@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
@@ -308,6 +309,35 @@ fn run_script(script_name: &str, envs: &[(&str, &str)]) -> Output {
     command.output().unwrap()
 }
 
+fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &str) -> Output {
+    let script_cmd = find_command_on_path("script");
+    let installer_script = script_path(script_name);
+    let mut command = Command::new(script_cmd);
+
+    command
+        .arg("-qec")
+        .arg("cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh")
+        .arg("/dev/null")
+        .env("AEGIS_INSTALLER_SCRIPT", &installer_script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+
+    child.wait_with_output().unwrap()
+}
+
 fn managed_block(real_shell: &Path, aegis_path: &Path) -> String {
     format!(
         "# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL=\"{}\"\nexport SHELL=\"{}\"\n# <<< aegis shell setup <<<\n",
@@ -340,6 +370,7 @@ fn install_script_configures_shell_wrapper_block_once() {
             ("AEGIS_ARCH", "x86_64"),
             ("PATH", &path_value),
             ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
             ("TEST_BINARY_ASSET", &binary_asset_str),
             ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
             ("TEST_BINARY_DIGEST", &binary_digest),
@@ -379,6 +410,7 @@ fn install_script_configures_shell_wrapper_block_once() {
             ("AEGIS_ARCH", "x86_64"),
             ("PATH", &path_value),
             ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
             ("TEST_BINARY_ASSET", &binary_asset_str),
             ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
             ("TEST_BINARY_DIGEST", &binary_digest),
@@ -716,6 +748,7 @@ fn install_script_global_mode_via_env_writes_shell_setup() {
             ("AEGIS_SETUP_MODE", "global"),
             ("PATH", &path_value),
             ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
             ("TEST_BINARY_ASSET", &binary_asset_str),
             ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
             ("TEST_BINARY_DIGEST", &binary_digest),
@@ -828,6 +861,62 @@ fn install_script_local_mode_creates_enter_script() {
     assert_eq!(
         rc_contents, "export FOO=bar\n",
         "local mode must not modify the rc file"
+    );
+}
+
+#[test]
+fn install_script_prompts_for_setup_mode_when_piped_from_tty_session() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+
+    let output = run_piped_script_with_tty(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+        "3\n",
+    );
+
+    assert!(
+        output.status.success(),
+        "piped install must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("How would you like to set up Aegis?"),
+        "piped install should still prompt when a tty is available; stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Binary installed. Shell setup skipped."),
+        "selecting binary mode should skip shell setup; stdout=\n{stdout}"
+    );
+
+    let rc_contents = fs::read_to_string(&rc_file).unwrap();
+    assert_eq!(
+        rc_contents, "export FOO=bar\n",
+        "binary mode selected from the prompt must not modify the rc file"
     );
 }
 
