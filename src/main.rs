@@ -88,7 +88,7 @@ enum Commands {
     Config(ConfigArgs),
     /// Run as a Claude Code PreToolUse hook — rewrites Bash commands through aegis
     Hook,
-    /// Install aegis hooks into agent config (Claude Code, Codex)
+    /// Install aegis hooks into Claude Code config
     Install(InstallArgs),
 }
 

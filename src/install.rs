@@ -11,8 +11,11 @@ use serde_json::{Map, Value};
 /// Run the Claude Code `PreToolUse` hook and rewrite unwrapped Bash commands
 /// through `aegis --command`.
 pub(crate) fn run_hook() -> i32 {
-    if let Some(output) = hook_response_from_stdin() {
-        println!("{output}");
+    match hook_response_from_stdin() {
+        HookOutcome::Allow(output) | HookOutcome::Deny(output) => {
+            println!("{output}");
+        }
+        HookOutcome::Noop => {}
     }
 
     0
@@ -36,27 +39,68 @@ pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
     }
 }
 
+#[derive(Debug)]
 enum InstallOutcome {
     Installed,
     AlreadyPresent,
 }
 
-fn hook_response_from_stdin() -> Option<Value> {
+#[derive(Debug)]
+enum HookOutcome {
+    Allow(Value),
+    Deny(Value),
+    Noop,
+}
+
+fn hook_response_from_stdin() -> HookOutcome {
     let mut input = String::new();
-    if std::io::stdin().read_to_string(&mut input).is_err() {
-        return None;
+    if let Err(err) = std::io::stdin().read_to_string(&mut input) {
+        return HookOutcome::Deny(hook_deny_output(format!(
+            "aegis could not read hook input: {err}"
+        )));
     }
 
     hook_response_value(&input)
 }
 
-fn hook_response_value(input: &str) -> Option<Value> {
-    let input: Value = serde_json::from_str(input).ok()?;
-    let tool_input = input.get("tool_input")?.as_object()?;
-    let command = tool_input.get("command")?.as_str()?;
+fn hook_response_value(input: &str) -> HookOutcome {
+    let input: Value = match serde_json::from_str(input) {
+        Ok(value) => value,
+        Err(err) => {
+            return HookOutcome::Deny(hook_deny_output(format!("invalid hook input: {err}")));
+        }
+    };
 
-    if command.starts_with("aegis") {
-        return None;
+    let Some(root) = input.as_object() else {
+        return HookOutcome::Deny(hook_deny_output(
+            "invalid hook input: expected a JSON object".to_string(),
+        ));
+    };
+
+    let Some(tool_input) = root.get("tool_input") else {
+        return HookOutcome::Deny(hook_deny_output(
+            "invalid hook input: missing tool_input".to_string(),
+        ));
+    };
+
+    let Some(tool_input) = tool_input.as_object() else {
+        return HookOutcome::Deny(hook_deny_output(
+            "invalid hook input: tool_input must be a JSON object".to_string(),
+        ));
+    };
+
+    let Some(command_value) = tool_input.get("command") else {
+        return HookOutcome::Noop;
+    };
+
+    let Some(command) = command_value.as_str() else {
+        return HookOutcome::Deny(hook_deny_output(
+            "invalid hook input: tool_input.command must be a string".to_string(),
+        ));
+    };
+
+    if is_already_wrapped(command) {
+        return HookOutcome::Noop;
     }
 
     let mut updated_input = tool_input.clone();
@@ -65,7 +109,7 @@ fn hook_response_value(input: &str) -> Option<Value> {
         Value::String(format!("aegis --command {}", shell_quote(command))),
     );
 
-    Some(serde_json::json!({
+    HookOutcome::Allow(serde_json::json!({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
@@ -75,20 +119,44 @@ fn hook_response_value(input: &str) -> Option<Value> {
     }))
 }
 
+fn hook_deny_output(reason: String) -> Value {
+    serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    })
+}
+
+fn is_already_wrapped(command: &str) -> bool {
+    command
+        .strip_prefix("aegis")
+        .is_some_and(|rest| rest.is_empty() || rest.chars().next().is_some_and(char::is_whitespace))
+}
+
 fn shell_quote(command: &str) -> String {
     format!("'{}'", command.replace('\'', "'\\''"))
 }
 
 fn run_install_inner(global: bool) -> Result<InstallOutcome, String> {
-    let cwd =
-        env::current_dir().map_err(|err| format!("failed to resolve current directory: {err}"))?;
-    let home = home_dir();
-    let settings_path = settings_path(global, &cwd, home.as_deref())?;
+    let settings_path = if global {
+        let home = home_dir();
+        settings_path_global(home.as_deref())?
+    } else {
+        let cwd = env::current_dir()
+            .map_err(|err| format!("failed to resolve current directory: {err}"))?;
+        settings_path_local(&cwd)
+    };
 
-    let mut settings = load_settings(&settings_path)?;
+    run_install_at_path(&settings_path)
+}
+
+fn run_install_at_path(settings_path: &Path) -> Result<InstallOutcome, String> {
+    let mut settings = load_settings(settings_path)?;
     let outcome = apply_installation(&mut settings)?;
     if matches!(outcome, InstallOutcome::Installed) {
-        write_settings_atomically(&settings_path, &settings)?;
+        write_settings_atomically(settings_path, &settings)?;
     }
 
     Ok(outcome)
@@ -234,13 +302,13 @@ fn home_dir() -> Option<PathBuf> {
         })
 }
 
-fn settings_path(global: bool, cwd: &Path, home_dir: Option<&Path>) -> Result<PathBuf, String> {
-    if global {
-        let home_dir = home_dir.ok_or_else(|| "HOME is not set".to_string())?;
-        Ok(home_dir.join(".claude/settings.json"))
-    } else {
-        Ok(cwd.join(".claude/settings.json"))
-    }
+fn settings_path_global(home_dir: Option<&Path>) -> Result<PathBuf, String> {
+    let home_dir = home_dir.ok_or_else(|| "HOME is not set".to_string())?;
+    Ok(home_dir.join(".claude/settings.json"))
+}
+
+fn settings_path_local(cwd: &Path) -> PathBuf {
+    cwd.join(".claude/settings.json")
 }
 
 #[cfg(test)]
@@ -252,8 +320,11 @@ mod tests {
     #[test]
     fn hook_rewrites_plain_command_with_shell_quote() {
         let output =
-            hook_response_value(r#"{"tool_input":{"command":"git commit -m 'fix: hello'"}}"#)
-                .expect("expected rewrite output");
+            match hook_response_value(r#"{"tool_input":{"command":"git commit -m 'fix: hello'"}}"#)
+            {
+                HookOutcome::Allow(output) => output,
+                other => panic!("expected rewrite output, got {other:?}"),
+            };
         let rewritten = format!(
             "aegis --command {}",
             shell_quote("git commit -m 'fix: hello'")
@@ -275,33 +346,93 @@ mod tests {
 
     #[test]
     fn hook_skips_already_wrapped_command() {
-        assert!(
-            hook_response_value(r#"{"tool_input":{"command":"aegis --command 'rm -rf /tmp'"}}"#)
-                .is_none()
-        );
+        assert!(matches!(
+            hook_response_value(r#"{"tool_input":{"command":"aegis --command 'rm -rf /tmp'"}}"#),
+            HookOutcome::Noop
+        ));
     }
 
     #[test]
     fn hook_skips_missing_command_field() {
-        assert!(hook_response_value(r#"{"tool_input":{}}"#).is_none());
+        assert!(matches!(
+            hook_response_value(r#"{"tool_input":{}}"#),
+            HookOutcome::Noop
+        ));
+    }
+
+    #[test]
+    fn hook_rejects_malformed_json_input() {
+        assert!(matches!(
+            hook_response_value(
+                r#"{"tool_input":{"command":#),
+            HookOutcome::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn hook_rejects_non_object_tool_input() {
+        assert!(matches!(
+            hook_response_value(r#"{"tool_input":"rm -rf /"}"#
+            ),
+            HookOutcome::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn hook_does_not_skip_aegisctl_commands() {
+        assert!(matches!(
+            hook_response_value(r#"{"tool_input":{"command":"aegisctl status"}}"#),
+            HookOutcome::Allow(_)
+        ));
     }
 
     #[test]
     fn install_settings_path_uses_local_cwd_by_default() {
         let cwd = TempDir::new().expect("temp dir");
-        let home = TempDir::new().expect("home dir");
 
-        let path = settings_path(false, cwd.path(), Some(home.path())).expect("local path");
+        let path = settings_path_local(cwd.path());
         assert_eq!(path, cwd.path().join(".claude/settings.json"));
     }
 
     #[test]
     fn install_settings_path_uses_home_for_global() {
-        let cwd = TempDir::new().expect("temp dir");
         let home = TempDir::new().expect("home dir");
 
-        let path = settings_path(true, cwd.path(), Some(home.path())).expect("global path");
+        let path = settings_path_global(Some(home.path())).expect("global path");
         assert_eq!(path, home.path().join(".claude/settings.json"));
+    }
+
+    #[test]
+    fn install_round_trip_writes_settings_file_atomically() {
+        let dir = TempDir::new().expect("temp dir");
+        let settings_dir = dir.path().join(".claude");
+        fs::create_dir_all(&settings_dir).expect("create settings dir");
+        let settings_path = settings_dir.join("settings.json");
+        fs::write(&settings_path, "{}\n").expect("seed settings file");
+
+        let outcome = run_install_at_path(&settings_path).expect("install");
+        assert!(matches!(outcome, InstallOutcome::Installed));
+
+        let written = fs::read_to_string(&settings_path).expect("read settings");
+        let parsed: Value = serde_json::from_str(&written).expect("parse settings");
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "aegis hook"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            })
+        );
     }
 
     #[test]
