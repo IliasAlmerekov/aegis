@@ -206,7 +206,7 @@ fn apply_installation(settings: &mut Value) -> Result<InstallOutcome, String> {
         .as_array_mut()
         .ok_or_else(|| "settings.hooks.PreToolUse must be a JSON array".to_string())?;
 
-    if pre_tool_use_contains_aegis_hook(pre_tool_use) {
+    if pre_tool_use_contains_bash_aegis_hook(pre_tool_use) {
         return Ok(InstallOutcome::AlreadyPresent);
     }
 
@@ -223,18 +223,27 @@ fn apply_installation(settings: &mut Value) -> Result<InstallOutcome, String> {
     Ok(InstallOutcome::Installed)
 }
 
-fn pre_tool_use_contains_aegis_hook(entries: &[Value]) -> bool {
+fn pre_tool_use_contains_bash_aegis_hook(entries: &[Value]) -> bool {
     entries.iter().any(|entry| {
+        let Some(entry) = entry.as_object() else {
+            return false;
+        };
+
+        if entry.get("matcher").and_then(Value::as_str) != Some("Bash") {
+            return false;
+        }
+
         entry
-            .as_object()
-            .and_then(|object| object.get("hooks"))
+            .get("hooks")
             .and_then(Value::as_array)
             .is_some_and(|hooks| {
                 hooks.iter().any(|hook| {
-                    hook.as_object()
-                        .and_then(|object| object.get("command"))
-                        .and_then(Value::as_str)
-                        == Some("aegis hook")
+                    let Some(hook) = hook.as_object() else {
+                        return false;
+                    };
+
+                    hook.get("type").and_then(Value::as_str) == Some("command")
+                        && hook.get("command").and_then(Value::as_str) == Some("aegis hook")
                 })
             })
     })
@@ -475,6 +484,35 @@ mod tests {
 
         let outcome = apply_installation(&mut settings).expect("second install");
         assert!(matches!(outcome, InstallOutcome::AlreadyPresent));
+        assert_eq!(
+            settings["hooks"]["PreToolUse"]
+                .as_array()
+                .expect("PreToolUse array")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn install_ignores_non_bash_hook_with_aegis_command() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Git",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "aegis hook"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let outcome = apply_installation(&mut settings).expect("install");
+        assert!(matches!(outcome, InstallOutcome::Installed));
         assert_eq!(
             settings["hooks"]["PreToolUse"]
                 .as_array()
