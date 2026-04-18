@@ -36,6 +36,7 @@ use aegis::interceptor::parser::Parser as CommandParser;
 #[cfg(test)]
 use aegis::runtime::RuntimeContext;
 
+mod install;
 mod policy_output;
 mod rollback;
 
@@ -85,6 +86,10 @@ enum Commands {
     Rollback(RollbackArgs),
     /// Manage aegis configuration
     Config(ConfigArgs),
+    /// Run as a Claude Code PreToolUse hook — rewrites Bash commands through aegis
+    Hook,
+    /// Install aegis hooks into Claude Code config
+    Install(InstallArgs),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -172,6 +177,13 @@ enum AuditOutputFormat {
 struct ConfigArgs {
     #[command(subcommand)]
     command: ConfigCommand,
+}
+
+#[derive(Args)]
+struct InstallArgs {
+    /// Patch ~/.claude/settings.json instead of ./.claude/settings.json
+    #[arg(long)]
+    global: bool,
 }
 
 #[derive(Subcommand)]
@@ -482,6 +494,8 @@ fn run_cli(cli: Cli, runtime: &tokio::runtime::Runtime, handle: Handle) -> i32 {
         }
         Some(Commands::Rollback(args)) => handle_rollback_command(args, runtime),
         Some(Commands::Config(args)) => handle_config_command(args),
+        Some(Commands::Hook) => install::run_hook(),
+        Some(Commands::Install(args)) => install::run_install(&args),
         None => {
             if let Some(cmd) = command {
                 run_shell_wrapper(
@@ -1560,6 +1574,22 @@ mod tests {
         .err()
         .expect("verbosity and verbose must conflict");
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn cli_parses_hook_subcommand() {
+        let cli = Cli::try_parse_from(["aegis", "hook"]).unwrap();
+        assert!(matches!(cli.subcommand, Some(Commands::Hook)));
+    }
+
+    #[test]
+    fn cli_parses_install_subcommand_with_global_flag() {
+        let cli = Cli::try_parse_from(["aegis", "install", "--global"]).unwrap();
+        let Some(Commands::Install(args)) = cli.subcommand else {
+            panic!("expected install subcommand");
+        };
+
+        assert!(args.global);
     }
 
     // ── CI policy ─────────────────────────────────────────────────────────────
