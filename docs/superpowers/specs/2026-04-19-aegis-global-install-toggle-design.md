@@ -103,6 +103,20 @@ Semantics:
 The file is the source of truth for both Rust runtime code and installed shell
 / hook scripts.
 
+### Hot-Path Contract
+
+Toggle detection must remain cheap enough for the command-interception hot path.
+
+Requirements:
+
+- disabled-state detection must be a single metadata existence check
+- no file contents are read on the hot path
+- no TOML parsing or config reload is allowed for toggle detection
+- the implementation target is equivalent to one `Path::exists()` / `stat` /
+  `faccessat`-style check per command boundary
+
+This keeps the toggle compatible with the project performance budget.
+
 ### Installer Behavior
 
 The installer becomes global-first and non-interactive with respect to mode
@@ -144,6 +158,18 @@ When in CI:
 
 - the disabled file is ignored
 - normal planning / enforcement proceeds
+
+Race semantics:
+
+- each command invocation snapshots the toggle state once at the start of the
+  wrapper path
+- `aegis off` is guaranteed to affect subsequent commands, not commands already
+  past the gate
+- `aegis on` is likewise guaranteed to affect subsequent commands, not commands
+  already committed to disabled passthrough
+
+This is acceptable and should be documented as command-boundary behavior rather
+than instantaneous global cancellation.
 
 #### 2. Claude Code hook
 
@@ -267,6 +293,26 @@ Provide a tiny portable detection rule for shell scripts:
 The shell-side logic must stay portable and fast; no heavy subprocesses for the
 common case.
 
+The CI detection contract must exactly match Rust behavior. Use this precedence:
+
+1. `AEGIS_CI=1` or `AEGIS_CI=true`
+2. any non-empty truthy value for one of:
+   - `CI`
+   - `GITHUB_ACTIONS`
+   - `GITLAB_CI`
+   - `CIRCLECI`
+   - `BUILDKITE`
+   - `TRAVIS`
+   - `JENKINS_URL`
+   - `TF_BUILD`
+
+Rust runtime code and shell hooks must share the same list and truthiness
+semantics.
+
+To avoid drift, the shell side should use one shared helper implementation for
+toggle / CI detection rather than duplicating the logic separately in every
+hook.
+
 ## Audit and Observability
 
 Toggle actions are user-meaningful security events and should be audited.
@@ -290,6 +336,17 @@ Disabled runtime passthrough commands do **not** need extra disabled-mode noise
 just to prove the toggle worked; the toggle commands themselves are the primary
 observable events.
 
+This spec intentionally does **not** require one audit entry per disabled
+passthrough command. The reason is product-driven:
+
+- disabled mode should feel absent
+- per-command disabled logging would reintroduce noise and a second behavioral
+  mode for ordinary usage
+- the primary forensic signal is the explicit `on` / `off` toggle history
+
+If deeper disabled-mode telemetry is later needed, it should be introduced as a
+separate follow-up with explicit product approval.
+
 ## Testing
 
 ### Installer tests
@@ -310,6 +367,8 @@ Cover:
 - `aegis on` removes it
 - both commands are idempotent
 - `aegis status` reports correct state
+- `aegis status` reports both local disabled state and effective CI-enforced
+  behavior when CI override is active
 
 ### Shell wrapper tests
 
@@ -328,6 +387,22 @@ Cover:
 - Codex `SessionStart` emits no routing context when disabled
 - all three resume enforcement behavior when re-enabled
 - disabled state is ignored in CI for all hooks
+
+### Known Limitation
+
+Codex `SessionStart` context is injected at session creation time. If a user
+runs `aegis off` in the middle of an already-running Codex session, the
+previously injected SessionStart context may still remain in the agent's
+conversation memory.
+
+This is acceptable for the initial implementation because:
+
+- runtime behavior still changes immediately for future hook invocations
+- `PreToolUse` and shell wrapper behavior control actual enforcement
+- a fresh agent session reflects the new disabled state cleanly
+
+The spec therefore guarantees full-disable semantics at runtime, while treating
+already-issued SessionStart guidance as a known session-lifecycle limitation.
 
 ### Regression tests
 
@@ -383,3 +458,6 @@ Recommended sequence:
 4. simplify installer flow to always-global + automatic hook setup
 5. add regression coverage for enabled / disabled / CI combinations
 
+Steps 2–4 are loosely parallelizable once the toggle-state contract is fixed,
+but the implementation should preserve a single shared definition of CI and
+disabled-state detection across Rust and shell code.
