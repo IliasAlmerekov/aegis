@@ -20,51 +20,36 @@ EOF
 
 is_exact_aegis_wrapper() {
   command=$1
-  prefix='aegis --command '
+  command -v python3 >/dev/null 2>&1 || return 1
 
-  case $command in
-    "$prefix"*) ;;
-    *) return 1 ;;
-  esac
+  python3 - "$command" <<'PY' >/dev/null 2>&1
+import shlex
+import sys
 
-  payload=${command#"$prefix"}
+command = sys.argv[1]
+prefix = "aegis --command "
 
-  [ -n "$payload" ] || return 1
+if not command.startswith(prefix):
+    raise SystemExit(1)
 
-  first_char=${payload%"${payload#?}"}
-  [ "$first_char" = "'" ] || return 1
+payload = command[len(prefix):]
+if not payload or payload[0] != "'" or payload[-1] != "'":
+    raise SystemExit(1)
 
-  len=${#payload}
-  i=1
+try:
+    parts = shlex.split(payload, posix=True)
+except ValueError:
+    raise SystemExit(1)
 
-  while [ "$i" -lt "$len" ]; do
-    c=${payload:$i:1}
+if len(parts) != 1:
+    raise SystemExit(1)
 
-    if [ "$c" != "'" ]; then
-      i=$((i + 1))
-      continue
-    fi
+def shell_quote(value: str) -> str:
+    return "'" + value.replace("'", r"'\''") + "'"
 
-    if [ $((i + 1)) -eq "$len" ]; then
-      return 0
-    fi
-
-    if [ "${payload:$((i + 1)):1}" != "\\" ]; then
-      return 1
-    fi
-
-    if [ "${payload:$((i + 2)):1}" != "'" ]; then
-      return 1
-    fi
-
-    if [ "${payload:$((i + 3)):1}" != "'" ]; then
-      return 1
-    fi
-
-    i=$((i + 4))
-  done
-
-  return 1
+if prefix + shell_quote(parts[0]) != command:
+    raise SystemExit(1)
+PY
 }
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -107,7 +92,7 @@ case $command_value in
     ;;
 esac
 
-quoted_command=$(printf '%s' "$command_value" | jq -Rrsr @sh)
+quoted_command=$(printf '%s' "$command_value" | jq -Rrs @sh)
 
 jq -n \
   --arg reason "Run through aegis: aegis --command ${quoted_command}" \
