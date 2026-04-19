@@ -149,6 +149,8 @@ When disabled and not in CI:
 - `run_shell_wrapper` must short-circuit before planning / scanning
 - the command is passed directly to the real shell
 - no user-facing disabled message is printed in normal operation
+- the toggle snapshot is taken immediately before the first enforcement-related
+  I/O in `run_shell_wrapper`
 
 When enabled:
 
@@ -178,6 +180,7 @@ When disabled and not in CI:
 - the hook exits as a silent no-op
 - it does not rewrite `tool_input.command`
 - it does not emit warning text
+- the toggle snapshot is taken immediately before building the hook JSON response
 
 When enabled:
 
@@ -194,6 +197,7 @@ When disabled and not in CI:
 - the hook exits as a silent no-op
 - it does not deny raw Bash commands
 - it does not require `aegis --command ...`
+- the toggle snapshot is taken immediately before building the hook JSON response
 
 When enabled:
 
@@ -209,6 +213,7 @@ When disabled and not in CI:
 
 - the hook emits no Aegis routing context
 - it behaves as a silent no-op
+- the toggle snapshot is taken immediately before building the hook JSON response
 
 When enabled:
 
@@ -268,6 +273,12 @@ Behavior:
 
 Suggested text should stay short and unambiguous.
 
+Exit code:
+
+- `aegis status` returns `0` in both enabled and disabled states
+- state is communicated via stdout / structured output, not via non-zero exit
+  codes
+
 ## Toggle Detection API
 
 We need one reusable toggle-state resolver shared across Rust code and hook
@@ -282,6 +293,14 @@ Provide helpers under a focused module, e.g. `src/toggle.rs`:
 - `set_disabled(bool) -> Result<()>`
 - `status() -> Result<ToggleState>`
 
+`set_disabled(bool)` is best-effort and command-oriented, not a multi-process
+transaction primitive:
+
+- it does not promise atomic cross-process on/off serialization
+- concurrent `on` / `off` races are resolved by last-writer-wins behavior
+- this is acceptable because toggle semantics are defined at command boundaries,
+  not as a globally linearizable control plane
+
 ### Script side
 
 Provide a tiny portable detection rule for shell scripts:
@@ -295,23 +314,41 @@ common case.
 
 The CI detection contract must exactly match Rust behavior. Use this precedence:
 
-1. `AEGIS_CI=1` or `AEGIS_CI=true`
-2. any non-empty truthy value for one of:
+1. `AEGIS_CI=0`, `AEGIS_CI=false`, or `AEGIS_CI=no` => force non-CI
+2. `AEGIS_CI=1`, `AEGIS_CI=true`, or `AEGIS_CI=yes` => force CI
+3. truthy value for one of:
    - `CI`
    - `GITHUB_ACTIONS`
    - `GITLAB_CI`
    - `CIRCLECI`
    - `BUILDKITE`
    - `TRAVIS`
-   - `JENKINS_URL`
    - `TF_BUILD`
+4. non-empty `JENKINS_URL` => CI
 
 Rust runtime code and shell hooks must share the same list and truthiness
 semantics.
 
+Truthiness rules:
+
+- for `AEGIS_CI`, `CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `CIRCLECI`, `BUILDKITE`,
+  `TRAVIS`, and `TF_BUILD`, accepted true values are `{1, true, yes}`
+  case-insensitively
+- accepted false values for the explicit `AEGIS_CI` override are
+  `{0, false, no}` case-insensitively
+- `JENKINS_URL` is considered CI when it is a non-empty string
+
 To avoid drift, the shell side should use one shared helper implementation for
 toggle / CI detection rather than duplicating the logic separately in every
 hook.
+
+That helper should live in a stable, installer-managed location that uninstall
+also knows how to remove. The exact final path is an implementation detail, but
+the spec requires:
+
+- one installed helper source of truth for shell-side CI / disabled detection
+- all installed hooks consume that helper rather than embedding divergent logic
+- uninstall removes the helper together with the installed hook payloads
 
 ## Audit and Observability
 
