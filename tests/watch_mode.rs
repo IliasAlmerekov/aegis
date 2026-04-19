@@ -38,6 +38,12 @@ fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output
         .expect("failed to wait for aegis watch")
 }
 
+fn write_disabled_toggle(home: &Path) {
+    let aegis_dir = home.join(".aegis");
+    fs::create_dir_all(&aegis_dir).unwrap();
+    fs::write(aegis_dir.join("disabled"), "timestamp=x\npid=1\n").unwrap();
+}
+
 fn parse_frames(stdout: &[u8]) -> Vec<serde_json::Value> {
     String::from_utf8_lossy(stdout)
         .lines()
@@ -261,6 +267,45 @@ fn child_exit_code_is_propagated() {
 fn watch_exits_zero_on_clean_eof() {
     let output = aegis_watch(b"{\"cmd\":\"echo hi\"}\n");
     assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn disabled_watch_mode_passthrough_executes_command_without_audit() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    write_disabled_toggle(home.path());
+
+    let output = aegis_watch_in(
+        home.path(),
+        cwd.path(),
+        b"{\"cmd\":\"printf hi\",\"id\":\"disabled-watch\"}\n",
+    );
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+
+    let frames = parse_frames(&output.stdout);
+    let stdout_frame = frames
+        .iter()
+        .find(|f| f["type"] == "stdout")
+        .expect("disabled watch mode should still emit stdout frames");
+    assert!(
+        stdout_frame["data_b64"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "stdout frame should carry child output"
+    );
+    let result = frames
+        .iter()
+        .find(|f| f["type"] == "result")
+        .expect("disabled watch mode should still emit a result frame");
+    assert_eq!(result["decision"], "approved");
+    assert_eq!(result["exit_code"], 0);
+
+    assert!(
+        !home.path().join(".aegis").join("audit.jsonl").exists(),
+        "disabled watch passthrough must bypass auditing"
+    );
 }
 
 #[test]

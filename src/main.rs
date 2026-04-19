@@ -592,7 +592,9 @@ fn run_shell_wrapper(
             }
         };
 
-        if matches!(toggle_state, toggle::ToggleState::Disabled) {
+        if matches!(toggle_state, toggle::ToggleState::Disabled)
+            && matches!(output, CommandOutputFormat::Text)
+        {
             return exec_command(cmd, launch);
         }
     }
@@ -671,21 +673,13 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
 }
 
 fn handle_toggle_on_command() -> i32 {
-    let was_disabled = match toggle::enable() {
-        Ok(was_disabled) => was_disabled,
-        Err(err) => {
-            eprintln!("error: failed to enable Aegis: {err}");
-            return EXIT_INTERNAL;
-        }
-    };
+    if let Err(err) = toggle::enable() {
+        eprintln!("error: failed to enable Aegis: {err}");
+        return EXIT_INTERNAL;
+    }
 
     if let Err(err) = toggle::append_toggle_audit_entry("aegis on") {
-        if was_disabled && let Err(restore_err) = toggle::disable() {
-            eprintln!("warning: failed to restore disabled state after audit error: {restore_err}");
-        }
-
-        eprintln!("error: failed to audit toggle change: {err}");
-        return EXIT_INTERNAL;
+        eprintln!("warning: toggle state changed, but audit entry could not be recorded: {err}");
     }
 
     println!("Aegis is enabled.");
@@ -693,21 +687,13 @@ fn handle_toggle_on_command() -> i32 {
 }
 
 fn handle_toggle_off_command() -> i32 {
-    let was_already_disabled = match toggle::disable() {
-        Ok(was_already_disabled) => was_already_disabled,
-        Err(err) => {
-            eprintln!("error: failed to disable Aegis: {err}");
-            return EXIT_INTERNAL;
-        }
-    };
+    if let Err(err) = toggle::disable() {
+        eprintln!("error: failed to disable Aegis: {err}");
+        return EXIT_INTERNAL;
+    }
 
     if let Err(err) = toggle::append_toggle_audit_entry("aegis off") {
-        if !was_already_disabled && let Err(restore_err) = toggle::enable() {
-            eprintln!("warning: failed to restore enabled state after audit error: {restore_err}");
-        }
-
-        eprintln!("error: failed to audit toggle change: {err}");
-        return EXIT_INTERNAL;
+        eprintln!("warning: toggle state changed, but audit entry could not be recorded: {err}");
     }
 
     println!("Aegis is disabled until `aegis on`.");
@@ -731,7 +717,7 @@ fn handle_toggle_status_command() -> i32 {
 
     println!("toggle: {toggle_label}");
     println!("flag: {}", view.flag_path.display());
-    if view.ci_override_active {
+    if view.ci_override_active && matches!(view.state, toggle::ToggleState::Disabled) {
         println!("effective mode: enforcing (CI override)");
     } else {
         println!(

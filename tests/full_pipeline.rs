@@ -54,6 +54,12 @@ fn write_executable(path: &Path, body: &str) {
     }
 }
 
+fn write_disabled_toggle(home: &Path) {
+    let aegis_dir = home.join(".aegis");
+    fs::create_dir_all(&aegis_dir).unwrap();
+    fs::write(aegis_dir.join("disabled"), "timestamp=x\npid=1\n").unwrap();
+}
+
 /// Read the invocation log written by a PATH-stub executable.
 ///
 /// Returns the lines recorded by the stub, or an empty `Vec` when the log
@@ -305,6 +311,52 @@ fn json_mode_still_does_not_write_audit_entries_when_planned() {
     assert!(
         !home.path().join(".aegis").join("audit.jsonl").exists(),
         "planned json evaluation must not append an audit entry"
+    );
+}
+
+#[test]
+fn disabled_shell_wrapper_text_passthrough_executes_without_audit() {
+    let home = TempDir::new().unwrap();
+    write_disabled_toggle(home.path());
+
+    let output = base_command(home.path())
+        .args(["-c", "printf passthrough"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "passthrough");
+    assert!(output.stderr.is_empty());
+    assert!(
+        !home.path().join(".aegis").join("audit.jsonl").exists(),
+        "disabled passthrough must bypass auditing"
+    );
+}
+
+#[test]
+fn disabled_shell_wrapper_json_mode_preserves_evaluation_contract() {
+    let home = TempDir::new().unwrap();
+    write_disabled_toggle(home.path());
+
+    let output = base_command(home.path())
+        .args(["-c", "echo hi", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.stderr.is_empty(),
+        "json mode must stay stderr-free even when the toggle is disabled"
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["command"], "echo hi");
+    assert_eq!(json["execution"]["mode"], "evaluation_only");
+    assert_eq!(json["execution"]["will_execute"], false);
+    assert_eq!(json["decision"], "auto_approve");
+    assert!(
+        !home.path().join(".aegis").join("audit.jsonl").exists(),
+        "disabled json mode must continue to avoid audit writes"
     );
 }
 
