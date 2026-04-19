@@ -893,7 +893,7 @@ fn install_script_prompts_for_setup_mode_when_piped_from_tty_session() {
             ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
             ("TEST_BINARY_DIGEST", &binary_digest),
         ],
-        "3\n",
+        "3\ny\n",
     );
 
     assert!(
@@ -911,6 +911,15 @@ fn install_script_prompts_for_setup_mode_when_piped_from_tty_session() {
     assert!(
         stdout.contains("Binary installed. Shell setup skipped."),
         "selecting binary mode should skip shell setup; stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Agent hook setup is only available from a local checkout"),
+        "installer should print local-only agent setup instructions instead of a remote curl|sh path; stdout=\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .contains("raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/agent-setup.sh"),
+        "installer must not advertise the remote curl|sh agent-setup path; stdout=\n{stdout}"
     );
 
     let rc_contents = fs::read_to_string(&rc_file).unwrap();

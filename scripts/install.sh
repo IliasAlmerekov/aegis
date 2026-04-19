@@ -488,13 +488,50 @@ Open a new shell (or source the file above) to activate it.
 Rollback:
   curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 
-Claude Code:
+  Claude Code:
   Open Claude Code settings and set the shell path to the output of `which aegis`.
 EOF
 }
 
+print_agent_setup_next_steps() {
+    cat <<'EOF'
+
+Agent hook setup is only available from a local checkout, because
+scripts/agent-setup.sh depends on the sibling files in scripts/hooks/.
+
+From a cloned repository, run:
+  sh scripts/agent-setup.sh
+
+If you only want to verify the installed binary path, run:
+  command -v aegis
+EOF
+}
+
+resolve_local_agent_setup() {
+    script_dir=""
+
+    case "$0" in
+        */*)
+            script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    if [ -f "${script_dir}/agent-setup.sh" ] \
+        && [ -f "${script_dir}/hooks/claude-code.sh" ] \
+        && [ -f "${script_dir}/hooks/codex-pre-tool-use.sh" ] \
+        && [ -f "${script_dir}/hooks/codex-session-start.sh" ]; then
+        printf '%s/agent-setup.sh\n' "${script_dir}"
+        return 0
+    fi
+
+    return 1
+}
+
 offer_agent_setup() {
-    agent_setup_url="https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/agent-setup.sh"
+    agent_setup_script=""
     answer="n"
 
     if ! has_prompt_tty; then
@@ -512,14 +549,17 @@ offer_agent_setup() {
 
     case "${answer}" in
         y|Y|yes|YES)
-            if ! curl -fsSL "${agent_setup_url}" | sh; then
-                printf 'Agent setup failed. Run manually later:\n'
-                printf '  curl -fsSL %s | sh\n' "${agent_setup_url}"
+            if agent_setup_script="$(resolve_local_agent_setup)"; then
+                if ! /bin/sh "${agent_setup_script}"; then
+                    printf 'Agent setup failed.\n'
+                    print_agent_setup_next_steps
+                fi
+            else
+                print_agent_setup_next_steps
             fi
             ;;
         *)
-            printf 'Skipped. Run later:\n'
-            printf '  curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/agent-setup.sh | sh\n'
+            print_agent_setup_next_steps
             ;;
     esac
 }

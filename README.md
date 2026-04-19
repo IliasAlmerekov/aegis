@@ -90,6 +90,13 @@ curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/i
 
 That's it. No config files to edit, no environment variables to copy, no second step.
 
+If you want the optional Claude Code / Codex hook installer, run it from a local
+checkout so the bundled `scripts/hooks/` files are available:
+
+```bash
+sh scripts/agent-setup.sh
+```
+
 ### Alternative: install from source
 
 If the pre-built binary is not available for your platform:
