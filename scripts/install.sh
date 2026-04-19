@@ -493,6 +493,37 @@ Claude Code:
 EOF
 }
 
+offer_agent_setup() {
+    agent_setup_url="https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/agent-setup.sh"
+    answer="n"
+
+    if ! has_prompt_tty; then
+        return 0
+    fi
+
+    printf '\nAgent hook setup — routes AI agent shell commands through aegis:\n'
+    printf '  y) Install now for detected agents (Claude Code / Codex)\n'
+    printf '  n) Skip\n'
+    printf 'Install agent hooks? [y/N] '
+
+    if ! read -r answer </dev/tty; then
+        answer="n"
+    fi
+
+    case "${answer}" in
+        y|Y|yes|YES)
+            if ! curl -fsSL "${agent_setup_url}" | sh; then
+                printf 'Agent setup failed. Run manually later:\n'
+                printf '  curl -fsSL %s | sh\n' "${agent_setup_url}"
+            fi
+            ;;
+        *)
+            printf 'Skipped. Run later:\n'
+            printf '  curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/agent-setup.sh | sh\n'
+            ;;
+    esac
+}
+
 main() {
     print_banner
 
@@ -543,16 +574,19 @@ main() {
             rc_file="$(resolve_rc_file "${real_shell}")"
             write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
             print_post_install "${rc_file}"
+            offer_agent_setup
             ;;
         local)
             setup_local_project "${real_shell}" "$(target_path)"
             print_local_post_install
+            offer_agent_setup
             enter_local_shell "${real_shell}" "$(target_path)"
             ;;
         binary)
             printf 'Binary installed. Shell setup skipped.\n'
             printf 'Set SHELL=%s and AEGIS_REAL_SHELL=%s manually to activate.\n' \
                 "$(target_path)" "${real_shell}"
+            offer_agent_setup
             ;;
     esac
 }
