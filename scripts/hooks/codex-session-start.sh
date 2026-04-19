@@ -9,7 +9,7 @@ cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "context": "Route every Bash command through aegis --command '<original command>'. Unwrapped Bash commands will be blocked by the fail-closed PreToolUse hook."
+    "context": "IMPORTANT: All Bash tool commands must be routed through aegis. Run every shell command as: aegis --command '<original command>'. Commands that do not start with 'aegis' will be blocked by the PreToolUse hook. This is a security requirement enforced by aegis."
   }
 }
 JSON

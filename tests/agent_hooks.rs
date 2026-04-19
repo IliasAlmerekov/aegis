@@ -1,0 +1,226 @@
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+
+use serde_json::Value;
+use tempfile::TempDir;
+
+fn script_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join(name)
+}
+
+fn run_script(script_name: &str, home: &Path, args: &[&str], stdin: Option<&str>) -> Output {
+    let mut command = Command::new("/bin/sh");
+    command.arg(script_path(script_name));
+    command.args(args);
+    command.env("HOME", home);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().unwrap();
+
+    if let Some(input) = stdin {
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+    }
+
+    child.wait_with_output().unwrap()
+}
+
+fn read_json(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn shell_quote(command: &str) -> String {
+    format!("'{}'", command.replace('\'', r"'\''"))
+}
+
+fn run_codex_pre_tool_use(home: &Path, command: &str) -> Output {
+    let input = serde_json::json!({ "tool_input": { "command": command } }).to_string();
+    run_script(
+        "hooks/codex-pre-tool-use.sh",
+        home,
+        &[],
+        Some(input.as_str()),
+    )
+}
+
+#[test]
+fn codex_agent_setup_installs_hooks_and_is_idempotent() {
+    let home = TempDir::new().unwrap();
+    let hooks_json = home.path().join(".codex").join("hooks.json");
+    let session_hook = home
+        .path()
+        .join(".codex")
+        .join("hooks")
+        .join("aegis-session-start.sh");
+    let ptu_hook = home
+        .path()
+        .join(".codex")
+        .join("hooks")
+        .join("aegis-pre-tool-use.sh");
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(
+        install_output.status.success(),
+        "agent setup must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&install_output.stdout),
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    assert!(
+        hooks_json.exists(),
+        "agent setup must write Codex hooks.json"
+    );
+    assert!(
+        session_hook.exists(),
+        "session-start hook must be installed"
+    );
+    assert!(ptu_hook.exists(), "pre-tool-use hook must be installed");
+
+    let installed_hooks_text = fs::read_to_string(&hooks_json).unwrap();
+    let installed_hooks = read_json(&hooks_json);
+    let expected_session = session_hook.display().to_string();
+    let expected_ptu = ptu_hook.display().to_string();
+
+    assert_eq!(
+        installed_hooks["hooks"]["SessionStart"][0]["matcher"],
+        "startup|resume"
+    );
+    assert_eq!(
+        installed_hooks["hooks"]["SessionStart"][0]["hooks"][0]["command"], expected_session,
+        "Codex hooks.json must point SessionStart at the installed Aegis hook"
+    );
+    assert_eq!(installed_hooks["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+    assert_eq!(
+        installed_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"], expected_ptu,
+        "Codex hooks.json must point PreToolUse at the installed Aegis hook"
+    );
+
+    let second_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(
+        second_output.status.success(),
+        "second agent setup must also succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&hooks_json).unwrap(),
+        installed_hooks_text,
+        "agent setup must be idempotent and keep hooks.json stable"
+    );
+}
+
+#[test]
+fn codex_session_start_emits_strong_aegis_context() {
+    let home = TempDir::new().unwrap();
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
+
+    let output = run_script("hooks/codex-session-start.sh", home.path(), &[], None);
+    assert!(output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "session-start hook must stay quiet: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    assert_eq!(
+        json["hookSpecificOutput"]["context"],
+        "IMPORTANT: All Bash tool commands must be routed through aegis. Run every shell command as: aegis --command '<original command>'. Commands that do not start with 'aegis' will be blocked by the PreToolUse hook. This is a security requirement enforced by aegis."
+    );
+}
+
+#[test]
+fn codex_pre_tool_use_denies_git_stash_clear_with_aegis_prompt_and_allows_wrapped_commands() {
+    let home = TempDir::new().unwrap();
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
+
+    let deny_output = run_codex_pre_tool_use(home.path(), "git stash clear");
+    assert!(deny_output.status.success());
+    assert!(
+        deny_output.stderr.is_empty(),
+        "pre-tool-use hook must stay quiet: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&deny_output.stdout),
+        String::from_utf8_lossy(&deny_output.stderr)
+    );
+
+    let deny_json: Value = serde_json::from_slice(&deny_output.stdout).unwrap();
+    assert_eq!(
+        deny_json["hookSpecificOutput"]["hookEventName"],
+        "PreToolUse"
+    );
+    assert_eq!(
+        deny_json["hookSpecificOutput"]["permissionDecision"],
+        "deny"
+    );
+    assert_eq!(
+        deny_json["hookSpecificOutput"]["permissionDecisionReason"],
+        "Run through aegis: aegis --command 'git stash clear'",
+        "Aegis must give a clean, command-specific rerun reason for git stash clear"
+    );
+
+    let allow_output = run_codex_pre_tool_use(home.path(), "aegis --command 'git stash clear'");
+    assert!(
+        allow_output.status.success(),
+        "wrapped command must be accepted: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&allow_output.stdout),
+        String::from_utf8_lossy(&allow_output.stderr)
+    );
+    assert!(
+        allow_output.stdout.is_empty(),
+        "exact aegis-wrapped commands must be allowed without a deny response"
+    );
+    assert!(allow_output.stderr.is_empty());
+}
+
+#[test]
+fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quotes() {
+    let home = TempDir::new().unwrap();
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
+
+    for malformed in [
+        r#"aegis --command '\''"#,
+        r#"aegis --command '\''echo '\''oops'\'''"#,
+    ] {
+        let output = run_codex_pre_tool_use(home.path(), malformed);
+        assert!(
+            output.status.success(),
+            "malformed wrapper test must not crash for {malformed:?}: stdout=\n{}\nstderr=\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            json["hookSpecificOutput"]["permissionDecisionReason"],
+            "Run through aegis: invalid aegis wrapper syntax"
+        );
+    }
+
+    let wrapped = format!("aegis --command {}", shell_quote("echo 'oops'"));
+    let allow_output = run_codex_pre_tool_use(home.path(), &wrapped);
+    assert!(
+        allow_output.status.success(),
+        "wrapped embedded-quote command must be accepted: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&allow_output.stdout),
+        String::from_utf8_lossy(&allow_output.stderr)
+    );
+    assert!(
+        allow_output.stdout.is_empty(),
+        "valid embedded-quote wrapper must not produce deny output"
+    );
+    assert!(allow_output.stderr.is_empty());
+}
