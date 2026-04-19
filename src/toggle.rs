@@ -115,17 +115,15 @@ fn home_dir_optional() -> Option<PathBuf> {
 
 fn is_disabled_at(path: &Path) -> Result<bool> {
     match fs::metadata(path) {
-        Ok(metadata) => {
-            if metadata.is_file() {
-                Ok(true)
-            } else {
-                Err(AegisError::Config(format!(
-                    "toggle path {} exists but is not a file",
-                    path.display()
-                )))
-            }
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(err.into()),
     }
 }
@@ -250,6 +248,16 @@ mod tests {
         assert!(contents.starts_with("timestamp="));
         assert!(contents.contains("\npid="));
         assert!(contents.ends_with('\n'));
+    }
+
+    #[test]
+    fn is_disabled_treats_malformed_parent_as_enabled() {
+        let home = TempDir::new().unwrap();
+        let parent = home.path().join(".aegis");
+        fs::write(&parent, "not a directory").unwrap();
+        let path = parent.join("disabled");
+
+        assert!(!is_disabled_at(&path).unwrap());
     }
 
     #[test]

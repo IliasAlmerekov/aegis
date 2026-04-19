@@ -270,6 +270,25 @@ fn watch_exits_zero_on_clean_eof() {
 }
 
 #[test]
+fn malformed_toggle_parent_does_not_abort_watch_mode() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    fs::write(home.path().join(".aegis"), "not a directory").unwrap();
+
+    let output = aegis_watch_in(home.path(), cwd.path(), b"{\"cmd\":\"echo hi\"}\n");
+
+    assert_eq!(output.status.code(), Some(0));
+
+    let frames = parse_frames(&output.stdout);
+    let result = frames
+        .iter()
+        .find(|f| f["type"] == "result")
+        .expect("watch mode should still complete command execution");
+    assert_eq!(result["decision"], "approved");
+    assert_eq!(result["exit_code"], 0);
+}
+
+#[test]
 fn disabled_watch_mode_passthrough_executes_command_without_audit() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
