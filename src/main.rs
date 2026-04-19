@@ -21,7 +21,9 @@ use aegis::planning::{
     SetupFailureKind, SetupFailurePlan, prepare_and_plan, prepare_planner,
 };
 use aegis::runtime::AuditWriteOptions;
+use aegis::runtime_gate::is_ci_environment;
 use aegis::snapshot::SnapshotRecord;
+use aegis::toggle;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use tokio::runtime::Handle;
@@ -82,6 +84,12 @@ enum Commands {
     Watch,
     /// View the audit log
     Audit(AuditArgs),
+    /// Enable Aegis by removing ~/.aegis/disabled
+    On,
+    /// Disable Aegis by creating ~/.aegis/disabled
+    Off,
+    /// Show the current toggle state and active config path
+    Status,
     /// Roll back a previously recorded snapshot
     Rollback(RollbackArgs),
     /// Manage aegis configuration
@@ -422,8 +430,9 @@ fn run_cli(cli: Cli, runtime: &tokio::runtime::Runtime, handle: Handle) -> i32 {
 
     match subcommand {
         Some(Commands::Watch) => {
+            let in_ci = is_ci_environment();
             let prepared = prepare_planner(verbosity.is_verbose(), handle);
-            runtime.block_on(aegis::watch::run(&prepared))
+            runtime.block_on(aegis::watch::run(&prepared, in_ci))
         }
         Some(Commands::Audit(args)) => {
             if args.summary && matches!(args.format, AuditOutputFormat::Ndjson) {
@@ -492,6 +501,9 @@ fn run_cli(cli: Cli, runtime: &tokio::runtime::Runtime, handle: Handle) -> i32 {
                 }
             }
         }
+        Some(Commands::On) => handle_toggle_on_command(),
+        Some(Commands::Off) => handle_toggle_off_command(),
+        Some(Commands::Status) => handle_toggle_status_command(),
         Some(Commands::Rollback(args)) => handle_rollback_command(args, runtime),
         Some(Commands::Config(args)) => handle_config_command(args),
         Some(Commands::Hook) => install::run_hook(),
@@ -569,8 +581,23 @@ fn run_shell_wrapper(
     handle: Handle,
     launch: &ShellLaunchOptions,
 ) -> i32 {
-    let prepared = prepare_planner(verbosity.is_verbose(), handle);
     let in_ci = is_ci_environment();
+    // Snapshot toggle state exactly once before any enforcement-related I/O.
+    if !in_ci {
+        let toggle_state = match toggle::status() {
+            Ok(state) => state,
+            Err(err) => {
+                eprintln!("error: failed to read toggle state: {err}");
+                return EXIT_INTERNAL;
+            }
+        };
+
+        if matches!(toggle_state, toggle::ToggleState::Disabled) {
+            return exec_command(cmd, launch);
+        }
+    }
+
+    let prepared = prepare_planner(verbosity.is_verbose(), handle);
     let cwd_state = match env::current_dir() {
         Ok(path) => CwdState::Resolved(path),
         Err(_) => CwdState::Unavailable,
@@ -608,39 +635,6 @@ fn run_shell_wrapper(
     run_shell_text_outcome(cmd, verbosity, &prepared, outcome, launch)
 }
 
-/// Returns `true` when aegis is running inside a CI environment.
-///
-/// Detection order:
-/// 1. `AEGIS_CI=1` — explicit override (useful for testing or forcing CI mode
-///    in environments that do not set the standard variables).
-/// 2. Well-known CI env vars set by major CI providers (GitHub Actions,
-///    GitLab CI, CircleCI, Buildkite, Travis CI, Jenkins, Azure Pipelines).
-fn is_ci_environment() -> bool {
-    // Explicit override — highest priority.
-    if let Ok(val) = env::var("AEGIS_CI") {
-        return val == "1" || val.eq_ignore_ascii_case("true");
-    }
-
-    // Standard CI provider signals.
-    const CI_VARS: &[&str] = &[
-        "CI", // GitHub Actions, GitLab CI, CircleCI, Buildkite, Travis, Heroku
-        "GITHUB_ACTIONS",
-        "GITLAB_CI",
-        "CIRCLECI",
-        "BUILDKITE",
-        "TRAVIS",
-        "JENKINS_URL",
-        "TF_BUILD", // Azure Pipelines
-    ];
-
-    CI_VARS.iter().any(|var| {
-        env::var(var)
-            .ok()
-            .map(|v| !v.is_empty() && v != "false" && v != "0")
-            .unwrap_or(false)
-    })
-}
-
 fn handle_config_command(args: ConfigArgs) -> i32 {
     match args.command {
         ConfigCommand::Init => match env::current_dir() {
@@ -674,6 +668,83 @@ fn handle_config_command(args: ConfigArgs) -> i32 {
         },
         ConfigCommand::Validate(args) => handle_config_validate_command(args),
     }
+}
+
+fn handle_toggle_on_command() -> i32 {
+    let was_disabled = match toggle::enable() {
+        Ok(was_disabled) => was_disabled,
+        Err(err) => {
+            eprintln!("error: failed to enable Aegis: {err}");
+            return EXIT_INTERNAL;
+        }
+    };
+
+    if let Err(err) = toggle::append_toggle_audit_entry("aegis on") {
+        if was_disabled && let Err(restore_err) = toggle::disable() {
+            eprintln!("warning: failed to restore disabled state after audit error: {restore_err}");
+        }
+
+        eprintln!("error: failed to audit toggle change: {err}");
+        return EXIT_INTERNAL;
+    }
+
+    println!("Aegis is enabled.");
+    0
+}
+
+fn handle_toggle_off_command() -> i32 {
+    let was_already_disabled = match toggle::disable() {
+        Ok(was_already_disabled) => was_already_disabled,
+        Err(err) => {
+            eprintln!("error: failed to disable Aegis: {err}");
+            return EXIT_INTERNAL;
+        }
+    };
+
+    if let Err(err) = toggle::append_toggle_audit_entry("aegis off") {
+        if !was_already_disabled && let Err(restore_err) = toggle::enable() {
+            eprintln!("warning: failed to restore enabled state after audit error: {restore_err}");
+        }
+
+        eprintln!("error: failed to audit toggle change: {err}");
+        return EXIT_INTERNAL;
+    }
+
+    println!("Aegis is disabled until `aegis on`.");
+    0
+}
+
+fn handle_toggle_status_command() -> i32 {
+    // Snapshot toggle state exactly once before any enforcement-related I/O.
+    let view = match toggle::status_view(is_ci_environment()) {
+        Ok(view) => view,
+        Err(err) => {
+            eprintln!("error: failed to read toggle status: {err}");
+            return EXIT_INTERNAL;
+        }
+    };
+
+    let toggle_label = match view.state {
+        toggle::ToggleState::Disabled => "disabled",
+        toggle::ToggleState::Enabled => "enabled",
+    };
+
+    println!("toggle: {toggle_label}");
+    println!("flag: {}", view.flag_path.display());
+    if view.ci_override_active {
+        println!("effective mode: enforcing (CI override)");
+    } else {
+        println!(
+            "effective mode: {}",
+            if matches!(view.state, toggle::ToggleState::Disabled) {
+                "disabled passthrough"
+            } else {
+                "enforcing"
+            }
+        );
+    }
+    println!("config: {}", view.config_status);
+    0
 }
 
 fn handle_rollback_command(args: RollbackArgs, runtime: &tokio::runtime::Runtime) -> i32 {

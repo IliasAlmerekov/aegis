@@ -206,7 +206,19 @@ pub fn emit_frame(frame: &OutputFrame) -> std::io::Result<()> {
 ///
 /// Must be called with a multi-thread tokio runtime so that
 /// `tokio::task::block_in_place` is available for TUI dialog rendering.
-pub async fn run(prepared: &PreparedPlanner) -> i32 {
+pub async fn run(prepared: &PreparedPlanner, ci_detected: bool) -> i32 {
+    // Snapshot toggle state exactly once at the command-boundary gate.
+    if !ci_detected {
+        match crate::toggle::status() {
+            Ok(crate::toggle::ToggleState::Disabled) => return run_disabled().await,
+            Ok(crate::toggle::ToggleState::Enabled) => {}
+            Err(err) => {
+                eprintln!("error: failed to read toggle state: {err}");
+                return 4;
+            }
+        }
+    }
+
     if let PreparedPlanner::SetupFailure(plan) = prepared {
         report_watch_setup_failure(plan);
         return 4;
@@ -237,14 +249,50 @@ pub async fn run(prepared: &PreparedPlanner) -> i32 {
                 if line.trim().is_empty() {
                     continue; // skip blank separator lines
                 }
-                process_frame(line, prepared).await;
+                process_frame(line, prepared, ci_detected).await;
+            }
+        }
+    }
+}
+
+/// Entry point for disabled watch passthrough mode.
+///
+/// Frames are still parsed and cwd-validated, but they bypass planning,
+/// prompting, snapshots, and audit writes before executing and streaming the
+/// child command output.
+pub async fn run_disabled() -> i32 {
+    let mut reader = TokioBufReader::new(tokio::io::stdin());
+
+    loop {
+        match read_bounded_line(&mut reader, MAX_FRAME_BYTES).await {
+            Err(e) => {
+                eprintln!("aegis: stdin read error: {e}");
+                return 4;
+            }
+            Ok(ReadLineResult::Eof) => return 0,
+            Ok(ReadLineResult::Oversized) => {
+                if emit_frame(&OutputFrame::Error {
+                    id: None,
+                    exit_code: 4,
+                    message: "frame exceeds 1 MiB limit".to_string(),
+                })
+                .is_err()
+                {
+                    std::process::exit(4);
+                }
+            }
+            Ok(ReadLineResult::Line(line)) => {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                process_disabled_frame(line).await;
             }
         }
     }
 }
 
 /// Process a single input line as a watch-mode frame.
-async fn process_frame(line: String, prepared: &PreparedPlanner) {
+async fn process_frame(line: String, prepared: &PreparedPlanner, ci_detected: bool) {
     // ── 1. Parse JSON ─────────────────────────────────────────────────────────
     let frame: InputFrame = match serde_json::from_str(&line) {
         Ok(f) => f,
@@ -307,7 +355,7 @@ async fn process_frame(line: String, prepared: &PreparedPlanner) {
             command: &frame.cmd,
             cwd_state,
             transport: ExecutionTransport::Watch,
-            ci_detected: false,
+            ci_detected,
         },
     );
 
@@ -316,11 +364,57 @@ async fn process_frame(line: String, prepared: &PreparedPlanner) {
             report_watch_setup_failure(&plan);
             std::process::exit(4);
         }
-        PlanningOutcome::Planned(plan) => run_watch_plan(frame, prepared, plan).await,
+        PlanningOutcome::Planned(plan) => run_watch_plan(frame, prepared, plan, ci_detected).await,
     }
 }
 
-async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: InterceptionPlan) {
+async fn process_disabled_frame(line: String) {
+    let frame: InputFrame = match serde_json::from_str(&line) {
+        Ok(f) => f,
+        Err(e) => {
+            let msg = format!("invalid JSON: {e}");
+            if emit_frame(&OutputFrame::Error {
+                id: None,
+                exit_code: 4,
+                message: msg,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+            return;
+        }
+    };
+
+    let id = frame.id.clone();
+
+    if frame.cmd.trim().is_empty() {
+        if emit_frame(&OutputFrame::Error {
+            id,
+            exit_code: 4,
+            message: "missing or empty cmd".to_string(),
+        })
+        .is_err()
+        {
+            std::process::exit(4);
+        }
+        return;
+    }
+
+    let cwd = match resolve_frame_cwd(&frame, &id) {
+        Ok(path) => path,
+        Err(()) => return,
+    };
+
+    execute_and_emit(&frame.cmd, &cwd, id).await;
+}
+
+async fn run_watch_plan(
+    frame: InputFrame,
+    prepared: &PreparedPlanner,
+    plan: InterceptionPlan,
+    ci_detected: bool,
+) {
     let id = frame.id.clone();
     let context = runtime_context(prepared);
     let cwd = watch_execution_cwd(plan.decision_context().cwd_state());
@@ -365,7 +459,7 @@ async fn run_watch_plan(frame: InputFrame, prepared: &PreparedPlanner, plan: Int
         frame.source.clone(),
         frame.cwd.clone(),
         id.clone(),
-        false,
+        ci_detected,
         true,
     );
 
@@ -403,6 +497,30 @@ fn runtime_context(prepared: &PreparedPlanner) -> &RuntimeContext {
         PreparedPlanner::Ready(context) => context,
         PreparedPlanner::SetupFailure(_) => unreachable!("watch run handles setup failure first"),
     }
+}
+
+fn resolve_frame_cwd(frame: &InputFrame, id: &Option<String>) -> Result<PathBuf, ()> {
+    if let Some(ref cwd_str) = frame.cwd {
+        let path = PathBuf::from(cwd_str);
+        if !path.is_dir() {
+            if emit_frame(&OutputFrame::Error {
+                id: id.clone(),
+                exit_code: 4,
+                message: "invalid cwd".to_string(),
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+            return Err(());
+        }
+        return Ok(path);
+    }
+
+    Ok(match std::env::current_dir() {
+        Ok(path) => path,
+        Err(_) => PathBuf::from("."),
+    })
 }
 
 fn watch_execution_cwd(cwd_state: &CwdState) -> PathBuf {
