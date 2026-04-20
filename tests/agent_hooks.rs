@@ -85,6 +85,56 @@ fn run_codex_pre_tool_use(home: &Path, command: &str) -> Output {
     )
 }
 
+fn json_contains_command(json: &Value, section: &str, command: &str) -> bool {
+    json["hooks"][section].as_array().is_some_and(|entries| {
+        entries.iter().any(|entry| {
+            entry["hooks"]
+                .as_array()
+                .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
+        })
+    })
+}
+
+#[test]
+fn codex_pre_tool_use_denies_when_helper_is_missing_in_normal_mode() {
+    let home = TempDir::new().unwrap();
+    let output = run_codex_pre_tool_use(home.path(), "echo hi");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        json["hookSpecificOutput"]["permissionDecisionReason"],
+        "Run through aegis: aegis --command 'echo hi'"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn codex_pre_tool_use_denies_when_helper_is_missing_but_ci_override_is_forced() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({ "tool_input": { "command": "echo hi" } }).to_string();
+    let output = run_script_with_env(
+        "hooks/codex-pre-tool-use.sh",
+        home.path(),
+        &[],
+        Some(input.as_str()),
+        &[("AEGIS_CI", "1")],
+    );
+
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(output.stderr.is_empty());
+}
+
 #[test]
 fn codex_pre_tool_use_is_noop_when_disabled_outside_ci() {
     let home = TempDir::new().unwrap();
@@ -152,6 +202,90 @@ fn claude_code_is_noop_when_disabled_outside_ci() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn uninstall_prunes_claude_and_codex_hook_registrations() {
+    let home = TempDir::new().unwrap();
+    let rc_file = home.path().join(".bashrc");
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--all"], None);
+    assert!(install_output.status.success());
+
+    let claude_settings = home.path().join(".claude").join("settings.json");
+    let codex_hooks = home.path().join(".codex").join("hooks.json");
+    let claude_hook = home
+        .path()
+        .join(".claude")
+        .join("hooks")
+        .join("aegis-rewrite.sh");
+    let session_hook = home
+        .path()
+        .join(".codex")
+        .join("hooks")
+        .join("aegis-session-start.sh");
+    let ptu_hook = home
+        .path()
+        .join(".codex")
+        .join("hooks")
+        .join("aegis-pre-tool-use.sh");
+    let helper = home
+        .path()
+        .join(".aegis")
+        .join("lib")
+        .join("toggle-state.sh");
+
+    assert!(claude_settings.exists());
+    assert!(codex_hooks.exists());
+    assert!(claude_hook.exists());
+    assert!(session_hook.exists());
+    assert!(ptu_hook.exists());
+    assert!(helper.exists());
+
+    let rc_file_str = rc_file.display().to_string();
+    let uninstall_output = run_script_with_env(
+        "uninstall.sh",
+        home.path(),
+        &[],
+        None,
+        &[("AEGIS_SHELL_RC", &rc_file_str), ("SHELL", "/bin/bash")],
+    );
+    assert!(
+        uninstall_output.status.success(),
+        "uninstall must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&uninstall_output.stdout),
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    assert!(!claude_hook.exists());
+    assert!(!session_hook.exists());
+    assert!(!ptu_hook.exists());
+    assert!(!helper.exists());
+
+    let claude_json = read_json(&claude_settings);
+    assert!(
+        !json_contains_command(
+            &claude_json,
+            "PreToolUse",
+            &claude_hook.display().to_string()
+        ),
+        "Claude settings.json must not retain the Aegis hook registration"
+    );
+
+    let codex_session_command = session_hook.display().to_string();
+    let codex_ptu_command = ptu_hook.display().to_string();
+    let codex_json = read_json(&codex_hooks);
+    assert!(
+        !json_contains_command(&codex_json, "SessionStart", &codex_session_command),
+        "Codex hooks.json must not retain the SessionStart registration"
+    );
+    assert!(
+        !json_contains_command(&codex_json, "PreToolUse", &codex_ptu_command),
+        "Codex hooks.json must not retain the PreToolUse registration"
+    );
+
+    assert_eq!(fs::read_to_string(&rc_file).unwrap(), "export FOO=bar\n");
 }
 
 #[test]

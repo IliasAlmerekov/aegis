@@ -127,8 +127,37 @@ remove_hook_payload() {
     rm -f "${hook_path}"
 }
 
+prune_hook_registration() {
+    json_file="$1"
+    section="$2"
+    command_path="$3"
+
+    [ -f "${json_file}" ] || return 0
+
+    jq --arg section "${section}" --arg cmd "${command_path}" '
+        if .hooks[$section]? then
+            .hooks[$section] = [
+                .hooks[$section][]?
+                | .hooks = [
+                    .hooks[]?
+                    | select(.type != "command" or .command != $cmd)
+                  ]
+                | select((.hooks | length) > 0)
+            ]
+        else
+            .
+        end
+    ' "${json_file}" > "${TMPDIR_AEGIS}/hook-prune.tmp"
+
+    mv "${TMPDIR_AEGIS}/hook-prune.tmp" "${json_file}"
+}
+
 main() {
     TMPDIR_AEGIS="$(mktemp -d)"
+
+    if [ -f "${HOME}/.claude/settings.json" ] || [ -f "${HOME}/.codex/hooks.json" ]; then
+        need_cmd jq || fail "jq is required to prune agent hook registrations"
+    fi
 
     real_shell="$(detect_real_shell)"
     rc_file="$(resolve_rc_file "${real_shell}")"
@@ -138,6 +167,9 @@ main() {
     remove_hook_payload "${HOME}/.codex/hooks/aegis-session-start.sh"
     remove_hook_payload "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"
     remove_hook_payload "${HOME}/.aegis/lib/toggle-state.sh"
+    prune_hook_registration "${HOME}/.claude/settings.json" "PreToolUse" "${HOME}/.claude/hooks/aegis-rewrite.sh"
+    prune_hook_registration "${HOME}/.codex/hooks.json" "SessionStart" "${HOME}/.codex/hooks/aegis-session-start.sh"
+    prune_hook_registration "${HOME}/.codex/hooks.json" "PreToolUse" "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"
 
     printf 'Removed shell wrapper setup from %s\n' "${rc_file}"
     printf 'Removed %s\n' "$(target_path)"
