@@ -34,10 +34,10 @@ pub fn is_ci_environment() -> bool {
         "TRAVIS",
         "TF_BUILD",
     ] {
-        if let Ok(value) = env::var(key) {
-            if truthy_env(&value) {
-                return true;
-            }
+        if let Ok(value) = env::var(key)
+            && truthy_env(&value)
+        {
+            return true;
         }
     }
 

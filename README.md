@@ -58,19 +58,17 @@ The installer will:
 
 ## Install behavior
 
-The installer performs a global setup by default:
-
-- installs the `aegis` binary
-- enables shell integration
-- installs Claude Code / Codex hooks when available from a local checkout
-- rejects the removed `AEGIS_SETUP_MODE` and `AEGIS_SKIP_SHELL_SETUP` controls instead of silently ignoring them
+- Global: installs the `aegis` binary by default.
+- Local: enables shell integration, installs Claude Code / Codex hooks when available from a local checkout, and lets you use `aegis off` / `aegis on` for a temporary toggle.
+- Binary: if a pre-built release is unavailable for your platform, use the source install path below instead.
+- The installer rejects the removed `AEGIS_SETUP_MODE` and `AEGIS_SKIP_SHELL_SETUP` controls instead of silently ignoring them.
 
 Automatic shell setup currently recognizes `bash` and `zsh`. If you use another
 shell or a custom rc file, set `AEGIS_SHELL_RC=/path/to/your/rcfile` before
 rerunning the installer. If you are already inside an Aegis shell, also set
 `AEGIS_REAL_SHELL` to the path of your real shell.
 
-Use `aegis off` to temporarily disable enforcement and `aegis on` to restore it.
+When disabled, Aegis behaves as though it is not installed for ordinary local shell and supported agent usage. CI ignores the local disabled flag and continues enforcing policy.
 
 ### Alternative: install from source
 
@@ -124,7 +122,7 @@ If you need to set the shell path manually, paste the output of `command -v aegi
 
 If the agent respects `$SHELL` — it works automatically.
 
-If the agent has its own shell setting — set it to:
+If the agent has its own shell setting, find the `shell` field and set it to:
 
 ```bash
 command -v aegis

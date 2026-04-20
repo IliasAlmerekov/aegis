@@ -96,6 +96,28 @@ fn status_returns_zero_when_enabled_or_disabled() {
 }
 
 #[test]
+fn disabled_shell_wrapper_passthrough_stays_quiet() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let output = Command::new(aegis_bin())
+        .env("HOME", home.path())
+        .env("AEGIS_REAL_SHELL", "/bin/sh")
+        .args(["--command", "printf test"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "test");
+    assert!(output.stderr.is_empty(), "disabled mode should stay quiet");
+}
+
+#[test]
 fn status_does_not_claim_ci_override_when_toggle_is_enabled() {
     let home = TempDir::new().unwrap();
 
