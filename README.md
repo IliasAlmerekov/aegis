@@ -53,49 +53,18 @@ The installer will:
 
 1. Download the right binary for your system
 2. Verify its checksum (so you know it hasn't been tampered with)
-3. Ask you how you want to set it up:
+3. Set up Aegis globally and, when available from a local checkout, install
+   Claude Code / Codex hooks automatically
 
-```
-     _    _____ ____ ___ ____
-    / \  | ____/ ___|_ _/ ___|
-   / _ \ |  _|| |  _ | |\___ \
-  / ___ \| |__| |_| || | ___) |
- /_/   \_\_____\____|___|____/
+## Install behavior
 
- Shield your terminal from AI agents
+The installer performs a global setup by default:
 
-How would you like to set up Aegis?
+- installs the `aegis` binary
+- enables shell integration
+- installs Claude Code / Codex hooks when available from a local checkout
 
-  [1] Global    — protect all shells (writes to ~/.bashrc or ~/.zshrc)
-  [2] Local     — protect this project only (starts a shielded shell now)
-  [3] Binary    — install the binary, skip shell setup
-
-Choose [1/2/3]:
-```
-
-If you want to preselect a mode without the prompt:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh \
-  | AEGIS_SETUP_MODE=binary sh
-```
-
-### Which option should I pick?
-
-| Option | Best for | What it does |
-|--------|----------|-------------|
-| **Global** | Most users | Every terminal you open will be protected. Commands from any AI agent, in any project, go through Aegis. |
-| **Local** | Trying it out on one project | Opens a protected shell right now, only for the current project. Your other terminals are not affected. To re-enter later, run `.aegis/enter.sh`. |
-| **Binary** | Advanced users | Just installs the binary. You set up `$SHELL` and `$AEGIS_REAL_SHELL` yourself. |
-
-That's it. No config files to edit, no environment variables to copy, no second step.
-
-If you want the optional Claude Code / Codex hook installer, run it from a local
-checkout so the bundled `scripts/hooks/` files are available:
-
-```bash
-sh scripts/agent-setup.sh
-```
+Use `aegis off` to temporarily disable enforcement and `aegis on` to restore it.
 
 ### Alternative: install from source
 
@@ -113,7 +82,7 @@ Aegis works on Windows through **WSL2** (Windows Subsystem for Linux). Open a WS
 
 ## Verify it works
 
-Open a new terminal (or, if you chose Local, you're already in a protected shell).
+Open a new terminal to let the global shell integration take effect.
 
 ```bash
 # Check the binary is installed
@@ -141,13 +110,13 @@ echo "$AEGIS_REAL_SHELL"  # should print your real shell (e.g. /bin/zsh)
 
 ### Claude Code
 
-If you chose **Global** or **Local** install — Claude Code will automatically use Aegis, because `$SHELL` already points to it.
+Claude Code will automatically use Aegis because `$SHELL` already points to it.
 
-If you chose **Binary** — open Claude Code settings, find the `shell` field, and paste the output of `command -v aegis`.
+If you need to set the shell path manually, paste the output of `command -v aegis` into the `shell` field.
 
 ### Codex, Cursor, and other agents
 
-If the agent respects `$SHELL` — it works automatically with Global or Local install.
+If the agent respects `$SHELL` — it works automatically.
 
 If the agent has its own shell setting — set it to:
 
@@ -206,8 +175,6 @@ safe_alt    = "my-nuke-script.sh --dry-run"
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 ```
-
-If you used **Local** mode, also delete the `.aegis/` directory in your project.
 
 ---
 
