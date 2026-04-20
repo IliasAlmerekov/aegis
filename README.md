@@ -68,7 +68,7 @@ shell or a custom rc file, set `AEGIS_SHELL_RC=/path/to/your/rcfile` before
 rerunning the installer. If you are already inside an Aegis shell, also set
 `AEGIS_REAL_SHELL` to the path of your real shell.
 
-When disabled, Aegis behaves as though it is not installed for ordinary local shell and supported agent usage. CI ignores the local disabled flag and continues enforcing policy.
+When disabled, Aegis behaves as though it is not installed for ordinary local shell and supported agent usage. By default, detected CI environments ignore the local disabled flag and continue enforcing policy. `AEGIS_CI` can explicitly override CI detection.
 
 ### Alternative: install from source
 
