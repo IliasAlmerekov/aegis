@@ -4,6 +4,42 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
+## v0.4.0
+
+### Highlights
+
+- **Global-first installer flow**: the convenience installer no longer prompts
+  for Global / Local / Binary setup modes. It validates shell support up front,
+  performs the managed global shell setup path, and prints explicit follow-up
+  guidance.
+- **Dynamic on/off toggle**: Aegis now exposes `aegis on`, `aegis off`, and
+  `aegis status` backed by the global `~/.aegis/disabled` flag.
+- **Zero-noise disabled mode**: outside CI, disabled shell-wrapper and
+  supported hook usage behave as though Aegis were absent for ordinary command
+  flow while still preserving the explicit toggle history.
+- **CI override contract**: detected CI environments keep enforcement active by
+  default, while `AEGIS_CI` can explicitly override CI detection in either
+  direction.
+- **Shared hook toggle helper**: Claude Code and Codex hook installations now
+  share the managed helper path `~/.aegis/lib/toggle-state.sh`, with fail-safe
+  fallback behavior if that helper is missing.
+- **Honest install / uninstall behavior**: local hook setup is auto-attempted
+  only from a real local checkout, and uninstall now removes both installed
+  hook payloads and their JSON registrations.
+
+### Documentation and contracts
+
+- `README.md` now documents the global-first installer, the removed
+  `AEGIS_SETUP_MODE` / `AEGIS_SKIP_SHELL_SETUP` controls, and the verified
+  disabled / CI-override behavior.
+- Added `docs/architecture-decisions.md` to capture the current architecture,
+  documented non-goals, toggle / CI decisions, and fuzzing guidance referenced
+  by contributor and security docs.
+- Troubleshooting and release docs now describe the current installer and hook
+  setup behavior instead of the removed interactive setup-mode flow.
+
+---
+
 ## v0.3.0
 
 ### Highlights

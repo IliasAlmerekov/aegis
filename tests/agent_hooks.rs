@@ -17,6 +17,64 @@ fn run_script(script_name: &str, home: &Path, args: &[&str], stdin: Option<&str>
     command.arg(script_path(script_name));
     command.args(args);
     command.env("HOME", home);
+    for key in [
+        "AEGIS_CI",
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "BUILDKITE",
+        "TRAVIS",
+        "TF_BUILD",
+        "JENKINS_URL",
+    ] {
+        command.env_remove(key);
+    }
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().unwrap();
+
+    if let Some(input) = stdin {
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+    }
+
+    child.wait_with_output().unwrap()
+}
+
+fn run_script_with_env(
+    script_name: &str,
+    home: &Path,
+    args: &[&str],
+    stdin: Option<&str>,
+    envs: &[(&str, &str)],
+) -> Output {
+    let mut command = Command::new("/bin/sh");
+    command.arg(script_path(script_name));
+    command.args(args);
+    command.env("HOME", home);
+    for key in [
+        "AEGIS_CI",
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "BUILDKITE",
+        "TRAVIS",
+        "TF_BUILD",
+        "JENKINS_URL",
+    ] {
+        command.env_remove(key);
+    }
+    for (key, value) in envs {
+        command.env(key, value);
+    }
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -51,6 +109,209 @@ fn run_codex_pre_tool_use(home: &Path, command: &str) -> Output {
         &[],
         Some(input.as_str()),
     )
+}
+
+fn json_contains_command(json: &Value, section: &str, command: &str) -> bool {
+    json["hooks"][section].as_array().is_some_and(|entries| {
+        entries.iter().any(|entry| {
+            entry["hooks"]
+                .as_array()
+                .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
+        })
+    })
+}
+
+#[test]
+fn codex_pre_tool_use_denies_when_helper_is_missing_in_normal_mode() {
+    let home = TempDir::new().unwrap();
+    let output = run_codex_pre_tool_use(home.path(), "echo hi");
+    assert!(output.status.success());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(
+        json["hookSpecificOutput"]["permissionDecisionReason"],
+        "Run through aegis: aegis --command 'echo hi'"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn codex_pre_tool_use_denies_when_helper_is_missing_but_ci_override_is_forced() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let input = serde_json::json!({ "tool_input": { "command": "echo hi" } }).to_string();
+    let output = run_script_with_env(
+        "hooks/codex-pre-tool-use.sh",
+        home.path(),
+        &[],
+        Some(input.as_str()),
+        &[("AEGIS_CI", "1")],
+    );
+
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn codex_pre_tool_use_is_noop_when_disabled_outside_ci() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
+
+    let output = run_codex_pre_tool_use(home.path(), "echo hi");
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "disabled hook must be silent noop"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "disabled hook must be silent noop"
+    );
+}
+
+#[test]
+fn codex_session_start_is_noop_when_disabled_outside_ci() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
+
+    let output = run_script("hooks/codex-session-start.sh", home.path(), &[], None);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn claude_code_is_noop_when_disabled_outside_ci() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--claude-code"], None);
+    assert!(install_output.status.success());
+
+    let input = serde_json::json!({ "tool_input": { "command": "echo hi" } }).to_string();
+    let output = run_script(
+        "hooks/claude-code.sh",
+        home.path(),
+        &[],
+        Some(input.as_str()),
+    );
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn uninstall_prunes_claude_and_codex_hook_registrations() {
+    let home = TempDir::new().unwrap();
+    let rc_file = home.path().join(".bashrc");
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--all"], None);
+    assert!(install_output.status.success());
+
+    let claude_settings = home.path().join(".claude").join("settings.json");
+    let codex_hooks = home.path().join(".codex").join("hooks.json");
+    let claude_hook = home
+        .path()
+        .join(".claude")
+        .join("hooks")
+        .join("aegis-rewrite.sh");
+    let session_hook = home
+        .path()
+        .join(".codex")
+        .join("hooks")
+        .join("aegis-session-start.sh");
+    let ptu_hook = home
+        .path()
+        .join(".codex")
+        .join("hooks")
+        .join("aegis-pre-tool-use.sh");
+    let helper = home
+        .path()
+        .join(".aegis")
+        .join("lib")
+        .join("toggle-state.sh");
+
+    assert!(claude_settings.exists());
+    assert!(codex_hooks.exists());
+    assert!(claude_hook.exists());
+    assert!(session_hook.exists());
+    assert!(ptu_hook.exists());
+    assert!(helper.exists());
+
+    let rc_file_str = rc_file.display().to_string();
+    let uninstall_output = run_script_with_env(
+        "uninstall.sh",
+        home.path(),
+        &[],
+        None,
+        &[("AEGIS_SHELL_RC", &rc_file_str), ("SHELL", "/bin/bash")],
+    );
+    assert!(
+        uninstall_output.status.success(),
+        "uninstall must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&uninstall_output.stdout),
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+
+    assert!(!claude_hook.exists());
+    assert!(!session_hook.exists());
+    assert!(!ptu_hook.exists());
+    assert!(!helper.exists());
+
+    let claude_json = read_json(&claude_settings);
+    assert!(
+        !json_contains_command(
+            &claude_json,
+            "PreToolUse",
+            &claude_hook.display().to_string()
+        ),
+        "Claude settings.json must not retain the Aegis hook registration"
+    );
+
+    let codex_session_command = session_hook.display().to_string();
+    let codex_ptu_command = ptu_hook.display().to_string();
+    let codex_json = read_json(&codex_hooks);
+    assert!(
+        !json_contains_command(&codex_json, "SessionStart", &codex_session_command),
+        "Codex hooks.json must not retain the SessionStart registration"
+    );
+    assert!(
+        !json_contains_command(&codex_json, "PreToolUse", &codex_ptu_command),
+        "Codex hooks.json must not retain the PreToolUse registration"
+    );
+
+    assert_eq!(fs::read_to_string(&rc_file).unwrap(), "export FOO=bar\n");
 }
 
 #[test]
@@ -116,6 +377,16 @@ fn codex_agent_setup_installs_hooks_and_is_idempotent() {
         installed_hooks_text,
         "agent setup must be idempotent and keep hooks.json stable"
     );
+
+    let helper = home
+        .path()
+        .join(".aegis")
+        .join("lib")
+        .join("toggle-state.sh");
+    let before = fs::read_to_string(&helper).unwrap();
+    let second_output = run_script("agent-setup.sh", home.path(), &["--all"], None);
+    assert!(second_output.status.success());
+    assert_eq!(fs::read_to_string(&helper).unwrap(), before);
 }
 
 #[test]
@@ -223,4 +494,37 @@ fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quote
         "valid embedded-quote wrapper must not produce deny output"
     );
     assert!(allow_output.stderr.is_empty());
+}
+
+#[test]
+fn codex_pre_tool_use_still_denies_when_disabled_file_exists_but_ci_override_is_forced() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let install_output = run_script_with_env(
+        "agent-setup.sh",
+        home.path(),
+        &["--codex"],
+        None,
+        &[("AEGIS_CI", "1")],
+    );
+    assert!(install_output.status.success());
+
+    let input = serde_json::json!({ "tool_input": { "command": "echo hi" } }).to_string();
+    let output = run_script_with_env(
+        "hooks/codex-pre-tool-use.sh",
+        home.path(),
+        &[],
+        Some(input.as_str()),
+        &[("AEGIS_CI", "1")],
+    );
+
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
 }

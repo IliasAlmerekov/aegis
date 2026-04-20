@@ -95,6 +95,11 @@ line.
 
 6. If you want the convenience wrapper behavior too, follow the wrapper
    instructions in `README.md` or use the convenience installer path instead.
+   The convenience installer now performs the global shell-setup path only and
+   rejects the removed `AEGIS_SETUP_MODE` / `AEGIS_SKIP_SHELL_SETUP` controls.
+   Automatic shell setup recognizes `bash` and `zsh`; for another shell or a
+   custom rc file, rerun with `AEGIS_SHELL_RC=/path/to/your/rcfile` (and set
+   `AEGIS_REAL_SHELL` too if you are already inside an Aegis-managed shell).
 
 If the checksum does not match, stop and re-download both files from the same
 release. Do not install a binary whose checksum you could not verify.

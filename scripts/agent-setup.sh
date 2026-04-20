@@ -8,6 +8,8 @@ set -eu
 
 SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 HOOKS_DIR="${SCRIPT_DIR}/hooks"
+COMMON_TOGGLE_SOURCE="${HOOKS_DIR}/toggle-state.sh"
+COMMON_TOGGLE_DEST="${HOME}/.aegis/lib/toggle-state.sh"
 
 INSTALL_CLAUDE_CODE=""
 INSTALL_CODEX=""
@@ -119,6 +121,13 @@ install_claude_code() {
     mv "${UPDATED_FILE}" "${CLAUDE_SETTINGS}"
     rm -f "${PATCH_FILE}"
     printf 'Claude Code: hook installed → %s\n' "${HOOK_DEST}"
+}
+
+install_toggle_helper() {
+    need_file "${COMMON_TOGGLE_SOURCE}"
+    require_shell_safe_path "${COMMON_TOGGLE_DEST}" "${COMMON_TOGGLE_DEST}"
+    mkdir -p "$(dirname "${COMMON_TOGGLE_DEST}")"
+    install -m 0755 "${COMMON_TOGGLE_SOURCE}" "${COMMON_TOGGLE_DEST}"
 }
 
 install_codex() {
@@ -233,6 +242,7 @@ main() {
         exit 0
     fi
 
+    install_toggle_helper
     [ -n "${INSTALL_CLAUDE_CODE}" ] && install_claude_code
     [ -n "${INSTALL_CODEX}" ] && install_codex
 

@@ -7,8 +7,6 @@ BINDIR="${AEGIS_BINDIR:-/usr/local/bin}"
 OS_OVERRIDE="${AEGIS_OS:-}"
 ARCH_OVERRIDE="${AEGIS_ARCH:-}"
 SHELL_RC_OVERRIDE="${AEGIS_SHELL_RC:-}"
-SKIP_SHELL_SETUP="${AEGIS_SKIP_SHELL_SETUP:-0}"
-SETUP_MODE="${AEGIS_SETUP_MODE:-}"
 
 BEGIN_MARKER="# >>> aegis shell setup >>>"
 END_MARKER="# <<< aegis shell setup <<<"
@@ -65,136 +63,6 @@ ${BEGIN_MARKER}
 export AEGIS_REAL_SHELL="${real_shell}"
 export SHELL="${aegis_path}"
 ${END_MARKER}
-EOF
-}
-
-has_prompt_tty() {
-    if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
-        return 1
-    fi
-
-    if ( : </dev/tty >/dev/tty ) >/dev/null 2>&1; then
-        return 0
-    fi
-
-    return 1
-}
-
-prompt_setup_mode() {
-    prompt_device=""
-    read_device=""
-
-    if [ -n "${SETUP_MODE}" ]; then
-        printf '%s\n' "${SETUP_MODE}"
-        return
-    fi
-
-    if has_prompt_tty; then
-        prompt_device="/dev/tty"
-        read_device="/dev/tty"
-    elif [ -t 0 ] && [ -t 1 ]; then
-        prompt_device="/dev/stdout"
-        read_device="/dev/stdin"
-    else
-        printf '%s\n' 'No interactive terminal detected; defaulting to Global setup.' >&2
-        printf '%s\n' \
-            'To choose explicitly, rerun with AEGIS_SETUP_MODE=global|local|binary or download the script first and run it directly.' >&2
-        printf 'global\n'
-        return
-    fi
-
-    printf '\n' >"${prompt_device}"
-    printf 'How would you like to set up Aegis?\n' >"${prompt_device}"
-    printf '\n' >"${prompt_device}"
-    printf '  [1] Global    — protect all shells (writes to ~/.bashrc or ~/.zshrc)\n' >"${prompt_device}"
-    printf '  [2] Local     — protect this project only (starts a shielded shell now)\n' >"${prompt_device}"
-    printf '  [3] Binary    — install the binary, skip shell setup\n' >"${prompt_device}"
-    printf '\n' >"${prompt_device}"
-    printf 'Choose [1/2/3]: ' >"${prompt_device}"
-    read -r choice <"${read_device}"
-
-    case "${choice}" in
-        1|global|Global)
-            printf 'global\n'
-            ;;
-        2|local|Local)
-            printf 'local\n'
-            ;;
-        3|binary|Binary)
-            printf 'binary\n'
-            ;;
-        *)
-            printf 'global\n'
-            ;;
-    esac
-}
-
-setup_local_project() {
-    real_shell="$1"
-    aegis_path="$2"
-    project_dir="$(pwd)"
-    aegis_dir="${project_dir}/.aegis"
-
-    mkdir -p "${aegis_dir}"
-
-    cat > "${aegis_dir}/enter.sh" <<ENTER_EOF
-#!/bin/sh
-# Aegis — enter a protected shell for this project.
-# Run this script to re-enter the aegis-shielded session.
-
-AEGIS_BIN="${aegis_path}"
-REAL_SHELL="${real_shell}"
-
-if [ ! -x "\${AEGIS_BIN}" ]; then
-    printf 'error: aegis binary not found at %s\\n' "\${AEGIS_BIN}" >&2
-    printf 'Re-run the installer or set AEGIS_BIN.\\n' >&2
-    exit 1
-fi
-
-export AEGIS_REAL_SHELL="\${REAL_SHELL}"
-export SHELL="\${AEGIS_BIN}"
-
-exec "\${REAL_SHELL}"
-ENTER_EOF
-
-    chmod 0755 "${aegis_dir}/enter.sh"
-
-    if [ ! -f "${project_dir}/.aegis.toml" ]; then
-        if "${aegis_path}" config init >/dev/null 2>&1; then
-            :
-        fi
-    fi
-}
-
-enter_local_shell() {
-    real_shell="$1"
-    aegis_path="$2"
-
-    export AEGIS_REAL_SHELL="${real_shell}"
-    export SHELL="${aegis_path}"
-
-    exec "${real_shell}"
-}
-
-print_local_post_install() {
-    project_dir="$(pwd)"
-
-    cat <<'EOF'
-
-Aegis is now protecting this project.
-
-You are inside an aegis-shielded shell. AI agents (Claude Code,
-Codex, etc.) launched here will have their commands intercepted.
-
-To re-enter this protected shell later, run:
-EOF
-    printf '  %s/.aegis/enter.sh\n' "${project_dir}"
-    cat <<'EOF'
-
-To stop protection, simply exit this shell (Ctrl-D or `exit`).
-
-Rollback:
-  curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 EOF
 }
 
@@ -530,42 +398,54 @@ resolve_local_agent_setup() {
     return 1
 }
 
-offer_agent_setup() {
-    agent_setup_script=""
-    answer="n"
-
-    if ! has_prompt_tty; then
+has_supported_agent_dirs() {
+    if [ -d "${HOME}/.claude" ] || [ -d "${HOME}/.codex" ]; then
         return 0
     fi
 
-    printf '\nAgent hook setup — routes AI agent shell commands through aegis:\n'
-    printf '  y) Install now for detected agents (Claude Code / Codex)\n'
-    printf '  n) Skip\n'
-    printf 'Install agent hooks? [y/N] '
+    return 1
+}
 
-    if ! read -r answer </dev/tty; then
-        answer="n"
-    fi
+offer_agent_setup() {
+    agent_setup_script=""
+    agent_setup_output=""
 
-    case "${answer}" in
-        y|Y|yes|YES)
-            if agent_setup_script="$(resolve_local_agent_setup)"; then
-                if ! /bin/sh "${agent_setup_script}"; then
-                    printf 'Agent setup failed.\n'
-                    print_agent_setup_next_steps
-                fi
-            else
-                print_agent_setup_next_steps
+    if agent_setup_script="$(resolve_local_agent_setup)"; then
+        if ! has_supported_agent_dirs; then
+            printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
+            return 0
+        fi
+
+        if agent_setup_output="$(/bin/sh "${agent_setup_script}" 2>&1)"; then
+            if [ -n "${agent_setup_output}" ]; then
+                printf '%s\n' "${agent_setup_output}"
             fi
-            ;;
-        *)
+
+            case "${agent_setup_output}" in
+                *"No agents detected (no ~/.claude or ~/.codex). Nothing installed."*)
+                    printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
+                    ;;
+                *)
+                    printf 'Agent hooks installed automatically.\n'
+                    ;;
+            esac
+        else
+            if [ -n "${agent_setup_output}" ]; then
+                printf '%s\n' "${agent_setup_output}"
+            fi
+            printf 'Agent hook setup failed.\n'
             print_agent_setup_next_steps
-            ;;
-    esac
+        fi
+    else
+        print_agent_setup_next_steps
+    fi
 }
 
 main() {
     print_banner
+    if [ -n "${AEGIS_SETUP_MODE:-}" ] || [ -n "${AEGIS_SKIP_SHELL_SETUP:-}" ]; then
+        fail "AEGIS_SETUP_MODE and AEGIS_SKIP_SHELL_SETUP are deprecated; the installer always performs global shell setup"
+    fi
 
     os=""
     arch=""
@@ -575,7 +455,8 @@ main() {
     checksum_url=""
     binary_path=""
     checksum_path=""
-    mode=""
+    real_shell="$(detect_real_shell)"
+    rc_file="$(resolve_rc_file "${real_shell}")"
 
     os="$(detect_os)"
     arch="$(detect_arch)"
@@ -601,34 +482,12 @@ main() {
         printf 'Installed version: %s\n' "$("$(target_path)" --version)"
     fi
 
-    if [ "${SKIP_SHELL_SETUP}" = "1" ]; then
-        printf 'Skipped shell setup because AEGIS_SKIP_SHELL_SETUP=1\n'
-        return
-    fi
-
-    real_shell="$(detect_real_shell)"
-    mode="$(prompt_setup_mode)"
-
-    case "${mode}" in
-        global)
-            rc_file="$(resolve_rc_file "${real_shell}")"
-            write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
-            print_post_install "${rc_file}"
-            offer_agent_setup
-            ;;
-        local)
-            setup_local_project "${real_shell}" "$(target_path)"
-            print_local_post_install
-            offer_agent_setup
-            enter_local_shell "${real_shell}" "$(target_path)"
-            ;;
-        binary)
-            printf 'Binary installed. Shell setup skipped.\n'
-            printf 'Set SHELL=%s and AEGIS_REAL_SHELL=%s manually to activate.\n' \
-                "$(target_path)" "${real_shell}"
-            offer_agent_setup
-            ;;
-    esac
+    write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
+    print_post_install "${rc_file}"
+    offer_agent_setup
+    printf 'Aegis installed globally.\n'
+    printf 'Use `aegis off` to disable temporarily.\n'
+    printf 'Use `aegis on` to re-enable enforcement.\n'
 }
 
 main "$@"

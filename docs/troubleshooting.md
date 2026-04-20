@@ -67,6 +67,39 @@ one of the files was changed in transit.
 2. Ensure `~/.bashrc` / `~/.zshrc` writable.
 3. Re-run with `AEGIS_REAL_SHELL` and `AEGIS_SHELL_RC` explicitly set when shell detection is wrong.
 
+### `AEGIS_SETUP_MODE and AEGIS_SKIP_SHELL_SETUP are deprecated`
+
+**Why:** The convenience installer no longer supports the old mode-selection
+switches. It now performs the global shell-setup path only.
+
+**Fix:**
+
+1. Remove `AEGIS_SETUP_MODE` and `AEGIS_SKIP_SHELL_SETUP` from your install command or environment.
+2. If you only want the binary, use the verification-first manual install path from `docs/release-readiness.md`.
+3. If you need a custom shell RC file, rerun with `AEGIS_SHELL_RC=/path/to/your/rcfile`.
+
+### `automatic shell setup supports bash and zsh`
+
+**Why:** The convenience installer only knows how to pick an RC file
+automatically for `bash` and `zsh`.
+
+**Fix:**
+
+1. Re-run with `AEGIS_SHELL_RC=/path/to/your/rcfile`.
+2. If shell detection is wrong because you are already inside an Aegis-managed shell, also set `AEGIS_REAL_SHELL=/path/to/your-real-shell`.
+3. If you only want the binary on `PATH`, use the manual install path in `docs/release-readiness.md`.
+
+### `Agent hook setup skipped; no supported agent directories were detected.`
+
+**Why:** The installer found a real local checkout of the hook bundle, but your
+`HOME` did not contain a detectable `~/.claude` or `~/.codex` directory.
+
+**Fix:**
+
+1. Start Claude Code or Codex once so its config directory exists.
+2. Re-run `sh scripts/agent-setup.sh` from a local checkout of the repository.
+3. If you only want to verify the installed binary path, run `command -v aegis`.
+
 ### Wrapper recursion errors
 
 **Error:** `refusing to wrap ... recursively`

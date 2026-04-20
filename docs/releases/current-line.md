@@ -13,6 +13,8 @@ Aegis on the current line is a heuristic shell-proxy guardrail that:
 - classifies commands into `Safe`, `Warn`, `Danger`, or `Block`;
 - requires confirmation for risky commands;
 - hard-blocks `Block` commands;
+- supports a global on/off toggle via `aegis on`, `aegis off`, and `aegis status`;
+- keeps detected CI environments enforcing by default, with explicit `AEGIS_CI` override semantics;
 - writes audit data and supports best-effort snapshots for dangerous actions
   when configured.
 
@@ -22,6 +24,10 @@ boundary, or release properties not already documented elsewhere.
 ## Current release-line notes
 
 - Current crate version: `0.4.0`
+- The convenience installer is global-first and rejects the removed
+  `AEGIS_SETUP_MODE` / `AEGIS_SKIP_SHELL_SETUP` controls.
+- Claude Code / Codex hook installation is attempted automatically only from a
+  real local checkout with supported agent directories present.
 - Supported platforms are documented in [Platform support](../platform-support.md).
 - Release and CI behavior are documented in [CI and Release Guarantees](../ci.md).
 - Launch checklists and the verification-first/manual install path are

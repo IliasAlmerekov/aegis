@@ -1,9 +1,4 @@
-#!/usr/bin/env bash
-# aegis-hook-version: 2
-# Codex SessionStart hook — injects the aegis command-routing instruction.
-# Installed to: ~/.codex/hooks/aegis-session-start.sh
-
-set -u
+#!/usr/bin/env sh
 
 aegis_truthy() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
@@ -50,21 +45,3 @@ aegis_enforcement_enabled() {
 
   return 0
 }
-
-AEGIS_TOGGLE_HELPER="${HOME}/.aegis/lib/toggle-state.sh"
-if [ -r "${AEGIS_TOGGLE_HELPER}" ]; then
-  . "${AEGIS_TOGGLE_HELPER}"
-fi
-
-if ! aegis_enforcement_enabled; then
-  exit 0
-fi
-
-cat <<'JSON'
-{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "context": "IMPORTANT: All Bash tool commands must be routed through aegis. Run every shell command as: aegis --command '<original command>'. Commands that do not start with 'aegis' will be blocked by the PreToolUse hook. This is a security requirement enforced by aegis."
-  }
-}
-JSON
