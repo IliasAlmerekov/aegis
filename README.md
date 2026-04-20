@@ -58,17 +58,31 @@ The installer will:
 
 ## Install behavior
 
-- Global: installs the `aegis` binary by default.
-- Local: enables shell integration, installs Claude Code / Codex hooks when available from a local checkout, and lets you use `aegis off` / `aegis on` for a temporary toggle.
-- Binary: if a pre-built release is unavailable for your platform, use the source install path below instead.
-- The installer rejects the removed `AEGIS_SETUP_MODE` and `AEGIS_SKIP_SHELL_SETUP` controls instead of silently ignoring them.
+The convenience installer is now **global-first** and performs one supported
+shell-setup path:
+
+- **Global** — installs the `aegis` binary, writes the managed shell-integration
+  block, and then attempts local Claude Code / Codex hook setup when a real
+  local checkout and supported agent directories are present.
+- **Local** — the old project-only shell mode has been removed from the
+  convenience installer. Use `aegis off` / `aegis on` for a temporary local
+  workflow change without uninstalling the shell wrapper, or configure a manual
+  shell path only for the agent you care about.
+- **Binary** — the old binary-only installer mode has been removed. If you only
+  want the binary, use the verification-first manual path or the source install
+  path below.
+- The installer rejects the removed `AEGIS_SETUP_MODE` and
+  `AEGIS_SKIP_SHELL_SETUP` controls instead of silently ignoring them.
 
 Automatic shell setup currently recognizes `bash` and `zsh`. If you use another
 shell or a custom rc file, set `AEGIS_SHELL_RC=/path/to/your/rcfile` before
 rerunning the installer. If you are already inside an Aegis shell, also set
 `AEGIS_REAL_SHELL` to the path of your real shell.
 
-When disabled, Aegis behaves as though it is not installed for ordinary local shell and supported agent usage. By default, detected CI environments ignore the local disabled flag and continue enforcing policy. `AEGIS_CI` can explicitly override CI detection.
+When disabled, Aegis behaves as though it is not installed for ordinary local
+shell and supported agent usage. By default, detected CI environments ignore
+the local disabled flag and continue enforcing policy. `AEGIS_CI` can
+explicitly override CI detection.
 
 ### Alternative: install from source
 
@@ -196,6 +210,7 @@ Full details: [Threat model](docs/threat-model.md)
 
 ## Docs
 
+- [Architecture decisions](docs/architecture-decisions.md)
 - [Changelog](CHANGELOG.md)
 - [Current release line](docs/releases/current-line.md)
 - [Config schema](docs/config-schema.md)
