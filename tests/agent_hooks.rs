@@ -35,6 +35,38 @@ fn run_script(script_name: &str, home: &Path, args: &[&str], stdin: Option<&str>
     child.wait_with_output().unwrap()
 }
 
+fn run_script_with_env(
+    script_name: &str,
+    home: &Path,
+    args: &[&str],
+    stdin: Option<&str>,
+    envs: &[(&str, &str)],
+) -> Output {
+    let mut command = Command::new("/bin/sh");
+    command.arg(script_path(script_name));
+    command.args(args);
+    command.env("HOME", home);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    let mut child = command.spawn().unwrap();
+
+    if let Some(input) = stdin {
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+    }
+
+    child.wait_with_output().unwrap()
+}
+
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
@@ -51,6 +83,69 @@ fn run_codex_pre_tool_use(home: &Path, command: &str) -> Output {
         &[],
         Some(input.as_str()),
     )
+}
+
+#[test]
+fn codex_pre_tool_use_is_noop_when_disabled_outside_ci() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let output = run_codex_pre_tool_use(home.path(), "echo hi");
+    assert!(output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "disabled hook must be silent noop"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "disabled hook must be silent noop"
+    );
+}
+
+#[test]
+fn codex_session_start_is_noop_when_disabled_outside_ci() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let output = run_script("hooks/codex-session-start.sh", home.path(), &[], None);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn claude_code_is_noop_when_disabled_outside_ci() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--claude-code"], None);
+    assert!(install_output.status.success());
+
+    let input = serde_json::json!({ "tool_input": { "command": "echo hi" } }).to_string();
+    let output = run_script(
+        "hooks/claude-code.sh",
+        home.path(),
+        &[],
+        Some(input.as_str()),
+    );
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -116,6 +211,16 @@ fn codex_agent_setup_installs_hooks_and_is_idempotent() {
         installed_hooks_text,
         "agent setup must be idempotent and keep hooks.json stable"
     );
+
+    let helper = home
+        .path()
+        .join(".aegis")
+        .join("lib")
+        .join("toggle-state.sh");
+    let before = fs::read_to_string(&helper).unwrap();
+    let second_output = run_script("agent-setup.sh", home.path(), &["--all"], None);
+    assert!(second_output.status.success());
+    assert_eq!(fs::read_to_string(&helper).unwrap(), before);
 }
 
 #[test]
@@ -223,4 +328,37 @@ fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quote
         "valid embedded-quote wrapper must not produce deny output"
     );
     assert!(allow_output.stderr.is_empty());
+}
+
+#[test]
+fn codex_pre_tool_use_still_denies_when_disabled_file_exists_but_ci_override_is_forced() {
+    let home = TempDir::new().unwrap();
+    fs::create_dir_all(home.path().join(".aegis")).unwrap();
+    fs::write(
+        home.path().join(".aegis").join("disabled"),
+        "timestamp=x\npid=1\n",
+    )
+    .unwrap();
+
+    let install_output = run_script_with_env(
+        "agent-setup.sh",
+        home.path(),
+        &["--codex"],
+        None,
+        &[("AEGIS_CI", "1")],
+    );
+    assert!(install_output.status.success());
+
+    let input = serde_json::json!({ "tool_input": { "command": "echo hi" } }).to_string();
+    let output = run_script_with_env(
+        "hooks/codex-pre-tool-use.sh",
+        home.path(),
+        &[],
+        Some(input.as_str()),
+        &[("AEGIS_CI", "1")],
+    );
+
+    assert!(output.status.success());
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
 }

@@ -6,6 +6,14 @@
 
 set -u
 
+AEGIS_TOGGLE_HELPER="${HOME}/.aegis/lib/toggle-state.sh"
+[ -r "${AEGIS_TOGGLE_HELPER}" ] || exit 0
+. "${AEGIS_TOGGLE_HELPER}"
+
+if ! aegis_enforcement_enabled; then
+  exit 0
+fi
+
 if ! command -v jq >/dev/null 2>&1; then
   echo "[aegis] WARNING: jq not installed. Hook cannot rewrite commands." >&2
   exit 0

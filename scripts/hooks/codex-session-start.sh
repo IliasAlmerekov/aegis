@@ -5,6 +5,14 @@
 
 set -u
 
+AEGIS_TOGGLE_HELPER="${HOME}/.aegis/lib/toggle-state.sh"
+[ -r "${AEGIS_TOGGLE_HELPER}" ] || exit 0
+. "${AEGIS_TOGGLE_HELPER}"
+
+if ! aegis_enforcement_enabled; then
+  exit 0
+fi
+
 cat <<'JSON'
 {
   "hookSpecificOutput": {

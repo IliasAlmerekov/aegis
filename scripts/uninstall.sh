@@ -92,12 +92,13 @@ remove_shell_setup() {
 
 remove_binary() {
     install_target="$(target_path)"
+    install_dir="$(dirname "${install_target}")"
 
     if [ ! -e "${install_target}" ]; then
         return
     fi
 
-    if [ -w "${install_target}" ] || [ -w "${BINDIR}" ]; then
+    if [ -w "${install_dir}" ]; then
         rm -f "${install_target}"
         return
     fi
@@ -110,6 +111,22 @@ remove_binary() {
     fail "cannot remove ${install_target}; rerun as root or install sudo"
 }
 
+remove_hook_payload() {
+    hook_path="$1"
+    hook_dir="$(dirname "${hook_path}")"
+
+    if [ -e "${hook_path}" ] && ! [ -w "${hook_dir}" ]; then
+        if need_cmd sudo; then
+            sudo rm -f "${hook_path}"
+            return
+        fi
+
+        fail "cannot remove ${hook_path}; rerun as root or install sudo"
+    fi
+
+    rm -f "${hook_path}"
+}
+
 main() {
     TMPDIR_AEGIS="$(mktemp -d)"
 
@@ -117,6 +134,10 @@ main() {
     rc_file="$(resolve_rc_file "${real_shell}")"
     remove_shell_setup "${rc_file}"
     remove_binary
+    remove_hook_payload "${HOME}/.claude/hooks/aegis-rewrite.sh"
+    remove_hook_payload "${HOME}/.codex/hooks/aegis-session-start.sh"
+    remove_hook_payload "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"
+    remove_hook_payload "${HOME}/.aegis/lib/toggle-state.sh"
 
     printf 'Removed shell wrapper setup from %s\n' "${rc_file}"
     printf 'Removed %s\n' "$(target_path)"
