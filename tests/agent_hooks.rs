@@ -95,6 +95,9 @@ fn codex_pre_tool_use_is_noop_when_disabled_outside_ci() {
     )
     .unwrap();
 
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
+
     let output = run_codex_pre_tool_use(home.path(), "echo hi");
     assert!(output.status.success());
     assert!(
@@ -116,6 +119,9 @@ fn codex_session_start_is_noop_when_disabled_outside_ci() {
         "timestamp=x\npid=1\n",
     )
     .unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
+    assert!(install_output.status.success());
 
     let output = run_script("hooks/codex-session-start.sh", home.path(), &[], None);
     assert!(output.status.success());
