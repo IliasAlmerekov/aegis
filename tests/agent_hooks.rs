@@ -17,6 +17,19 @@ fn run_script(script_name: &str, home: &Path, args: &[&str], stdin: Option<&str>
     command.arg(script_path(script_name));
     command.args(args);
     command.env("HOME", home);
+    for key in [
+        "AEGIS_CI",
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "BUILDKITE",
+        "TRAVIS",
+        "TF_BUILD",
+        "JENKINS_URL",
+    ] {
+        command.env_remove(key);
+    }
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -46,6 +59,19 @@ fn run_script_with_env(
     command.arg(script_path(script_name));
     command.args(args);
     command.env("HOME", home);
+    for key in [
+        "AEGIS_CI",
+        "CI",
+        "GITHUB_ACTIONS",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "BUILDKITE",
+        "TRAVIS",
+        "TF_BUILD",
+        "JENKINS_URL",
+    ] {
+        command.env_remove(key);
+    }
     for (key, value) in envs {
         command.env(key, value);
     }
