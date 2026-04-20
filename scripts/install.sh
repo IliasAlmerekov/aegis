@@ -398,13 +398,41 @@ resolve_local_agent_setup() {
     return 1
 }
 
+has_supported_agent_dirs() {
+    if [ -d "${HOME}/.claude" ] || [ -d "${HOME}/.codex" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
 offer_agent_setup() {
     agent_setup_script=""
+    agent_setup_output=""
 
     if agent_setup_script="$(resolve_local_agent_setup)"; then
-        if /bin/sh "${agent_setup_script}"; then
-            printf 'Agent hooks installed automatically.\n'
+        if ! has_supported_agent_dirs; then
+            printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
+            return 0
+        fi
+
+        if agent_setup_output="$(/bin/sh "${agent_setup_script}" 2>&1)"; then
+            if [ -n "${agent_setup_output}" ]; then
+                printf '%s\n' "${agent_setup_output}"
+            fi
+
+            case "${agent_setup_output}" in
+                *"No agents detected (no ~/.claude or ~/.codex). Nothing installed."*)
+                    printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
+                    ;;
+                *)
+                    printf 'Agent hooks installed automatically.\n'
+                    ;;
+            esac
         else
+            if [ -n "${agent_setup_output}" ]; then
+                printf '%s\n' "${agent_setup_output}"
+            fi
             printf 'Agent hook setup failed.\n'
             print_agent_setup_next_steps
         fi
@@ -415,6 +443,9 @@ offer_agent_setup() {
 
 main() {
     print_banner
+    if [ -n "${AEGIS_SETUP_MODE:-}" ] || [ -n "${AEGIS_SKIP_SHELL_SETUP:-}" ]; then
+        fail "AEGIS_SETUP_MODE and AEGIS_SKIP_SHELL_SETUP are deprecated; the installer always performs global shell setup"
+    fi
 
     os=""
     arch=""
@@ -424,6 +455,9 @@ main() {
     checksum_url=""
     binary_path=""
     checksum_path=""
+    real_shell="$(detect_real_shell)"
+    rc_file="$(resolve_rc_file "${real_shell}")"
+
     os="$(detect_os)"
     arch="$(detect_arch)"
     asset="aegis-${os}-${arch}"
@@ -448,8 +482,6 @@ main() {
         printf 'Installed version: %s\n' "$("$(target_path)" --version)"
     fi
 
-    real_shell="$(detect_real_shell)"
-    rc_file="$(resolve_rc_file "${real_shell}")"
     write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
     print_post_install "${rc_file}"
     offer_agent_setup

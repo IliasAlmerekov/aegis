@@ -63,6 +63,12 @@ The installer performs a global setup by default:
 - installs the `aegis` binary
 - enables shell integration
 - installs Claude Code / Codex hooks when available from a local checkout
+- rejects the removed `AEGIS_SETUP_MODE` and `AEGIS_SKIP_SHELL_SETUP` controls instead of silently ignoring them
+
+Automatic shell setup currently recognizes `bash` and `zsh`. If you use another
+shell or a custom rc file, set `AEGIS_SHELL_RC=/path/to/your/rcfile` before
+rerunning the installer. If you are already inside an Aegis shell, also set
+`AEGIS_REAL_SHELL` to the path of your real shell.
 
 Use `aegis off` to temporarily disable enforcement and `aegis on` to restore it.
 

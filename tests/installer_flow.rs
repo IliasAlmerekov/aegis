@@ -58,6 +58,22 @@ fn write_host_command_shims(dir: &Path, commands: &[&str]) {
     }
 }
 
+fn copy_tree(source: &Path, target: &Path) {
+    fs::create_dir_all(target).unwrap();
+
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if source_path.is_dir() {
+            copy_tree(&source_path, &target_path);
+        } else {
+            fs::copy(&source_path, &target_path).unwrap();
+        }
+    }
+}
+
 fn write_fake_release_binary(path: &Path) {
     write_executable(path, "#!/bin/sh\necho 'aegis 1.0.0'\n");
 }
@@ -291,25 +307,44 @@ fn installer_path(temp: &TempDir, stub_dir: &Path) -> String {
         &host_dir,
         &[
             "mktemp", "dirname", "cp", "mkdir", "uname", "basename", "awk", "install", "chmod",
-            "rm", "cat", "cut", "grep", "sed",
+            "rm", "mv", "cat", "cut", "grep", "sed", "jq",
         ],
     );
 
     format!("{}:{}", stub_dir.display(), host_dir.display())
 }
 
-fn run_script(script_name: &str, envs: &[(&str, &str)]) -> Output {
-    let temp = TempDir::new().unwrap();
-    let script_copy = temp.path().join(script_name);
+fn run_script_at(script_path: &Path, envs: &[(&str, &str)]) -> Output {
     let mut command = Command::new("/bin/sh");
-    fs::copy(script_path(script_name), &script_copy).unwrap();
-    command.arg(&script_copy);
+    command.arg(script_path);
 
     for (key, value) in envs {
         command.env(key, value);
     }
 
     command.output().unwrap()
+}
+
+fn run_script(script_name: &str, envs: &[(&str, &str)]) -> Output {
+    let temp = TempDir::new().unwrap();
+    let script_copy = temp.path().join(script_name);
+    fs::copy(script_path(script_name), &script_copy).unwrap();
+    run_script_at(&script_copy, envs)
+}
+
+fn prepare_local_checkout(temp: &TempDir) -> PathBuf {
+    let checkout_dir = temp.path().join("checkout");
+
+    fs::create_dir_all(&checkout_dir).unwrap();
+    fs::copy(script_path("install.sh"), checkout_dir.join("install.sh")).unwrap();
+    fs::copy(
+        script_path("agent-setup.sh"),
+        checkout_dir.join("agent-setup.sh"),
+    )
+    .unwrap();
+    copy_tree(&script_path("hooks"), &checkout_dir.join("hooks"));
+
+    checkout_dir
 }
 
 fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &str) -> Output {
@@ -677,7 +712,65 @@ fn install_script_falls_back_to_shasum_when_sha256sum_is_missing() {
 }
 
 #[test]
-fn install_script_ignores_setup_mode_env_and_still_installs_globally() {
+fn install_script_rejects_deprecated_setup_controls_before_mutation() {
+    for (env_key, env_value) in [
+        ("AEGIS_SETUP_MODE", "binary"),
+        ("AEGIS_SKIP_SHELL_SETUP", "1"),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let bindir = temp.path().join("bin");
+        let rc_file = temp.path().join(".bashrc");
+        let stub_dir = temp.path().join("stub-bin");
+
+        fs::write(&rc_file, "export FOO=bar\n").unwrap();
+        let (binary_asset, checksum_asset, binary_digest, path_value) =
+            prepare_checksum_ready_release(&temp, &stub_dir);
+        let bindir_str = bindir.display().to_string();
+        let rc_file_str = rc_file.display().to_string();
+        let binary_asset_str = binary_asset.display().to_string();
+        let checksum_asset_str = checksum_asset.display().to_string();
+
+        let output = run_script(
+            "install.sh",
+            &[
+                ("AEGIS_BINDIR", &bindir_str),
+                ("AEGIS_SHELL_RC", &rc_file_str),
+                ("AEGIS_OS", "linux"),
+                ("AEGIS_ARCH", "x86_64"),
+                (env_key, env_value),
+                ("PATH", &path_value),
+                ("SHELL", "/bin/bash"),
+                ("TEST_BINARY_ASSET", &binary_asset_str),
+                ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+                ("TEST_BINARY_DIGEST", &binary_digest),
+            ],
+        );
+
+        assert!(
+            !output.status.success(),
+            "installer must reject deprecated control {env_key}; stdout=\n{}\nstderr=\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(env_key),
+            "error should name the deprecated control {env_key}; stderr=\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !bindir.join("aegis").exists(),
+            "deprecated controls must be rejected before touching bindir"
+        );
+        let rc_contents = fs::read_to_string(&rc_file).unwrap();
+        assert_eq!(
+            rc_contents, "export FOO=bar\n",
+            "deprecated controls must be rejected before mutating rc files"
+        );
+    }
+}
+
+#[test]
+fn install_script_rejects_unsupported_shell_before_mutation() {
     let temp = TempDir::new().unwrap();
     let bindir = temp.path().join("bin");
     let rc_file = temp.path().join(".bashrc");
@@ -695,12 +788,10 @@ fn install_script_ignores_setup_mode_env_and_still_installs_globally() {
         "install.sh",
         &[
             ("AEGIS_BINDIR", &bindir_str),
-            ("AEGIS_SHELL_RC", &rc_file_str),
             ("AEGIS_OS", "linux"),
             ("AEGIS_ARCH", "x86_64"),
-            ("AEGIS_SETUP_MODE", "binary"),
             ("PATH", &path_value),
-            ("SHELL", "/bin/bash"),
+            ("SHELL", "/bin/fish"),
             ("TEST_BINARY_ASSET", &binary_asset_str),
             ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
             ("TEST_BINARY_DIGEST", &binary_digest),
@@ -708,23 +799,25 @@ fn install_script_ignores_setup_mode_env_and_still_installs_globally() {
     );
 
     assert!(
-        output.status.success(),
-        "installer must still succeed when setup-mode env vars are present: stdout=\n{}\nstderr=\n{}",
+        !output.status.success(),
+        "unsupported shells must fail before any installation occurs: stdout=\n{}\nstderr=\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-
     assert!(
-        bindir.join("aegis").exists(),
-        "installer must still install the binary"
+        String::from_utf8_lossy(&output.stderr)
+            .contains("automatic shell setup supports bash and zsh"),
+        "unsupported shell error should explain the bash/zsh limitation; stderr=\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-
-    let rc_contents = fs::read_to_string(&rc_file).unwrap();
-    let aegis_path = bindir.join("aegis");
-    let expected_block = managed_block(Path::new("/bin/bash"), &aegis_path);
     assert!(
-        rc_contents.contains(&expected_block),
-        "installer must ignore the old setup-mode env and still write the global block; rc contents:\n{rc_contents}"
+        !bindir.join("aegis").exists(),
+        "unsupported shell must fail before downloading or installing the binary"
+    );
+    let rc_contents = fs::read_to_string(&rc_file).unwrap();
+    assert_eq!(
+        rc_contents, "export FOO=bar\n",
+        "unsupported shell must fail before mutating rc files"
     );
 }
 
@@ -772,6 +865,158 @@ fn install_script_global_setup_writes_shell_setup() {
     assert!(
         rc_contents.contains(&expected_block),
         "global setup must write managed block; rc contents:\n{rc_contents}"
+    );
+}
+
+#[test]
+fn install_script_skips_agent_setup_honestly_without_detected_agents() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+    let home = temp.path().join("home");
+    let checkout = prepare_local_checkout(&temp);
+
+    fs::create_dir_all(&home).unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let home_str = home.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+    let output = run_script_at(
+        &checkout.join("install.sh"),
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("HOME", &home_str),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "local checkout install must succeed even without detectable agents: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Agent hook setup skipped; no supported agent directories were detected."),
+        "installer should explain that no hooks were installed when no agent dirs are present; stdout=\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Agent hooks installed automatically."),
+        "installer must not claim success when no agent dirs were detected; stdout=\n{stdout}"
+    );
+    assert!(
+        bindir.join("aegis").exists(),
+        "binary must still be installed"
+    );
+    assert!(
+        !home
+            .join(".aegis")
+            .join("lib")
+            .join("toggle-state.sh")
+            .exists(),
+        "no agent dirs should mean the helper is not installed either"
+    );
+    assert!(
+        !home.join(".codex").join("hooks.json").exists(),
+        "no agent dirs should mean no codex hook files are created"
+    );
+}
+
+#[test]
+fn install_script_auto_installs_agent_hooks_from_local_checkout() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+    let home = temp.path().join("home");
+    let checkout = prepare_local_checkout(&temp);
+
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let home_str = home.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+    let output = run_script_at(
+        &checkout.join("install.sh"),
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("HOME", &home_str),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "local checkout install must auto-install hooks when agents are detected: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Agent hooks installed automatically."),
+        "installer should report successful automatic hook setup; stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Codex: hooks installed"),
+        "agent-setup output should show Codex hook installation; stdout=\n{stdout}"
+    );
+    assert!(
+        home.join(".aegis")
+            .join("lib")
+            .join("toggle-state.sh")
+            .exists(),
+        "agent helper should be installed into ~/.aegis/lib"
+    );
+    let codex_hooks = home.join(".codex").join("hooks.json");
+    assert!(codex_hooks.exists(), "Codex hooks.json should be created");
+    assert!(
+        home.join(".codex")
+            .join("hooks")
+            .join("aegis-pre-tool-use.sh")
+            .exists(),
+        "Codex pre-tool-use hook should be installed"
+    );
+    assert!(
+        home.join(".codex")
+            .join("hooks")
+            .join("aegis-session-start.sh")
+            .exists(),
+        "Codex session-start hook should be installed"
+    );
+    let hooks_json = fs::read_to_string(&codex_hooks).unwrap();
+    assert!(
+        hooks_json.contains("aegis-pre-tool-use.sh"),
+        "Codex hooks.json should reference the pre-tool-use hook; hooks.json=\n{hooks_json}"
+    );
+    assert!(
+        hooks_json.contains("aegis-session-start.sh"),
+        "Codex hooks.json should reference the session-start hook; hooks.json=\n{hooks_json}"
     );
 }
 
