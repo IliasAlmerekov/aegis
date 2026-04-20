@@ -1,7 +1,7 @@
-# Aegis current release line (v0.4.0)
+# Aegis current release line (v0.5.0)
 
 This document summarizes the live pre-1.0 release line described by
-`Cargo.toml` version `0.4.0`.
+`Cargo.toml` version `0.5.0`.
 
 It is the current public / MVP posture, not the future `v1.0.0` target.
 
@@ -23,7 +23,7 @@ boundary, or release properties not already documented elsewhere.
 
 ## Current release-line notes
 
-- Current crate version: `0.4.0`
+- Current crate version: `0.5.0`
 - The convenience installer is global-first and rejects the removed
   `AEGIS_SETUP_MODE` / `AEGIS_SKIP_SHELL_SETUP` controls.
 - Claude Code / Codex hook installation is attempted automatically only from a
