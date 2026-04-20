@@ -4,6 +4,35 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
+## v0.5.0
+
+### Highlights
+
+- **Managed agent-hook install flow**: the current release line now documents
+  and ships the local-checkout-only installation path for Claude Code and Codex
+  hook payloads, including their shared toggle helper behavior.
+- **Global toggle + CI posture clarified**: the `aegis on`, `aegis off`, and
+  `aegis status` flow remains part of the public current line, with docs and
+  tests aligned around the default-on CI enforcement contract and explicit
+  `AEGIS_CI` override semantics.
+- **Installer and hook hardening**: deprecated installer controls stay rejected,
+  uninstall cleanup removes installed hook payloads and registrations together,
+  and hook fallback paths remain best-effort without silently weakening the main
+  guardrail contract.
+- **Release and architecture docs refreshed**: architecture, install,
+  troubleshooting, and release-readiness docs were updated to describe the
+  global-first installer and current release workflow honestly.
+
+### Documentation and contracts
+
+- `docs/releases/current-line.md` now tracks the `0.5.0` release line.
+- `docs/releases/v1.0.0.md` now references `0.5.0` as the current pre-1.0
+  crate version when describing the future `v1.0.0` target.
+- The release documentation continues to describe Aegis as a heuristic shell
+  guardrail rather than a sandbox or hard security boundary.
+
+---
+
 ## v0.4.0
 
 ### Highlights
