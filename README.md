@@ -59,6 +59,14 @@ source ~/.zshrc    # zsh
 
 Or open a new terminal window — either works.
 
+### Step 3: confirm the binary is on your PATH
+
+```bash
+aegis --version
+```
+
+If you see a version number, the install worked and the `aegis` binary is available.
+
 ---
 
 ## Check that Aegis is really working
