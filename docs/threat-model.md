@@ -173,6 +173,24 @@ to cause unsafe behavior or resource exhaustion.
 **Residual risk:** Watch mode still trusts the host process boundary and the
 real shell once a command is approved.
 
+### 8. Agent handoff after deny
+
+**Threat:** An agent treats a denied risky command as a workflow obstacle and
+coaches the operator to bypass the guardrail manually through shell escapes or
+equivalent out-of-band execution paths.
+
+**Mitigations:**
+
+- agent-facing instructions require denied decisions to be respected
+- runtime hook guidance forbids bypass framing and shell-escape workaround
+  suggestions
+- agents may still explain the block, suggest verification steps, and hand the
+  final decision to the operator in neutral language
+
+**Residual risk:** A human operator can still act manually outside Aegis. This
+policy reduces agent-assisted bypass coaching; it does not turn Aegis into a
+sandbox or prevent deliberate manual execution.
+
 ## Security invariants
 
 The following properties are part of Aegis' intended contract:

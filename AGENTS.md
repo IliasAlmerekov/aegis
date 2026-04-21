@@ -34,6 +34,10 @@ rtk rg "RiskLevel" src
 
 Never execute raw commands.
 
+If Aegis denies a risky command, do not suggest bypassing the guardrail. Do not
+recommend `! <command>` or equivalent escape syntax as a workaround. Hand off to
+the operator using neutral language with an explicit risk explanation.
+
 ---
 
 ## Commit Style

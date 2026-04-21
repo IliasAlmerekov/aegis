@@ -315,8 +315,12 @@ fn installer_path(temp: &TempDir, stub_dir: &Path) -> String {
 }
 
 fn run_script_at(script_path: &Path, envs: &[(&str, &str)]) -> Output {
+    let sandbox_home = TempDir::new().unwrap();
     let mut command = Command::new("/bin/sh");
     command.arg(script_path);
+    command.env_remove("AEGIS_REAL_SHELL");
+    command.env_remove("AEGIS_SHELL_RC");
+    command.env("HOME", sandbox_home.path());
 
     for (key, value) in envs {
         command.env(key, value);
@@ -348,6 +352,7 @@ fn prepare_local_checkout(temp: &TempDir) -> PathBuf {
 }
 
 fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &str) -> Output {
+    let sandbox_home = TempDir::new().unwrap();
     let script_cmd = find_command_on_path("script");
     let installer_script = script_path(script_name);
     let mut command = Command::new(script_cmd);
@@ -357,6 +362,9 @@ fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &s
         .arg("cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh")
         .arg("/dev/null")
         .env("AEGIS_INSTALLER_SCRIPT", &installer_script)
+        .env_remove("AEGIS_REAL_SHELL")
+        .env_remove("AEGIS_SHELL_RC")
+        .env("HOME", sandbox_home.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
