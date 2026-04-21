@@ -524,14 +524,16 @@ impl AuditLogger {
 
     pub fn append(&self, entry: AuditEntry) -> Result<()> {
         if let Some(parent) = self.path.parent() {
+            // The lock file lives inside that directory, so we must ensure the directory
+            // exists before opening the lock path. This leaves a narrow race window around
+            // create_dir_all before the lock is acquired, but directory creation is idempotent
+            // and the append/chain-critical work still happens only after taking the lock.
             fs::create_dir_all(parent)?;
         }
         let _lock = AuditLock::exclusive(&self.lock_path())?;
 
         let prev_hash = self.latest_chained_hash()?;
-        let entry = self
-            .apply_integrity(entry.normalize_legacy_fields(), prev_hash)?
-            .normalize_legacy_fields();
+        let entry = self.apply_integrity(entry.normalize_legacy_fields(), prev_hash)?;
         let mut serialized =
             serde_json::to_vec(&entry).map_err(|e| AegisError::Io(std::io::Error::other(e)))?;
         serialized.push(b'\n');
@@ -1891,6 +1893,45 @@ mod tests {
         assert!(entries[0].prev_hash.is_none());
         assert_eq!(entries[1].chain_alg.as_deref(), Some("sha256"));
         assert_eq!(entries[1].prev_hash, entries[0].entry_hash);
+    }
+
+    #[test]
+    fn append_normalizes_legacy_fields_only_once() {
+        let source = include_str!("logger.rs");
+        let append_start = source
+            .find("pub fn append(&self, entry: AuditEntry) -> Result<()> {")
+            .expect("append function must exist");
+        let append_source = &source[append_start..];
+        let next_fn = append_source
+            .find("\n    pub fn read_all(&self) -> Result<Vec<AuditEntry>> {")
+            .expect("append must be followed by read_all");
+        let append_body = &append_source[..next_fn];
+
+        let normalize_calls = append_body.matches("normalize_legacy_fields()").count();
+        assert_eq!(
+            normalize_calls, 1,
+            "append must normalize legacy fields exactly once to avoid hidden repeat transforms"
+        );
+    }
+
+    #[test]
+    fn append_documents_directory_creation_race_window() {
+        let source = include_str!("logger.rs");
+        let append_start = source
+            .find("pub fn append(&self, entry: AuditEntry) -> Result<()> {")
+            .expect("append function must exist");
+        let append_source = &source[append_start..];
+        let next_fn = append_source
+            .find("\n    pub fn read_all(&self) -> Result<Vec<AuditEntry>> {")
+            .expect("append must be followed by read_all");
+        let append_body = &append_source[..next_fn];
+
+        assert!(
+            append_body.contains("narrow race window")
+                && append_body.contains("create_dir_all")
+                && append_body.contains("lock file lives inside that directory"),
+            "append must document the acceptable create_dir_all-before-lock race window"
+        );
     }
 
     #[test]

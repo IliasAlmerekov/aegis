@@ -224,8 +224,9 @@ pub fn analyze_allowlist_rule(rule: &AllowlistRule) -> Vec<AllowlistWarning> {
     if is_broad_pattern(rule.pattern.trim()) {
         warnings.push(AllowlistWarning {
             code: "broad_pattern",
-            message: "allowlist rule uses wildcard matching that may be broader than intended"
-                .to_string(),
+            message:
+                "allowlist rule uses wildcard matching that may be broader than intended and can span compound shell commands like `&&`, `;`, or `|`"
+                    .to_string(),
             location,
         });
     }
@@ -540,6 +541,29 @@ mod tests {
 
         assert!(!warnings.iter().any(|w| w.code == "missing_scope"));
         assert!(warnings.iter().any(|w| w.code == "broad_pattern"));
+    }
+
+    #[test]
+    fn broad_pattern_warning_mentions_compound_shell_commands() {
+        let warnings = analyze_allowlist_rule(&AllowlistRule {
+            pattern: "terraform destroy *".to_string(),
+            cwd: Some("/srv/infra".to_string()),
+            user: None,
+            expires_at: None,
+            reason: "scoped but broad".to_string(),
+        });
+
+        let broad_pattern = warnings
+            .iter()
+            .find(|w| w.code == "broad_pattern")
+            .expect("broad pattern warning must exist");
+
+        assert!(
+            broad_pattern.message.contains("&&")
+                && broad_pattern.message.contains(";")
+                && broad_pattern.message.contains("|"),
+            "broad pattern warning must explain that wildcard matching can span compound shell commands"
+        );
     }
 
     #[test]
