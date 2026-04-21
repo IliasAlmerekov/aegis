@@ -292,6 +292,9 @@ fn temporary_settings_path(parent: &Path) -> PathBuf {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
 
+    // This name does not try to provide strong entropy on its own; the collision guard is
+    // write_settings_atomically() using create_new(true), which fails closed instead of
+    // silently overwriting another installer's temporary file.
     parent.join(format!(".settings.json.aegis-{pid}-{nanos}.tmp"))
 }
 
@@ -423,6 +426,24 @@ mod tests {
         assert!(
             !load_settings_body.contains("path.exists()"),
             "load_settings must not preflight with exists(); handle NotFound from read_to_string to avoid TOCTOU"
+        );
+    }
+
+    #[test]
+    fn temporary_settings_path_documents_create_new_collision_guard() {
+        let source = include_str!("install.rs");
+        let start = source
+            .find("fn temporary_settings_path(parent: &Path) -> PathBuf {")
+            .expect("temporary_settings_path function must exist");
+        let temp_path_source = &source[start..];
+        let next_fn = temp_path_source
+            .find("\nfn home_dir() -> Option<PathBuf> {")
+            .expect("temporary_settings_path must be followed by home_dir");
+        let temp_path_body = &temp_path_source[..next_fn];
+
+        assert!(
+            temp_path_body.contains("create_new") && temp_path_body.contains("collision guard"),
+            "temporary_settings_path must document that write_settings_atomically relies on create_new as the collision guard"
         );
     }
 
