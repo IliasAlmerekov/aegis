@@ -276,6 +276,8 @@ pub fn extract_heredoc_bodies(cmd: &str) -> Vec<HeredocBody> {
 /// | `python` / `python3` | `-c` |
 /// | `node` / `nodejs` | `-e` |
 /// | `ruby`            | `-e` |
+/// | `php`             | `-r` |
+/// | `lua`             | `-e` |
 /// | `perl`            | `-e` |
 ///
 /// # Examples
@@ -291,6 +293,8 @@ pub fn extract_inline_scripts(cmd: &str) -> Vec<InlineScript> {
         ("node", "-e"),
         ("nodejs", "-e"),
         ("ruby", "-e"),
+        ("php", "-r"),
+        ("lua", "-e"),
         ("perl", "-e"),
     ];
 

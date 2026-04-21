@@ -434,6 +434,22 @@ mod tests {
     }
 
     #[test]
+    fn inline_script_php() {
+        let scripts = extract_inline_scripts(r#"php -r "system('rm -rf /')""#);
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].interpreter, "php");
+        assert_eq!(scripts[0].body, "system('rm -rf /')");
+    }
+
+    #[test]
+    fn inline_script_lua() {
+        let scripts = extract_inline_scripts(r#"lua -e "os.execute('rm -rf /')""#);
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].interpreter, "lua");
+        assert_eq!(scripts[0].body, "os.execute('rm -rf /')");
+    }
+
+    #[test]
     fn inline_script_stays_within_logical_segment_boundary() {
         let scripts = extract_inline_scripts(r#"ruby puts(1) && node -e "process.exit(1)""#);
         assert_eq!(

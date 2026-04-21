@@ -166,7 +166,16 @@ fn is_obvious_secret_source(segment: &str) -> bool {
 }
 
 fn is_known_secret_path(path: &str) -> bool {
-    matches!(path, "~/.ssh/id_rsa" | "~/.aws/credentials")
+    matches!(
+        path,
+        "~/.ssh/id_rsa"
+            | "~/.ssh/id_ed25519"
+            | "~/.ssh/id_ecdsa"
+            | "~/.aws/credentials"
+            | "~/.kube/config"
+            | "~/.config/gcloud/credentials.db"
+            | "~/.netrc"
+    )
 }
 
 fn is_secret_like_env_name(name: &str) -> bool {
