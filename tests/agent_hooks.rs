@@ -344,6 +344,12 @@ fn codex_agent_setup_installs_hooks_and_is_idempotent() {
         String::from_utf8_lossy(&install_output.stderr)
     );
     assert!(
+        String::from_utf8_lossy(&install_output.stdout)
+            .contains("To uninstall: sh scripts/uninstall.sh"),
+        "agent setup should advertise the real uninstall script path; stdout=\n{}",
+        String::from_utf8_lossy(&install_output.stdout)
+    );
+    assert!(
         hooks_json.exists(),
         "agent setup must write Codex hooks.json"
     );

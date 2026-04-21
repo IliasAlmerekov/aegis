@@ -247,7 +247,7 @@ main() {
     [ -n "${INSTALL_CODEX}" ] && install_codex
 
     printf '\nDone. Open a new agent session to activate.\n'
-    printf 'To uninstall: sh scripts/agent-uninstall.sh\n'
+    printf 'To uninstall: sh scripts/uninstall.sh\n'
 }
 
 main "$@"
