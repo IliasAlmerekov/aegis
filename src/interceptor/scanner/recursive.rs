@@ -25,6 +25,7 @@ pub(super) fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> RecursiveScanRe
 fn requires_recursive_scan(cmd: &str) -> bool {
     cmd.contains("<<")
         || cmd.contains("<(")
+        || cmd.contains('`')
         || cmd
             .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&'))
             .any(|token| token == "eval")
