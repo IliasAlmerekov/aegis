@@ -640,6 +640,15 @@ mod tests {
         );
     }
 
+    // An unmatched outer `(` must not be "closed" by an inner command-substitution `)`.
+    #[test]
+    fn segments_unbalanced_subshell_is_not_unwrapped() {
+        assert_eq!(
+            logical_segments("(echo $(rm -rf /)"),
+            vec!["(echo $(rm -rf /)", "rm -rf /"]
+        );
+    }
+
     // Leading environment assignments keep the raw segment and add the executable form.
     #[test]
     fn segments_env_prefix_body_extracted() {

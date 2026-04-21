@@ -102,6 +102,39 @@ impl DockerPlugin {
             }
         }
     }
+
+    fn run_docker_output_blocking<I, S>(&self, args: I) -> std::io::Result<Output>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let args: Vec<OsString> = args
+            .into_iter()
+            .map(|arg| arg.as_ref().to_os_string())
+            .collect();
+
+        let mut attempt = 0usize;
+        loop {
+            match std::process::Command::new(&self.docker_bin)
+                .args(&args)
+                .output()
+            {
+                Ok(output) => return Ok(output),
+                Err(error)
+                    if is_executable_busy(&error) && attempt < DOCKER_BUSY_RETRY_ATTEMPTS =>
+                {
+                    attempt += 1;
+                    tracing::warn!(
+                        docker_bin = %self.docker_bin,
+                        attempt,
+                        "docker binary busy during sync command launch, retrying"
+                    );
+                    thread::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
 }
 
 fn is_executable_busy(error: &std::io::Error) -> bool {
@@ -278,9 +311,7 @@ impl SnapshotPlugin for DockerPlugin {
     /// exits non-zero or errors when docker is unavailable.
     fn is_applicable(&self, _cwd: &Path) -> bool {
         let ps_args = self.build_ps_args();
-        let output = std::process::Command::new(&self.docker_bin)
-            .args(&ps_args)
-            .output();
+        let output = self.run_docker_output_blocking(&ps_args);
 
         match output {
             Ok(out) if out.status.success() => {

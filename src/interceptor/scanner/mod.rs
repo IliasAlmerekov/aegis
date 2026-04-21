@@ -204,6 +204,19 @@ mod tests {
     }
 
     #[test]
+    fn scan_targets_include_eval_payload_from_backtick_substitution() {
+        let cmd = "echo `eval \"rm -rf /tmp/backtick-demo\"`";
+        let parsed = Parser::parse(cmd);
+        let report = super::recursive::scan_targets(cmd, &parsed);
+        assert!(
+            report
+                .targets
+                .iter()
+                .any(|target| target == "rm -rf /tmp/backtick-demo")
+        );
+    }
+
+    #[test]
     fn assess_still_returns_safe_for_benign_input() {
         let scanner = scanner();
         let assessment = super::assessment::assess_for_tests(&scanner, "echo hello world");

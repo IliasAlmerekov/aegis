@@ -416,8 +416,72 @@ fn strip_env_prefix(raw_segment: &str) -> Option<String> {
 
 fn unwrap_subshell_group(raw_segment: &str) -> Option<String> {
     let trimmed = raw_segment.trim();
-    if trimmed.starts_with('(') && trimmed.ends_with(')') {
-        let inner = trimmed[1..trimmed.len() - 1].trim();
+    if !trimmed.starts_with('(') {
+        return None;
+    }
+
+    let chars: Vec<char> = trimmed.chars().collect();
+    let mut i = 0;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut in_backticks = false;
+    let mut paren_depth = 0usize;
+    let mut command_subst_depth = 0usize;
+    let mut close_idx = None;
+
+    while i < chars.len() {
+        match chars[i] {
+            '\\' if !in_single_quote => {
+                i = (i + 2).min(chars.len());
+            }
+            '\'' if !in_double_quote && !in_backticks => {
+                in_single_quote = !in_single_quote;
+                i += 1;
+            }
+            '"' if !in_single_quote && !in_backticks => {
+                in_double_quote = !in_double_quote;
+                i += 1;
+            }
+            '`' if !in_single_quote => {
+                in_backticks = !in_backticks;
+                i += 1;
+            }
+            '$' if !in_single_quote && !in_backticks && chars.get(i + 1) == Some(&'(') => {
+                command_subst_depth += 1;
+                i += 2;
+            }
+            '(' if !in_single_quote
+                && !in_double_quote
+                && !in_backticks
+                && command_subst_depth == 0 =>
+            {
+                paren_depth += 1;
+                i += 1;
+            }
+            ')' if !in_single_quote
+                && !in_backticks
+                && (command_subst_depth > 0 || paren_depth > 0) =>
+            {
+                if command_subst_depth > 0 {
+                    command_subst_depth -= 1;
+                } else {
+                    paren_depth -= 1;
+                    if paren_depth == 0 {
+                        close_idx = Some(i);
+                        break;
+                    }
+                }
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    if close_idx == Some(chars.len() - 1) {
+        let inner: String = chars[1..chars.len() - 1].iter().collect();
+        let inner = inner.trim();
         if !inner.is_empty() {
             return Some(inner.to_string());
         }
