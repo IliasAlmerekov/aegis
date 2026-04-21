@@ -1152,3 +1152,44 @@ fn uninstall_script_removes_managed_block_and_binary() {
         "uninstall must remove the installed binary"
     );
 }
+
+#[test]
+fn uninstall_script_does_not_create_missing_rc_file() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+
+    fs::create_dir_all(&bindir).unwrap();
+    write_fake_release_binary(&bindir.join("aegis"));
+    assert!(
+        !rc_file.exists(),
+        "test setup must start without an rc file"
+    );
+
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+
+    let uninstall_output = run_script(
+        "uninstall.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("SHELL", "/bin/bash"),
+        ],
+    );
+
+    assert!(
+        uninstall_output.status.success(),
+        "uninstall must succeed even when the rc file is absent: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&uninstall_output.stdout),
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+    assert!(
+        !rc_file.exists(),
+        "uninstall must not create a missing rc file"
+    );
+    assert!(
+        !bindir.join("aegis").exists(),
+        "uninstall must still remove the installed binary when the rc file is absent"
+    );
+}
