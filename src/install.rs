@@ -8,6 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
+const CODEX_PRE_TOOL_USE_HOOK_SH: &str = include_str!("../scripts/hooks/codex-pre-tool-use.sh");
+const CODEX_SESSION_START_HOOK_SH: &str = include_str!("../scripts/hooks/codex-session-start.sh");
+
 /// Run the Claude Code `PreToolUse` hook and rewrite unwrapped Bash commands
 /// through `aegis --command`.
 pub(crate) fn run_hook() -> i32 {
@@ -21,28 +24,41 @@ pub(crate) fn run_hook() -> i32 {
     0
 }
 
-/// Install the aegis Claude Code hook into the requested settings file.
+/// Install aegis hooks for all detected agents (Claude Code + Codex if present).
 pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
+    let mut exit = 0;
+
     match run_install_inner(args.global) {
-        Ok(InstallOutcome::Installed) => {
-            println!("Claude Code: hook installed");
-            0
-        }
+        Ok(InstallOutcome::Installed) => println!("Claude Code: hook installed"),
         Ok(InstallOutcome::AlreadyPresent) => {
-            println!("Claude Code: hook already present, skipping");
-            0
+            println!("Claude Code: hook already present, skipping")
         }
+        Ok(InstallOutcome::Skipped) => {}
         Err(err) => {
             eprintln!("error: failed to install Claude Code hook: {err}");
-            super::EXIT_INTERNAL
+            exit = super::EXIT_INTERNAL;
         }
     }
+
+    match run_codex_install_inner() {
+        Ok(InstallOutcome::Installed) => println!("Codex: hooks installed"),
+        Ok(InstallOutcome::AlreadyPresent) => println!("Codex: hooks already present, skipping"),
+        Ok(InstallOutcome::Skipped) => {}
+        Err(err) => {
+            eprintln!("error: failed to install Codex hooks: {err}");
+            exit = super::EXIT_INTERNAL;
+        }
+    }
+
+    exit
 }
 
 #[derive(Debug)]
 enum InstallOutcome {
     Installed,
     AlreadyPresent,
+    /// Agent directory not present — nothing to install.
+    Skipped,
 }
 
 #[derive(Debug)]
@@ -160,6 +176,126 @@ fn run_install_at_path(settings_path: &Path) -> Result<InstallOutcome, String> {
     }
 
     Ok(outcome)
+}
+
+// ── Codex installation ────────────────────────────────────────────────────────
+
+fn run_codex_install_inner() -> Result<InstallOutcome, String> {
+    let home = home_dir().ok_or_else(|| "HOME is not set".to_string())?;
+    let codex_dir = home.join(".codex");
+
+    if !codex_dir.exists() {
+        return Ok(InstallOutcome::Skipped);
+    }
+
+    let hooks_dir = codex_dir.join("hooks");
+    let hooks_json_path = codex_dir.join("hooks.json");
+
+    fs::create_dir_all(&hooks_dir)
+        .map_err(|e| format!("failed to create {}: {e}", hooks_dir.display()))?;
+
+    let ptu_dest = hooks_dir.join("aegis-pre-tool-use.sh");
+    let session_dest = hooks_dir.join("aegis-session-start.sh");
+
+    write_executable(&ptu_dest, CODEX_PRE_TOOL_USE_HOOK_SH)?;
+    write_executable(&session_dest, CODEX_SESSION_START_HOOK_SH)?;
+
+    apply_codex_hooks_json(&hooks_json_path, &ptu_dest, &session_dest)
+}
+
+fn write_executable(path: &Path, content: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", path.display()))?;
+    let tmp = temporary_settings_path(parent);
+    fs::write(&tmp, content).map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("failed to chmod {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("failed to install {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn apply_codex_hooks_json(
+    hooks_json: &Path,
+    ptu_dest: &Path,
+    session_dest: &Path,
+) -> Result<InstallOutcome, String> {
+    let ptu_cmd = ptu_dest
+        .to_str()
+        .ok_or_else(|| "pre-tool-use hook path is not valid UTF-8".to_string())?
+        .to_owned();
+    let session_cmd = session_dest
+        .to_str()
+        .ok_or_else(|| "session-start hook path is not valid UTF-8".to_string())?
+        .to_owned();
+
+    let mut root = load_settings(hooks_json)?;
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "hooks.json must be a JSON object".to_string())?;
+
+    let hooks = obj
+        .entry("hooks".to_string())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| "hooks.hooks must be a JSON object".to_string())?;
+
+    let session_entries = hooks
+        .entry("SessionStart".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "hooks.hooks.SessionStart must be an array".to_string())?;
+    let session_present = codex_hook_present(session_entries, "startup|resume", &session_cmd);
+    if !session_present {
+        session_entries.push(serde_json::json!({
+            "matcher": "startup|resume",
+            "hooks": [{ "type": "command", "command": session_cmd }]
+        }));
+    }
+
+    let ptu_entries = hooks
+        .entry("PreToolUse".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| "hooks.hooks.PreToolUse must be an array".to_string())?;
+    let ptu_present = codex_hook_present(ptu_entries, "Bash", &ptu_cmd);
+    if !ptu_present {
+        ptu_entries.push(serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [{ "type": "command", "command": ptu_cmd }]
+        }));
+    }
+
+    if session_present && ptu_present {
+        return Ok(InstallOutcome::AlreadyPresent);
+    }
+
+    write_settings_atomically(hooks_json, &root)?;
+    Ok(InstallOutcome::Installed)
+}
+
+fn codex_hook_present(entries: &[Value], matcher: &str, command: &str) -> bool {
+    entries.iter().any(|entry| {
+        let Some(obj) = entry.as_object() else {
+            return false;
+        };
+        if obj.get("matcher").and_then(Value::as_str) != Some(matcher) {
+            return false;
+        }
+        obj.get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|hooks| {
+                hooks.iter().any(|hook| {
+                    let Some(h) = hook.as_object() else {
+                        return false;
+                    };
+                    h.get("type").and_then(Value::as_str) == Some("command")
+                        && h.get("command").and_then(Value::as_str) == Some(command)
+                })
+            })
+    })
 }
 
 fn load_settings(path: &Path) -> Result<Value, String> {

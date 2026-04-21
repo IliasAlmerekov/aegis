@@ -20,6 +20,14 @@ fn install_and_uninstall_shell_rc_updates_use_atomic_rename() {
         !install.contains("cp \"${tmp_rc}\" \"${rc_file}\""),
         "install.sh must not copy over rc files non-atomically"
     );
+    assert!(
+        !install.contains("cat >> \"${rc_file}\""),
+        "install.sh must fully stage rc file contents in tmp_rc before the atomic rename"
+    );
+    assert!(
+        install.contains("cat >> \"${tmp_rc}\""),
+        "install.sh must append the managed block to tmp_rc before the atomic rename"
+    );
 
     assert!(
         uninstall.contains("mv \"${tmp_rc}\" \"${rc_file}\""),

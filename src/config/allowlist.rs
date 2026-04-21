@@ -336,7 +336,7 @@ fn glob_to_regex(pattern: &str) -> String {
 
     for ch in pattern.chars() {
         match ch {
-            '*' => regex.push_str(".*"),
+            '*' => regex.push_str("[^;&|]+"),
             '?' => regex.push('.'),
             '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | '[' | ']' | '\\' => {
                 regex.push('\\');
@@ -381,6 +381,15 @@ mod tests {
         assert!(allowlist.is_allowed(&ctx("terraform destroy -target=module.test.api")));
         assert!(allowlist.is_allowed(&ctx("terraform destroy -target=module.test.api.blue")));
         assert!(!allowlist.is_allowed(&ctx("terraform destroy -target=module.prod.api")));
+    }
+
+    #[test]
+    fn wildcard_patterns_do_not_match_compound_shell_commands() {
+        let allowlist = Allowlist::new(&[rule("terraform destroy *", "scoped teardown")]).unwrap();
+
+        assert!(!allowlist.is_allowed(&ctx("terraform destroy -auto-approve && rm -rf /tmp/demo")));
+        assert!(!allowlist.is_allowed(&ctx("terraform destroy -auto-approve ; rm -rf /tmp/demo")));
+        assert!(!allowlist.is_allowed(&ctx("terraform destroy -auto-approve | sh")));
     }
 
     #[test]
