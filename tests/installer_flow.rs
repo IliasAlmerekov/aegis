@@ -1193,3 +1193,51 @@ fn uninstall_script_does_not_create_missing_rc_file() {
         "uninstall must still remove the installed binary when the rc file is absent"
     );
 }
+
+#[test]
+fn uninstall_script_honors_explicit_rc_override_without_shell_detection() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let aegis_path = bindir.join("aegis");
+
+    fs::create_dir_all(&bindir).unwrap();
+    write_fake_release_binary(&aegis_path);
+    fs::write(
+        &rc_file,
+        format!(
+            "export FOO=bar\n{}",
+            managed_block(Path::new("/bin/bash"), &aegis_path)
+        ),
+    )
+    .unwrap();
+
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let aegis_path_str = aegis_path.display().to_string();
+
+    let uninstall_output = run_script(
+        "uninstall.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("SHELL", &aegis_path_str),
+        ],
+    );
+
+    assert!(
+        uninstall_output.status.success(),
+        "uninstall must honor explicit rc override even when SHELL points at aegis: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&uninstall_output.stdout),
+        String::from_utf8_lossy(&uninstall_output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&rc_file).unwrap(),
+        "export FOO=bar\n",
+        "uninstall must clean the explicit rc file override"
+    );
+    assert!(
+        !aegis_path.exists(),
+        "uninstall must still remove the installed binary when using an explicit rc override"
+    );
+}
