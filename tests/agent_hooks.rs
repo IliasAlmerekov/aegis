@@ -270,12 +270,19 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
     assert!(helper.exists());
 
     let rc_file_str = rc_file.display().to_string();
+    let fake_bindir = home.path().join("bin");
+    fs::create_dir_all(&fake_bindir).unwrap();
+    let bindir_str = fake_bindir.display().to_string();
     let uninstall_output = run_script_with_env(
         "uninstall.sh",
         home.path(),
         &[],
         None,
-        &[("AEGIS_SHELL_RC", &rc_file_str), ("SHELL", "/bin/bash")],
+        &[
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_BINDIR", &bindir_str),
+        ],
     );
     assert!(
         uninstall_output.status.success(),
@@ -406,9 +413,32 @@ fn codex_session_start_emits_strong_aegis_context() {
 
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["hookSpecificOutput"]["hookEventName"], "SessionStart");
-    assert_eq!(
-        json["hookSpecificOutput"]["context"],
-        "IMPORTANT: All Bash tool commands must be routed through aegis. Run every shell command as: aegis --command '<original command>'. Commands that do not start with 'aegis' will be blocked by the PreToolUse hook. This is a security requirement enforced by aegis."
+    let context = json["hookSpecificOutput"]["context"]
+        .as_str()
+        .expect("session-start context must be a string");
+    assert!(
+        context.contains("IMPORTANT: All Bash tool commands must be routed through aegis."),
+        "session-start guidance must preserve the command-routing requirement"
+    );
+    assert!(
+        context.contains("aegis --command '<original command>'"),
+        "session-start guidance must preserve the canonical aegis wrapper"
+    );
+    assert!(
+        context.contains("blocked by the PreToolUse hook"),
+        "session-start guidance must preserve the pre-tool-use enforcement note"
+    );
+    assert!(
+        context.contains("do not suggest bypassing the guardrail"),
+        "session-start guidance must forbid bypass framing after deny"
+    );
+    assert!(
+        context.contains("! <command>"),
+        "session-start guidance must mention shell-escape forms explicitly"
+    );
+    assert!(
+        context.contains("hand the decision to the human operator"),
+        "session-start guidance must preserve the operator handoff instruction"
     );
 }
 
