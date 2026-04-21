@@ -4,6 +4,32 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
+## v0.5.1
+
+### Highlights
+
+- **Keyword scanner regression test hardening**: the `keywords.rs` source-slice
+  helper used by the hot-path regression test now stops at the actual `mod
+  tests` boundary instead of relying on a naive split. This keeps literal
+  `chars.next().unwrap()` strings inside test-only helpers from causing false
+  positives against production-code assertions.
+- **Release metadata bumped to 0.5.1**: `Cargo.toml` and `Cargo.lock` now track
+  the `0.5.1` crate version for the current release line.
+- **Tracker cleanup**: repository-local `REVIEW.md` and `TODO.md` were removed
+  from the release tree so the tagged state reflects the current curated docs
+  set more closely.
+
+### Documentation and contracts
+
+- `CHANGELOG.md` now tracks the `v0.5.1` release line.
+- `docs/releases/current-line.md` now tracks the `0.5.1` release line.
+- `docs/releases/v1.0.0.md` now references `0.5.1` as the current pre-1.0
+  crate version when describing the future `v1.0.0` target.
+- The release documentation continues to describe Aegis as a heuristic shell
+  guardrail rather than a sandbox or hard security boundary.
+
+---
+
 ## v0.5.0
 
 ### Highlights
