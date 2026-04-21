@@ -434,6 +434,18 @@ mod tests {
     }
 
     #[test]
+    fn inline_script_stays_within_logical_segment_boundary() {
+        let scripts = extract_inline_scripts(r#"ruby puts(1) && node -e "process.exit(1)""#);
+        assert_eq!(
+            scripts,
+            vec![InlineScript {
+                interpreter: "node".to_string(),
+                body: "process.exit(1)".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn process_substitution_body_basic() {
         let bodies = extract_process_substitution_bodies(r#"source <(python3 -c "print(42)")"#);
         assert_eq!(bodies, vec![r#"python3 -c "print(42)""#]);

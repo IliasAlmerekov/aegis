@@ -295,25 +295,27 @@ pub fn extract_inline_scripts(cmd: &str) -> Vec<InlineScript> {
     ];
 
     let mut scripts = Vec::new();
-    let tokens = split_tokens(cmd);
-    let mut i = 0;
+    for segment in split_top_level_segments(cmd) {
+        let tokens = split_tokens(&segment);
+        let mut i = 0;
 
-    while i < tokens.len() {
-        for &(interp, flag) in INTERPRETERS {
-            if tokens[i] == interp {
-                if let Some(rel) = tokens[i..].iter().position(|t| t == flag) {
-                    let body_idx = i + rel + 1;
-                    if let Some(body) = tokens.get(body_idx) {
-                        scripts.push(InlineScript {
-                            interpreter: interp.to_string(),
-                            body: body.clone(),
-                        });
+        while i < tokens.len() {
+            for &(interp, flag) in INTERPRETERS {
+                if tokens[i] == interp {
+                    if let Some(rel) = tokens[i..].iter().position(|t| t == flag) {
+                        let body_idx = i + rel + 1;
+                        if let Some(body) = tokens.get(body_idx) {
+                            scripts.push(InlineScript {
+                                interpreter: interp.to_string(),
+                                body: body.clone(),
+                            });
+                        }
                     }
+                    break;
                 }
-                break;
             }
+            i += 1;
         }
-        i += 1;
     }
 
     scripts

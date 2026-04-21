@@ -43,27 +43,29 @@ Works on:
 
 native Windows shells like **PowerShell** and **cmd.exe** are **not** supported.
 
-### Step 1: copy this command
+### Step 1: run the installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-### Step 2: paste it into your terminal
+### Step 2: reload your shell
 
-Wait until the installer finishes.
+```bash
+source ~/.bashrc   # bash
+# or
+source ~/.zshrc    # zsh
+```
 
-### Step 3: open a new terminal
+Or open a new terminal window — either works.
 
-This is important. Aegis updates your shell setup, so open a fresh terminal window or tab.
-
-### Step 4: check that it installed
+### Step 3: confirm the binary is on your PATH
 
 ```bash
 aegis --version
 ```
 
-If you see a version number, the install worked.
+If you see a version number, the install worked and the `aegis` binary is available.
 
 ---
 
