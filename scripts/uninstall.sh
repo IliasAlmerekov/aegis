@@ -85,7 +85,10 @@ remove_shell_setup() {
     rc_file="$1"
     tmp_rc="${TMPDIR_AEGIS}/rc.tmp"
 
-    mkdir -p "$(dirname "${rc_file}")"
+    if [ ! -f "${rc_file}" ]; then
+        return
+    fi
+
     remove_managed_block "${rc_file}" "${tmp_rc}"
     cp "${tmp_rc}" "${rc_file}"
 }
