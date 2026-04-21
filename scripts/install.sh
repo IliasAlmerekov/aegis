@@ -64,14 +64,15 @@ write_shell_setup() {
 
     mkdir -p "$(dirname "${rc_file}")"
     remove_managed_block "${rc_file}" "${tmp_rc}"
-    mv "${tmp_rc}" "${rc_file}"
 
-    cat >> "${rc_file}" <<EOF
+    cat >> "${tmp_rc}" <<EOF
 ${BEGIN_MARKER}
 export AEGIS_REAL_SHELL="${real_shell}"
 export SHELL="${aegis_path}"
 ${END_MARKER}
 EOF
+
+    mv "${tmp_rc}" "${rc_file}"
 }
 
 print_banner() {

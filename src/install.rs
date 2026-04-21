@@ -8,10 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
-const CODEX_PRE_TOOL_USE_HOOK_SH: &str =
-    include_str!("../scripts/hooks/codex-pre-tool-use.sh");
-const CODEX_SESSION_START_HOOK_SH: &str =
-    include_str!("../scripts/hooks/codex-session-start.sh");
+const CODEX_PRE_TOOL_USE_HOOK_SH: &str = include_str!("../scripts/hooks/codex-pre-tool-use.sh");
+const CODEX_SESSION_START_HOOK_SH: &str = include_str!("../scripts/hooks/codex-session-start.sh");
 
 /// Run the Claude Code `PreToolUse` hook and rewrite unwrapped Bash commands
 /// through `aegis --command`.
@@ -32,7 +30,9 @@ pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
 
     match run_install_inner(args.global) {
         Ok(InstallOutcome::Installed) => println!("Claude Code: hook installed"),
-        Ok(InstallOutcome::AlreadyPresent) => println!("Claude Code: hook already present, skipping"),
+        Ok(InstallOutcome::AlreadyPresent) => {
+            println!("Claude Code: hook already present, skipping")
+        }
         Ok(InstallOutcome::Skipped) => {}
         Err(err) => {
             eprintln!("error: failed to install Claude Code hook: {err}");
@@ -210,12 +210,10 @@ fn write_executable(path: &Path, content: &str) -> Result<(), String> {
         .parent()
         .ok_or_else(|| format!("{} has no parent", path.display()))?;
     let tmp = temporary_settings_path(parent);
-    fs::write(&tmp, content)
-        .map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
+    fs::write(&tmp, content).map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("failed to chmod {}: {e}", tmp.display()))?;
-    fs::rename(&tmp, path)
-        .map_err(|e| format!("failed to install {}: {e}", path.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("failed to install {}: {e}", path.display()))?;
     Ok(())
 }
 
