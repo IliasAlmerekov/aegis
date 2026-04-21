@@ -90,7 +90,7 @@ remove_shell_setup() {
     fi
 
     remove_managed_block "${rc_file}" "${tmp_rc}"
-    cp "${tmp_rc}" "${rc_file}"
+    mv "${tmp_rc}" "${rc_file}"
 }
 
 remove_binary() {
