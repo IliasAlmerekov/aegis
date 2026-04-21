@@ -32,6 +32,14 @@ target_path() {
     printf '%s/aegis\n' "${BINDIR}"
 }
 
+validate_shell_path() {
+    case "$1" in
+        *[!A-Za-z0-9_./+-]*)
+            fail "invalid real shell path: contains unsafe characters"
+            ;;
+    esac
+}
+
 remove_managed_block() {
     input_path="$1"
     output_path="$2"
@@ -94,6 +102,8 @@ detect_real_shell() {
     if [ "${real_shell}" = "${aegis_path}" ]; then
         fail "refusing to wrap ${aegis_path} recursively; set AEGIS_REAL_SHELL to the real shell and rerun"
     fi
+
+    validate_shell_path "${real_shell}"
 
     printf '%s\n' "${real_shell}"
 }

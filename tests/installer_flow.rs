@@ -524,6 +524,59 @@ fn install_script_prefers_aegis_real_shell_when_shell_already_points_to_wrapper(
 }
 
 #[test]
+fn install_script_rejects_unsafe_real_shell_value_before_rc_mutation() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+
+    fs::write(&rc_file, "export FOO=bar\n").unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_checksum_ready_release(&temp, &stub_dir);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+
+    let output = run_script(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash\nexport EVIL=1"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        !output.status.success(),
+        "install must reject unsafe real shell values: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid real shell path"),
+        "installer must explain why the shell path was rejected"
+    );
+
+    let rc_contents = fs::read_to_string(&rc_file).unwrap();
+    assert_eq!(
+        rc_contents, "export FOO=bar\n",
+        "unsafe real shell values must not mutate the rc file"
+    );
+    assert!(
+        !bindir.join("aegis").exists(),
+        "unsafe real shell values must abort before installing the binary"
+    );
+}
+
+#[test]
 fn install_script_rejects_checksum_mismatch_before_touching_bindir() {
     let temp = TempDir::new().unwrap();
     let bindir = temp.path().join("bin");

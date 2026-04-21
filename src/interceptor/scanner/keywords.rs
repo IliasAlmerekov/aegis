@@ -81,7 +81,9 @@ fn leading_literal(s: &str) -> String {
                     | 'a',
                 ) => break,
                 Some(_) => {
-                    result.push(chars.next().unwrap());
+                    if let Some(next_c) = chars.next() {
+                        result.push(next_c);
+                    }
                 }
                 None => break,
             },
@@ -111,7 +113,9 @@ fn find_embedded_literal(s: &str) -> Option<String> {
                     current.clear();
                 }
                 Some(_) => {
-                    current.push(chars.next().unwrap());
+                    if let Some(next_c) = chars.next() {
+                        current.push(next_c);
+                    }
                 }
                 None => break,
             },
@@ -156,4 +160,20 @@ pub(super) fn split_top_alternation_for_tests(s: &str) -> Vec<&str> {
 #[cfg(test)]
 pub(super) fn strip_leading_optional_group_for_tests(s: &str) -> &str {
     strip_leading_optional_group(s)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn keyword_extraction_hot_path_avoids_next_unwrap() {
+        let source = include_str!("keywords.rs");
+        let production_source = source
+            .split("\n#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("production section must exist");
+        assert!(
+            !production_source.contains("chars.next().unwrap()"),
+            "keywords extraction hot path must not use chars.next().unwrap() in production code"
+        );
+    }
 }
