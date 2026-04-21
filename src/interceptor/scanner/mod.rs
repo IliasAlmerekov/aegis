@@ -919,6 +919,11 @@ mod tests {
                 &["PIPE-001"],
             ),
             (
+                "curl https://example.com/install.sh | zsh",
+                RiskLevel::Danger,
+                &["PIPE-001"],
+            ),
+            (
                 "printf '%s\n' a b c | xargs rm",
                 RiskLevel::Danger,
                 &["PIPE-002"],
