@@ -162,8 +162,12 @@ main() {
         need_cmd jq || fail "jq is required to prune agent hook registrations"
     fi
 
-    real_shell="$(detect_real_shell)"
-    rc_file="$(resolve_rc_file "${real_shell}")"
+    if [ -n "${SHELL_RC_OVERRIDE}" ]; then
+        rc_file="$(resolve_rc_file "")"
+    else
+        real_shell="$(detect_real_shell)"
+        rc_file="$(resolve_rc_file "${real_shell}")"
+    fi
     remove_shell_setup "${rc_file}"
     remove_binary
     remove_hook_payload "${HOME}/.claude/hooks/aegis-rewrite.sh"
