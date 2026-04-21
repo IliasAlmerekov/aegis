@@ -163,12 +163,13 @@ fn run_install_at_path(settings_path: &Path) -> Result<InstallOutcome, String> {
 }
 
 fn load_settings(path: &Path) -> Result<Value, String> {
-    if !path.exists() {
-        return Ok(Value::Object(Map::new()));
-    }
-
-    let raw = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Value::Object(Map::new()));
+        }
+        Err(err) => return Err(format!("failed to read {}: {err}", path.display())),
+    };
 
     if raw.trim().is_empty() {
         return Ok(Value::Object(Map::new()));
@@ -403,6 +404,26 @@ mod tests {
 
         let path = settings_path_global(Some(home.path())).expect("global path");
         assert_eq!(path, home.path().join(".claude/settings.json"));
+    }
+
+    #[test]
+    fn load_settings_does_not_preflight_with_exists_check() {
+        let source = include_str!("install.rs");
+        let start = source
+            .find("fn load_settings(path: &Path) -> Result<Value, String> {")
+            .expect("load_settings function must exist");
+        let load_settings_source = &source[start..];
+        let next_fn = load_settings_source
+            .find(
+                "\nfn apply_installation(settings: &mut Value) -> Result<InstallOutcome, String> {",
+            )
+            .expect("load_settings must be followed by apply_installation");
+        let load_settings_body = &load_settings_source[..next_fn];
+
+        assert!(
+            !load_settings_body.contains("path.exists()"),
+            "load_settings must not preflight with exists(); handle NotFound from read_to_string to avoid TOCTOU"
+        );
     }
 
     #[test]
