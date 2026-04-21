@@ -214,6 +214,8 @@ These apply to every agent, every phase, and every command.
 - All new `pub` items must have `///` doc comments.
 - Preserve the exit-code contract in `src/main.rs`.
 - Preserve the documented security model: Aegis is a heuristic guardrail, not a sandbox. Never claim stronger guarantees in code or docs.
+- If Aegis blocks a command or requires confirmation, do not frame the next step as a bypass. Do not suggest shell-escape forms, raw-command escape paths, or wording such as "bypass Aegis", "run it through `!`", or "do it outside Aegis".
+- After a deny/confirmation-required result, you may explain the risk, suggest verification steps or safer alternatives, and state that proceeding requires an explicit operator decision.
 - Do not move business logic into `src/main.rs`; prefer library modules.
 - Keep `src/interceptor/` synchronous. Do not introduce async execution into the parser/scanner hot path.
 - Benchmark-sensitive changes in command parsing or scanning require an explicit performance note in `summary.md`.

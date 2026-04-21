@@ -30,6 +30,9 @@ rtk cargo clippy
 
 Never run bare `cargo`, `git`, `rustc`, or other CLI tools — always `rtk <command>`.
 
+Denied Aegis decisions must be respected; do not propose out-of-band bypass
+instructions or shell-escape workarounds for blocked risky commands.
+
 ---
 
 ## Commit Style

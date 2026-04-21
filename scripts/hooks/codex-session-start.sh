@@ -64,7 +64,7 @@ cat <<'JSON'
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "context": "IMPORTANT: All Bash tool commands must be routed through aegis. Run every shell command as: aegis --command '<original command>'. Commands that do not start with 'aegis' will be blocked by the PreToolUse hook. This is a security requirement enforced by aegis."
+    "context": "IMPORTANT: All Bash tool commands must be routed through aegis. Run every shell command as: aegis --command '<original command>'. Commands that do not start with 'aegis' will be blocked by the PreToolUse hook. This is a security requirement enforced by aegis. If Aegis denies or blocks a command, do not suggest bypassing the guardrail, do not recommend shell-escape forms such as '! <command>', and do not instruct the user to run the same risky command outside Aegis. You may explain the risk, suggest verification steps, and hand the decision to the human operator."
   }
 }
 JSON
