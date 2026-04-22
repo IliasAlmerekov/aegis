@@ -198,7 +198,11 @@ fn decision_engine_is_pure_no_io() {
 fn interceptor_has_no_downstream_dependencies() {
     for path in rs_files_under("src/interceptor") {
         let src = strip_test_code(&fs::read_to_string(&path).unwrap());
-        let rel = path.strip_prefix(repo_root()).unwrap().display().to_string();
+        let rel = path
+            .strip_prefix(repo_root())
+            .unwrap()
+            .display()
+            .to_string();
         for forbidden in [
             "use crate::audit",
             "use crate::snapshot",
@@ -227,7 +231,11 @@ fn interceptor_has_no_downstream_dependencies() {
 fn ui_does_not_call_audit_or_snapshot_business_logic() {
     for path in rs_files_under("src/ui") {
         let src = strip_test_code(&fs::read_to_string(&path).unwrap());
-        let rel = path.strip_prefix(repo_root()).unwrap().display().to_string();
+        let rel = path
+            .strip_prefix(repo_root())
+            .unwrap()
+            .display()
+            .to_string();
 
         // No audit coupling at all.
         assert_absent(
@@ -283,7 +291,11 @@ fn ui_does_not_call_audit_or_snapshot_business_logic() {
 fn config_is_a_leaf() {
     for path in rs_files_under("src/config") {
         let src = strip_test_code(&fs::read_to_string(&path).unwrap());
-        let rel = path.strip_prefix(repo_root()).unwrap().display().to_string();
+        let rel = path
+            .strip_prefix(repo_root())
+            .unwrap()
+            .display()
+            .to_string();
         for forbidden in [
             "use crate::runtime",
             "use crate::planning",
@@ -291,12 +303,7 @@ fn config_is_a_leaf() {
             "use crate::snapshot",
             "use crate::audit",
         ] {
-            assert_absent(
-                &src,
-                forbidden,
-                &rel,
-                "§4: config must stay a leaf module",
-            );
+            assert_absent(&src, forbidden, &rel, "§4: config must stay a leaf module");
         }
     }
 }

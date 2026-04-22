@@ -33,7 +33,7 @@ pub(crate) fn run_cli(cli: Cli, runtime: &tokio::runtime::Runtime, handle: Handl
         Some(Commands::Rollback(args)) => cli_commands::handle_rollback_command(args, runtime),
         Some(Commands::Config(args)) => cli_commands::handle_config_command(args),
         Some(Commands::Hook) => install::run_hook(),
-        Some(Commands::Install(args)) => install::run_install(&args),
+        Some(Commands::InstallHooks(args)) => install::run_install(&args),
         None => {
             if let Some(cmd) = command {
                 run_shell_wrapper(

@@ -26,8 +26,11 @@ boundary, or release properties not already documented elsewhere.
 - Current crate version: `0.5.2`
 - The convenience installer is global-first and rejects the removed
   `AEGIS_SETUP_MODE` / `AEGIS_SKIP_SHELL_SETUP` controls.
-- Claude Code / Codex hook installation is attempted automatically only from a
-  real local checkout with supported agent directories present.
+- Claude Code / Codex hook installation is attempted automatically through the
+  installed binary when supported agent directories already exist.
+- Missing `~/.claude` / `~/.codex` directories are skipped instead of being
+  created just for hook setup.
+- Users can re-run hook setup later with `aegis install-hooks --all`.
 - Supported platforms are documented in [Platform support](../platform-support.md).
 - Release and CI behavior are documented in [CI and Release Guarantees](../ci.md).
 - Launch checklists and the verification-first/manual install path are

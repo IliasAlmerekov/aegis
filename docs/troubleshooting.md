@@ -91,14 +91,18 @@ automatically for `bash` and `zsh`.
 
 ### `Agent hook setup skipped; no supported agent directories were detected.`
 
-**Why:** The installer found a real local checkout of the hook bundle, but your
-`HOME` did not contain a detectable `~/.claude` or `~/.codex` directory.
+**Why:** The installer checked your `HOME` for supported agent directories
+before attempting automatic hook setup, and it did not find a detectable
+`~/.claude` or `~/.codex` directory. Aegis skips hook installation when an
+agent directory does not exist yet.
 
 **Fix:**
 
 1. Start Claude Code or Codex once so its config directory exists.
-2. Re-run `sh scripts/agent-setup.sh` from a local checkout of the repository.
-3. If you only want to verify the installed binary path, run `command -v aegis`.
+2. Re-run `aegis install-hooks --all`.
+3. If your current shell does not see `aegis` on `PATH` yet, use the absolute
+   path printed by the installer, such as `$HOME/.local/bin/aegis install-hooks --all`.
+4. If you only want to verify the installed binary path, run `command -v aegis`.
 
 ### Wrapper recursion errors
 

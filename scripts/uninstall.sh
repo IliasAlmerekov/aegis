@@ -175,6 +175,7 @@ main() {
     remove_hook_payload "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"
     remove_hook_payload "${HOME}/.aegis/lib/toggle-state.sh"
     prune_hook_registration "${HOME}/.claude/settings.json" "PreToolUse" "${HOME}/.claude/hooks/aegis-rewrite.sh"
+    prune_hook_registration "${HOME}/.claude/settings.json" "PreToolUse" "aegis hook"
     prune_hook_registration "${HOME}/.codex/hooks.json" "SessionStart" "${HOME}/.codex/hooks/aegis-session-start.sh"
     prune_hook_registration "${HOME}/.codex/hooks.json" "PreToolUse" "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"
 

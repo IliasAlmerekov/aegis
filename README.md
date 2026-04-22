@@ -113,8 +113,11 @@ When an AI agent runs a shell command, Aegis intercepts it and decides what to d
 The convenience installer is **global-first**.
 
 - **Global** — installs the `aegis` binary, writes the managed shell-integration
-  block, and then attempts local Claude Code / Codex hook setup when a real
-  local checkout and supported agent directories are present.
+  block, and then auto-attempts Claude Code / Codex hook setup through the
+  installed binary.
+  - Supported agent directories that already exist are updated automatically.
+  - Missing `~/.claude` / `~/.codex` directories are skipped instead of being
+    created just for hook installation.
 - **Local** — the old project-only shell mode has been removed from the
   convenience installer. Use `aegis off` / `aegis on` for a temporary local
   workflow change without uninstalling the shell wrapper, or configure a manual
@@ -148,13 +151,23 @@ explicitly override CI detection.
 
 ### If automatic agent setup did not run
 
-If you installed from a local checkout, you can run this manually:
+If Claude Code or Codex was not installed yet, start the agent once so its
+config directory exists, then run:
 
 ```bash
-sh scripts/agent-setup.sh
+aegis install-hooks --all
 ```
 
-This installs supported hooks for **Claude Code** and **Codex** when their config folders exist.
+This installs supported hooks for **Claude Code** and **Codex** when their
+config folders already exist, and skips any agent directory that is still
+absent.
+
+If you have not opened a new shell yet, you can also use the absolute path that
+the installer printed, such as:
+
+```bash
+$HOME/.local/bin/aegis install-hooks --all
+```
 
 ### Alternative: install from source
 

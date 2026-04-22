@@ -58,24 +58,25 @@ fn write_host_command_shims(dir: &Path, commands: &[&str]) {
     }
 }
 
-fn copy_tree(source: &Path, target: &Path) {
-    fs::create_dir_all(target).unwrap();
-
-    for entry in fs::read_dir(source).unwrap() {
-        let entry = entry.unwrap();
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-
-        if source_path.is_dir() {
-            copy_tree(&source_path, &target_path);
-        } else {
-            fs::copy(&source_path, &target_path).unwrap();
-        }
-    }
-}
-
 fn write_fake_release_binary(path: &Path) {
     write_executable(path, "#!/bin/sh\necho 'aegis 1.0.0'\n");
+}
+
+fn aegis_test_binary() -> PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_aegis")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("CARGO_BIN_EXE_aegis is not set for installer flow tests"))
+}
+
+fn copy_release_binary(source: &Path, target: &Path) {
+    fs::copy(source, target).unwrap();
+
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(target).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(target, permissions).unwrap();
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -301,6 +302,27 @@ fn prepare_checksum_ready_release(
     (binary_asset, checksum_asset, binary_digest, path_value)
 }
 
+fn prepare_real_binary_release(
+    temp: &TempDir,
+    stub_dir: &Path,
+) -> (PathBuf, PathBuf, String, String) {
+    let binary_asset = temp.path().join("aegis-linux-x86_64");
+    let checksum_asset = temp.path().join("aegis-linux-x86_64.sha256");
+
+    fs::create_dir_all(stub_dir).unwrap();
+    copy_release_binary(&aegis_test_binary(), &binary_asset);
+
+    let binary_digest = sha256_hex(&fs::read(&binary_asset).unwrap());
+    write_release_checksum(&checksum_asset, "aegis-linux-x86_64", &binary_digest);
+    write_curl_stub(&stub_dir.join("curl"));
+    write_sha256sum_stub(&stub_dir.join("sha256sum"));
+    write_shasum_stub(&stub_dir.join("shasum"));
+
+    let path_value = installer_path(temp, stub_dir);
+
+    (binary_asset, checksum_asset, binary_digest, path_value)
+}
+
 fn installer_path(temp: &TempDir, stub_dir: &Path) -> String {
     let host_dir = temp.path().join("host-bin");
     write_host_command_shims(
@@ -312,6 +334,16 @@ fn installer_path(temp: &TempDir, stub_dir: &Path) -> String {
     );
 
     format!("{}:{}", stub_dir.display(), host_dir.display())
+}
+
+fn write_failing_aegis_on_path(path: &Path, log_path: &Path) {
+    write_executable(
+        path,
+        &format!(
+            "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{}'\nprintf 'unexpected PATH aegis invocation\\n' >&2\nexit 99\n",
+            log_path.display()
+        ),
+    );
 }
 
 fn run_script_at(script_path: &Path, envs: &[(&str, &str)]) -> Output {
@@ -334,21 +366,6 @@ fn run_script(script_name: &str, envs: &[(&str, &str)]) -> Output {
     let script_copy = temp.path().join(script_name);
     fs::copy(script_path(script_name), &script_copy).unwrap();
     run_script_at(&script_copy, envs)
-}
-
-fn prepare_local_checkout(temp: &TempDir) -> PathBuf {
-    let checkout_dir = temp.path().join("checkout");
-
-    fs::create_dir_all(&checkout_dir).unwrap();
-    fs::copy(script_path("install.sh"), checkout_dir.join("install.sh")).unwrap();
-    fs::copy(
-        script_path("agent-setup.sh"),
-        checkout_dir.join("agent-setup.sh"),
-    )
-    .unwrap();
-    copy_tree(&script_path("hooks"), &checkout_dir.join("hooks"));
-
-    checkout_dir
 }
 
 fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &str) -> Output {
@@ -935,19 +952,21 @@ fn install_script_skips_agent_setup_honestly_without_detected_agents() {
     let bindir = temp.path().join("bin");
     let rc_file = temp.path().join(".bashrc");
     let stub_dir = temp.path().join("stub-bin");
+    let rogue_log = temp.path().join("rogue-aegis.log");
     let home = temp.path().join("home");
-    let checkout = prepare_local_checkout(&temp);
 
     fs::create_dir_all(&home).unwrap();
     let (binary_asset, checksum_asset, binary_digest, path_value) =
-        prepare_checksum_ready_release(&temp, &stub_dir);
+        prepare_real_binary_release(&temp, &stub_dir);
+    write_failing_aegis_on_path(&stub_dir.join("aegis"), &rogue_log);
+
     let bindir_str = bindir.display().to_string();
     let rc_file_str = rc_file.display().to_string();
     let home_str = home.display().to_string();
     let binary_asset_str = binary_asset.display().to_string();
     let checksum_asset_str = checksum_asset.display().to_string();
-    let output = run_script_at(
-        &checkout.join("install.sh"),
+    let output = run_script(
+        "install.sh",
         &[
             ("AEGIS_BINDIR", &bindir_str),
             ("AEGIS_SHELL_RC", &rc_file_str),
@@ -965,18 +984,26 @@ fn install_script_skips_agent_setup_honestly_without_detected_agents() {
 
     assert!(
         output.status.success(),
-        "local checkout install must succeed even without detectable agents: stdout=\n{}\nstderr=\n{}",
+        "release install must succeed even without detectable agents: stdout=\n{}\nstderr=\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected_follow_up = format!(
+        "If you install Claude Code or Codex later, run:\n  {}/aegis install-hooks --all",
+        bindir.display()
+    );
     assert!(
         stdout.contains("Agent hook setup skipped; no supported agent directories were detected."),
         "installer should explain that no hooks were installed when no agent dirs are present; stdout=\n{stdout}"
     );
     assert!(
-        !stdout.contains("Agent hooks installed automatically."),
+        stdout.contains(&expected_follow_up),
+        "installer should point users at the installed binary for follow-up hook setup; stdout=\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Agent hook setup completed automatically."),
         "installer must not claim success when no agent dirs were detected; stdout=\n{stdout}"
     );
     assert!(
@@ -984,38 +1011,40 @@ fn install_script_skips_agent_setup_honestly_without_detected_agents() {
         "binary must still be installed"
     );
     assert!(
-        !home
-            .join(".aegis")
-            .join("lib")
-            .join("toggle-state.sh")
-            .exists(),
-        "no agent dirs should mean the helper is not installed either"
+        !home.join(".claude").join("settings.json").exists(),
+        "no agent dirs should mean no Claude settings are created"
     );
     assert!(
         !home.join(".codex").join("hooks.json").exists(),
-        "no agent dirs should mean no codex hook files are created"
+        "no agent dirs should mean no Codex hook files are created"
+    );
+    assert!(
+        !rogue_log.exists(),
+        "installer must invoke the installed binary directly instead of PATH aegis"
     );
 }
 
 #[test]
-fn install_script_auto_installs_agent_hooks_from_local_checkout() {
+fn install_script_auto_installs_codex_hooks_via_installed_binary() {
     let temp = TempDir::new().unwrap();
     let bindir = temp.path().join("bin");
     let rc_file = temp.path().join(".bashrc");
     let stub_dir = temp.path().join("stub-bin");
+    let rogue_log = temp.path().join("rogue-aegis.log");
     let home = temp.path().join("home");
-    let checkout = prepare_local_checkout(&temp);
 
     fs::create_dir_all(home.join(".codex")).unwrap();
     let (binary_asset, checksum_asset, binary_digest, path_value) =
-        prepare_checksum_ready_release(&temp, &stub_dir);
+        prepare_real_binary_release(&temp, &stub_dir);
+    write_failing_aegis_on_path(&stub_dir.join("aegis"), &rogue_log);
+
     let bindir_str = bindir.display().to_string();
     let rc_file_str = rc_file.display().to_string();
     let home_str = home.display().to_string();
     let binary_asset_str = binary_asset.display().to_string();
     let checksum_asset_str = checksum_asset.display().to_string();
-    let output = run_script_at(
-        &checkout.join("install.sh"),
+    let output = run_script(
+        "install.sh",
         &[
             ("AEGIS_BINDIR", &bindir_str),
             ("AEGIS_SHELL_RC", &rc_file_str),
@@ -1033,26 +1062,20 @@ fn install_script_auto_installs_agent_hooks_from_local_checkout() {
 
     assert!(
         output.status.success(),
-        "local checkout install must auto-install hooks when agents are detected: stdout=\n{}\nstderr=\n{}",
+        "release install must auto-install Codex hooks when Codex is detected: stdout=\n{}\nstderr=\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Agent hooks installed automatically."),
+        stdout.contains("Agent hook setup completed automatically."),
         "installer should report successful automatic hook setup; stdout=\n{stdout}"
     );
     assert!(
-        stdout.contains("Codex: hooks installed"),
-        "agent-setup output should show Codex hook installation; stdout=\n{stdout}"
-    );
-    assert!(
-        home.join(".aegis")
-            .join("lib")
-            .join("toggle-state.sh")
-            .exists(),
-        "agent helper should be installed into ~/.aegis/lib"
+        stdout.contains("Codex: hooks installed")
+            || stdout.contains("Codex: hooks already present, skipping"),
+        "installer should show Codex hook setup output from the installed binary; stdout=\n{stdout}"
     );
     let codex_hooks = home.join(".codex").join("hooks.json");
     assert!(codex_hooks.exists(), "Codex hooks.json should be created");
@@ -1070,14 +1093,207 @@ fn install_script_auto_installs_agent_hooks_from_local_checkout() {
             .exists(),
         "Codex session-start hook should be installed"
     );
-    let hooks_json = fs::read_to_string(&codex_hooks).unwrap();
     assert!(
-        hooks_json.contains("aegis-pre-tool-use.sh"),
-        "Codex hooks.json should reference the pre-tool-use hook; hooks.json=\n{hooks_json}"
+        !home.join(".claude").join("settings.json").exists(),
+        "Codex-only install should not seed Claude settings"
     );
     assert!(
-        hooks_json.contains("aegis-session-start.sh"),
-        "Codex hooks.json should reference the session-start hook; hooks.json=\n{hooks_json}"
+        !rogue_log.exists(),
+        "installer must invoke the installed binary directly instead of PATH aegis"
+    );
+}
+
+#[test]
+fn install_script_auto_installs_claude_hooks_via_installed_binary() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+    let home = temp.path().join("home");
+
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_real_binary_release(&temp, &stub_dir);
+
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let home_str = home.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+    let output = run_script(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("HOME", &home_str),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "release install must auto-install Claude hooks when Claude is detected: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Agent hook setup completed automatically."),
+        "installer should report successful automatic hook setup; stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Claude Code: hook installed")
+            || stdout.contains("Claude Code: hook already present, skipping"),
+        "installer should show Claude hook setup output from the installed binary; stdout=\n{stdout}"
+    );
+    let claude_settings = fs::read_to_string(home.join(".claude").join("settings.json")).unwrap();
+    assert!(
+        claude_settings.contains("\"command\": \"aegis hook\""),
+        "Claude settings should point at the aegis hook subcommand; settings.json=\n{claude_settings}"
+    );
+    assert!(
+        !home.join(".codex").join("hooks.json").exists(),
+        "Claude-only install should not seed Codex hooks"
+    );
+}
+
+#[test]
+fn install_script_auto_installs_both_agent_hooks_via_installed_binary() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+    let home = temp.path().join("home");
+
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_real_binary_release(&temp, &stub_dir);
+
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let home_str = home.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+    let output = run_script(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", "linux"),
+            ("AEGIS_ARCH", "x86_64"),
+            ("HOME", &home_str),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
+            ("TEST_BINARY_ASSET", &binary_asset_str),
+            ("TEST_CHECKSUM_ASSET", &checksum_asset_str),
+            ("TEST_BINARY_DIGEST", &binary_digest),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "release install must auto-install both hook sets when both agents are detected: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Agent hook setup completed automatically."));
+    assert!(
+        stdout.contains("Claude Code: hook installed")
+            || stdout.contains("Claude Code: hook already present, skipping")
+    );
+    assert!(
+        stdout.contains("Codex: hooks installed")
+            || stdout.contains("Codex: hooks already present, skipping")
+    );
+    assert!(home.join(".claude").join("settings.json").exists());
+    assert!(home.join(".codex").join("hooks.json").exists());
+}
+
+#[test]
+fn install_script_repeated_install_keeps_agent_hook_setup_idempotent() {
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+    let home = temp.path().join("home");
+
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(home.join(".codex")).unwrap();
+    let (binary_asset, checksum_asset, binary_digest, path_value) =
+        prepare_real_binary_release(&temp, &stub_dir);
+
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let home_str = home.display().to_string();
+    let binary_asset_str = binary_asset.display().to_string();
+    let checksum_asset_str = checksum_asset.display().to_string();
+    let envs = [
+        ("AEGIS_BINDIR", bindir_str.as_str()),
+        ("AEGIS_SHELL_RC", rc_file_str.as_str()),
+        ("AEGIS_OS", "linux"),
+        ("AEGIS_ARCH", "x86_64"),
+        ("HOME", home_str.as_str()),
+        ("PATH", path_value.as_str()),
+        ("SHELL", "/bin/bash"),
+        ("AEGIS_REAL_SHELL", "/bin/bash"),
+        ("TEST_BINARY_ASSET", binary_asset_str.as_str()),
+        ("TEST_CHECKSUM_ASSET", checksum_asset_str.as_str()),
+        ("TEST_BINARY_DIGEST", binary_digest.as_str()),
+    ];
+
+    let first_output = run_script("install.sh", &envs);
+    assert!(
+        first_output.status.success(),
+        "first release install must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&first_output.stdout),
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+
+    let claude_before = fs::read_to_string(home.join(".claude").join("settings.json")).unwrap();
+    let codex_before = fs::read_to_string(home.join(".codex").join("hooks.json")).unwrap();
+
+    let second_output = run_script("install.sh", &envs);
+    assert!(
+        second_output.status.success(),
+        "second release install must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&second_output.stdout);
+    assert!(
+        stdout.contains("Agent hook setup completed automatically."),
+        "successful re-install should still report automatic hook setup; stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Claude Code: hook already present, skipping"),
+        "re-install should report Claude idempotence; stdout=\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Codex: hooks already present, skipping"),
+        "re-install should report Codex idempotence; stdout=\n{stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".claude").join("settings.json")).unwrap(),
+        claude_before,
+        "re-install should not rewrite Claude settings when already configured"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(".codex").join("hooks.json")).unwrap(),
+        codex_before,
+        "re-install should not rewrite Codex hooks when already configured"
     );
 }
 
@@ -1134,9 +1350,12 @@ fn install_script_global_first_flow_in_tty_session() {
         "installer should advertise the new toggle flow; stdout=\n{stdout}"
     );
     assert!(
-        stdout.contains("Agent hooks installed automatically.")
-            || stdout.contains("Agent hook setup is only available from a local checkout"),
-        "installer must either auto-install hooks or print honest local-checkout guidance; stdout=\n{stdout}"
+        stdout.contains("Agent hook setup completed automatically.")
+            || stdout.contains(
+                "Agent hook setup skipped; no supported agent directories were detected."
+            )
+            || stdout.contains("Agent hook setup failed."),
+        "installer must print an honest hook-setup outcome; stdout=\n{stdout}"
     );
 
     let rc_contents = fs::read_to_string(&rc_file).unwrap();

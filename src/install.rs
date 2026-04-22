@@ -24,41 +24,98 @@ pub(crate) fn run_hook() -> i32 {
     0
 }
 
-/// Install aegis hooks for all detected agents (Claude Code + Codex if present).
+/// Install aegis hooks for the selected agent targets.
 pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
     let mut exit = 0;
+    let selection = install_target_selection(args);
 
-    match run_install_inner(!args.local) {
-        Ok(InstallOutcome::Installed) => println!("Claude Code: hook installed"),
-        Ok(InstallOutcome::AlreadyPresent) => {
-            println!("Claude Code: hook already present, skipping")
-        }
-        Ok(InstallOutcome::Skipped) => {}
-        Err(err) => {
-            eprintln!("error: failed to install Claude Code hook: {err}");
-            exit = super::EXIT_INTERNAL;
+    if selection.includes_claude() {
+        match run_claude_install(!args.local) {
+            AgentInstallResult::Installed => println!("Claude Code: hook installed"),
+            AgentInstallResult::AlreadyPresent => {
+                println!("Claude Code: hook already present, skipping")
+            }
+            AgentInstallResult::Skipped => {
+                println!("Claude Code: skipped (agent directory not present)")
+            }
+            AgentInstallResult::Error(err) => {
+                eprintln!("error: failed to install Claude Code hook: {err}");
+                exit = super::EXIT_INTERNAL;
+            }
         }
     }
 
-    match run_codex_install_inner() {
-        Ok(InstallOutcome::Installed) => println!("Codex: hooks installed"),
-        Ok(InstallOutcome::AlreadyPresent) => println!("Codex: hooks already present, skipping"),
-        Ok(InstallOutcome::Skipped) => {}
-        Err(err) => {
-            eprintln!("error: failed to install Codex hooks: {err}");
-            exit = super::EXIT_INTERNAL;
+    if selection.includes_codex() {
+        match run_codex_install() {
+            AgentInstallResult::Installed => println!("Codex: hooks installed"),
+            AgentInstallResult::AlreadyPresent => {
+                println!("Codex: hooks already present, skipping")
+            }
+            AgentInstallResult::Skipped => println!("Codex: skipped (agent directory not present)"),
+            AgentInstallResult::Error(err) => {
+                eprintln!("error: failed to install Codex hooks: {err}");
+                exit = super::EXIT_INTERNAL;
+            }
         }
     }
 
     exit
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InstallTargetSelection {
+    All,
+    ClaudeCode,
+    Codex,
+}
+
+impl InstallTargetSelection {
+    fn includes_claude(self) -> bool {
+        matches!(self, Self::All | Self::ClaudeCode)
+    }
+
+    fn includes_codex(self) -> bool {
+        matches!(self, Self::All | Self::Codex)
+    }
+}
+
+fn install_target_selection(args: &super::InstallArgs) -> InstallTargetSelection {
+    // Legacy `aegis install` behavior installs both agents, so no explicit
+    // target flag falls back to `All`.
+    if args.all || (!args.claude_code && !args.codex) {
+        InstallTargetSelection::All
+    } else if args.claude_code {
+        InstallTargetSelection::ClaudeCode
+    } else {
+        InstallTargetSelection::Codex
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InstallOutcome {
     Installed,
     AlreadyPresent,
     /// Agent directory not present — nothing to install.
     Skipped,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum AgentInstallResult {
+    Installed,
+    AlreadyPresent,
+    Skipped,
+    Error(String),
+}
+
+impl AgentInstallResult {
+    fn from_result(result: Result<InstallOutcome, String>) -> Self {
+        match result {
+            Ok(InstallOutcome::Installed) => Self::Installed,
+            Ok(InstallOutcome::AlreadyPresent) => Self::AlreadyPresent,
+            Ok(InstallOutcome::Skipped) => Self::Skipped,
+            Err(err) => Self::Error(err),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -155,15 +212,34 @@ fn shell_quote(command: &str) -> String {
     format!("'{}'", command.replace('\'', "'\\''"))
 }
 
+fn run_claude_install(global: bool) -> AgentInstallResult {
+    AgentInstallResult::from_result(run_install_inner(global))
+}
+
 fn run_install_inner(global: bool) -> Result<InstallOutcome, String> {
-    let settings_path = if global {
+    if global {
         let home = home_dir();
-        settings_path_global(home.as_deref())?
-    } else {
-        let cwd = env::current_dir()
-            .map_err(|err| format!("failed to resolve current directory: {err}"))?;
-        settings_path_local(&cwd)
-    };
+        return run_global_claude_install_at_home(home.as_deref());
+    }
+
+    let cwd =
+        env::current_dir().map_err(|err| format!("failed to resolve current directory: {err}"))?;
+    let settings_path = settings_path_local(&cwd);
+    run_install_at_path(&settings_path)
+}
+
+fn run_global_claude_install_at_home(home_dir: Option<&Path>) -> Result<InstallOutcome, String> {
+    let settings_path = settings_path_global(home_dir)?;
+    let claude_dir = settings_path.parent().ok_or_else(|| {
+        format!(
+            "{} does not have a parent directory",
+            settings_path.display()
+        )
+    })?;
+
+    if !agent_dir_exists(claude_dir)? {
+        return Ok(InstallOutcome::Skipped);
+    }
 
     run_install_at_path(&settings_path)
 }
@@ -180,31 +256,62 @@ fn run_install_at_path(settings_path: &Path) -> Result<InstallOutcome, String> {
 
 // ── Codex installation ────────────────────────────────────────────────────────
 
+fn run_codex_install() -> AgentInstallResult {
+    AgentInstallResult::from_result(run_codex_install_inner())
+}
+
 fn run_codex_install_inner() -> Result<InstallOutcome, String> {
     let home = home_dir().ok_or_else(|| "HOME is not set".to_string())?;
-    let codex_dir = home.join(".codex");
+    run_codex_install_at_dir(&home.join(".codex"))
+}
 
-    if !codex_dir.exists() {
+fn run_codex_install_at_dir(codex_dir: &Path) -> Result<InstallOutcome, String> {
+    if !agent_dir_exists(codex_dir)? {
         return Ok(InstallOutcome::Skipped);
     }
 
+    let hooks_outcome = materialize_codex_hooks(codex_dir)?;
     let hooks_dir = codex_dir.join("hooks");
-    let hooks_json_path = codex_dir.join("hooks.json");
+    let hooks_json_outcome = apply_codex_hooks_json(
+        &codex_dir.join("hooks.json"),
+        &hooks_dir.join("aegis-pre-tool-use.sh"),
+        &hooks_dir.join("aegis-session-start.sh"),
+    )?;
 
+    Ok(combine_outcomes(hooks_outcome, hooks_json_outcome))
+}
+
+fn materialize_codex_hooks(codex_dir: &Path) -> Result<InstallOutcome, String> {
+    let hooks_dir = codex_dir.join("hooks");
     fs::create_dir_all(&hooks_dir)
         .map_err(|e| format!("failed to create {}: {e}", hooks_dir.display()))?;
 
-    let ptu_dest = hooks_dir.join("aegis-pre-tool-use.sh");
-    let session_dest = hooks_dir.join("aegis-session-start.sh");
+    let ptu_outcome = write_executable(
+        &hooks_dir.join("aegis-pre-tool-use.sh"),
+        CODEX_PRE_TOOL_USE_HOOK_SH,
+    )?;
+    let session_outcome = write_executable(
+        &hooks_dir.join("aegis-session-start.sh"),
+        CODEX_SESSION_START_HOOK_SH,
+    )?;
 
-    write_executable(&ptu_dest, CODEX_PRE_TOOL_USE_HOOK_SH)?;
-    write_executable(&session_dest, CODEX_SESSION_START_HOOK_SH)?;
-
-    apply_codex_hooks_json(&hooks_json_path, &ptu_dest, &session_dest)
+    Ok(combine_outcomes(ptu_outcome, session_outcome))
 }
 
-fn write_executable(path: &Path, content: &str) -> Result<(), String> {
+fn write_executable(path: &Path, content: &str) -> Result<InstallOutcome, String> {
     use std::os::unix::fs::PermissionsExt;
+
+    match fs::read_to_string(path) {
+        Ok(existing) => {
+            let metadata = fs::metadata(path)
+                .map_err(|err| format!("failed to stat {}: {err}", path.display()))?;
+            if executable_content_is_current(&existing, metadata.permissions().mode(), content) {
+                return Ok(InstallOutcome::AlreadyPresent);
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("failed to read {}: {err}", path.display())),
+    }
 
     let parent = path
         .parent()
@@ -214,7 +321,7 @@ fn write_executable(path: &Path, content: &str) -> Result<(), String> {
     fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("failed to chmod {}: {e}", tmp.display()))?;
     fs::rename(&tmp, path).map_err(|e| format!("failed to install {}: {e}", path.display()))?;
-    Ok(())
+    Ok(InstallOutcome::Installed)
 }
 
 fn apply_codex_hooks_json(
@@ -247,7 +354,12 @@ fn apply_codex_hooks_json(
         .or_insert_with(|| Value::Array(Vec::new()))
         .as_array_mut()
         .ok_or_else(|| "hooks.hooks.SessionStart must be an array".to_string())?;
-    let session_present = codex_hook_present(session_entries, "startup|resume", &session_cmd);
+    let session_present = codex_hook_present(
+        session_entries,
+        "startup|resume",
+        &session_cmd,
+        "hooks.hooks.SessionStart",
+    )?;
     if !session_present {
         session_entries.push(serde_json::json!({
             "matcher": "startup|resume",
@@ -260,7 +372,7 @@ fn apply_codex_hooks_json(
         .or_insert_with(|| Value::Array(Vec::new()))
         .as_array_mut()
         .ok_or_else(|| "hooks.hooks.PreToolUse must be an array".to_string())?;
-    let ptu_present = codex_hook_present(ptu_entries, "Bash", &ptu_cmd);
+    let ptu_present = codex_hook_present(ptu_entries, "Bash", &ptu_cmd, "hooks.hooks.PreToolUse")?;
     if !ptu_present {
         ptu_entries.push(serde_json::json!({
             "matcher": "Bash",
@@ -276,26 +388,87 @@ fn apply_codex_hooks_json(
     Ok(InstallOutcome::Installed)
 }
 
-fn codex_hook_present(entries: &[Value], matcher: &str, command: &str) -> bool {
-    entries.iter().any(|entry| {
-        let Some(obj) = entry.as_object() else {
-            return false;
-        };
-        if obj.get("matcher").and_then(Value::as_str) != Some(matcher) {
-            return false;
+fn executable_content_is_current(existing: &str, mode: u32, expected_content: &str) -> bool {
+    existing == expected_content && mode & 0o777 == 0o755
+}
+
+fn codex_hook_present(
+    entries: &[Value],
+    matcher: &str,
+    command: &str,
+    location: &str,
+) -> Result<bool, String> {
+    let mut found = false;
+
+    for entry in entries {
+        let obj = entry
+            .as_object()
+            .ok_or_else(|| format!("{location} entries must contain objects"))?;
+        let entry_matcher = obj
+            .get("matcher")
+            .ok_or_else(|| format!("{location} entries must contain matcher"))?
+            .as_str()
+            .ok_or_else(|| format!("{location} entry matcher must be a string"))?;
+
+        if entry_matcher != matcher {
+            continue;
         }
-        obj.get("hooks")
-            .and_then(Value::as_array)
-            .is_some_and(|hooks| {
-                hooks.iter().any(|hook| {
-                    let Some(h) = hook.as_object() else {
-                        return false;
-                    };
-                    h.get("type").and_then(Value::as_str) == Some("command")
-                        && h.get("command").and_then(Value::as_str) == Some(command)
-                })
-            })
-    })
+
+        let hooks = obj
+            .get("hooks")
+            .ok_or_else(|| format!("{location} matching entry must contain hooks"))?
+            .as_array()
+            .ok_or_else(|| format!("{location} matching entry hooks must be an array"))?;
+
+        for hook in hooks {
+            let hook = hook
+                .as_object()
+                .ok_or_else(|| format!("{location} matching entry hooks must contain objects"))?;
+            let hook_type = hook
+                .get("type")
+                .ok_or_else(|| format!("{location} matching entry hook must contain type"))?
+                .as_str()
+                .ok_or_else(|| format!("{location} matching entry hook type must be a string"))?;
+            let hook_command = hook
+                .get("command")
+                .ok_or_else(|| format!("{location} matching entry hook must contain command"))?
+                .as_str()
+                .ok_or_else(|| {
+                    format!("{location} matching entry hook command must be a string")
+                })?;
+
+            if hook_type == "command" && hook_command == command {
+                found = true;
+            }
+        }
+    }
+
+    Ok(found)
+}
+
+fn combine_outcomes(lhs: InstallOutcome, rhs: InstallOutcome) -> InstallOutcome {
+    if matches!(lhs, InstallOutcome::Installed) || matches!(rhs, InstallOutcome::Installed) {
+        InstallOutcome::Installed
+    } else if matches!(lhs, InstallOutcome::Skipped) || matches!(rhs, InstallOutcome::Skipped) {
+        InstallOutcome::Skipped
+    } else {
+        InstallOutcome::AlreadyPresent
+    }
+}
+
+fn agent_dir_exists(agent_dir: &Path) -> Result<bool, String> {
+    if !agent_dir.exists() {
+        return Ok(false);
+    }
+
+    if agent_dir.is_dir() {
+        return Ok(true);
+    }
+
+    Err(format!(
+        "{} exists but is not a directory",
+        agent_dir.display()
+    ))
 }
 
 fn load_settings(path: &Path) -> Result<Value, String> {
@@ -343,7 +516,7 @@ fn apply_installation(settings: &mut Value) -> Result<InstallOutcome, String> {
         .as_array_mut()
         .ok_or_else(|| "settings.hooks.PreToolUse must be a JSON array".to_string())?;
 
-    if pre_tool_use_contains_bash_aegis_hook(pre_tool_use) {
+    if pre_tool_use_contains_bash_aegis_hook(pre_tool_use)? {
         return Ok(InstallOutcome::AlreadyPresent);
     }
 
@@ -360,30 +533,68 @@ fn apply_installation(settings: &mut Value) -> Result<InstallOutcome, String> {
     Ok(InstallOutcome::Installed)
 }
 
-fn pre_tool_use_contains_bash_aegis_hook(entries: &[Value]) -> bool {
-    entries.iter().any(|entry| {
-        let Some(entry) = entry.as_object() else {
-            return false;
-        };
+fn pre_tool_use_contains_bash_aegis_hook(entries: &[Value]) -> Result<bool, String> {
+    let mut found = false;
 
-        if entry.get("matcher").and_then(Value::as_str) != Some("Bash") {
-            return false;
+    for entry in entries {
+        let entry = entry
+            .as_object()
+            .ok_or_else(|| "settings.hooks.PreToolUse entries must contain objects".to_string())?;
+        let matcher = entry
+            .get("matcher")
+            .ok_or_else(|| "settings.hooks.PreToolUse entries must contain matcher".to_string())?
+            .as_str()
+            .ok_or_else(|| {
+                "settings.hooks.PreToolUse entry matcher must be a string".to_string()
+            })?;
+
+        if matcher != "Bash" {
+            continue;
         }
 
-        entry
+        let hooks = entry
             .get("hooks")
-            .and_then(Value::as_array)
-            .is_some_and(|hooks| {
-                hooks.iter().any(|hook| {
-                    let Some(hook) = hook.as_object() else {
-                        return false;
-                    };
+            .ok_or_else(|| {
+                "settings.hooks.PreToolUse matching Bash entry must contain hooks".to_string()
+            })?
+            .as_array()
+            .ok_or_else(|| {
+                "settings.hooks.PreToolUse matching Bash entry hooks must be an array".to_string()
+            })?;
 
-                    hook.get("type").and_then(Value::as_str) == Some("command")
-                        && hook.get("command").and_then(Value::as_str) == Some("aegis hook")
-                })
-            })
-    })
+        for hook in hooks {
+            let hook = hook.as_object().ok_or_else(|| {
+                "settings.hooks.PreToolUse matching Bash entry hooks must contain objects"
+                    .to_string()
+            })?;
+
+            let hook_type = hook
+                .get("type")
+                .ok_or_else(|| {
+                    "settings.hooks.PreToolUse matching Bash hook must contain type".to_string()
+                })?
+                .as_str()
+                .ok_or_else(|| {
+                    "settings.hooks.PreToolUse matching Bash hook type must be a string".to_string()
+                })?;
+            let hook_command = hook
+                .get("command")
+                .ok_or_else(|| {
+                    "settings.hooks.PreToolUse matching Bash hook must contain command".to_string()
+                })?
+                .as_str()
+                .ok_or_else(|| {
+                    "settings.hooks.PreToolUse matching Bash hook command must be a string"
+                        .to_string()
+                })?;
+
+            if hook_type == "command" && hook_command == "aegis hook" {
+                found = true;
+            }
+        }
+    }
+
+    Ok(found)
 }
 
 fn write_settings_atomically(path: &Path, settings: &Value) -> Result<(), String> {
@@ -458,6 +669,7 @@ fn settings_path_local(cwd: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     #[test]
@@ -614,6 +826,342 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn install_target_selection_defaults_to_all_when_no_target_flags_are_set() {
+        let args = crate::InstallArgs {
+            local: false,
+            all: false,
+            claude_code: false,
+            codex: false,
+        };
+
+        assert_eq!(install_target_selection(&args), InstallTargetSelection::All);
+    }
+
+    #[test]
+    fn install_target_selection_honors_explicit_target_flags() {
+        let claude_only = crate::InstallArgs {
+            local: false,
+            all: false,
+            claude_code: true,
+            codex: false,
+        };
+        assert_eq!(
+            install_target_selection(&claude_only),
+            InstallTargetSelection::ClaudeCode
+        );
+
+        let codex_only = crate::InstallArgs {
+            local: false,
+            all: false,
+            claude_code: false,
+            codex: true,
+        };
+        assert_eq!(
+            install_target_selection(&codex_only),
+            InstallTargetSelection::Codex
+        );
+
+        let all_targets = crate::InstallArgs {
+            local: false,
+            all: true,
+            claude_code: false,
+            codex: true,
+        };
+        assert_eq!(
+            install_target_selection(&all_targets),
+            InstallTargetSelection::All
+        );
+    }
+
+    #[test]
+    fn global_claude_install_skips_when_agent_dir_is_missing() {
+        let home = TempDir::new().expect("home dir");
+
+        let outcome = run_global_claude_install_at_home(Some(home.path())).expect("install");
+
+        assert!(matches!(outcome, InstallOutcome::Skipped));
+        assert!(!home.path().join(".claude/settings.json").exists());
+    }
+
+    #[test]
+    fn global_claude_install_errors_on_malformed_settings_json() {
+        let home = TempDir::new().expect("home dir");
+        let claude_dir = home.path().join(".claude");
+        fs::create_dir_all(&claude_dir).expect("create claude dir");
+        fs::write(claude_dir.join("settings.json"), "{not valid json").expect("write settings");
+
+        let err = run_global_claude_install_at_home(Some(home.path()))
+            .expect_err("malformed settings should error");
+
+        assert!(err.contains(".claude/settings.json"));
+    }
+
+    #[test]
+    fn global_claude_install_errors_on_malformed_nested_bash_hook_entry() {
+        let home = TempDir::new().expect("home dir");
+        let claude_dir = home.path().join(".claude");
+        fs::create_dir_all(&claude_dir).expect("create claude dir");
+        fs::write(
+            claude_dir.join("settings.json"),
+            serde_json::json!({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": "not-an-array"
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write settings");
+
+        let err = run_global_claude_install_at_home(Some(home.path()))
+            .expect_err("malformed nested bash hook should error");
+
+        assert!(err.contains("settings.hooks.PreToolUse"));
+    }
+
+    #[test]
+    fn global_claude_install_errors_on_non_object_pre_tool_use_member() {
+        let home = TempDir::new().expect("home dir");
+        let claude_dir = home.path().join(".claude");
+        fs::create_dir_all(&claude_dir).expect("create claude dir");
+        fs::write(
+            claude_dir.join("settings.json"),
+            serde_json::json!({
+                "hooks": {
+                    "PreToolUse": ["bad-entry"]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write settings");
+
+        let err = run_global_claude_install_at_home(Some(home.path()))
+            .expect_err("non-object pre-tool-use member should error");
+
+        assert!(err.contains("settings.hooks.PreToolUse"));
+    }
+
+    #[test]
+    fn global_claude_install_errors_on_non_string_bash_matcher() {
+        let home = TempDir::new().expect("home dir");
+        let claude_dir = home.path().join(".claude");
+        fs::create_dir_all(&claude_dir).expect("create claude dir");
+        fs::write(
+            claude_dir.join("settings.json"),
+            serde_json::json!({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": 7,
+                            "hooks": []
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write settings");
+
+        let err = run_global_claude_install_at_home(Some(home.path()))
+            .expect_err("non-string matcher should error");
+
+        assert!(err.contains("settings.hooks.PreToolUse"));
+    }
+
+    #[test]
+    fn codex_install_errors_on_malformed_hooks_json() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(codex_dir.join("hooks.json"), "{not valid json").expect("write hooks.json");
+
+        let err =
+            run_codex_install_at_dir(&codex_dir).expect_err("malformed hooks.json should error");
+
+        assert!(err.contains("hooks.json"));
+    }
+
+    #[test]
+    fn codex_install_errors_on_malformed_nested_session_start_hook_entry() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("hooks.json"),
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "startup|resume",
+                            "hooks": "not-an-array"
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write hooks.json");
+
+        let err = run_codex_install_at_dir(&codex_dir)
+            .expect_err("malformed nested session start hook should error");
+
+        assert!(err.contains("hooks.hooks.SessionStart"));
+    }
+
+    #[test]
+    fn codex_install_errors_on_non_object_session_start_member() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("hooks.json"),
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [42]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write hooks.json");
+
+        let err = run_codex_install_at_dir(&codex_dir)
+            .expect_err("non-object session-start member should error");
+
+        assert!(err.contains("hooks.hooks.SessionStart"));
+    }
+
+    #[test]
+    fn codex_install_errors_on_non_string_session_start_matcher() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("hooks.json"),
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": 42,
+                            "hooks": []
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write hooks.json");
+
+        let err = run_codex_install_at_dir(&codex_dir)
+            .expect_err("non-string session-start matcher should error");
+
+        assert!(err.contains("hooks.hooks.SessionStart"));
+    }
+
+    #[test]
+    fn codex_install_errors_on_non_string_pre_tool_use_matcher() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("hooks.json"),
+            serde_json::json!({
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": false,
+                            "hooks": []
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write hooks.json");
+
+        let err = run_codex_install_at_dir(&codex_dir)
+            .expect_err("non-string pre-tool-use matcher should error");
+
+        assert!(err.contains("hooks.hooks.PreToolUse"));
+    }
+
+    #[test]
+    fn codex_install_skips_when_agent_dir_is_missing() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+
+        let outcome = run_codex_install_at_dir(&codex_dir).expect("install");
+
+        assert!(matches!(outcome, InstallOutcome::Skipped));
+        assert!(!codex_dir.join("hooks.json").exists());
+    }
+
+    #[test]
+    fn codex_install_is_idempotent_without_duplicate_registrations() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let first = run_codex_install_at_dir(&codex_dir).expect("first install");
+        assert!(matches!(first, InstallOutcome::Installed));
+
+        let second = run_codex_install_at_dir(&codex_dir).expect("second install");
+        assert!(matches!(second, InstallOutcome::AlreadyPresent));
+
+        let hooks: Value = serde_json::from_str(
+            &fs::read_to_string(codex_dir.join("hooks.json")).expect("read hooks.json"),
+        )
+        .expect("parse hooks.json");
+
+        let session_entries = hooks["hooks"]["SessionStart"]
+            .as_array()
+            .expect("SessionStart array");
+        assert_eq!(session_entries.len(), 1);
+
+        let pre_tool_use_entries = hooks["hooks"]["PreToolUse"]
+            .as_array()
+            .expect("PreToolUse array");
+        assert_eq!(pre_tool_use_entries.len(), 1);
+    }
+
+    #[test]
+    fn write_executable_repairs_missing_owner_execute_bit() {
+        let dir = TempDir::new().expect("temp dir");
+        let hook_path = dir.path().join("hook.sh");
+        fs::write(&hook_path, CODEX_PRE_TOOL_USE_HOOK_SH).expect("write hook");
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o455))
+            .expect("set permissions");
+
+        let outcome = write_executable(&hook_path, CODEX_PRE_TOOL_USE_HOOK_SH).expect("install");
+
+        assert_eq!(
+            outcome,
+            InstallOutcome::Installed,
+            "matching content with missing owner execute should be repaired"
+        );
+        let mode = fs::metadata(&hook_path)
+            .expect("stat hook")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755, "installed hook should normalize to 0755");
+    }
+
+    #[test]
+    fn local_install_can_bootstrap_project_settings_when_missing() {
+        let project = TempDir::new().expect("project dir");
+        let settings_path = settings_path_local(project.path());
+
+        let outcome = run_install_at_path(&settings_path).expect("install");
+
+        assert!(matches!(outcome, InstallOutcome::Installed));
+        assert!(settings_path.exists());
     }
 
     #[test]

@@ -90,8 +90,9 @@ enum Commands {
     Config(ConfigArgs),
     /// Run as a Claude Code PreToolUse hook — rewrites Bash commands through aegis
     Hook,
-    /// Install aegis hooks into Claude Code config
-    Install(InstallArgs),
+    /// Install aegis hooks into Claude Code and Codex
+    #[command(alias = "install")]
+    InstallHooks(InstallArgs),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -183,9 +184,22 @@ struct ConfigArgs {
 
 #[derive(Args)]
 struct InstallArgs {
-    /// Patch ./.claude/settings.json instead of ~/.claude/settings.json
-    #[arg(long)]
+    /// Patch ./.claude/settings.json instead of ~/.claude/settings.json when
+    /// installing Claude Code hooks.
+    #[arg(long, conflicts_with = "codex")]
     local: bool,
+
+    /// Install hooks for Claude Code and Codex.
+    #[arg(long, conflicts_with_all = ["claude_code", "codex"])]
+    all: bool,
+
+    /// Install only Claude Code hooks.
+    #[arg(long = "claude-code", conflicts_with_all = ["all", "codex"])]
+    claude_code: bool,
+
+    /// Install only Codex hooks.
+    #[arg(long, conflicts_with_all = ["all", "claude_code"])]
+    codex: bool,
 }
 
 #[derive(Subcommand)]
@@ -591,6 +605,54 @@ mod tests {
     }
 
     #[test]
+    fn cli_parses_install_hooks_subcommand_with_all_flag() {
+        let cli = Cli::try_parse_from(["aegis", "install-hooks", "--all"]).unwrap();
+        let Some(Commands::InstallHooks(args)) = cli.subcommand else {
+            panic!("expected install-hooks subcommand");
+        };
+
+        assert!(args.all);
+        assert!(!args.local);
+        assert!(!args.claude_code);
+        assert!(!args.codex);
+    }
+
+    #[test]
+    fn cli_parses_install_hooks_subcommand_with_claude_code_flag() {
+        let cli = Cli::try_parse_from(["aegis", "install-hooks", "--claude-code"]).unwrap();
+        let Some(Commands::InstallHooks(args)) = cli.subcommand else {
+            panic!("expected install-hooks subcommand");
+        };
+
+        assert!(!args.all);
+        assert!(!args.local);
+        assert!(args.claude_code);
+        assert!(!args.codex);
+    }
+
+    #[test]
+    fn cli_parses_install_hooks_subcommand_with_codex_flag() {
+        let cli = Cli::try_parse_from(["aegis", "install-hooks", "--codex"]).unwrap();
+        let Some(Commands::InstallHooks(args)) = cli.subcommand else {
+            panic!("expected install-hooks subcommand");
+        };
+
+        assert!(!args.all);
+        assert!(!args.local);
+        assert!(!args.claude_code);
+        assert!(args.codex);
+    }
+
+    #[test]
+    fn cli_rejects_install_hooks_codex_with_local_flag() {
+        let error = Cli::try_parse_from(["aegis", "install-hooks", "--codex", "--local"])
+            .err()
+            .expect("codex and local must conflict");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn cli_parses_hook_subcommand() {
         let cli = Cli::try_parse_from(["aegis", "hook"]).unwrap();
         assert!(matches!(cli.subcommand, Some(Commands::Hook)));
@@ -599,11 +661,14 @@ mod tests {
     #[test]
     fn cli_parses_install_subcommand_with_local_flag() {
         let cli = Cli::try_parse_from(["aegis", "install", "--local"]).unwrap();
-        let Some(Commands::Install(args)) = cli.subcommand else {
+        let Some(Commands::InstallHooks(args)) = cli.subcommand else {
             panic!("expected install subcommand");
         };
 
         assert!(args.local);
+        assert!(!args.all);
+        assert!(!args.claude_code);
+        assert!(!args.codex);
     }
 
     // ── CI policy ─────────────────────────────────────────────────────────────

@@ -125,10 +125,12 @@ fn adr_index_split_is_present_and_active_docs_reference_it() {
         "CONTRIBUTING.md must point contributors at the ADR index"
     );
 
-    let threat_model =
-        fs::read_to_string(repo_path("docs/threat-model.md")).expect("docs/threat-model.md must exist");
+    let threat_model = fs::read_to_string(repo_path("docs/threat-model.md"))
+        .expect("docs/threat-model.md must exist");
     assert!(
-        threat_model.contains("docs/adr/adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md"),
+        threat_model.contains(
+            "docs/adr/adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md"
+        ),
         "threat-model doc must link to the ADR-010 non-goals record"
     );
 }
