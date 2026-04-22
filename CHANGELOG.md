@@ -4,7 +4,7 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
-## v0.5.2
+## v0.5.3
 
 ### Highlights
 
