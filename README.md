@@ -99,12 +99,12 @@ echo "$AEGIS_REAL_SHELL"
 
 When an AI agent runs a shell command, Aegis intercepts it and decides what to do:
 
-| Level | What happens | Example |
-|-------|-------------|---------|
-| **Safe** | Runs instantly, no questions asked | `ls`, `echo hello`, `git status` |
-| **Warn** | Aegis asks: "Allow this?" | `git push --force`, `npm publish` |
+| Level      | What happens                              | Example                            |
+| ---------- | ----------------------------------------- | ---------------------------------- |
+| **Safe**   | Runs instantly, no questions asked        | `ls`, `echo hello`, `git status`   |
+| **Warn**   | Aegis asks: "Allow this?"                 | `git push --force`, `npm publish`  |
 | **Danger** | Aegis asks, and can snapshot for rollback | `rm -rf ./src`, `DROP TABLE users` |
-| **Block** | Refused, always | `rm -rf /`, `mkfs.ext4 /dev/sda` |
+| **Block**  | Refused, always                           | `rm -rf /`, `mkfs.ext4 /dev/sda`   |
 
 ---
 
