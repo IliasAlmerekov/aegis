@@ -164,6 +164,36 @@ pub(super) fn strip_leading_optional_group_for_tests(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    fn production_source_for_tests(source: &str) -> &str {
+        let boundary = source
+            .find("\n#[cfg(test)]\nmod tests {")
+            .expect("test module boundary must exist");
+        &source[..boundary]
+    }
+
+    #[test]
+    fn production_source_for_tests_skips_test_module_literal_needles() {
+        let synthetic_source = "\
+fn hot_path() {}
+#[cfg(test)]
+pub(super) fn helper() {}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn guard() {
+        assert!(!\"chars.next().unwrap()\".is_empty());
+    }
+}
+";
+
+        let production_source = production_source_for_tests(synthetic_source);
+        assert!(
+            !production_source.contains("chars.next().unwrap()"),
+            "production slice must stop before the test module even when earlier #[cfg(test)] helpers exist"
+        );
+    }
+
     #[test]
     fn keyword_extraction_hot_path_avoids_next_unwrap() {
         let source = include_str!("keywords.rs").replace("\r\n", "\n");
@@ -171,6 +201,8 @@ mod tests {
             .split("#[cfg(test)]\nmod tests {")
             .next()
             .expect("production section must exist");
+        let source = include_str!("keywords.rs");
+        let production_source = production_source_for_tests(source);
         assert!(
             !production_source.contains("chars.next().unwrap()"),
             "keywords extraction hot path must not use chars.next().unwrap() in production code"
