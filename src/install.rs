@@ -28,7 +28,7 @@ pub(crate) fn run_hook() -> i32 {
 pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
     let mut exit = 0;
 
-    match run_install_inner(args.global) {
+    match run_install_inner(!args.local) {
         Ok(InstallOutcome::Installed) => println!("Claude Code: hook installed"),
         Ok(InstallOutcome::AlreadyPresent) => {
             println!("Claude Code: hook already present, skipping")
