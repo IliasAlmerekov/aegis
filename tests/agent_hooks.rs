@@ -12,11 +12,28 @@ fn script_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn aegis_test_binary() -> PathBuf {
+    std::env::var_os("CARGO_BIN_EXE_aegis")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("CARGO_BIN_EXE_aegis is not set for agent hook tests"))
+}
+
+fn prepare_agent_dirs(home: &Path, claude: bool, codex: bool) {
+    if claude {
+        fs::create_dir_all(home.join(".claude")).unwrap();
+    }
+
+    if codex {
+        fs::create_dir_all(home.join(".codex")).unwrap();
+    }
+}
+
 fn run_script(script_name: &str, home: &Path, args: &[&str], stdin: Option<&str>) -> Output {
     let mut command = Command::new("/bin/sh");
     command.arg(script_path(script_name));
     command.args(args);
     command.env("HOME", home);
+    command.env("AEGIS_BIN", aegis_test_binary());
     for key in [
         "AEGIS_CI",
         "CI",
@@ -59,6 +76,7 @@ fn run_script_with_env(
     command.arg(script_path(script_name));
     command.args(args);
     command.env("HOME", home);
+    command.env("AEGIS_BIN", aegis_test_binary());
     for key in [
         "AEGIS_CI",
         "CI",
@@ -164,6 +182,7 @@ fn codex_pre_tool_use_denies_when_helper_is_missing_but_ci_override_is_forced() 
 #[test]
 fn codex_pre_tool_use_is_noop_when_disabled_outside_ci() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     fs::create_dir_all(home.path().join(".aegis")).unwrap();
     fs::write(
         home.path().join(".aegis").join("disabled"),
@@ -189,6 +208,7 @@ fn codex_pre_tool_use_is_noop_when_disabled_outside_ci() {
 #[test]
 fn codex_session_start_is_noop_when_disabled_outside_ci() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     fs::create_dir_all(home.path().join(".aegis")).unwrap();
     fs::write(
         home.path().join(".aegis").join("disabled"),
@@ -208,6 +228,7 @@ fn codex_session_start_is_noop_when_disabled_outside_ci() {
 #[test]
 fn claude_code_is_noop_when_disabled_outside_ci() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), true, false);
     fs::create_dir_all(home.path().join(".aegis")).unwrap();
     fs::write(
         home.path().join(".aegis").join("disabled"),
@@ -233,6 +254,7 @@ fn claude_code_is_noop_when_disabled_outside_ci() {
 #[test]
 fn uninstall_prunes_claude_and_codex_hook_registrations() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), true, true);
     let rc_file = home.path().join(".bashrc");
     fs::write(&rc_file, "export FOO=bar\n").unwrap();
 
@@ -241,11 +263,6 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
 
     let claude_settings = home.path().join(".claude").join("settings.json");
     let codex_hooks = home.path().join(".codex").join("hooks.json");
-    let claude_hook = home
-        .path()
-        .join(".claude")
-        .join("hooks")
-        .join("aegis-rewrite.sh");
     let session_hook = home
         .path()
         .join(".codex")
@@ -256,18 +273,17 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
         .join(".codex")
         .join("hooks")
         .join("aegis-pre-tool-use.sh");
-    let helper = home
-        .path()
-        .join(".aegis")
-        .join("lib")
-        .join("toggle-state.sh");
 
     assert!(claude_settings.exists());
     assert!(codex_hooks.exists());
-    assert!(claude_hook.exists());
     assert!(session_hook.exists());
     assert!(ptu_hook.exists());
-    assert!(helper.exists());
+
+    let claude_json = read_json(&claude_settings);
+    assert!(
+        json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
+        "Claude settings.json must register the binary-first aegis hook before uninstall"
+    );
 
     let rc_file_str = rc_file.display().to_string();
     let fake_bindir = home.path().join("bin");
@@ -291,19 +307,13 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
         String::from_utf8_lossy(&uninstall_output.stderr)
     );
 
-    assert!(!claude_hook.exists());
     assert!(!session_hook.exists());
     assert!(!ptu_hook.exists());
-    assert!(!helper.exists());
 
     let claude_json = read_json(&claude_settings);
     assert!(
-        !json_contains_command(
-            &claude_json,
-            "PreToolUse",
-            &claude_hook.display().to_string()
-        ),
-        "Claude settings.json must not retain the Aegis hook registration"
+        !json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
+        "Claude settings.json must not retain the binary-first aegis hook registration"
     );
 
     let codex_session_command = session_hook.display().to_string();
@@ -324,6 +334,7 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
 #[test]
 fn codex_agent_setup_installs_hooks_and_is_idempotent() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     let hooks_json = home.path().join(".codex").join("hooks.json");
     let session_hook = home
         .path()
@@ -342,12 +353,6 @@ fn codex_agent_setup_installs_hooks_and_is_idempotent() {
         "agent setup must succeed: stdout=\n{}\nstderr=\n{}",
         String::from_utf8_lossy(&install_output.stdout),
         String::from_utf8_lossy(&install_output.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&install_output.stdout)
-            .contains("To uninstall: sh scripts/uninstall.sh"),
-        "agent setup should advertise the real uninstall script path; stdout=\n{}",
-        String::from_utf8_lossy(&install_output.stdout)
     );
     assert!(
         hooks_json.exists(),
@@ -391,20 +396,16 @@ fn codex_agent_setup_installs_hooks_and_is_idempotent() {
         "agent setup must be idempotent and keep hooks.json stable"
     );
 
-    let helper = home
-        .path()
-        .join(".aegis")
-        .join("lib")
-        .join("toggle-state.sh");
-    let before = fs::read_to_string(&helper).unwrap();
+    let before = fs::read_to_string(&session_hook).unwrap();
     let second_output = run_script("agent-setup.sh", home.path(), &["--all"], None);
     assert!(second_output.status.success());
-    assert_eq!(fs::read_to_string(&helper).unwrap(), before);
+    assert_eq!(fs::read_to_string(&session_hook).unwrap(), before);
 }
 
 #[test]
 fn codex_session_start_emits_strong_aegis_context() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
     assert!(install_output.status.success());
 
@@ -451,6 +452,7 @@ fn codex_session_start_emits_strong_aegis_context() {
 #[test]
 fn codex_pre_tool_use_denies_git_stash_clear_with_aegis_prompt_and_allows_wrapped_commands() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
     assert!(install_output.status.success());
 
@@ -495,6 +497,7 @@ fn codex_pre_tool_use_denies_git_stash_clear_with_aegis_prompt_and_allows_wrappe
 #[test]
 fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quotes() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
     assert!(install_output.status.success());
 
@@ -535,6 +538,7 @@ fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quote
 #[test]
 fn codex_pre_tool_use_still_denies_when_disabled_file_exists_but_ci_override_is_forced() {
     let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), false, true);
     fs::create_dir_all(home.path().join(".aegis")).unwrap();
     fs::write(
         home.path().join(".aegis").join("disabled"),
@@ -563,4 +567,56 @@ fn codex_pre_tool_use_still_denies_when_disabled_file_exists_but_ci_override_is_
     assert!(output.status.success());
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+}
+
+#[test]
+fn agent_setup_wrapper_delegates_to_binary_install_hooks_command() {
+    let home = TempDir::new().unwrap();
+    let fake_bin_dir = home.path().join("bin");
+    let fake_aegis = fake_bin_dir.join("aegis");
+    let args_log = home.path().join("agent-setup-args.log");
+
+    fs::create_dir_all(&fake_bin_dir).unwrap();
+    fs::write(
+        &fake_aegis,
+        format!(
+            "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" > '{}'\nprintf 'delegated from wrapper\\n'\n",
+            args_log.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&fake_aegis).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_aegis, permissions).unwrap();
+    }
+
+    let fake_aegis_str = fake_aegis.display().to_string();
+    let output = run_script_with_env(
+        "agent-setup.sh",
+        home.path(),
+        &["--codex"],
+        None,
+        &[("AEGIS_BIN", &fake_aegis_str)],
+    );
+
+    assert!(
+        output.status.success(),
+        "wrapper must delegate successfully: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&args_log).unwrap(),
+        "install-hooks --codex\n",
+        "compatibility wrapper must forward its supported flags to aegis install-hooks"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "delegated from wrapper\n"
+    );
+    assert!(output.stderr.is_empty());
 }

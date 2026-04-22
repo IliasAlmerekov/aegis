@@ -6,7 +6,8 @@ to reduce risk, and where its protection intentionally stops.
 It is a companion to:
 
 - `README.md` — user-facing security model and limitations
-- `docs/architecture-decisions.md` — especially ADR-010
+- `docs/adr/README.md` — ADR index and shared verification guidance
+- `docs/adr/adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md` — explicit shell-evaluation non-goals
 - `docs/config-schema.md` — runtime policy, allowlist, snapshot, and audit settings
 
 ## Security posture
@@ -248,4 +249,5 @@ Use Aegis as one layer in a larger safety posture:
 - `tests/audit_integrity.rs`
 - `tests/snapshot_integration.rs`
 - `README.md`
-- `docs/architecture-decisions.md`
+- `docs/adr/README.md`
+- `docs/adr/adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md`

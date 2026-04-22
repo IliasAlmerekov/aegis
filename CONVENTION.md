@@ -6,7 +6,7 @@ tooling, and release readiness in Aegis.
 It consolidates the current enforced rules from:
 
 - `.claude/CLAUDE.md`
-- `docs/architecture-decisions.md`
+- `docs/adr/README.md`
 - `.github/workflows/ci.yml`
 - `CONTRIBUTING.md`
 - `ROADMAP.md`

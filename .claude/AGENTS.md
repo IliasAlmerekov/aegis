@@ -50,7 +50,7 @@ It complements `.claude/CLAUDE.md` and does not replace it.
 - `src/ui/confirm.rs`: interactive and non-interactive approval behavior
 - `tests/full_pipeline.rs`: end-to-end shell-wrapper behavior
 - `tests/docker_integration.rs`: live Docker snapshot integration coverage
-- `docs/architecture-decisions.md`: architectural constraints and rationale; treat ADRs as binding unless the human explicitly changes them
+- `docs/adr/README.md` and `docs/adr/*.md`: architectural constraints and rationale; treat ADRs as binding unless the human explicitly changes them
 
 ---
 
@@ -251,7 +251,7 @@ Changes that affect snapshot guarantees or recovery semantics also require secur
 - For CI policy changes, test fail-closed behavior explicitly.
 - For allowlist changes, verify that `Block` still cannot be silently bypassed.
 - For snapshot changes, document rollback behavior and partial-failure handling.
-- For public behavior changes, update `README.md` and `docs/architecture-decisions.md` when necessary.
+- For public behavior changes, update `README.md` and the relevant `docs/adr/*.md` records when necessary.
 
 ---
 

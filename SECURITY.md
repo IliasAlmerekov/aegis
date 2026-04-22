@@ -53,7 +53,7 @@ The following are currently out of scope because they are documented non-goals o
 - issues limited to local development helper directories such as `.claude/`, `.codex/`, or `.planning/`
 - vulnerabilities that exist only in third-party infrastructure outside this repository unless Aegis introduces the exploitable condition
 
-The product also has explicit design limitations documented in `README.md` and `docs/architecture-decisions.md`. Reports based only on these known non-goals are out of scope:
+The product also has explicit design limitations documented in `README.md` and `docs/adr/adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md`. Reports based only on these known non-goals are out of scope:
 
 - obfuscated shell input that requires full shell evaluation
 - indirect execution where a safe write is followed by a later dangerous invocation

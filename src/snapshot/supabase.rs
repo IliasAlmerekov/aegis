@@ -11,7 +11,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::process::Command;
 
-use crate::config::model::SupabaseSnapshotConfig;
+use crate::config::SupabaseSnapshotConfig;
 use crate::error::AegisError;
 use crate::snapshot::SnapshotPlugin;
 

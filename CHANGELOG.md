@@ -4,6 +4,33 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
+## v0.5.2
+
+### Highlights
+
+- **Binary-first hook installation**: the documented release-install flow now
+  describes Claude Code / Codex hook setup as running through the installed
+  `aegis` binary when supported agent directories are already present, instead
+  of depending on a local repository checkout.
+- **Honest skip behavior**: current docs now state that automatic hook setup
+  only updates agent directories that already exist and skips missing
+  `~/.claude` / `~/.codex` directories without seeding them.
+- **Single follow-up command**: README, troubleshooting, and release docs now
+  point users at `aegis install-hooks --all` as the supported explicit rerun
+  command after agent directories appear later.
+
+### Documentation and contracts
+
+- `README.md` now documents automatic hook setup as a binary-first flow and
+  replaces local-checkout-only follow-up guidance with `aegis install-hooks --all`.
+- `docs/troubleshooting.md` now explains the skip reason in terms of missing
+  agent directories and tells users to rerun `aegis install-hooks --all`.
+- `docs/releases/current-line.md` and `docs/releases/v1.0.0.md` now describe
+  the binary-first auto-attempt path, skip semantics, and explicit follow-up
+  command honestly.
+
+---
+
 ## v0.5.1
 
 ### Highlights

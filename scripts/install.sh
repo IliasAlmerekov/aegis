@@ -373,40 +373,14 @@ EOF
 }
 
 print_agent_setup_next_steps() {
-    cat <<'EOF'
+    aegis_path="$1"
 
-Agent hook setup is only available from a local checkout, because
-scripts/agent-setup.sh depends on the sibling files in scripts/hooks/.
+    cat <<EOF
 
-From a cloned repository, run:
-  sh scripts/agent-setup.sh
+If you install Claude Code or Codex later, run:
+  ${aegis_path} install-hooks --all
 
-If you only want to verify the installed binary path, run:
-  command -v aegis
 EOF
-}
-
-resolve_local_agent_setup() {
-    script_dir=""
-
-    case "$0" in
-        */*)
-            script_dir="$(CDPATH= cd "$(dirname "$0")" && pwd)"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-
-    if [ -f "${script_dir}/agent-setup.sh" ] \
-        && [ -f "${script_dir}/hooks/claude-code.sh" ] \
-        && [ -f "${script_dir}/hooks/codex-pre-tool-use.sh" ] \
-        && [ -f "${script_dir}/hooks/codex-session-start.sh" ]; then
-        printf '%s/agent-setup.sh\n' "${script_dir}"
-        return 0
-    fi
-
-    return 1
 }
 
 has_supported_agent_dirs() {
@@ -418,37 +392,27 @@ has_supported_agent_dirs() {
 }
 
 offer_agent_setup() {
-    agent_setup_script=""
+    aegis_path="$1"
     agent_setup_output=""
 
-    if agent_setup_script="$(resolve_local_agent_setup)"; then
-        if ! has_supported_agent_dirs; then
-            printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
-            return 0
+    if ! has_supported_agent_dirs; then
+        printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
+        print_agent_setup_next_steps "${aegis_path}"
+        return 0
+    fi
+
+    if agent_setup_output="$("${aegis_path}" install-hooks --all 2>&1)"; then
+        if [ -n "${agent_setup_output}" ]; then
+            printf '%s\n' "${agent_setup_output}"
         fi
 
-        if agent_setup_output="$(/bin/sh "${agent_setup_script}" 2>&1)"; then
-            if [ -n "${agent_setup_output}" ]; then
-                printf '%s\n' "${agent_setup_output}"
-            fi
-
-            case "${agent_setup_output}" in
-                *"No agents detected (no ~/.claude or ~/.codex). Nothing installed."*)
-                    printf 'Agent hook setup skipped; no supported agent directories were detected.\n'
-                    ;;
-                *)
-                    printf 'Agent hooks installed automatically.\n'
-                    ;;
-            esac
-        else
-            if [ -n "${agent_setup_output}" ]; then
-                printf '%s\n' "${agent_setup_output}"
-            fi
-            printf 'Agent hook setup failed.\n'
-            print_agent_setup_next_steps
-        fi
+        printf 'Agent hook setup completed automatically.\n'
     else
-        print_agent_setup_next_steps
+        if [ -n "${agent_setup_output}" ]; then
+            printf '%s\n' "${agent_setup_output}"
+        fi
+        printf 'Agent hook setup failed.\n'
+        print_agent_setup_next_steps "${aegis_path}"
     fi
 }
 
@@ -489,13 +453,15 @@ main() {
 
     printf 'Installed aegis to %s/aegis\n' "${BINDIR}"
 
-    if "$(target_path)" --version >/dev/null 2>&1; then
-        printf 'Installed version: %s\n' "$("$(target_path)" --version)"
+    install_target="$(target_path)"
+
+    if "${install_target}" --version >/dev/null 2>&1; then
+        printf 'Installed version: %s\n' "$("${install_target}" --version)"
     fi
 
-    write_shell_setup "${rc_file}" "${real_shell}" "$(target_path)"
+    write_shell_setup "${rc_file}" "${real_shell}" "${install_target}"
     print_post_install "${rc_file}"
-    offer_agent_setup
+    offer_agent_setup "${install_target}"
     printf 'Aegis installed globally.\n'
     printf 'Use `aegis off` to disable temporarily.\n'
     printf 'Use `aegis on` to re-enable enforcement.\n'

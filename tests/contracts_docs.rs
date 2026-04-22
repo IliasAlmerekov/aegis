@@ -57,6 +57,10 @@ fn threat_model_is_current_and_documents_non_goals_honestly() {
 fn readme_links_to_contract_docs() {
     let readme = fs::read_to_string(repo_path("README.md")).expect("README.md must exist");
     assert!(
+        readme.contains("[Architecture decisions](docs/adr/README.md)"),
+        "README must link to ADR index document"
+    );
+    assert!(
         readme.contains("[Config schema](docs/config-schema.md)"),
         "README must link to config schema contract document"
     );
@@ -86,6 +90,49 @@ fn readme_links_to_contract_docs() {
     ] {
         assert!(readme.contains(needle), "README must mention `{needle}`");
     }
+}
+
+#[test]
+fn adr_index_split_is_present_and_active_docs_reference_it() {
+    let adr_index =
+        fs::read_to_string(repo_path("docs/adr/README.md")).expect("docs/adr/README.md must exist");
+
+    for needle in [
+        "## Current architecture snapshot",
+        "## ADR index",
+        "## Verification guidance",
+        "ADR-001",
+        "ADR-010",
+        "adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md",
+    ] {
+        assert!(
+            adr_index.contains(needle),
+            "ADR index must include `{needle}`"
+        );
+    }
+
+    let architecture =
+        fs::read_to_string(repo_path("ARCHITECTURE.md")).expect("ARCHITECTURE.md must exist");
+    assert!(
+        architecture.contains("docs/adr/README.md"),
+        "ARCHITECTURE.md must point readers at the ADR index"
+    );
+
+    let contributing =
+        fs::read_to_string(repo_path("CONTRIBUTING.md")).expect("CONTRIBUTING.md must exist");
+    assert!(
+        contributing.contains("docs/adr/README.md"),
+        "CONTRIBUTING.md must point contributors at the ADR index"
+    );
+
+    let threat_model = fs::read_to_string(repo_path("docs/threat-model.md"))
+        .expect("docs/threat-model.md must exist");
+    assert!(
+        threat_model.contains(
+            "docs/adr/adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md"
+        ),
+        "threat-model doc must link to the ADR-010 non-goals record"
+    );
 }
 
 #[test]
