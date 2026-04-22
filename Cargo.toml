@@ -1,6 +1,6 @@
 [package]
 name = "aegis"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT"
 description = "Terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations"
