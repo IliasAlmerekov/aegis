@@ -166,9 +166,9 @@ pub(super) fn strip_leading_optional_group_for_tests(s: &str) -> &str {
 mod tests {
     #[test]
     fn keyword_extraction_hot_path_avoids_next_unwrap() {
-        let source = include_str!("keywords.rs");
+        let source = include_str!("keywords.rs").replace("\r\n", "\n");
         let production_source = source
-            .split("\n#[cfg(test)]\nmod tests {")
+            .split("#[cfg(test)]\nmod tests {")
             .next()
             .expect("production section must exist");
         assert!(
