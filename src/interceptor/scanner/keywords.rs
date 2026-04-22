@@ -196,13 +196,9 @@ mod tests {
 
     #[test]
     fn keyword_extraction_hot_path_avoids_next_unwrap() {
-        let source = include_str!("keywords.rs").replace("\r\n", "\n");
-        let production_source = source
-            .split("#[cfg(test)]\nmod tests {")
-            .next()
-            .expect("production section must exist");
-        let source = include_str!("keywords.rs");
-        let production_source = production_source_for_tests(source);
+        let raw = include_str!("keywords.rs");
+        let source = raw.replace("\r\n", "\n");
+        let production_source = production_source_for_tests(&source);
         assert!(
             !production_source.contains("chars.next().unwrap()"),
             "keywords extraction hot path must not use chars.next().unwrap() in production code"
