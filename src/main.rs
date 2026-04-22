@@ -183,9 +183,9 @@ struct ConfigArgs {
 
 #[derive(Args)]
 struct InstallArgs {
-    /// Patch ~/.claude/settings.json instead of ./.claude/settings.json
+    /// Patch ./.claude/settings.json instead of ~/.claude/settings.json
     #[arg(long)]
-    global: bool,
+    local: bool,
 }
 
 #[derive(Subcommand)]
@@ -597,13 +597,13 @@ mod tests {
     }
 
     #[test]
-    fn cli_parses_install_subcommand_with_global_flag() {
-        let cli = Cli::try_parse_from(["aegis", "install", "--global"]).unwrap();
+    fn cli_parses_install_subcommand_with_local_flag() {
+        let cli = Cli::try_parse_from(["aegis", "install", "--local"]).unwrap();
         let Some(Commands::Install(args)) = cli.subcommand else {
             panic!("expected install subcommand");
         };
 
-        assert!(args.global);
+        assert!(args.local);
     }
 
     // ── CI policy ─────────────────────────────────────────────────────────────
