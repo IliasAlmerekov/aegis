@@ -298,7 +298,7 @@ curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/u
 
 ## Docs
 
-- [Architecture decisions](docs/architecture-decisions.md)
+- [Architecture decisions](docs/adr/README.md)
 - [Changelog](CHANGELOG.md)
 - [Current release line](docs/releases/current-line.md)
 - [Config schema](docs/config-schema.md)

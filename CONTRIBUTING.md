@@ -5,7 +5,7 @@ Thanks for helping improve Aegis.
 Before opening a pull request, please read:
 
 - [`CONVENTION.md`](CONVENTION.md) — project rules, security invariants, style, and release gates
-- [`docs/architecture-decisions.md`](docs/architecture-decisions.md) — non-obvious design decisions and documented non-goals
+- [`docs/adr/README.md`](docs/adr/README.md) — architecture decision records and documented non-goals
 - [`SECURITY.md`](SECURITY.md) — responsible disclosure process for security reports
 
 For non-trivial changes, please open an issue first so we can agree on scope before implementation.
@@ -111,7 +111,7 @@ The repository currently includes a parser fuzz target. Run it with nightly Rust
 cargo +nightly fuzz run parser fuzz/corpus/parser
 ```
 
-Fuzzing guidance and current status are documented in [`docs/architecture-decisions.md`](docs/architecture-decisions.md).
+Fuzzing guidance and current status are documented in [`docs/adr/README.md#verification-guidance`](docs/adr/README.md#verification-guidance).
 
 ## Local security checks
 

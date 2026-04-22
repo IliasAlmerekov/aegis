@@ -6,7 +6,7 @@
 >
 > **Scope:** structural contracts (module boundaries, invariants, request
 > lifecycles, extension points). For _why_ decisions were made, see
-> `docs/architecture-decisions.md`. For code style and dependency policy, see
+> `docs/adr/README.md`. For code style and dependency policy, see
 > `CONVENTION.md`.
 
 ---

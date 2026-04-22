@@ -138,7 +138,7 @@ in scope for this task, and every item you raise must be specific, actionable, a
 - [ ] All new `pub` items have `///` doc comments
 - [ ] Would pass default `rustfmt` with zero changes
 - [ ] Would pass `rtk cargo clippy -- -D warnings`
-- [ ] Does not violate `.claude/CLAUDE.md` or ADRs in `docs/architecture-decisions.md`
+- [ ] Does not violate `.claude/CLAUDE.md` or ADRs in `docs/adr/`
 
 ### ✅ Tests
 
