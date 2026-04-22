@@ -1,5 +1,6 @@
 pub mod allowlist;
 pub mod model;
+pub mod snapshot;
 pub mod validate;
 
 pub use allowlist::{
@@ -8,7 +9,11 @@ pub use allowlist::{
 };
 pub use model::{
     AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, AuditIntegrityMode, CiPolicy,
-    DockerScope, DockerScopeMode, Mode, SnapshotPolicy, UserPattern,
+    Mode, SnapshotPolicy, UserPattern,
+};
+pub use snapshot::{
+    DockerScope, DockerScopeMode, MysqlSnapshotConfig, PostgresSnapshotConfig,
+    SupabaseSnapshotConfig,
 };
 pub use validate::{
     ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validate_config_layers,

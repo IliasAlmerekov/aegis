@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use crate::config::Config;
+use crate::config::{
+    Config, DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SnapshotPolicy,
+    SupabaseSnapshotConfig,
+};
 use crate::error::AegisError;
 
 /// Built-in Docker snapshot provider implementation.
@@ -150,19 +153,19 @@ pub struct SnapshotRegistry {
 /// checks performed by each provider.
 #[derive(Debug, Clone)]
 pub struct SnapshotRegistryConfig {
-    pub snapshot_policy: crate::config::SnapshotPolicy,
+    pub snapshot_policy: SnapshotPolicy,
     pub auto_snapshot_git: bool,
     pub auto_snapshot_docker: bool,
     pub auto_snapshot_postgres: bool,
-    pub postgres_snapshot: crate::config::model::PostgresSnapshotConfig,
+    pub postgres_snapshot: PostgresSnapshotConfig,
     pub auto_snapshot_mysql: bool,
-    pub mysql_snapshot: crate::config::model::MysqlSnapshotConfig,
+    pub mysql_snapshot: MysqlSnapshotConfig,
     pub auto_snapshot_supabase: bool,
-    pub supabase_snapshot: crate::config::model::SupabaseSnapshotConfig,
+    pub supabase_snapshot: SupabaseSnapshotConfig,
     pub auto_snapshot_sqlite: bool,
     pub sqlite_snapshot_path: String,
     pub snapshots_dir: PathBuf,
-    pub docker_scope: crate::config::DockerScope,
+    pub docker_scope: DockerScope,
 }
 
 impl From<&Config> for SnapshotRegistryConfig {
