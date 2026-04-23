@@ -858,7 +858,6 @@ fn install_script_rejects_unsupported_shell_before_mutation() {
     let (binary_asset, checksum_asset, binary_digest, path_value) =
         prepare_checksum_ready_release(&temp, &stub_dir);
     let bindir_str = bindir.display().to_string();
-    let rc_file_str = rc_file.display().to_string();
     let binary_asset_str = binary_asset.display().to_string();
     let checksum_asset_str = checksum_asset.display().to_string();
 

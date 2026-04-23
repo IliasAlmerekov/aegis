@@ -987,6 +987,35 @@ mod tests {
         format!("{:x}", Sha256::digest(b"dump-data"))
     }
 
+    fn configured_supabase_snapshot_config(
+        project_ref: &str,
+        database: &str,
+        host: &str,
+        port: u16,
+        user: &str,
+    ) -> SupabaseSnapshotConfig {
+        SupabaseSnapshotConfig {
+            project_ref: project_ref.to_string(),
+            db: crate::config::PostgresSnapshotConfig {
+                database: database.to_string(),
+                host: host.to_string(),
+                port,
+                user: user.to_string(),
+            },
+            ..SupabaseSnapshotConfig::default()
+        }
+    }
+
+    fn database_only_supabase_snapshot_config(database: &str) -> SupabaseSnapshotConfig {
+        SupabaseSnapshotConfig {
+            db: crate::config::PostgresSnapshotConfig {
+                database: database.to_string(),
+                ..crate::config::PostgresSnapshotConfig::default()
+            },
+            ..SupabaseSnapshotConfig::default()
+        }
+    }
+
     #[cfg(test)]
     fn write_phase1_manifest_fixture(temp_dir: &tempfile::TempDir, checksum: &str) -> PathBuf {
         let manifest_path = manifest_path(temp_dir);
@@ -1061,8 +1090,7 @@ mod tests {
         let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.db.database = "postgres".to_string();
+        let config = database_only_supabase_snapshot_config("postgres");
 
         let mut plugin = SupabasePlugin::new(config.clone(), temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1103,12 +1131,13 @@ mod tests {
         );
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 6543;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "db.supabase.co",
+            6543,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1172,8 +1201,7 @@ mod tests {
         );
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.db.database = "postgres".to_string();
+        let config = database_only_supabase_snapshot_config("postgres");
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1231,12 +1259,13 @@ mod tests {
         let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "drifted.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "drifted.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1266,12 +1295,13 @@ mod tests {
             ),
         );
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "different-project-ref".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "different-project-ref",
+            "postgres",
+            "db.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1290,12 +1320,13 @@ mod tests {
         let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "db.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1322,12 +1353,13 @@ mod tests {
         let dump_path = manifest_path.parent().unwrap().join("artifacts/db.dump");
         fs::remove_file(&dump_path).unwrap();
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "db.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1351,12 +1383,13 @@ mod tests {
         let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "db.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1391,12 +1424,13 @@ mod tests {
         manifest.rollback.allowed = false;
         write_manifest_atomically(&manifest_path, &manifest).unwrap();
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "db.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1426,12 +1460,13 @@ mod tests {
         manifest.rollback.db_supported = false;
         write_manifest_atomically(&manifest_path, &manifest).unwrap();
 
-        let mut config = SupabaseSnapshotConfig::default();
-        config.project_ref = "proj_123".to_string();
-        config.db.database = "postgres".to_string();
-        config.db.host = "db.supabase.co".to_string();
-        config.db.port = 5432;
-        config.db.user = "postgres".to_string();
+        let config = configured_supabase_snapshot_config(
+            "proj_123",
+            "postgres",
+            "db.supabase.co",
+            5432,
+            "postgres",
+        );
 
         let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
@@ -1528,13 +1563,16 @@ mod tests {
             ),
         );
 
-        let mut drifted_config = SupabaseSnapshotConfig::default();
-        drifted_config.project_ref = "proj_drifted".to_string();
-        drifted_config.require_config_target_match_on_rollback = false;
-        drifted_config.db.database = "drifted-db".to_string();
-        drifted_config.db.host = "drifted.supabase.co".to_string();
-        drifted_config.db.port = 7777;
-        drifted_config.db.user = "drifted-user".to_string();
+        let drifted_config = SupabaseSnapshotConfig {
+            require_config_target_match_on_rollback: false,
+            ..configured_supabase_snapshot_config(
+                "proj_drifted",
+                "drifted-db",
+                "drifted.supabase.co",
+                7777,
+                "drifted-user",
+            )
+        };
 
         let mut plugin = SupabasePlugin::new(drifted_config, temp_dir.path().join("snapshots"));
         plugin.pg_dump_bin = pg_dump.display().to_string();
