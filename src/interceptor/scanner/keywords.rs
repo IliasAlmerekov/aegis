@@ -76,10 +76,12 @@ fn leading_literal(s: &str) -> String {
     while let Some(c) = chars.next() {
         match c {
             '\\' => match chars.peek() {
-                Some(
-                    's' | 'S' | 'd' | 'D' | 'w' | 'W' | 'b' | 'B' | 'n' | 'r' | 't' | 'f' | 'v'
-                    | 'a',
-                ) => break,
+                Some('b' | 'B') => {
+                    chars.next();
+                }
+                Some('s' | 'S' | 'd' | 'D' | 'w' | 'W' | 'n' | 'r' | 't' | 'f' | 'v' | 'a') => {
+                    break;
+                }
                 Some(_) => {
                     if let Some(next_c) = chars.next() {
                         result.push(next_c);
@@ -102,10 +104,10 @@ fn find_embedded_literal(s: &str) -> Option<String> {
     while let Some(c) = chars.next() {
         match c {
             '\\' => match chars.peek() {
-                Some(
-                    's' | 'S' | 'd' | 'D' | 'w' | 'W' | 'b' | 'B' | 'n' | 'r' | 't' | 'f' | 'v'
-                    | 'a',
-                ) => {
+                Some('b' | 'B') => {
+                    chars.next();
+                }
+                Some('s' | 'S' | 'd' | 'D' | 'w' | 'W' | 'n' | 'r' | 't' | 'f' | 'v' | 'a') => {
                     chars.next();
                     if current.trim_end().len() >= 3 {
                         return Some(current.trim_end().to_string());
