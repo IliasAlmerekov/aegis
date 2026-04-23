@@ -624,6 +624,77 @@ mod tests {
     }
 
     #[test]
+    fn assess_rm_root_delete_variants_with_split_and_extra_flags_as_block() {
+        let s = scanner();
+
+        let cases = [
+            "rm -r -f /",
+            "rm -R -f /",
+            "rm -r --force /",
+            "rm --recursive -f /",
+            "rm -r --one-file-system -f /",
+            "rm -rf --no-preserve-root /",
+            "sudo rm -rf --no-preserve-root /",
+        ];
+
+        for cmd in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk,
+                RiskLevel::Block,
+                "command {cmd:?}: got {:?}, expected Block",
+                assessment.risk,
+            );
+            assert!(
+                assessment
+                    .matched
+                    .iter()
+                    .any(|m| m.pattern.id.as_ref() == "PS-006"),
+                "command {cmd:?}: PS-006 must be in matched patterns: {:?}",
+                assessment
+                    .matched
+                    .iter()
+                    .map(|m| m.pattern.id.as_ref())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn assess_rm_recursive_force_split_flags_on_non_root_paths_as_danger() {
+        let s = scanner();
+
+        let cases = [
+            "rm -r -f /home/user/old-project",
+            "rm -R -f /tmp/build",
+            "rm --recursive --force /tmp/build",
+            "rm -r --one-file-system -f /tmp/build",
+        ];
+
+        for cmd in cases {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk,
+                RiskLevel::Danger,
+                "command {cmd:?}: got {:?}, expected Danger",
+                assessment.risk,
+            );
+            assert!(
+                assessment
+                    .matched
+                    .iter()
+                    .any(|m| m.pattern.id.as_ref() == "FS-001"),
+                "command {cmd:?}: FS-001 must be in matched patterns: {:?}",
+                assessment
+                    .matched
+                    .iter()
+                    .map(|m| m.pattern.id.as_ref())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
     fn assess_preserves_raw_command() {
         let s = scanner();
         let cmd = "git reset --hard HEAD~1";
