@@ -89,3 +89,22 @@ fn regression_commands_with_subshell_grouping_and_multiline_payloads() {
         "expected subshell regression command to match scanner pattern"
     );
 }
+
+#[test]
+fn regression_docker_compose_down_with_volume_flag_is_flagged() {
+    let command = "docker compose down -v";
+
+    let assessment = assess(command).expect("assessment should not fail");
+    assert_eq!(
+        assessment.risk,
+        RiskLevel::Warn,
+        "expected docker compose down -v to be warn: {command:?}"
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "DK-003"),
+        "expected docker compose down -v to match DK-003"
+    );
+}
