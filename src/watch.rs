@@ -128,8 +128,14 @@ where
         let newline_pos = available.iter().position(|&b| b == b'\n');
         let chunk_len = newline_pos.map_or(available.len(), |p| p + 1);
         let is_end = newline_pos.is_some();
+        let content_chunk_len = if let Some(pos) = newline_pos {
+            let has_cr = pos > 0 && available[pos - 1] == b'\r';
+            pos - usize::from(has_cr)
+        } else {
+            chunk_len
+        };
 
-        if buf.len() + chunk_len > max_bytes {
+        if buf.len() + content_chunk_len > max_bytes {
             // Frame too large — consume this chunk, then drain to end of line.
             reader.consume(chunk_len);
             if !is_end {
@@ -138,14 +144,15 @@ where
             return Ok(ReadLineResult::Oversized);
         }
 
-        buf.extend_from_slice(&available[..chunk_len]);
+        if is_end {
+            buf.extend_from_slice(&available[..chunk_len - 1]);
+        } else {
+            buf.extend_from_slice(&available[..chunk_len]);
+        }
         reader.consume(chunk_len);
 
         if is_end {
-            // Strip trailing \n and optional \r.
-            if buf.last() == Some(&b'\n') {
-                buf.pop();
-            }
+            // Strip optional \r from a CRLF terminator; \n was not copied in.
             if buf.last() == Some(&b'\r') {
                 buf.pop();
             }
@@ -721,6 +728,15 @@ mod tests {
         // limit = 5 bytes; input is 7 bytes before \n
         let result = read_line_with_limit(b"1234567\n", 5).await.unwrap();
         assert!(matches!(result, ReadLineResult::Oversized));
+    }
+
+    #[tokio::test]
+    async fn read_line_at_exact_limit_with_newline_returns_line() {
+        let result = read_line_with_limit(b"12345\n", 5).await.unwrap();
+        match result {
+            ReadLineResult::Line(s) => assert_eq!(s, "12345"),
+            _ => panic!("expected Line"),
+        }
     }
 
     #[tokio::test]
