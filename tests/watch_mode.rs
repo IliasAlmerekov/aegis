@@ -144,12 +144,15 @@ fn watch_mode_audit_entry_sets_transport_watch() {
     use std::process::{Command, Stdio};
 
     let dir = tempfile::TempDir::new().unwrap();
+    let home = tempfile::TempDir::new().unwrap();
     let audit_path = dir.path().join("audit.jsonl");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_aegis"))
         .arg("watch")
         .env("AEGIS_REAL_SHELL", "/bin/sh")
         .env("AEGIS_AUDIT_PATH", &audit_path)
+        .env("AEGIS_CI", "0")
+        .env("HOME", home.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
