@@ -326,7 +326,7 @@ safe_alt = "List volumes first: 'docker volume ls' and back up data before pruni
 id = "DK-003"
 category = "Docker"
 risk = "Warn"
-pattern = 'docker(-compose|compose)\s+down\s+.*-v'
+pattern = 'docker(?:-compose|\s+compose)\s+down\s+.*-v'
 description = "docker-compose down -v — stops services and removes named volumes, deleting persistent data"
 safe_alt = "Omit '-v' to keep volumes: 'docker-compose down' preserves volume data"
 

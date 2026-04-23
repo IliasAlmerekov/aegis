@@ -716,6 +716,7 @@ mod tests {
             );
         }
     }
+
     #[test]
     fn assess_preserves_raw_command() {
         let s = scanner();
