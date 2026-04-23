@@ -14,7 +14,7 @@
 id = "FS-001"
 category = "Filesystem"
 risk = "Danger"
-pattern = 'rm\s+(?:-[A-Za-z]*[rR][A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*[rR][A-Za-z]*|(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*f[A-Za-z]*|--force)|(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive))'
+pattern = '\brm\s+(?:-[A-Za-z]*[rR][A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*[rR][A-Za-z]*|(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*f[A-Za-z]*|--force)|(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive))'
 description = "Recursive force delete — permanently removes files and directories with no recovery path"
 safe_alt = "Move to trash: 'trash <path>' or 'mv <path> /tmp/backup-$(date +%s)'"
 
@@ -400,7 +400,7 @@ safe_alt = "Apply permissions only to the specific directory that needs them"
 id = "PS-006"
 category = "Process"
 risk = "Block"
-pattern = '(sudo\s+)?rm\s+(?:-[A-Za-z]*[rR][A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*[rR][A-Za-z]*|(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*f[A-Za-z]*|--force)|(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive))(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+/(\s|$)'
+pattern = '(sudo\s+)?\brm\s+(?:-[A-Za-z]*[rR][A-Za-z]*f[A-Za-z]*|-[A-Za-z]*f[A-Za-z]*[rR][A-Za-z]*|(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*f[A-Za-z]*|--force)|(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive))(?:\s+(?:--|-{1,2}[A-Za-z][A-Za-z0-9-]*))*\s+/(\s|$)'
 description = "rm -rf / — deletes the entire root filesystem; unrecoverable system destruction"
 safe_alt = "There is no safe alternative; this command must not be run"
 

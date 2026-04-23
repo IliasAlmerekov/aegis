@@ -356,8 +356,8 @@ mod tests {
         // `rm\s+...` → `rm` (stops at `\s`)
         let lit = super::keywords::leading_literal_for_tests(r"rm\s+.*");
         assert_eq!(lit, "rm");
+        assert_eq!(super::keywords::extract_keywords(r"\brm\s+.*"), vec!["rm"]);
     }
-
     #[test]
     fn split_alternation_ignores_escaped_pipe() {
         // `:\(\)\{.*:\|:.*\}` has `\|` which must NOT split
@@ -694,6 +694,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn assess_does_not_match_rm_patterns_inside_longer_words() {
+        let s = scanner();
+        for cmd in ["echo farm -rf /", "echo farm -rf --no-preserve-root /"] {
+            let assessment = s.assess(cmd);
+            assert_eq!(
+                assessment.risk,
+                RiskLevel::Safe,
+                "command {cmd:?}: got {:?}, expected Safe",
+                assessment.risk,
+            );
+            assert!(
+                assessment.matched.is_empty(),
+                "command {cmd:?}: expected no matches, got {:?}",
+                assessment
+                    .matched
+                    .iter()
+                    .map(|m| m.pattern.id.as_ref())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
     #[test]
     fn assess_preserves_raw_command() {
         let s = scanner();
