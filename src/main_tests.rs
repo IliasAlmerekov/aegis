@@ -399,26 +399,56 @@ fn context() -> RuntimeContext {
     RuntimeContext::new(Config::default(), test_handle()).unwrap()
 }
 
+fn config_from_toml(src: &str) -> Config {
+    toml::from_str(src).unwrap()
+}
+
 fn context_with_ci_policy(ci_policy: CiPolicy) -> RuntimeContext {
-    let mut config = Config::default();
-    config.ci_policy = ci_policy;
+    let config = match ci_policy {
+        CiPolicy::Allow => config_from_toml(r#"ci_policy = "Allow""#),
+        CiPolicy::Block => config_from_toml(r#"ci_policy = "Block""#),
+    };
     RuntimeContext::new(config, test_handle()).unwrap()
 }
 
 fn context_with_mode(mode: Mode) -> RuntimeContext {
-    let mut config = Config::default();
-    config.mode = mode;
+    let config = match mode {
+        Mode::Audit => config_from_toml(r#"mode = "Audit""#),
+        Mode::Protect => config_from_toml(r#"mode = "Protect""#),
+        Mode::Strict => config_from_toml(r#"mode = "Strict""#),
+    };
     RuntimeContext::new(config, test_handle()).unwrap()
 }
 
 fn context_with_allowlist_override_level(
     allowlist_override_level: AllowlistOverrideLevel,
 ) -> RuntimeContext {
-    let mut config = Config::default();
-    config.mode = Mode::Strict;
-    config.auto_snapshot_git = false;
-    config.auto_snapshot_docker = false;
-    config.allowlist_override_level = allowlist_override_level;
+    let config = match allowlist_override_level {
+        AllowlistOverrideLevel::Never => config_from_toml(
+            r#"
+mode = "Strict"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+allowlist_override_level = "Never"
+"#,
+        ),
+        AllowlistOverrideLevel::Warn => config_from_toml(
+            r#"
+mode = "Strict"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+allowlist_override_level = "Warn"
+"#,
+        ),
+        AllowlistOverrideLevel::Danger => config_from_toml(
+            r#"
+mode = "Strict"
+auto_snapshot_git = false
+auto_snapshot_docker = false
+allowlist_override_level = "Danger"
+"#,
+        ),
+    };
     RuntimeContext::new(config, test_handle()).unwrap()
 }
 
@@ -433,10 +463,13 @@ fn unavailable_cwd_shell_plan_carries_snapshot_fallback_in_plan() {
         .unwrap();
     env::set_current_dir(workspace.path()).unwrap();
 
-    let mut config = Config::default();
-    config.snapshot_policy = aegis::config::SnapshotPolicy::Selective;
-    config.auto_snapshot_git = true;
-    config.auto_snapshot_docker = false;
+    let config = config_from_toml(
+        r#"
+snapshot_policy = "Selective"
+auto_snapshot_git = true
+auto_snapshot_docker = false
+"#,
+    );
     let context = RuntimeContext::new(config, test_handle()).unwrap();
     let prepared = PreparedPlanner::Ready(Box::new(context));
     let outcome = prepare_and_plan(

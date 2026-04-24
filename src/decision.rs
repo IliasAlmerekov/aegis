@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    fn evaluate(
+    struct EvalInput<'a> {
         risk: RiskLevel,
         mode: Mode,
         ci_detected: bool,
@@ -314,26 +314,28 @@ mod tests {
         allowlist_matched: bool,
         allowlist_override_level: AllowlistOverrideLevel,
         snapshot_policy: SnapshotPolicy,
-        applicable_snapshot_plugins: &[&'static str],
-    ) -> PolicyDecision {
-        let assessment = assessment(risk);
+        applicable_snapshot_plugins: &'a [&'static str],
+    }
+
+    fn evaluate(input: EvalInput<'_>) -> PolicyDecision {
+        let assessment = assessment(input.risk);
         evaluate_policy(PolicyInput {
             assessment: &assessment,
-            mode,
+            mode: input.mode,
             ci_state: PolicyCiState {
-                detected: ci_detected,
+                detected: input.ci_detected,
             },
             allowlist: PolicyAllowlistResult {
-                matched: allowlist_matched,
+                matched: input.allowlist_matched,
             },
             config_flags: PolicyConfigFlags {
-                ci_policy,
-                allowlist_override_level,
-                snapshot_policy,
+                ci_policy: input.ci_policy,
+                allowlist_override_level: input.allowlist_override_level,
+                snapshot_policy: input.snapshot_policy,
             },
             execution_context: PolicyExecutionContext {
                 transport: ExecutionTransport::Shell,
-                applicable_snapshot_plugins,
+                applicable_snapshot_plugins: input.applicable_snapshot_plugins,
             },
         })
     }
@@ -357,16 +359,16 @@ mod tests {
 
     #[test]
     fn audit_mode_never_requires_confirmation_or_snapshots() {
-        let decision = evaluate(
-            RiskLevel::Danger,
-            Mode::Audit,
-            true,
-            CiPolicy::Block,
-            true,
-            AllowlistOverrideLevel::Danger,
-            SnapshotPolicy::Full,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Audit,
+            ci_detected: true,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: true,
+            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            snapshot_policy: SnapshotPolicy::Full,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -381,16 +383,16 @@ mod tests {
 
     #[test]
     fn protect_warn_without_override_requires_confirmation() {
-        let decision = evaluate(
-            RiskLevel::Warn,
-            Mode::Protect,
-            false,
-            CiPolicy::Block,
-            false,
-            AllowlistOverrideLevel::Never,
-            SnapshotPolicy::Selective,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Warn,
+            mode: Mode::Protect,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -405,16 +407,16 @@ mod tests {
 
     #[test]
     fn protect_allowlisted_warn_autoapproves_without_snapshots() {
-        let decision = evaluate(
-            RiskLevel::Warn,
-            Mode::Protect,
-            false,
-            CiPolicy::Block,
-            true,
-            AllowlistOverrideLevel::Warn,
-            SnapshotPolicy::Selective,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Warn,
+            mode: Mode::Protect,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: true,
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -429,16 +431,16 @@ mod tests {
 
     #[test]
     fn protect_danger_prompts_and_requests_snapshots_when_available() {
-        let decision = evaluate(
-            RiskLevel::Danger,
-            Mode::Protect,
-            false,
-            CiPolicy::Block,
-            false,
-            AllowlistOverrideLevel::Never,
-            SnapshotPolicy::Selective,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Protect,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -453,16 +455,16 @@ mod tests {
 
     #[test]
     fn protect_danger_does_not_request_snapshots_when_policy_disables_them() {
-        let decision = evaluate(
-            RiskLevel::Danger,
-            Mode::Protect,
-            false,
-            CiPolicy::Block,
-            false,
-            AllowlistOverrideLevel::Never,
-            SnapshotPolicy::None,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Protect,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::None,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -477,16 +479,16 @@ mod tests {
 
     #[test]
     fn protect_danger_does_not_request_snapshots_without_applicable_plugins() {
-        let decision = evaluate(
-            RiskLevel::Danger,
-            Mode::Protect,
-            false,
-            CiPolicy::Block,
-            false,
-            AllowlistOverrideLevel::Never,
-            SnapshotPolicy::Selective,
-            &[],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Protect,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &[],
+        });
 
         assert_decision(
             decision,
@@ -501,16 +503,16 @@ mod tests {
 
     #[test]
     fn protect_ci_policy_blocks_without_confirmation() {
-        let decision = evaluate(
-            RiskLevel::Warn,
-            Mode::Protect,
-            true,
-            CiPolicy::Block,
-            false,
-            AllowlistOverrideLevel::Never,
-            SnapshotPolicy::Selective,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Warn,
+            mode: Mode::Protect,
+            ci_detected: true,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -525,16 +527,16 @@ mod tests {
 
     #[test]
     fn protect_ci_block_still_respects_danger_allowlist_override() {
-        let decision = evaluate(
-            RiskLevel::Danger,
-            Mode::Protect,
-            true,
-            CiPolicy::Block,
-            true,
-            AllowlistOverrideLevel::Danger,
-            SnapshotPolicy::Full,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Protect,
+            ci_detected: true,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: true,
+            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            snapshot_policy: SnapshotPolicy::Full,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -549,16 +551,16 @@ mod tests {
 
     #[test]
     fn strict_mode_blocks_warn_without_override() {
-        let decision = evaluate(
-            RiskLevel::Warn,
-            Mode::Strict,
-            false,
-            CiPolicy::Allow,
-            false,
-            AllowlistOverrideLevel::Never,
-            SnapshotPolicy::Selective,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Warn,
+            mode: Mode::Strict,
+            ci_detected: false,
+            ci_policy: CiPolicy::Allow,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -573,16 +575,16 @@ mod tests {
 
     #[test]
     fn strict_allowlist_override_danger_autoapproves_and_keeps_snapshot_requirement() {
-        let decision = evaluate(
-            RiskLevel::Danger,
-            Mode::Strict,
-            false,
-            CiPolicy::Block,
-            true,
-            AllowlistOverrideLevel::Danger,
-            SnapshotPolicy::Full,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Strict,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            allowlist_matched: true,
+            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            snapshot_policy: SnapshotPolicy::Full,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,
@@ -597,16 +599,16 @@ mod tests {
 
     #[test]
     fn block_risk_is_never_bypassable() {
-        let decision = evaluate(
-            RiskLevel::Block,
-            Mode::Strict,
-            false,
-            CiPolicy::Allow,
-            true,
-            AllowlistOverrideLevel::Danger,
-            SnapshotPolicy::Full,
-            &["git"],
-        );
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Block,
+            mode: Mode::Strict,
+            ci_detected: false,
+            ci_policy: CiPolicy::Allow,
+            allowlist_matched: true,
+            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            snapshot_policy: SnapshotPolicy::Full,
+            applicable_snapshot_plugins: &["git"],
+        });
 
         assert_decision(
             decision,

@@ -527,9 +527,11 @@ mod tests {
 
     #[test]
     fn from_config_disables_all_plugins_when_snapshots_are_off() {
-        let mut config = Config::default();
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
+        let config = Config {
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
 
@@ -538,9 +540,11 @@ mod tests {
 
     #[test]
     fn from_config_enables_only_requested_plugins() {
-        let mut config = Config::default();
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = true;
+        let config = Config {
+            auto_snapshot_git: false,
+            auto_snapshot_docker: true,
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
         let plugin_names: Vec<_> = registry
@@ -562,9 +566,11 @@ mod tests {
 
     #[test]
     fn configured_provider_names_report_only_materialized_runtime_plugins() {
-        let mut config = Config::default();
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = true;
+        let config = Config {
+            auto_snapshot_git: false,
+            auto_snapshot_docker: true,
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
 
@@ -596,10 +602,12 @@ mod tests {
     fn policy_none_disables_all_plugins() {
         use crate::config::SnapshotPolicy;
 
-        let mut config = Config::default();
-        config.snapshot_policy = SnapshotPolicy::None;
-        config.auto_snapshot_git = true;
-        config.auto_snapshot_docker = true;
+        let config = Config {
+            snapshot_policy: SnapshotPolicy::None,
+            auto_snapshot_git: true,
+            auto_snapshot_docker: true,
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
         assert!(
@@ -612,10 +620,12 @@ mod tests {
     fn policy_selective_honours_per_plugin_flags() {
         use crate::config::SnapshotPolicy;
 
-        let mut config = Config::default();
-        config.snapshot_policy = SnapshotPolicy::Selective;
-        config.auto_snapshot_git = true;
-        config.auto_snapshot_docker = false;
+        let config = Config {
+            snapshot_policy: SnapshotPolicy::Selective,
+            auto_snapshot_git: true,
+            auto_snapshot_docker: false,
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
@@ -626,14 +636,19 @@ mod tests {
     fn selective_policy_enables_postgres_when_configured() {
         use crate::config::SnapshotPolicy;
 
-        let mut config = Config::default();
-        config.snapshot_policy = SnapshotPolicy::Selective;
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
-        config.auto_snapshot_postgres = true;
-        config.auto_snapshot_mysql = false;
-        config.auto_snapshot_sqlite = false;
-        config.postgres_snapshot.database = "app".to_string();
+        let config = Config {
+            snapshot_policy: SnapshotPolicy::Selective,
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            auto_snapshot_postgres: true,
+            auto_snapshot_mysql: false,
+            auto_snapshot_sqlite: false,
+            postgres_snapshot: crate::config::PostgresSnapshotConfig {
+                database: "app".to_string(),
+                ..crate::config::PostgresSnapshotConfig::default()
+            },
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
@@ -645,14 +660,19 @@ mod tests {
     fn selective_policy_disables_postgres_when_flag_off() {
         use crate::config::SnapshotPolicy;
 
-        let mut config = Config::default();
-        config.snapshot_policy = SnapshotPolicy::Selective;
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
-        config.auto_snapshot_postgres = false;
-        config.auto_snapshot_mysql = false;
-        config.auto_snapshot_sqlite = false;
-        config.postgres_snapshot.database = "app".to_string();
+        let config = Config {
+            snapshot_policy: SnapshotPolicy::Selective,
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            auto_snapshot_postgres: false,
+            auto_snapshot_mysql: false,
+            auto_snapshot_sqlite: false,
+            postgres_snapshot: crate::config::PostgresSnapshotConfig {
+                database: "app".to_string(),
+                ..crate::config::PostgresSnapshotConfig::default()
+            },
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
@@ -664,14 +684,16 @@ mod tests {
     fn policy_full_enables_supabase_plugin() {
         use crate::config::SnapshotPolicy;
 
-        let mut config = Config::default();
-        config.snapshot_policy = SnapshotPolicy::Full;
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
-        config.auto_snapshot_postgres = false;
-        config.auto_snapshot_mysql = false;
-        config.auto_snapshot_sqlite = false;
-        config.auto_snapshot_supabase = false;
+        let config = Config {
+            snapshot_policy: SnapshotPolicy::Full,
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            auto_snapshot_postgres: false,
+            auto_snapshot_mysql: false,
+            auto_snapshot_sqlite: false,
+            auto_snapshot_supabase: false,
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
@@ -693,27 +715,38 @@ mod tests {
 
     #[test]
     fn rollback_runtime_config_preserves_supabase_settings_and_forces_provider() {
-        let mut config = Config::default();
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
-        config.auto_snapshot_postgres = false;
-        config.auto_snapshot_mysql = false;
-        config.auto_snapshot_supabase = false;
-        config.auto_snapshot_sqlite = false;
-        config.postgres_snapshot.database = "pg-app".to_string();
-        config.postgres_snapshot.host = "pg.internal".to_string();
-        config.postgres_snapshot.port = 5544;
-        config.postgres_snapshot.user = "pguser".to_string();
-        config.mysql_snapshot.database = "mysql-app".to_string();
-        config.mysql_snapshot.host = "mysql.internal".to_string();
-        config.mysql_snapshot.port = 4407;
-        config.mysql_snapshot.user = "mysqluser".to_string();
-        config.supabase_snapshot.project_ref = "proj_123".to_string();
-        config.supabase_snapshot.db.database = "postgres".to_string();
-        config.supabase_snapshot.db.host = "db.supabase.co".to_string();
-        config.supabase_snapshot.db.port = 6543;
-        config.supabase_snapshot.db.user = "postgres".to_string();
-        config.sqlite_snapshot_path = "db/app.sqlite".to_string();
+        let config = Config {
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            auto_snapshot_postgres: false,
+            auto_snapshot_mysql: false,
+            auto_snapshot_supabase: false,
+            auto_snapshot_sqlite: false,
+            postgres_snapshot: crate::config::PostgresSnapshotConfig {
+                database: "pg-app".to_string(),
+                host: "pg.internal".to_string(),
+                port: 5544,
+                user: "pguser".to_string(),
+            },
+            mysql_snapshot: crate::config::MysqlSnapshotConfig {
+                database: "mysql-app".to_string(),
+                host: "mysql.internal".to_string(),
+                port: 4407,
+                user: "mysqluser".to_string(),
+            },
+            supabase_snapshot: crate::config::SupabaseSnapshotConfig {
+                project_ref: "proj_123".to_string(),
+                db: crate::config::PostgresSnapshotConfig {
+                    database: "postgres".to_string(),
+                    host: "db.supabase.co".to_string(),
+                    port: 6543,
+                    user: "postgres".to_string(),
+                },
+                ..crate::config::SupabaseSnapshotConfig::default()
+            },
+            sqlite_snapshot_path: "db/app.sqlite".to_string(),
+            ..Config::default()
+        };
 
         let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config);
 
@@ -740,15 +773,23 @@ mod tests {
     fn selective_policy_enables_supabase_when_configured() {
         use crate::config::SnapshotPolicy;
 
-        let mut config = Config::default();
-        config.snapshot_policy = SnapshotPolicy::Selective;
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
-        config.auto_snapshot_postgres = false;
-        config.auto_snapshot_mysql = false;
-        config.auto_snapshot_sqlite = false;
-        config.auto_snapshot_supabase = true;
-        config.supabase_snapshot.db.database = "postgres".to_string();
+        let config = Config {
+            snapshot_policy: SnapshotPolicy::Selective,
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            auto_snapshot_postgres: false,
+            auto_snapshot_mysql: false,
+            auto_snapshot_sqlite: false,
+            auto_snapshot_supabase: true,
+            supabase_snapshot: crate::config::SupabaseSnapshotConfig {
+                db: crate::config::PostgresSnapshotConfig {
+                    database: "postgres".to_string(),
+                    ..crate::config::PostgresSnapshotConfig::default()
+                },
+                ..crate::config::SupabaseSnapshotConfig::default()
+            },
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
 
@@ -762,13 +803,15 @@ mod tests {
         std::fs::create_dir_all(&db_dir).unwrap();
         std::fs::write(db_dir.join("app.db"), b"sqlite-data").unwrap();
 
-        let mut config = Config::default();
-        config.auto_snapshot_git = false;
-        config.auto_snapshot_docker = false;
-        config.auto_snapshot_postgres = false;
-        config.auto_snapshot_mysql = false;
-        config.auto_snapshot_sqlite = true;
-        config.sqlite_snapshot_path = "db/app.db".to_string();
+        let config = Config {
+            auto_snapshot_git: false,
+            auto_snapshot_docker: false,
+            auto_snapshot_postgres: false,
+            auto_snapshot_mysql: false,
+            auto_snapshot_sqlite: true,
+            sqlite_snapshot_path: "db/app.db".to_string(),
+            ..Config::default()
+        };
 
         let registry = SnapshotRegistry::from_config(&config);
 

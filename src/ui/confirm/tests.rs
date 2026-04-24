@@ -14,7 +14,7 @@ use crate::explanation::{
 use crate::interceptor::RiskLevel;
 use crate::interceptor::parser::Parser;
 use crate::interceptor::patterns::{Category, Pattern, PatternSource};
-use crate::interceptor::scanner::{Assessment, DecisionSource, HighlightRange, MatchResult};
+use crate::interceptor::scanner::{Assessment, HighlightRange, MatchResult};
 use crate::snapshot::SnapshotRecord;
 
 // ── helpers ───────────────────────────────────────────────────────────────
