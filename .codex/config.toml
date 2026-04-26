@@ -11,7 +11,7 @@ sandbox_mode = "workspace-write"
 web_search = "live"
 
 # Use project-local codex instructions.
-model_instructions_file = "/home/iliasalmerekov/Projects/aegis/.codex/AGENTS.md"
+model_instructions_file = "AGENTS.md"
 
 [features]
 multi_agent = true

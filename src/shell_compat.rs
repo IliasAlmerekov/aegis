@@ -97,20 +97,22 @@ pub(crate) fn parse_shell_compat_invocation(
                     return Ok(None);
                 };
 
-                for (position, flag) in bundle.chars().enumerate() {
+                let mut command_flag = false;
+                for flag in bundle.chars() {
                     match flag {
                         'l' => launch.login = true,
                         'i' => launch.interactive = true,
-                        'c' if position == bundle.len() - 1 => {
-                            let command = parse_shell_compat_command(args, index + 1)?;
-                            launch.positional_args = args[index + 2..].to_vec();
-                            return Ok(Some(InvocationMode::ShellCompatCommand {
-                                command,
-                                launch,
-                            }));
+                        'c' if !command_flag => {
+                            command_flag = true;
                         }
                         _ => return Ok(None),
                     }
+                }
+
+                if command_flag {
+                    let command = parse_shell_compat_command(args, index + 1)?;
+                    launch.positional_args = args[index + 2..].to_vec();
+                    return Ok(Some(InvocationMode::ShellCompatCommand { command, launch }));
                 }
 
                 index += 1;
@@ -130,10 +132,19 @@ pub(crate) fn starts_with_shell_compat_flags(arg: &OsStr) -> bool {
         return false;
     };
 
-    matches!(
-        text,
-        "-l" | "-i" | "-lc" | "-ic" | "-il" | "-li" | "-ilc" | "-lic"
-    )
+    if matches!(text, "-l" | "-i") {
+        return true;
+    }
+
+    let Some(bundle) = text.strip_prefix('-') else {
+        return false;
+    };
+
+    !bundle.is_empty()
+        && !bundle.starts_with('-')
+        && bundle.chars().all(|flag| matches!(flag, 'l' | 'i' | 'c'))
+        && bundle.contains('c')
+        && (bundle.contains('l') || bundle.contains('i'))
 }
 
 pub(crate) fn parse_shell_compat_command(
