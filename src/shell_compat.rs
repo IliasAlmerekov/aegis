@@ -102,7 +102,7 @@ pub(crate) fn parse_shell_compat_invocation(
                     match flag {
                         'l' => launch.login = true,
                         'i' => launch.interactive = true,
-                        'c' if !command_flag => {
+                        'c' => {
                             command_flag = true;
                         }
                         _ => return Ok(None),
@@ -142,9 +142,9 @@ pub(crate) fn starts_with_shell_compat_flags(arg: &OsStr) -> bool {
 
     !bundle.is_empty()
         && !bundle.starts_with('-')
+        && bundle.len() > 1
         && bundle.chars().all(|flag| matches!(flag, 'l' | 'i' | 'c'))
         && bundle.contains('c')
-        && (bundle.contains('l') || bundle.contains('i'))
 }
 
 pub(crate) fn parse_shell_compat_command(
