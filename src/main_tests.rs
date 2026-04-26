@@ -93,9 +93,46 @@ fn shell_compat_parser_handles_command_flag_before_interactive_flag() {
 }
 
 #[test]
+fn shell_compat_parser_handles_repeated_command_flag_bundle() {
+    let args = vec![
+        std::ffi::OsString::from("-cc"),
+        std::ffi::OsString::from("printf compat"),
+    ];
+
+    let parsed = parse_shell_compat_invocation(&args).unwrap();
+    let Some(InvocationMode::ShellCompatCommand { command, launch }) = parsed else {
+        panic!("expected shell compatibility command invocation");
+    };
+
+    assert_eq!(command, "printf compat");
+    assert!(!launch.login);
+    assert!(!launch.interactive);
+    assert!(launch.positional_args.is_empty());
+}
+
+#[test]
 fn shell_compat_parser_handles_separate_login_and_command_flags() {
     let args = vec![
         std::ffi::OsString::from("-l"),
+        std::ffi::OsString::from("-c"),
+        std::ffi::OsString::from("printf compat"),
+    ];
+
+    let parsed = parse_shell_compat_invocation(&args).unwrap();
+    let Some(InvocationMode::ShellCompatCommand { command, launch }) = parsed else {
+        panic!("expected shell compatibility command invocation");
+    };
+
+    assert_eq!(command, "printf compat");
+    assert!(launch.login);
+    assert!(!launch.interactive);
+    assert!(launch.positional_args.is_empty());
+}
+
+#[test]
+fn shell_compat_parser_handles_long_login_flag() {
+    let args = vec![
+        std::ffi::OsString::from("--login"),
         std::ffi::OsString::from("-c"),
         std::ffi::OsString::from("printf compat"),
     ];
