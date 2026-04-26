@@ -18,7 +18,7 @@ type Result<T> = std::result::Result<T, AegisError>;
 /// Sentinel returned when there were no running containers at snapshot time.
 const NO_CONTAINERS: &str = "none";
 const EXECUTABLE_BUSY_ERRNO: i32 = 26;
-const DOCKER_BUSY_RETRY_ATTEMPTS: usize = 12;
+const DOCKER_BUSY_RETRY_ATTEMPTS: usize = 40;
 const DOCKER_BUSY_RETRY_DELAY_MS: u64 = 25;
 
 pub struct DockerPlugin {
