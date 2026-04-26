@@ -1,3 +1,5 @@
+name = "security_reviewer"
+description = "Security reviewer focused on bypasses, fail-open behavior, and audit/snapshot integrity."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
