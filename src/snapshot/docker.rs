@@ -94,7 +94,7 @@ impl DockerPlugin {
                         attempt,
                         "docker binary busy during command launch, retrying"
                     );
-                    thread::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS));
+                    sleep_docker_busy_retry_delay().await;
                 }
                 Err(error) => {
                     return Err(AegisError::Snapshot(format!("{context}: {error}")));
@@ -139,6 +139,16 @@ impl DockerPlugin {
 
 fn is_executable_busy(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(EXECUTABLE_BUSY_ERRNO)
+}
+
+async fn sleep_docker_busy_retry_delay() {
+    if let Err(error) = tokio::task::spawn_blocking(|| {
+        thread::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS));
+    })
+    .await
+    {
+        tracing::warn!(%error, "docker busy retry sleep task failed");
+    }
 }
 
 /// Host-level configuration captured from a running container before snapshot.
