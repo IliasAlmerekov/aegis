@@ -15,8 +15,9 @@ model_instructions_file = "/home/iliasalmerekov/Projects/aegis/.codex/AGENTS.md"
 
 [features]
 multi_agent = true
-
+# Enables Codex hook loading; Aegis installs hook registrations in ~/.codex/hooks.json.
 codex_hooks = true
+
 [profiles.strict]
 approval_policy = "on-request"
 sandbox_mode = "read-only"
@@ -30,4 +31,3 @@ web_search = "live"
 [agents]
 max_threads = 6
 max_depth = 1
-
