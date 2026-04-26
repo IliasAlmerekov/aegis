@@ -79,6 +79,10 @@ pub(crate) fn parse_shell_compat_invocation(
         };
 
         match arg {
+            "--login" => {
+                launch.login = true;
+                index += 1;
+            }
             "-l" => {
                 launch.login = true;
                 index += 1;
@@ -132,7 +136,7 @@ pub(crate) fn starts_with_shell_compat_flags(arg: &OsStr) -> bool {
         return false;
     };
 
-    if matches!(text, "-l" | "-i") {
+    if matches!(text, "--login" | "-l" | "-i") {
         return true;
     }
 
