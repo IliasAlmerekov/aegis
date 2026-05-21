@@ -3,8 +3,11 @@
 ## Agent Configuration
 
 Before starting any non-trivial task, read `.claude/AGENTS.md` — it defines the lead
-orchestrator identity, sub-agent registry, orchestration rules, human checkpoints, and
-global constraints that apply to all agents working in this repository.
+orchestrator identity, the `/implement` TDD pipeline (red-tester → green-tester →
+reviewer, max 3 iterations), the sub-agent registry, and global constraints that apply
+to all agents working in this repository.
+
+Use `/implement <task description>` to start any feature or bug fix work.
 
 ---
 

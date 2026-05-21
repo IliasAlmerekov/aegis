@@ -3,8 +3,7 @@
 # Aegis — Codex project baseline
 # Codex rules for this repository live in:
 # - .codex/AGENTS.md
-# - .codex/agents/guardrails.md
-# - .codex/agents/workflows/*.md
+# - .codex/agents/{red-tester,green-tester,reviewer}.toml
 
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
