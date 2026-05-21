@@ -959,8 +959,7 @@ mod tests {
         // call happens, so the only yield opportunities are inside the retry
         // sleep itself.
         let mut command = tokio::process::Command::new(&pg_dump);
-        let result =
-            PostgresPlugin::output_with_busy_retry(&mut command, "test context").await;
+        let result = PostgresPlugin::output_with_busy_retry(&mut command, "test context").await;
 
         // The binary was always busy, so we expect an error after exhausting retries.
         assert!(

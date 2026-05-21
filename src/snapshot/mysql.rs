@@ -1141,8 +1141,7 @@ mod tests {
         // (12) are exhausted and the call returns Err — no subsequent async I/O
         // happens, so the only yield opportunities are inside the retry sleep.
         let mut command = tokio::process::Command::new(&mysqldump);
-        let result =
-            MysqlPlugin::spawn_with_busy_retry(&mut command, "test context").await;
+        let result = MysqlPlugin::spawn_with_busy_retry(&mut command, "test context").await;
 
         // The binary was always busy, so we expect an error after exhausting retries.
         assert!(
