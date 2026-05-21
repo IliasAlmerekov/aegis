@@ -119,7 +119,7 @@ impl MysqlPlugin {
                         attempt,
                         "mysql binary busy during command launch, retrying"
                     );
-                    std::thread::sleep(std::time::Duration::from_millis(BUSY_RETRY_DELAY_MS));
+                    tokio::time::sleep(std::time::Duration::from_millis(BUSY_RETRY_DELAY_MS)).await;
                 }
                 Err(error) => {
                     return Err(AegisError::Snapshot(format!("{context}: {error}")));
@@ -1098,6 +1098,68 @@ mod tests {
         let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &dump_path);
 
         plugin.rollback(&snapshot_id).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_with_busy_retry_yields_to_tokio_runtime_during_sleep() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicU32, Ordering},
+        };
+
+        let temp_dir = TempDir::new().unwrap();
+        // A stub binary that we will hold open for writing for the entire test,
+        // so every call to spawn() returns ETXTBSY and the retry loop fires.
+        let mysqldump = stub_bin(&temp_dir, "mysqldump", "exit 0");
+
+        // Keep the file open for writing from this process.  The kernel returns
+        // ETXTBSY from execve() as long as any process holds the file open for
+        // writing, so this forces spawn_with_busy_retry to exhaust all retries.
+        let _keep_open = std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&mysqldump)
+            .unwrap();
+
+        // Spawn a concurrent task that counts how many scheduling opportunities
+        // it receives.  In a current_thread runtime:
+        //   - std::thread::sleep blocks the only worker thread, so this task
+        //     cannot run at all during each 25 ms retry delay.
+        //   - tokio::time::sleep(...).await yields to the runtime, letting this
+        //     task run between retries.
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = Arc::clone(&counter);
+        tokio::spawn(async move {
+            loop {
+                tokio::task::yield_now().await;
+                counter_clone.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        // Call the retry function directly so we reach the sleep on every
+        // attempt.  The binary is permanently busy, so all BUSY_RETRY_ATTEMPTS
+        // (12) are exhausted and the call returns Err — no subsequent async I/O
+        // happens, so the only yield opportunities are inside the retry sleep.
+        let mut command = tokio::process::Command::new(&mysqldump);
+        let result =
+            MysqlPlugin::spawn_with_busy_retry(&mut command, "test context").await;
+
+        // The binary was always busy, so we expect an error after exhausting retries.
+        assert!(
+            result.is_err(),
+            "expected error after exhausting busy retries, got success"
+        );
+
+        // If std::thread::sleep was used, the counter is 0: the retry delays
+        // blocked the single Tokio thread, giving the spawned task no chance to
+        // run.  When fixed with tokio::time::sleep(...).await, the counter is
+        // > 0 because each sleep yields to the executor.
+        assert!(
+            counter.load(Ordering::Relaxed) > 0,
+            "counter stayed at 0: std::thread::sleep is blocking the Tokio \
+             runtime during retry delays; replace with \
+             tokio::time::sleep(...).await"
+        );
     }
 
     #[tokio::test]
