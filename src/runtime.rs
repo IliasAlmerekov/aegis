@@ -542,7 +542,10 @@ mod tests {
     #[test]
     fn find_id_in_path_returns_absolute_path() {
         let path = find_id_in_path().expect("id must be present in PATH for this test");
-        assert!(path.is_absolute(), "find_id_in_path must return an absolute path, got {path:?}");
+        assert!(
+            path.is_absolute(),
+            "find_id_in_path must return an absolute path, got {path:?}"
+        );
         assert!(path.is_file(), "returned path must exist as a regular file");
     }
 
@@ -552,7 +555,10 @@ mod tests {
         // Verifies that detect_effective_user() resolves the id binary through
         // PATH rather than relying on a hardcoded location like /usr/bin/id.
         let user = detect_effective_user();
-        assert!(user.is_some(), "detect_effective_user must return Some when PATH contains id");
+        assert!(
+            user.is_some(),
+            "detect_effective_user must return Some when PATH contains id"
+        );
         assert!(!user.unwrap().is_empty());
     }
 
