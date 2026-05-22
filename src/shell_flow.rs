@@ -22,7 +22,7 @@ use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{show_confirmation, show_policy_block};
 
 use crate::shell_compat::{ShellLaunchOptions, exec_command};
-use crate::{EXIT_BLOCKED, EXIT_DENIED};
+use crate::{EXIT_BLOCKED, EXIT_DENIED, EXIT_INTERNAL};
 
 pub(crate) fn run_planned_shell_command(
     cmd: &str,
@@ -34,7 +34,10 @@ pub(crate) fn run_planned_shell_command(
     match plan.execution_disposition() {
         ExecutionDisposition::Execute => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
-            append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots, verbose);
+            if let Err(err) = append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots) {
+                eprintln!("error: failed to write audit log: {err}");
+                return EXIT_INTERNAL;
+            }
             exec_command(cmd, launch)
         }
         ExecutionDisposition::RequiresApproval => {
@@ -45,7 +48,10 @@ pub(crate) fn run_planned_shell_command(
             } else {
                 Decision::Denied
             };
-            append_shell_audit(prepared, plan, decision, &snapshots, verbose);
+            if let Err(err) = append_shell_audit(prepared, plan, decision, &snapshots) {
+                eprintln!("error: failed to write audit log: {err}");
+                return EXIT_INTERNAL;
+            }
             if approved {
                 exec_command(cmd, launch)
             } else {
@@ -54,7 +60,10 @@ pub(crate) fn run_planned_shell_command(
         }
         ExecutionDisposition::Block => {
             show_block_for_plan(plan);
-            append_shell_audit(prepared, plan, Decision::Blocked, &[], verbose);
+            if let Err(err) = append_shell_audit(prepared, plan, Decision::Blocked, &[]) {
+                eprintln!("error: failed to write audit log: {err}");
+                return EXIT_INTERNAL;
+            }
             EXIT_BLOCKED
         }
     }
@@ -90,10 +99,9 @@ fn append_shell_audit(
     plan: &InterceptionPlan,
     decision: Decision,
     snapshots: &[SnapshotRecord],
-    verbose: bool,
-) {
+) -> Result<(), aegis::error::AegisError> {
     if let PreparedPlanner::Ready(context) = prepared {
-        context.append_audit_entry(
+        return context.append_audit_entry(
             plan.assessment(),
             decision,
             snapshots,
@@ -102,10 +110,10 @@ fn append_shell_audit(
                 allowlist_match: plan.decision_context().allowlist_match(),
                 allowlist_effective: plan.policy_decision().allowlist_effective,
                 ci_detected: plan.decision_context().ci_detected(),
-                verbose,
             },
         );
     }
+    Ok(())
 }
 
 fn show_block_for_plan(plan: &InterceptionPlan) {

@@ -1155,9 +1155,10 @@ max_file_size_bytes = 0
 // Audit logger failure ─────────────────────────────────────────────────────
 
 /// If `~/.aegis` is a file instead of a directory, audit append fails.
-/// The binary must NOT crash — error is swallowed in non-verbose mode.
+/// The binary must exit non-zero and print an error — audit is a security
+/// artifact; silently dropping write failures defeats tamper-detection.
 #[test]
-fn audit_logger_failure_does_not_crash_binary() {
+fn audit_logger_failure_exits_nonzero_with_error() {
     let home = TempDir::new().unwrap();
     fs::write(home.path().join(".aegis"), "I am a file, not a directory").unwrap();
 
@@ -1167,27 +1168,30 @@ fn audit_logger_failure_does_not_crash_binary() {
         .unwrap();
 
     assert!(
-        output.status.success(),
-        "binary must not crash when audit log is unwritable"
+        !output.status.success(),
+        "binary must exit non-zero when audit log is unwritable"
     );
-    assert_eq!(output.stdout, b"hello\n");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("failed to write audit log"),
+        "error message must be printed to stderr when audit append fails"
+    );
 }
 
-/// With `--verbose`, a failed audit append must emit a warning to stderr.
+/// Audit write failures must always be reported — not gated on --verbose.
 #[test]
-fn audit_logger_failure_verbose_prints_warning() {
+fn audit_logger_failure_always_prints_error() {
     let home = TempDir::new().unwrap();
     fs::write(home.path().join(".aegis"), "I am a file, not a directory").unwrap();
 
     let output = base_command(home.path())
-        .args(["-v", "-c", "echo hello"])
+        .args(["-c", "echo hello"])
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("failed to append audit log entry"),
-        "verbose mode must print a warning when audit append fails"
+        String::from_utf8_lossy(&output.stderr).contains("failed to write audit log"),
+        "audit failure must print an error regardless of verbose flag"
     );
 }
 

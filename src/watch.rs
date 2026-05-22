@@ -456,7 +456,7 @@ async fn run_watch_plan(
         }
     };
 
-    context.append_watch_audit_entry(
+    if let Err(err) = context.append_watch_audit_entry(
         plan.assessment(),
         runtime_decision,
         &snapshots,
@@ -467,8 +467,9 @@ async fn run_watch_plan(
         frame.cwd.clone(),
         id.clone(),
         ci_detected,
-        true,
-    );
+    ) {
+        eprintln!("error: failed to write audit log: {err}");
+    }
 
     match runtime_decision {
         Decision::Denied => {

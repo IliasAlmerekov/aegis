@@ -23,9 +23,7 @@ pub(crate) async fn execute(snapshot_id: String) -> Result<RollbackTarget> {
     .rollback(&target.plugin, &target.snapshot_id)
     .await?;
 
-    if let Err(err) = append_rollback_audit_entry(&audit_logger, &target) {
-        eprintln!("warning: rollback succeeded but audit append failed: {err}");
-    }
+    append_rollback_audit_entry(&audit_logger, &target)?;
 
     Ok(target)
 }

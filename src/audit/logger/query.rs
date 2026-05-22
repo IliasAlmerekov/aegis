@@ -8,6 +8,7 @@ use super::*;
 use crate::error::AegisError;
 
 impl AuditLogger {
+    #[must_use = "audit log entries must be used or explicitly discarded"]
     pub fn read_all(&self) -> Result<Vec<AuditEntry>> {
         let _lock = self.acquire_shared_lock()?;
         let mut entries = Vec::new();
@@ -17,6 +18,7 @@ impl AuditLogger {
         Ok(entries)
     }
 
+    #[must_use = "audit query result must be used or explicitly discarded"]
     pub fn query(&self, query: AuditQuery) -> Result<Vec<AuditEntry>> {
         let mut entries = self.read_all()?;
         entries.retain(|entry| entry_matches_query(entry, &query));
