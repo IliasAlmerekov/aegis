@@ -470,7 +470,16 @@ async fn run_watch_plan(
             id: id.clone(),
         },
     ) {
-        eprintln!("error: failed to write audit log: {err}");
+        if emit_frame(&OutputFrame::Error {
+            id: id.clone(),
+            exit_code: 4,
+            message: format!("audit log write failed: {err}"),
+        })
+        .is_err()
+        {
+            std::process::exit(4);
+        }
+        return;
     }
 
     match runtime_decision {
@@ -567,6 +576,7 @@ fn report_watch_setup_failure(plan: &SetupFailurePlan) {
 /// Spawn the child command, stream its output as NDJSON frames, and emit
 /// a final result frame.
 async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) {
+    #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     use tokio::process::Command;
 
@@ -666,9 +676,16 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
 
     // Reap the child.
     let exit_code = match child.wait().await {
-        Ok(status) => status
-            .code()
-            .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)),
+        Ok(status) => status.code().unwrap_or_else(|| {
+            #[cfg(unix)]
+            {
+                128 + status.signal().unwrap_or(0)
+            }
+            #[cfg(not(unix))]
+            {
+                128
+            }
+        }),
         Err(_) => 4,
     };
 

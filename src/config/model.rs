@@ -307,6 +307,7 @@ impl AegisConfig {
     pub fn load() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
 
@@ -316,6 +317,7 @@ impl AegisConfig {
     pub fn load_inspection() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
 
@@ -710,12 +712,20 @@ where
 }
 
 fn validate_config_version(version: u32) -> std::result::Result<u32, String> {
-    if version == CURRENT_CONFIG_VERSION {
-        Ok(version)
-    } else {
-        Err(format!(
-            "unsupported config_version {version}; supported version is {CURRENT_CONFIG_VERSION}"
-        ))
+    match version.cmp(&CURRENT_CONFIG_VERSION) {
+        std::cmp::Ordering::Equal => Ok(version),
+        std::cmp::Ordering::Greater => Err(format!(
+            "config_version {version} requires a newer version of Aegis \
+             (this binary supports schema version {CURRENT_CONFIG_VERSION}).\n\
+             To upgrade: install a newer Aegis release that supports schema {version}, \
+             then run `aegis config validate` to confirm compatibility.\n\
+             To downgrade the config to schema {CURRENT_CONFIG_VERSION}: \
+             run `aegis config init` to regenerate a fresh config file."
+        )),
+        std::cmp::Ordering::Less => Err(format!(
+            "config_version {version} is below the minimum supported version \
+             ({CURRENT_CONFIG_VERSION}); run `aegis config init` to regenerate your config."
+        )),
     }
 }
 
@@ -765,9 +775,31 @@ reason = "ephemeral test teardown"
     }
 
     #[test]
-    fn unsupported_config_version_is_rejected() {
+    fn config_version_newer_than_binary_emits_migration_error() {
         let err = toml::from_str::<AegisConfig>("config_version = 99").unwrap_err();
-        assert!(err.to_string().contains("unsupported config_version"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("requires a newer version of Aegis"),
+            "expected migration error, got: {msg}"
+        );
+        assert!(
+            msg.contains("aegis config init"),
+            "error must include downgrade instructions: {msg}"
+        );
+    }
+
+    #[test]
+    fn config_version_below_minimum_emits_legacy_error() {
+        let err = toml::from_str::<AegisConfig>("config_version = 0").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("below the minimum supported version"),
+            "expected legacy error, got: {msg}"
+        );
+        assert!(
+            msg.contains("aegis config init"),
+            "error must include regen instructions: {msg}"
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub(crate) async fn execute(snapshot_id: String) -> Result<RollbackTarget> {
 
     SnapshotRegistry::from_runtime_config(&SnapshotRegistryConfig::for_rollback_from_config(
         &config,
-    ))
+    )?)
     .rollback(&target.plugin, &target.snapshot_id)
     .await?;
 

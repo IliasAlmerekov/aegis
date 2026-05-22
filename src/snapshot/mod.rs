@@ -63,9 +63,21 @@ pub fn available_provider_names() -> &'static [&'static str] {
     BUILTIN_SNAPSHOT_PROVIDER_NAMES
 }
 
-fn default_snapshots_dir() -> PathBuf {
-    let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".aegis").join("snapshots")
+fn resolve_snapshots_dir() -> Result<PathBuf> {
+    let home = home_dir().ok_or_else(|| {
+        AegisError::Config(
+            "HOME is not set; cannot determine snapshot storage directory".to_string(),
+        )
+    })?;
+    Ok(home.join(".aegis").join("snapshots"))
+}
+
+/// Return the user's home directory, checking `HOME` first and falling back to
+/// `USERPROFILE` (Windows). Returns `None` when neither is set.
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 fn materialize_builtin_plugin(
@@ -168,31 +180,35 @@ pub struct SnapshotRegistryConfig {
     pub docker_scope: DockerScope,
 }
 
-impl From<&Config> for SnapshotRegistryConfig {
-    fn from(config: &Config) -> Self {
-        Self {
-            snapshot_policy: config.snapshot_policy,
-            auto_snapshot_git: config.auto_snapshot_git,
-            auto_snapshot_docker: config.auto_snapshot_docker,
-            auto_snapshot_postgres: config.auto_snapshot_postgres,
-            postgres_snapshot: config.postgres_snapshot.clone(),
-            auto_snapshot_mysql: config.auto_snapshot_mysql,
-            mysql_snapshot: config.mysql_snapshot.clone(),
-            auto_snapshot_supabase: config.auto_snapshot_supabase,
-            supabase_snapshot: config.supabase_snapshot.clone(),
-            auto_snapshot_sqlite: config.auto_snapshot_sqlite,
-            sqlite_snapshot_path: config.sqlite_snapshot_path.clone(),
-            snapshots_dir: default_snapshots_dir(),
-            docker_scope: config.docker_scope.clone(),
-        }
+fn registry_config_from_parts(config: &Config, snapshots_dir: PathBuf) -> SnapshotRegistryConfig {
+    SnapshotRegistryConfig {
+        snapshot_policy: config.snapshot_policy,
+        auto_snapshot_git: config.auto_snapshot_git,
+        auto_snapshot_docker: config.auto_snapshot_docker,
+        auto_snapshot_postgres: config.auto_snapshot_postgres,
+        postgres_snapshot: config.postgres_snapshot.clone(),
+        auto_snapshot_mysql: config.auto_snapshot_mysql,
+        mysql_snapshot: config.mysql_snapshot.clone(),
+        auto_snapshot_supabase: config.auto_snapshot_supabase,
+        supabase_snapshot: config.supabase_snapshot.clone(),
+        auto_snapshot_sqlite: config.auto_snapshot_sqlite,
+        sqlite_snapshot_path: config.sqlite_snapshot_path.clone(),
+        snapshots_dir,
+        docker_scope: config.docker_scope.clone(),
     }
 }
 
 impl SnapshotRegistryConfig {
+    /// Fallible constructor — propagates `HOME`-unset error.
+    pub fn try_new(config: &Config) -> Result<Self> {
+        let snapshots_dir = resolve_snapshots_dir()?;
+        Ok(registry_config_from_parts(config, snapshots_dir))
+    }
+
     /// Build a rollback runtime config that preserves effective provider
     /// settings while forcing all built-in providers to be available.
-    pub fn for_rollback_from_config(config: &Config) -> Self {
-        let mut runtime_config = Self::from(config);
+    pub fn for_rollback_from_config(config: &Config) -> Result<Self> {
+        let mut runtime_config = Self::try_new(config)?;
         runtime_config.snapshot_policy = crate::config::SnapshotPolicy::Full;
         runtime_config.auto_snapshot_git = true;
         runtime_config.auto_snapshot_docker = true;
@@ -200,20 +216,16 @@ impl SnapshotRegistryConfig {
         runtime_config.auto_snapshot_mysql = true;
         runtime_config.auto_snapshot_supabase = true;
         runtime_config.auto_snapshot_sqlite = true;
-        runtime_config
-    }
-}
-
-impl Default for SnapshotRegistry {
-    fn default() -> Self {
-        Self::from_config(&Config::default())
+        Ok(runtime_config)
     }
 }
 
 impl SnapshotRegistry {
-    /// Build a snapshot registry that honours the effective runtime config.
-    pub fn from_config(config: &Config) -> Self {
-        Self::from_runtime_config(&SnapshotRegistryConfig::from(config))
+    /// Fallible constructor that honours the effective runtime config.
+    pub fn try_from_config(config: &Config) -> Result<Self> {
+        Ok(Self::from_runtime_config(&SnapshotRegistryConfig::try_new(
+            config,
+        )?))
     }
 
     /// Build a snapshot registry from the eager runtime config.
@@ -260,9 +272,9 @@ impl SnapshotRegistry {
     /// This intentionally ignores per-plugin snapshot flags: operators must be
     /// able to restore previously recorded snapshots even if snapshot creation
     /// is disabled in the current config.
-    pub fn for_rollback() -> Self {
-        Self::from_runtime_config(&SnapshotRegistryConfig::for_rollback_from_config(
-            &Config::default(),
+    pub fn for_rollback() -> Result<Self> {
+        Ok(Self::from_runtime_config(
+            &SnapshotRegistryConfig::for_rollback_from_config(&Config::default())?,
         ))
     }
 
@@ -537,7 +549,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert!(registry.plugins.is_empty());
     }
@@ -550,7 +562,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let plugin_names: Vec<_> = registry
             .plugins
             .iter()
@@ -576,14 +588,14 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert_eq!(registry.configured_provider_names(), vec!["docker"]);
     }
 
     #[test]
     fn for_rollback_materializes_all_builtin_providers() {
-        let registry = SnapshotRegistry::for_rollback();
+        let registry = SnapshotRegistry::for_rollback().unwrap();
 
         assert_eq!(
             registry.configured_provider_names(),
@@ -596,7 +608,7 @@ mod tests {
     fn materialize_builtin_plugins_fails_closed_for_unknown_builtin_name() {
         let _ = materialize_builtin_plugins(
             &["git", "unknown-provider"],
-            &SnapshotRegistryConfig::from(&Config::default()),
+            &SnapshotRegistryConfig::try_new(&Config::default()).unwrap(),
         );
     }
 
@@ -613,7 +625,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         assert!(
             registry.plugins.is_empty(),
             "None policy must produce zero plugins"
@@ -631,7 +643,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
         assert_eq!(names, vec!["git"]);
     }
@@ -654,7 +666,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
 
         assert_eq!(names, vec!["postgres"]);
@@ -678,7 +690,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
 
         assert!(!names.contains(&"postgres"));
@@ -699,7 +711,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
         assert_eq!(
             names,
@@ -709,7 +721,7 @@ mod tests {
 
     #[test]
     fn for_rollback_includes_supabase_plugin() {
-        let registry = SnapshotRegistry::for_rollback();
+        let registry = SnapshotRegistry::for_rollback().unwrap();
 
         assert_eq!(
             registry.configured_provider_names(),
@@ -752,7 +764,7 @@ mod tests {
             ..Config::default()
         };
 
-        let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config);
+        let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config).unwrap();
 
         assert_eq!(
             runtime_config.snapshot_policy,
@@ -795,9 +807,40 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert_eq!(registry.configured_provider_names(), vec!["supabase"]);
+    }
+
+    #[test]
+    fn try_from_config_fails_when_home_is_unset() {
+        // SAFETY: this test mutates env vars. Remove both HOME and USERPROFILE
+        // (the Windows equivalent) so that home_dir() returns None on all
+        // platforms. Restore both before asserting so a failure doesn't poison
+        // the environment for parallel tests.
+        let saved_home = std::env::var_os("HOME");
+        let saved_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+        }
+
+        let result = SnapshotRegistryConfig::try_new(&Config::default());
+
+        unsafe {
+            if let Some(val) = saved_home {
+                std::env::set_var("HOME", val);
+            }
+            if let Some(val) = saved_userprofile {
+                std::env::set_var("USERPROFILE", val);
+            }
+        }
+
+        let err = result.expect_err("TryFrom must fail when HOME is unset");
+        assert!(
+            err.to_string().contains("HOME is not set"),
+            "error must name the missing variable: {err}"
+        );
     }
 
     #[tokio::test]
@@ -817,7 +860,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert_eq!(
             registry.applicable_plugins(temp_dir.path()).await,

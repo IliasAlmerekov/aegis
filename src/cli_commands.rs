@@ -206,6 +206,7 @@ pub(crate) fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {
         }
     };
     let home_dir = env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
     let report = validate_config_layers(&current_dir, home_dir.as_deref());

@@ -237,7 +237,9 @@ fn default_audit_path() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
+    let home = env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .unwrap_or_else(|| ".".into());
     PathBuf::from(home).join(".aegis").join("audit.jsonl")
 }
 

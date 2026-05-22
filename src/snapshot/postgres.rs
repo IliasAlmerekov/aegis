@@ -411,7 +411,9 @@ impl SnapshotPlugin for PostgresPlugin {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
@@ -425,6 +427,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn stub_bin(dir: &TempDir, name: &str, body: &str) -> PathBuf {
         let path = dir.path().join(name);
         fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
@@ -647,6 +650,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_uses_pg_dump_and_creates_dump_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -682,10 +686,12 @@ mod tests {
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
+    #[cfg(unix)]
     fn single_quote_for_shell(path: &Path) -> String {
         path.to_string_lossy().replace('\'', r"'\''")
     }
 
+    #[cfg(unix)]
     fn hold_file_open_for_writing(path: &Path) -> std::process::Child {
         let quoted_path = single_quote_for_shell(path);
         StdCommand::new("/bin/sh")
@@ -695,6 +701,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_retries_when_pg_dump_binary_is_temporarily_busy() {
         let temp_dir = TempDir::new().unwrap();
@@ -714,6 +721,7 @@ mod tests {
         assert!(snapshot_id.starts_with("v2\t"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_returns_stderr_when_pg_dump_fails() {
         let temp_dir = TempDir::new().unwrap();
@@ -739,6 +747,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_uses_pg_restore_with_expected_arguments() {
         let temp_dir = TempDir::new().unwrap();
@@ -774,6 +783,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_retries_when_pg_restore_binary_is_temporarily_busy() {
         let temp_dir = TempDir::new().unwrap();
@@ -818,6 +828,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_uses_snapshot_time_target_instead_of_current_config() {
         let temp_dir = TempDir::new().unwrap();
@@ -892,6 +903,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_returns_stderr_when_pg_restore_fails() {
         let temp_dir = TempDir::new().unwrap();
@@ -918,6 +930,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "current_thread")]
     async fn output_with_busy_retry_yields_to_tokio_runtime_during_sleep() {
         use std::sync::{
@@ -934,7 +947,6 @@ mod tests {
         // ETXTBSY from execve() as long as any process holds the file open for
         // writing, so this forces output_with_busy_retry to exhaust all retries.
         let _keep_open = std::fs::OpenOptions::new()
-            .write(true)
             .append(true)
             .open(&pg_dump)
             .unwrap();
@@ -980,6 +992,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_generates_distinct_ids_for_back_to_back_calls() {
         let temp_dir = TempDir::new().unwrap();

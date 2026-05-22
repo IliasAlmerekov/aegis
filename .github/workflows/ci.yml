@@ -163,6 +163,34 @@ jobs:
             benchmark-report.txt
             target/criterion
 
+  windows:
+    name: Windows (compile + unit tests)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: windows-cargo-
+
+      # Integration tests that spawn the aegis binary use Unix process
+      # semantics and are gated by #[cfg(unix)].  Running --lib exercises
+      # the #[cfg(windows)] code paths and proves the crate compiles cleanly
+      # on Windows without pulling in Unix-only syscalls.
+      - name: cargo test --lib
+        run: cargo test --lib --locked
+
   fuzz:
     name: Fuzzing (parser + scanner)
     runs-on: ubuntu-latest
