@@ -34,7 +34,8 @@ pub(crate) fn run_planned_shell_command(
     match plan.execution_disposition() {
         ExecutionDisposition::Execute => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
-            if let Err(err) = append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots) {
+            if let Err(err) = append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots)
+            {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
             }
