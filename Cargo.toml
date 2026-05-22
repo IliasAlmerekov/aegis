@@ -2,7 +2,7 @@
 name = "aegis"
 version = "0.5.3"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 description = "Terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations"
 repository = "https://github.com/IliasAlmerekov/aegis"
