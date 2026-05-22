@@ -277,8 +277,12 @@ fn run_codex_install_at_dir(codex_dir: &Path) -> Result<InstallOutcome, String> 
         &hooks_dir.join("aegis-pre-tool-use.sh"),
         &hooks_dir.join("aegis-session-start.sh"),
     )?;
+    let config_outcome = apply_codex_config_toml(&codex_dir.join("config.toml"))?;
 
-    Ok(combine_outcomes(hooks_outcome, hooks_json_outcome))
+    Ok(combine_outcomes(
+        combine_outcomes(hooks_outcome, hooks_json_outcome),
+        config_outcome,
+    ))
 }
 
 fn materialize_codex_hooks(codex_dir: &Path) -> Result<InstallOutcome, String> {
@@ -386,6 +390,96 @@ fn apply_codex_hooks_json(
 
     write_settings_atomically(hooks_json, &root)?;
     Ok(InstallOutcome::Installed)
+}
+
+fn apply_codex_config_toml(config_path: &Path) -> Result<InstallOutcome, String> {
+    let mut config = load_codex_config_toml(config_path)?;
+    let root = config
+        .as_table_mut()
+        .ok_or_else(|| "config.toml must contain a top-level TOML table".to_string())?;
+
+    let features = root
+        .entry("features".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "config.toml features must be a TOML table".to_string())?;
+
+    let removed_legacy_hooks_flag = features.remove("codex_hooks").is_some();
+    let hooks_was_enabled = features
+        .get("hooks")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false);
+
+    features.insert("hooks".to_string(), toml::Value::Boolean(true));
+
+    if hooks_was_enabled && !removed_legacy_hooks_flag {
+        return Ok(InstallOutcome::AlreadyPresent);
+    }
+
+    write_toml_atomically(config_path, &config)?;
+    Ok(InstallOutcome::Installed)
+}
+
+fn load_codex_config_toml(path: &Path) -> Result<toml::Value, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(toml::Value::Table(toml::map::Map::new()));
+        }
+        Err(err) => return Err(format!("failed to read {}: {err}", path.display())),
+    };
+
+    if raw.trim().is_empty() {
+        return Ok(toml::Value::Table(toml::map::Map::new()));
+    }
+
+    let value: toml::Value = toml::from_str(&raw)
+        .map_err(|err| format!("failed to parse {} as TOML: {err}", path.display()))?;
+
+    if value.is_table() {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{} must contain a top-level TOML table",
+            path.display()
+        ))
+    }
+}
+
+fn write_toml_atomically(path: &Path, value: &toml::Value) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} does not have a parent directory", path.display()))?;
+
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+
+    let rendered = toml::to_string_pretty(value)
+        .map_err(|err| format!("failed to serialize TOML for {}: {err}", path.display()))?;
+
+    let temp_path = temporary_settings_path(parent);
+    {
+        let mut temp = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .map_err(|err| {
+                format!(
+                    "failed to create temporary file {}: {err}",
+                    temp_path.display()
+                )
+            })?;
+
+        temp.write_all(rendered.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", temp_path.display()))?;
+        temp.sync_all()
+            .map_err(|err| format!("failed to flush {}: {err}", temp_path.display()))?;
+    }
+
+    fs::rename(&temp_path, path)
+        .map_err(|err| format!("failed to replace {}: {err}", path.display()))?;
+
+    Ok(())
 }
 
 fn executable_content_is_current(existing: &str, mode: u32, expected_content: &str) -> bool {
@@ -1128,6 +1222,58 @@ mod tests {
             .as_array()
             .expect("PreToolUse array");
         assert_eq!(pre_tool_use_entries.len(), 1);
+    }
+
+    #[test]
+    fn codex_install_creates_supported_config_toml() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+
+        let outcome = run_codex_install_at_dir(&codex_dir).expect("install");
+
+        assert!(matches!(outcome, InstallOutcome::Installed));
+        let config_path = codex_dir.join("config.toml");
+        let config = fs::read_to_string(&config_path).expect("read config.toml");
+        let parsed: toml::Value = toml::from_str(&config).expect("config.toml parses");
+        assert_eq!(parsed["features"]["hooks"].as_bool(), Some(true));
+        assert!(parsed["features"].get("codex_hooks").is_none());
+        assert!(parsed.get("profiles").is_none());
+    }
+
+    #[test]
+    fn codex_install_repairs_legacy_config_toml_without_dropping_unrelated_settings() {
+        let home = TempDir::new().expect("home dir");
+        let codex_dir = home.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        fs::write(
+            codex_dir.join("config.toml"),
+            r#"
+approval_policy = "on-request"
+
+[features]
+multi_agent = true
+codex_hooks = true
+
+[profiles.strict]
+sandbox_mode = "read-only"
+"#,
+        )
+        .expect("write legacy config.toml");
+
+        let outcome = run_codex_install_at_dir(&codex_dir).expect("install");
+
+        assert!(matches!(outcome, InstallOutcome::Installed));
+        let config = fs::read_to_string(codex_dir.join("config.toml")).expect("read config.toml");
+        let parsed: toml::Value = toml::from_str(&config).expect("config.toml parses");
+        assert_eq!(parsed["approval_policy"].as_str(), Some("on-request"));
+        assert_eq!(parsed["features"]["multi_agent"].as_bool(), Some(true));
+        assert_eq!(parsed["features"]["hooks"].as_bool(), Some(true));
+        assert!(parsed["features"].get("codex_hooks").is_none());
+        assert_eq!(
+            parsed["profiles"]["strict"]["sandbox_mode"].as_str(),
+            Some("read-only")
+        );
     }
 
     #[test]
