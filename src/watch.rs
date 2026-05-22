@@ -678,9 +678,13 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
     let exit_code = match child.wait().await {
         Ok(status) => status.code().unwrap_or_else(|| {
             #[cfg(unix)]
-            { 128 + status.signal().unwrap_or(0) }
+            {
+                128 + status.signal().unwrap_or(0)
+            }
             #[cfg(not(unix))]
-            { 128 }
+            {
+                128
+            }
         }),
         Err(_) => 4,
     };
