@@ -273,22 +273,24 @@ fn watch_exits_zero_on_clean_eof() {
 }
 
 #[test]
-fn malformed_toggle_parent_does_not_abort_watch_mode() {
+fn malformed_audit_dir_emits_protocol_error_and_does_not_execute_command() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
+    // Place a file at ~/.aegis so create_dir_all(~/.aegis) fails — audit write
+    // is impossible. Aegis must fail-closed: emit a protocol-level error and
+    // not execute the command (ROADMAP 0.2 acceptance criterion).
     fs::write(home.path().join(".aegis"), "not a directory").unwrap();
 
     let output = aegis_watch_in(home.path(), cwd.path(), b"{\"cmd\":\"echo hi\"}\n");
 
-    assert_eq!(output.status.code(), Some(0));
-
     let frames = parse_frames(&output.stdout);
-    let result = frames
+    let error_frame = frames
         .iter()
-        .find(|f| f["type"] == "result")
-        .expect("watch mode should still complete command execution");
-    assert_eq!(result["decision"], "approved");
-    assert_eq!(result["exit_code"], 0);
+        .find(|f| f["type"] == "error")
+        .expect("broken audit path must emit a protocol-level error frame");
+    assert_eq!(error_frame["exit_code"], 4);
+    assert!(frames.iter().all(|f| f["type"] != "result"),
+        "no result frame should be emitted when audit write fails");
 }
 
 #[test]
