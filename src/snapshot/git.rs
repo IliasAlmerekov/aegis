@@ -25,17 +25,18 @@ impl SnapshotPlugin for GitPlugin {
         "git"
     }
 
-    fn is_applicable(&self, cwd: &Path) -> bool {
+    async fn is_applicable(&self, cwd: &Path) -> bool {
         // `git rev-parse --git-dir` is the authoritative way to detect a repo.
         // It handles: regular repos, worktrees, submodules, .git file pointers,
         // and any subdirectory within a repo — all cases where `cwd/.git` alone
         // would give a false negative.
-        std::process::Command::new("git")
+        Command::new("git")
             .args(["rev-parse", "--git-dir"])
             .current_dir(cwd)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
+            .await
             .map(|s| s.success())
             .unwrap_or(false)
     }
@@ -232,14 +233,14 @@ mod tests {
     #[tokio::test]
     async fn is_applicable_outside_repo() {
         let dir = TempDir::new().unwrap();
-        assert!(!GitPlugin.is_applicable(dir.path()));
+        assert!(!GitPlugin.is_applicable(dir.path()).await);
     }
 
     #[tokio::test]
     async fn is_applicable_at_repo_root() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path()).await;
-        assert!(GitPlugin.is_applicable(dir.path()));
+        assert!(GitPlugin.is_applicable(dir.path()).await);
     }
 
     #[tokio::test]
@@ -249,7 +250,7 @@ mod tests {
         let sub = dir.path().join("deep/nested/dir");
         fs::create_dir_all(&sub).unwrap();
         // Should detect the repo even though there is no .git in this subdirectory.
-        assert!(GitPlugin.is_applicable(&sub));
+        assert!(GitPlugin.is_applicable(&sub).await);
     }
 
     #[tokio::test]
@@ -443,7 +444,7 @@ mod tests {
             return;
         }
         assert!(
-            GitPlugin.is_applicable(wt_dir.path()),
+            GitPlugin.is_applicable(wt_dir.path()).await,
             "worktree should be detected as a git repo"
         );
     }

@@ -131,19 +131,19 @@ impl SupabasePlugin {
         }
     }
 
-    fn binary_available(binary: &str) -> bool {
+    async fn binary_available(binary: &str) -> bool {
         let binary_path = Path::new(binary);
         if binary_path.components().count() > 1 || binary_path.is_absolute() {
-            return Self::is_runnable_file(binary_path);
+            return Self::is_runnable_file_async(binary_path).await;
         }
 
         let Some(path_env) = env::var_os("PATH") else {
             return false;
         };
 
-        env::split_paths(&path_env).any(|path_dir| {
+        for path_dir in env::split_paths(&path_env) {
             let candidate = path_dir.join(binary);
-            if Self::is_runnable_file(&candidate) {
+            if Self::is_runnable_file_async(&candidate).await {
                 return true;
             }
 
@@ -161,21 +161,25 @@ impl SupabasePlugin {
                     }
 
                     let candidate = path_dir.join(format!("{binary}{ext}"));
-                    if Self::is_runnable_file(&candidate) {
+                    if Self::is_runnable_file_async(&candidate).await {
                         return true;
                     }
                 }
             }
+        }
 
-            false
-        })
+        false
     }
 
-    fn is_runnable_file(path: &Path) -> bool {
-        let Ok(metadata) = fs::metadata(path) else {
+    async fn is_runnable_file_async(path: &Path) -> bool {
+        let Ok(metadata) = tokio::fs::metadata(path).await else {
             return false;
         };
 
+        Self::metadata_is_runnable_file(metadata)
+    }
+
+    fn metadata_is_runnable_file(metadata: std::fs::Metadata) -> bool {
         if !metadata.is_file() {
             return false;
         }
@@ -286,18 +290,18 @@ impl SupabasePlugin {
         Self::decode_path(encoded_path, "manifest path")
     }
 
-    fn validate_preflight(&self) -> Result<()> {
+    async fn validate_preflight(&self) -> Result<()> {
         if self.config.db.database.trim().is_empty() {
             return Err(AegisError::Snapshot(
                 "supabase_snapshot.db.database is required".to_string(),
             ));
         }
-        if !Self::binary_available(&self.pg_dump_bin) {
+        if !Self::binary_available(&self.pg_dump_bin).await {
             return Err(AegisError::Snapshot(
                 "pg_dump is required for supabase snapshots".to_string(),
             ));
         }
-        if !Self::binary_available(&self.pg_restore_bin) {
+        if !Self::binary_available(&self.pg_restore_bin).await {
             return Err(AegisError::Snapshot(
                 "pg_restore is required for strict supabase rollback".to_string(),
             ));
@@ -830,14 +834,14 @@ impl SnapshotPlugin for SupabasePlugin {
         "supabase"
     }
 
-    fn is_applicable(&self, _cwd: &Path) -> bool {
+    async fn is_applicable(&self, _cwd: &Path) -> bool {
         !self.config.db.database.trim().is_empty()
-            && Self::binary_available(&self.pg_dump_bin)
-            && Self::binary_available(&self.pg_restore_bin)
+            && Self::binary_available(&self.pg_dump_bin).await
+            && Self::binary_available(&self.pg_restore_bin).await
     }
 
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
-        self.validate_preflight()?;
+        self.validate_preflight().await?;
 
         let bundle_dir = self.create_bundle_dir()?;
         let artifacts_dir = bundle_dir.join("artifacts");
@@ -1084,8 +1088,8 @@ mod tests {
         assert!(!manifest.recompute_strict_eligibility().unwrap().allowed);
     }
 
-    #[test]
-    fn is_applicable_requires_explicit_config_and_both_tools() {
+    #[tokio::test]
+    async fn is_applicable_requires_explicit_config_and_both_tools() {
         let temp_dir = TempDir::new().unwrap();
         let pg_dump = stub_bin(&temp_dir, "pg_dump", "exit 0");
         let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
@@ -1096,7 +1100,7 @@ mod tests {
         plugin.pg_dump_bin = pg_dump.display().to_string();
         plugin.pg_restore_bin = pg_restore.display().to_string();
 
-        assert!(plugin.is_applicable(temp_dir.path()));
+        assert!(plugin.is_applicable(temp_dir.path()).await);
 
         let mut missing_db = SupabasePlugin::new(
             SupabaseSnapshotConfig::default(),
@@ -1104,7 +1108,7 @@ mod tests {
         );
         missing_db.pg_dump_bin = pg_dump.display().to_string();
         missing_db.pg_restore_bin = pg_restore.display().to_string();
-        assert!(!missing_db.is_applicable(temp_dir.path()));
+        assert!(!missing_db.is_applicable(temp_dir.path()).await);
 
         let mut missing_restore =
             SupabasePlugin::new(config, temp_dir.path().join("snapshots-missing-restore"));
@@ -1114,7 +1118,7 @@ mod tests {
             .join("missing-pg_restore")
             .display()
             .to_string();
-        assert!(!missing_restore.is_applicable(temp_dir.path()));
+        assert!(!missing_restore.is_applicable(temp_dir.path()).await);
     }
 
     #[tokio::test]

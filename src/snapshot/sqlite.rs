@@ -154,15 +154,26 @@ impl SqlitePlugin {
     }
 }
 
+async fn path_points_to_file(path: &Path) -> bool {
+    tokio::fs::metadata(path)
+        .await
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false)
+}
+
 #[async_trait]
 impl SnapshotPlugin for SqlitePlugin {
     fn name(&self) -> &'static str {
         "sqlite"
     }
 
-    fn is_applicable(&self, cwd: &Path) -> bool {
+    async fn is_applicable(&self, cwd: &Path) -> bool {
+        if self.db_path.as_os_str().is_empty() {
+            return false;
+        }
+
         let db_path = self.resolve_db_path(cwd);
-        !self.db_path.as_os_str().is_empty() && db_path.is_file()
+        path_points_to_file(&db_path).await
     }
 
     async fn snapshot(&self, cwd: &Path, _cmd: &str) -> Result<String> {
@@ -236,7 +247,7 @@ mod tests {
 
         let plugin = SqlitePlugin::new(db_path, temp_dir.path().join("snaps"));
 
-        assert!(plugin.is_applicable(temp_dir.path()));
+        assert!(plugin.is_applicable(temp_dir.path()).await);
     }
 
     #[tokio::test]
@@ -247,7 +258,7 @@ mod tests {
             temp_dir.path().join("snaps"),
         );
 
-        assert!(!plugin.is_applicable(temp_dir.path()));
+        assert!(!plugin.is_applicable(temp_dir.path()).await);
     }
 
     #[tokio::test]
@@ -258,7 +269,7 @@ mod tests {
 
         let plugin = SqlitePlugin::new(db_dir, temp_dir.path().join("snaps"));
 
-        assert!(!plugin.is_applicable(temp_dir.path()));
+        assert!(!plugin.is_applicable(temp_dir.path()).await);
     }
 
     #[tokio::test]

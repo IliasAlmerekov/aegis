@@ -151,7 +151,7 @@ async fn is_applicable_true_when_container_running() {
     start_alpine(&name, &[]).await;
 
     assert!(
-        DockerPlugin::new().is_applicable(Path::new("/")),
+        DockerPlugin::new().is_applicable(Path::new("/")).await,
         "is_applicable must return true when a container is running"
     );
 }

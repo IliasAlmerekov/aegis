@@ -441,7 +441,7 @@ fn make_assessment(risk: RiskLevel) -> Assessment {
 }
 
 fn test_handle() -> Handle {
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap();
