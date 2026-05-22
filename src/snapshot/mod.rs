@@ -223,7 +223,9 @@ impl SnapshotRegistryConfig {
 impl SnapshotRegistry {
     /// Fallible constructor that honours the effective runtime config.
     pub fn try_from_config(config: &Config) -> Result<Self> {
-        Ok(Self::from_runtime_config(&SnapshotRegistryConfig::try_new(config)?))
+        Ok(Self::from_runtime_config(&SnapshotRegistryConfig::try_new(
+            config,
+        )?))
     }
 
     /// Build a snapshot registry from the eager runtime config.
