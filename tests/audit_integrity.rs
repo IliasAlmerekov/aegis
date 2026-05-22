@@ -172,9 +172,23 @@ integrity_mode = "ChainSha256"
 
 #[test]
 fn verify_integrity_rejects_legacy_log_without_chain_data() {
+    // Simulate a legacy log written with integrity_mode = "Off" (no chain
+    // hashes). Verification must fail — not silently pass — so that an
+    // operator restoring from backup can detect an unchained log.
     let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[audit]
+integrity_mode = "Off"
+"#,
+    )
+    .unwrap();
 
     let output = base_command(home.path())
+        .current_dir(workspace.path())
         .args(["-c", "printf one"])
         .output()
         .unwrap();

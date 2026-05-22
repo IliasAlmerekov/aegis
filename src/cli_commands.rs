@@ -122,7 +122,8 @@ pub(crate) fn handle_toggle_on_command() -> i32 {
     }
 
     if let Err(err) = toggle::append_toggle_audit_entry("aegis on") {
-        eprintln!("warning: toggle state changed, but audit entry could not be recorded: {err}");
+        eprintln!("error: toggle state changed, but audit entry could not be recorded: {err}");
+        return EXIT_INTERNAL;
     }
 
     println!("Aegis is enabled.");
@@ -136,7 +137,8 @@ pub(crate) fn handle_toggle_off_command() -> i32 {
     }
 
     if let Err(err) = toggle::append_toggle_audit_entry("aegis off") {
-        eprintln!("warning: toggle state changed, but audit entry could not be recorded: {err}");
+        eprintln!("error: toggle state changed, but audit entry could not be recorded: {err}");
+        return EXIT_INTERNAL;
     }
 
     println!("Aegis is disabled until `aegis on`.");

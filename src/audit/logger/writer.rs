@@ -145,7 +145,7 @@ impl AuditLogger {
         Self {
             path: path.into(),
             rotation: None,
-            integrity_mode: AuditIntegrityMode::Off,
+            integrity_mode: AuditIntegrityMode::ChainSha256,
         }
     }
 
@@ -177,6 +177,7 @@ impl AuditLogger {
         &self.path
     }
 
+    #[must_use = "audit write failures must be handled — ignoring them silently defeats tamper-detection"]
     pub fn append(&self, entry: AuditEntry) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             // The lock file lives inside that directory, so we must ensure the directory

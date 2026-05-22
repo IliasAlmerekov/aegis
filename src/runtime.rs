@@ -61,7 +61,6 @@ pub struct AuditWriteOptions<'a> {
     pub allowlist_match: Option<&'a AllowlistMatch>,
     pub allowlist_effective: bool,
     pub ci_detected: bool,
-    pub verbose: bool,
 }
 
 impl RuntimeContext {
@@ -164,14 +163,9 @@ impl RuntimeContext {
         snapshots: &[SnapshotRecord],
         explanation: &CommandExplanation,
         options: AuditWriteOptions<'_>,
-    ) {
+    ) -> Result<(), AegisError> {
         let entry = self.build_audit_entry(assessment, decision, snapshots, explanation, options);
-
-        if let Err(err) = self.audit_logger.append(entry)
-            && options.verbose
-        {
-            eprintln!("warning: failed to append audit log entry: {err}");
-        }
+        self.audit_logger.append(entry)
     }
 
     /// Append a watch-mode audit entry with frame correlation fields.
@@ -191,8 +185,7 @@ impl RuntimeContext {
         watch_cwd: Option<String>,
         watch_id: Option<String>,
         ci_detected: bool,
-        verbose: bool,
-    ) {
+    ) -> Result<(), AegisError> {
         let entry = self
             .build_audit_entry(
                 assessment,
@@ -203,16 +196,11 @@ impl RuntimeContext {
                     allowlist_match,
                     allowlist_effective,
                     ci_detected,
-                    verbose: false,
                 },
             )
             .with_watch_context(watch_source, watch_cwd, watch_id);
 
-        if let Err(err) = self.audit_logger.append(entry)
-            && verbose
-        {
-            eprintln!("warning: failed to append watch audit log entry: {err}");
-        }
+        self.audit_logger.append(entry)
     }
 
     fn build_audit_entry(
@@ -731,7 +719,6 @@ expires_at = "2030-01-01T00:00:00Z"
                 allowlist_match: None,
                 allowlist_effective: false,
                 ci_detected: false,
-                verbose: false,
             },
         );
 
@@ -807,7 +794,6 @@ expires_at = "2030-01-01T00:00:00Z"
                 allowlist_match: allowlist_match.as_ref(),
                 allowlist_effective: true,
                 ci_detected: false,
-                verbose: false,
             },
         );
 

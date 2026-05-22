@@ -137,24 +137,34 @@ fn status_does_not_claim_ci_override_when_toggle_is_enabled() {
 
 #[test]
 fn off_still_disables_when_config_is_invalid() {
+    // Toggle succeeds (disabled flag is written) but audit append fails when
+    // the config is unparseable. Exit code must be non-zero — audit is a
+    // security artifact and write failures are hard errors.
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     write_invalid_config(&cwd);
 
     let output = run_aegis_in(&home, &cwd, &["off"]);
 
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "audit write failure must exit non-zero"
+    );
     assert!(home.path().join(".aegis").join("disabled").exists());
 
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("warning: toggle state changed, but audit entry could not be recorded"),
-        "audit failures should be reported without rolling back the toggle; stderr:\n{stderr}"
+        stderr.contains("audit entry could not be recorded"),
+        "audit failure must be reported to stderr; stderr:\n{stderr}"
     );
 }
 
 #[test]
 fn on_still_enables_when_config_is_invalid() {
+    // Toggle succeeds (disabled flag is removed) but audit append fails when
+    // the config is unparseable. Exit code must be non-zero — audit is a
+    // security artifact and write failures are hard errors.
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     write_invalid_config(&cwd);
@@ -167,13 +177,17 @@ fn on_still_enables_when_config_is_invalid() {
 
     let output = run_aegis_in(&home, &cwd, &["on"]);
 
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "audit write failure must exit non-zero"
+    );
     assert!(!home.path().join(".aegis").join("disabled").exists());
 
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("warning: toggle state changed, but audit entry could not be recorded"),
-        "audit failures should be reported without rolling back the toggle; stderr:\n{stderr}"
+        stderr.contains("audit entry could not be recorded"),
+        "audit failure must be reported to stderr; stderr:\n{stderr}"
     );
 }
 

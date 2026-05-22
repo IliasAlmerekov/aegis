@@ -95,7 +95,7 @@ rotation_enabled = false
 max_file_size_bytes = 10485760
 retention_files = 5
 compress_rotated = true
-integrity_mode = "Off" # Off = no chain hashes, ChainSha256 = tamper-evident chained SHA-256.
+integrity_mode = "ChainSha256" # Off = no chain hashes, ChainSha256 = tamper-evident chained SHA-256.
 "#;
 
 type Result<T> = std::result::Result<T, AegisError>;
@@ -139,8 +139,8 @@ pub enum CiPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum AuditIntegrityMode {
-    #[default]
     Off,
+    #[default]
     ChainSha256,
 }
 
@@ -292,7 +292,7 @@ impl Default for AuditConfig {
             max_file_size_bytes: 10 * 1024 * 1024,
             retention_files: 5,
             compress_rotated: true,
-            integrity_mode: AuditIntegrityMode::Off,
+            integrity_mode: AuditIntegrityMode::ChainSha256,
         }
     }
 }

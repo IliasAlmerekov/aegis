@@ -5,6 +5,7 @@ use super::*;
 use crate::error::AegisError;
 
 impl AuditLogger {
+    #[must_use = "integrity check result must be inspected"]
     pub fn verify_integrity(&self) -> Result<AuditIntegrityReport> {
         let entries = self.read_all()?;
         Ok(verify_integrity_entries(&entries))
