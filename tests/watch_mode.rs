@@ -289,8 +289,10 @@ fn malformed_audit_dir_emits_protocol_error_and_does_not_execute_command() {
         .find(|f| f["type"] == "error")
         .expect("broken audit path must emit a protocol-level error frame");
     assert_eq!(error_frame["exit_code"], 4);
-    assert!(frames.iter().all(|f| f["type"] != "result"),
-        "no result frame should be emitted when audit write fails");
+    assert!(
+        frames.iter().all(|f| f["type"] != "result"),
+        "no result frame should be emitted when audit write fails"
+    );
 }
 
 #[test]
