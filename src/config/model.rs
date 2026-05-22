@@ -307,6 +307,7 @@ impl AegisConfig {
     pub fn load() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
 
@@ -316,6 +317,7 @@ impl AegisConfig {
     pub fn load_inspection() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
 

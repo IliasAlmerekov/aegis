@@ -109,6 +109,7 @@ fn home_dir() -> Result<PathBuf> {
 
 fn home_dir_optional() -> Option<PathBuf> {
     env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
 }

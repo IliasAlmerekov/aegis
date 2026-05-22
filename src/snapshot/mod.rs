@@ -64,12 +64,20 @@ pub fn available_provider_names() -> &'static [&'static str] {
 }
 
 fn resolve_snapshots_dir() -> Result<PathBuf> {
-    let home = env::var_os("HOME").ok_or_else(|| {
+    let home = home_dir().ok_or_else(|| {
         AegisError::Config(
             "HOME is not set; cannot determine snapshot storage directory".to_string(),
         )
     })?;
-    Ok(PathBuf::from(home).join(".aegis").join("snapshots"))
+    Ok(home.join(".aegis").join("snapshots"))
+}
+
+/// Return the user's home directory, checking `HOME` first and falling back to
+/// `USERPROFILE` (Windows). Returns `None` when neither is set.
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 fn materialize_builtin_plugin(
@@ -820,17 +828,26 @@ mod tests {
 
     #[test]
     fn try_from_config_fails_when_home_is_unset() {
-        // SAFETY: this test mutates env vars. Isolate with a temp HOME removal.
-        // We use a scoped guard pattern: save, remove, test, restore.
+        // SAFETY: this test mutates env vars. Remove both HOME and USERPROFILE
+        // (the Windows equivalent) so that home_dir() returns None on all
+        // platforms. Restore both before asserting so a failure doesn't poison
+        // the environment for parallel tests.
         let saved_home = std::env::var_os("HOME");
-        // SAFETY: single-threaded test; no other threads touch HOME here.
-        unsafe { std::env::remove_var("HOME") };
+        let saved_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+        }
 
         let result = SnapshotRegistryConfig::try_new(&Config::default());
 
-        // Restore before any assert so a failure doesn't poison the env.
-        if let Some(val) = saved_home {
-            unsafe { std::env::set_var("HOME", val) }
+        unsafe {
+            if let Some(val) = saved_home {
+                std::env::set_var("HOME", val);
+            }
+            if let Some(val) = saved_userprofile {
+                std::env::set_var("USERPROFILE", val);
+            }
         }
 
         let err = result.expect_err("TryFrom must fail when HOME is unset");
