@@ -1,5 +1,4 @@
 // Parser: tokenizer, heredoc, inline scripts
-#![allow(dead_code)]
 
 mod embedded_scripts;
 mod nested_shells;
