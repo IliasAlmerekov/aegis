@@ -63,9 +63,13 @@ pub fn available_provider_names() -> &'static [&'static str] {
     BUILTIN_SNAPSHOT_PROVIDER_NAMES
 }
 
-fn default_snapshots_dir() -> PathBuf {
-    let home = env::var_os("HOME").unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".aegis").join("snapshots")
+fn resolve_snapshots_dir() -> Result<PathBuf> {
+    let home = env::var_os("HOME").ok_or_else(|| {
+        AegisError::Config(
+            "HOME is not set; cannot determine snapshot storage directory".to_string(),
+        )
+    })?;
+    Ok(PathBuf::from(home).join(".aegis").join("snapshots"))
 }
 
 fn materialize_builtin_plugin(
@@ -168,23 +172,37 @@ pub struct SnapshotRegistryConfig {
     pub docker_scope: DockerScope,
 }
 
+fn registry_config_from_parts(config: &Config, snapshots_dir: PathBuf) -> SnapshotRegistryConfig {
+    SnapshotRegistryConfig {
+        snapshot_policy: config.snapshot_policy,
+        auto_snapshot_git: config.auto_snapshot_git,
+        auto_snapshot_docker: config.auto_snapshot_docker,
+        auto_snapshot_postgres: config.auto_snapshot_postgres,
+        postgres_snapshot: config.postgres_snapshot.clone(),
+        auto_snapshot_mysql: config.auto_snapshot_mysql,
+        mysql_snapshot: config.mysql_snapshot.clone(),
+        auto_snapshot_supabase: config.auto_snapshot_supabase,
+        supabase_snapshot: config.supabase_snapshot.clone(),
+        auto_snapshot_sqlite: config.auto_snapshot_sqlite,
+        sqlite_snapshot_path: config.sqlite_snapshot_path.clone(),
+        snapshots_dir,
+        docker_scope: config.docker_scope.clone(),
+    }
+}
+
 impl From<&Config> for SnapshotRegistryConfig {
     fn from(config: &Config) -> Self {
-        Self {
-            snapshot_policy: config.snapshot_policy,
-            auto_snapshot_git: config.auto_snapshot_git,
-            auto_snapshot_docker: config.auto_snapshot_docker,
-            auto_snapshot_postgres: config.auto_snapshot_postgres,
-            postgres_snapshot: config.postgres_snapshot.clone(),
-            auto_snapshot_mysql: config.auto_snapshot_mysql,
-            mysql_snapshot: config.mysql_snapshot.clone(),
-            auto_snapshot_supabase: config.auto_snapshot_supabase,
-            supabase_snapshot: config.supabase_snapshot.clone(),
-            auto_snapshot_sqlite: config.auto_snapshot_sqlite,
-            sqlite_snapshot_path: config.sqlite_snapshot_path.clone(),
-            snapshots_dir: default_snapshots_dir(),
-            docker_scope: config.docker_scope.clone(),
-        }
+        let snapshots_dir = resolve_snapshots_dir()
+            .expect("HOME is not set; snapshot storage cannot be configured");
+        registry_config_from_parts(config, snapshots_dir)
+    }
+}
+
+impl SnapshotRegistryConfig {
+    /// Fallible constructor for production use — propagates `HOME`-unset error.
+    pub fn try_new(config: &Config) -> Result<Self> {
+        let snapshots_dir = resolve_snapshots_dir()?;
+        Ok(registry_config_from_parts(config, snapshots_dir))
     }
 }
 
@@ -798,6 +816,28 @@ mod tests {
         let registry = SnapshotRegistry::from_config(&config);
 
         assert_eq!(registry.configured_provider_names(), vec!["supabase"]);
+    }
+
+    #[test]
+    fn try_from_config_fails_when_home_is_unset() {
+        // SAFETY: this test mutates env vars. Isolate with a temp HOME removal.
+        // We use a scoped guard pattern: save, remove, test, restore.
+        let saved_home = std::env::var_os("HOME");
+        // SAFETY: single-threaded test; no other threads touch HOME here.
+        unsafe { std::env::remove_var("HOME") };
+
+        let result = SnapshotRegistryConfig::try_new(&Config::default());
+
+        // Restore before any assert so a failure doesn't poison the env.
+        if let Some(val) = saved_home {
+            unsafe { std::env::set_var("HOME", val) }
+        }
+
+        let err = result.expect_err("TryFrom must fail when HOME is unset");
+        assert!(
+            err.to_string().contains("HOME is not set"),
+            "error must name the missing variable: {err}"
+        );
     }
 
     #[tokio::test]

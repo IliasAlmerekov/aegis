@@ -1117,7 +1117,6 @@ mod tests {
         // ETXTBSY from execve() as long as any process holds the file open for
         // writing, so this forces spawn_with_busy_retry to exhaust all retries.
         let _keep_open = std::fs::OpenOptions::new()
-            .write(true)
             .append(true)
             .open(&mysqldump)
             .unwrap();
