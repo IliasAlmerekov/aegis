@@ -2,10 +2,13 @@ use crate::interceptor::nested::{RecursiveScanReport, recursive_scan_targets};
 use crate::interceptor::parser::{ParsedCommand, logical_segments};
 
 pub(super) fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> RecursiveScanReport {
+    // Heredoc / process-substitution / eval detection requires the raw string.
     if requires_recursive_scan(cmd) {
         return recursive_scan_targets(cmd);
     }
 
+    // Primary target is the raw string until Phase 1.3 converts patterns to PrefixRules.
+    // The normalized form will replace this once token-level matching is in place.
     let mut targets = vec![cmd.to_string()];
 
     for segment in logical_segments(cmd) {

@@ -128,7 +128,7 @@ fn log_assessment(assessment: &Assessment, allowlist_match: Option<&AllowlistMat
     eprintln!(
         "scan: risk={:?}, executable={}, matched={}, source={}",
         assessment.risk,
-        assessment.command.executable.as_deref().unwrap_or("<none>"),
+        assessment.command.program.as_deref().unwrap_or("<none>"),
         assessment.matched.len(),
         source_label,
     );

