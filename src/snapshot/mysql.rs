@@ -515,7 +515,9 @@ impl SnapshotPlugin for MysqlPlugin {
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::process::Command as StdCommand;
     use tempfile::TempDir;
 
@@ -529,6 +531,7 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn stub_bin(dir: &TempDir, name: &str, body: &str) -> PathBuf {
         let path = dir.path().join(name);
         fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}\n")).unwrap();
@@ -538,10 +541,12 @@ mod tests {
         path
     }
 
+    #[cfg(unix)]
     fn single_quote_for_shell(path: &Path) -> String {
         path.to_string_lossy().replace('\'', r"'\''")
     }
 
+    #[cfg(unix)]
     fn hold_file_open_for_writing(path: &Path) -> std::process::Child {
         let quoted_path = single_quote_for_shell(path);
         StdCommand::new("/bin/sh")
@@ -768,6 +773,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_uses_mysqldump_and_creates_dump_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -807,6 +813,7 @@ mod tests {
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_retries_when_mysqldump_binary_is_temporarily_busy() {
         let temp_dir = TempDir::new().unwrap();
@@ -826,6 +833,7 @@ mod tests {
         assert!(snapshot_id.starts_with("v2\t"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_returns_stderr_when_mysqldump_fails() {
         let temp_dir = TempDir::new().unwrap();
@@ -875,6 +883,7 @@ mod tests {
         assert!(fs::read_dir(&snapshots_dir).unwrap().next().is_none());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_drains_large_stderr_without_deadlocking() {
         let temp_dir = TempDir::new().unwrap();
@@ -896,6 +905,7 @@ mod tests {
         assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_uses_mysql_with_expected_arguments_and_dump_on_stdin() {
         let temp_dir = TempDir::new().unwrap();
@@ -927,6 +937,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_retries_when_mysql_binary_is_temporarily_busy() {
         let temp_dir = TempDir::new().unwrap();
@@ -971,6 +982,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_uses_snapshot_time_target_and_dump_path_instead_of_current_config() {
         let temp_dir = TempDir::new().unwrap();
@@ -1038,6 +1050,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&stdin_path).unwrap(), "dump-data");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_returns_stderr_when_mysql_fails() {
         let temp_dir = TempDir::new().unwrap();
@@ -1064,6 +1077,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_errors_when_mysql_stdin_streaming_fails() {
         let temp_dir = TempDir::new().unwrap();
@@ -1083,6 +1097,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn rollback_drains_large_stderr_without_deadlocking() {
         let temp_dir = TempDir::new().unwrap();
@@ -1101,6 +1116,7 @@ mod tests {
         plugin.rollback(&snapshot_id).await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "current_thread")]
     async fn spawn_with_busy_retry_yields_to_tokio_runtime_during_sleep() {
         use std::sync::{
@@ -1161,6 +1177,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn snapshot_generates_distinct_ids_for_back_to_back_calls() {
         let temp_dir = TempDir::new().unwrap();

@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(not(windows))]
+use std::path::PathBuf;
 #[cfg(not(windows))]
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
