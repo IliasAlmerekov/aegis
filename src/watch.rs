@@ -13,7 +13,7 @@ use crate::planning::{
     CwdState, ExecutionDisposition, InterceptionPlan, PlanningOutcome, PreparedPlanner,
     SetupFailureKind, SetupFailurePlan, prepare_and_plan,
 };
-use crate::runtime::RuntimeContext;
+use crate::runtime::{RuntimeContext, WatchAuditContext};
 use crate::ui::confirm::{
     show_block_via_tty, show_confirmation_via_tty, show_policy_block_via_tty,
 };
@@ -461,12 +461,14 @@ async fn run_watch_plan(
         runtime_decision,
         &snapshots,
         plan.explanation(),
-        plan.decision_context().allowlist_match(),
-        plan.policy_decision().allowlist_effective,
-        frame.source.clone(),
-        frame.cwd.clone(),
-        id.clone(),
-        ci_detected,
+        WatchAuditContext {
+            allowlist_match: plan.decision_context().allowlist_match(),
+            allowlist_effective: plan.policy_decision().allowlist_effective,
+            ci_detected,
+            source: frame.source.clone(),
+            cwd: frame.cwd.clone(),
+            id: id.clone(),
+        },
     ) {
         eprintln!("error: failed to write audit log: {err}");
     }

@@ -63,6 +63,16 @@ pub struct AuditWriteOptions<'a> {
     pub ci_detected: bool,
 }
 
+/// Watch-mode correlation fields attached to each audit entry in watch transport.
+pub struct WatchAuditContext<'a> {
+    pub allowlist_match: Option<&'a AllowlistMatch>,
+    pub allowlist_effective: bool,
+    pub ci_detected: bool,
+    pub source: Option<String>,
+    pub cwd: Option<String>,
+    pub id: Option<String>,
+}
+
 impl RuntimeContext {
     /// Load config, build runtime dependencies once, and keep them consistent.
     pub fn load(_verbose: bool, handle: Handle) -> Result<Self, AegisError> {
@@ -172,19 +182,13 @@ impl RuntimeContext {
     ///
     /// Identical to `append_audit_entry` but attaches `source`, `cwd`, `id`,
     /// and sets `transport = "watch"` via `AuditEntry::with_watch_context`.
-    #[allow(clippy::too_many_arguments)]
     pub fn append_watch_audit_entry(
         &self,
         assessment: &Assessment,
         decision: Decision,
         snapshots: &[SnapshotRecord],
         explanation: &CommandExplanation,
-        allowlist_match: Option<&AllowlistMatch>,
-        allowlist_effective: bool,
-        watch_source: Option<String>,
-        watch_cwd: Option<String>,
-        watch_id: Option<String>,
-        ci_detected: bool,
+        watch: WatchAuditContext<'_>,
     ) -> Result<(), AegisError> {
         let entry = self
             .build_audit_entry(
@@ -193,12 +197,12 @@ impl RuntimeContext {
                 snapshots,
                 explanation,
                 AuditWriteOptions {
-                    allowlist_match,
-                    allowlist_effective,
-                    ci_detected,
+                    allowlist_match: watch.allowlist_match,
+                    allowlist_effective: watch.allowlist_effective,
+                    ci_detected: watch.ci_detected,
                 },
             )
-            .with_watch_context(watch_source, watch_cwd, watch_id);
+            .with_watch_context(watch.source, watch.cwd, watch.id);
 
         self.audit_logger.append(entry)
     }
