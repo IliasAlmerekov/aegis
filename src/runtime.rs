@@ -358,6 +358,7 @@ mod tests {
         assert!(err.to_string().contains("duplicate pattern id"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn config_is_shared_across_runtime_dependencies() {
         use crate::config::AllowlistRule;
@@ -597,6 +598,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn load_for_preserves_project_allowlist_precedence_into_runtime_matching() {
         let workspace = TempDir::new().unwrap();

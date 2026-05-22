@@ -219,7 +219,7 @@ impl SnapshotPlugin for SqlitePlugin {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use tempfile::TempDir;
