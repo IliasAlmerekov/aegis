@@ -369,16 +369,17 @@ impl SnapshotPlugin for MysqlPlugin {
         "mysql"
     }
 
-    fn is_applicable(&self, _cwd: &Path) -> bool {
+    async fn is_applicable(&self, _cwd: &Path) -> bool {
         if self.database.is_empty() {
             return false;
         }
 
-        std::process::Command::new("which")
+        tokio::process::Command::new("which")
             .arg(&self.mysqldump_bin)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
+            .await
             .map(|status| status.success())
             .unwrap_or(false)
     }
@@ -601,7 +602,7 @@ mod tests {
             temp_dir.path().join("snaps"),
         );
 
-        assert!(!plugin.is_applicable(temp_dir.path()));
+        assert!(!plugin.is_applicable(temp_dir.path()).await);
     }
 
     #[test]

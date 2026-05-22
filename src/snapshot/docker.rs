@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::Output;
-use std::thread;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -102,53 +101,14 @@ impl DockerPlugin {
             }
         }
     }
-
-    fn run_docker_output_blocking<I, S>(&self, args: I) -> std::io::Result<Output>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        let args: Vec<OsString> = args
-            .into_iter()
-            .map(|arg| arg.as_ref().to_os_string())
-            .collect();
-
-        let mut attempt = 0usize;
-        loop {
-            match std::process::Command::new(&self.docker_bin)
-                .args(&args)
-                .output()
-            {
-                Ok(output) => return Ok(output),
-                Err(error)
-                    if is_executable_busy(&error) && attempt < DOCKER_BUSY_RETRY_ATTEMPTS =>
-                {
-                    attempt += 1;
-                    tracing::warn!(
-                        docker_bin = %self.docker_bin,
-                        attempt,
-                        "docker binary busy during sync command launch, retrying"
-                    );
-                    thread::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS));
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
 }
 
 fn is_executable_busy(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(EXECUTABLE_BUSY_ERRNO)
 }
 
-async fn sleep_docker_busy_retry_delay() {
-    if let Err(error) = tokio::task::spawn_blocking(|| {
-        thread::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS));
-    })
-    .await
-    {
-        tracing::warn!(%error, "docker busy retry sleep task failed");
-    }
+pub(crate) async fn sleep_docker_busy_retry_delay() {
+    tokio::time::sleep(Duration::from_millis(DOCKER_BUSY_RETRY_DELAY_MS)).await;
 }
 
 /// Host-level configuration captured from a running container before snapshot.
@@ -319,11 +279,9 @@ impl SnapshotPlugin for DockerPlugin {
     /// Uses `docker ps -q`: exits 0 with output when containers are running,
     /// exits 0 with no output when docker is up but idle,
     /// exits non-zero or errors when docker is unavailable.
-    fn is_applicable(&self, _cwd: &Path) -> bool {
+    async fn is_applicable(&self, _cwd: &Path) -> bool {
         let ps_args = self.build_ps_args();
-        let output = self.run_docker_output_blocking(&ps_args);
-
-        match output {
+        match self.run_docker_output(&ps_args, "docker ps").await {
             Ok(out) if out.status.success() => {
                 !String::from_utf8_lossy(&out.stdout).trim().is_empty()
             }
@@ -586,17 +544,17 @@ mod tests {
 
     // ── is_applicable ──────────────────────────────────────────────────────────
 
-    #[test]
-    fn is_applicable_no_docker_cli() {
+    #[tokio::test]
+    async fn is_applicable_no_docker_cli() {
         let p = DockerPlugin {
             docker_bin: "/nonexistent/bin/docker".to_string(),
             scope: DockerScope::default(),
         };
-        assert!(!p.is_applicable(Path::new("/")));
+        assert!(!p.is_applicable(Path::new("/")).await);
     }
 
-    #[test]
-    fn is_applicable_no_running_containers() {
+    #[tokio::test]
+    async fn is_applicable_no_running_containers() {
         let dir = TempDir::new().unwrap();
         write_mock_docker(
             dir.path(),
@@ -605,11 +563,15 @@ mod tests {
   *) exit 1 ;;
 esac"#,
         );
-        assert!(!plugin(&dir.path().join("docker")).is_applicable(Path::new("/")));
+        assert!(
+            !plugin(&dir.path().join("docker"))
+                .is_applicable(Path::new("/"))
+                .await
+        );
     }
 
-    #[test]
-    fn is_applicable_with_running_containers() {
+    #[tokio::test]
+    async fn is_applicable_with_running_containers() {
         let dir = TempDir::new().unwrap();
         write_mock_docker(
             dir.path(),
@@ -618,11 +580,15 @@ esac"#,
   *) exit 1 ;;
 esac"#,
         );
-        assert!(plugin(&dir.path().join("docker")).is_applicable(Path::new("/")));
+        assert!(
+            plugin(&dir.path().join("docker"))
+                .is_applicable(Path::new("/"))
+                .await
+        );
     }
 
-    #[test]
-    fn is_applicable_docker_not_running() {
+    #[tokio::test]
+    async fn is_applicable_docker_not_running() {
         let dir = TempDir::new().unwrap();
         write_mock_docker(
             dir.path(),
@@ -631,7 +597,11 @@ esac"#,
   *) exit 1 ;;
 esac"#,
         );
-        assert!(!plugin(&dir.path().join("docker")).is_applicable(Path::new("/")));
+        assert!(
+            !plugin(&dir.path().join("docker"))
+                .is_applicable(Path::new("/"))
+                .await
+        );
     }
 
     // ── snapshot ───────────────────────────────────────────────────────────────
@@ -1228,6 +1198,102 @@ esac"#
         assert!(
             !first_call.contains("--filter"),
             "All scope must NOT pass --filter to docker ps, got: {first_call}"
+        );
+    }
+
+    // ── async-safety regression tests ─────────────────────────────────────────
+
+    /// Checks counter before awaiting bg task to prove concurrent progress.
+    ///
+    /// With blocking `is_applicable` on a `current_thread` runtime:
+    ///   - The single Tokio thread is held for ~50ms by the blocking `std::process::Command`
+    ///   - The bg task cannot be scheduled during that time
+    ///   - `counter_after` == 0  → assertion fails (as desired for a red test)
+    ///
+    /// After the fix (async `is_applicable` with `tokio::process::Command`):
+    ///   - The Tokio thread is yielded at each `.await` point
+    ///   - The bg task wakes after 10ms and increments the counter
+    ///   - `counter_after` == 1  → assertion passes
+    #[tokio::test(flavor = "current_thread")]
+    async fn is_applicable_does_not_block_tokio_runtime_v2() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = TempDir::new().unwrap();
+        write_mock_docker(
+            dir.path(),
+            r#"case "$1" in
+  ps) sleep 0.05; printf "abc123\n"; exit 0 ;;
+  *) exit 1 ;;
+esac"#,
+        );
+
+        let p = plugin(&dir.path().join("docker"));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_bg = Arc::clone(&counter);
+
+        let bg = tokio::task::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            counter_bg.fetch_add(1, Ordering::SeqCst);
+        });
+
+        // Async call — yields the Tokio thread while waiting for docker ps.
+        let _ = p.is_applicable(Path::new("/")).await;
+
+        // Read counter *before* awaiting bg. With blocking is_applicable the bg task
+        // was never polled while is_applicable ran, so counter is still 0 here.
+        let counter_after = counter.load(Ordering::SeqCst);
+
+        bg.await.unwrap();
+
+        // This assertion FAILS with the current blocking implementation:
+        // counter_after == 0, not 1.
+        assert_eq!(
+            counter_after, 1,
+            "is_applicable blocked the Tokio thread — background task could not progress \
+             (counter={counter_after}, expected 1). Fix: make is_applicable async and use \
+             tokio::process::Command."
+        );
+    }
+
+    /// Verifies that `sleep_docker_busy_retry_delay` yields the current-thread runtime
+    /// so that other tasks can make progress during the delay.
+    ///
+    /// The retry delay must use `tokio::time::sleep`, which is cheaper than
+    /// dispatching a blocking sleep to a helper thread and still yields the
+    /// runtime while the delay is pending.
+    ///
+    /// This is a behavioral contract test: it asserts the function MUST yield the runtime
+    /// and will catch any regression that changes it to a blocking call (e.g., replacing
+    /// the body with a bare `thread::sleep` call).
+    #[tokio::test(flavor = "current_thread")]
+    async fn sleep_docker_busy_retry_delay_yields_to_runtime() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let flag = Arc::new(AtomicBool::new(false));
+        let flag_bg = Arc::clone(&flag);
+
+        // Background task sets the flag after 5ms.
+        let bg = tokio::task::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            flag_bg.store(true, Ordering::SeqCst);
+        });
+
+        // sleep_docker_busy_retry_delay sleeps for DOCKER_BUSY_RETRY_DELAY_MS (25ms).
+        // A properly yielding implementation allows the bg task (5ms) to
+        // complete before this returns.
+        sleep_docker_busy_retry_delay().await;
+
+        let flag_value = flag.load(Ordering::SeqCst);
+
+        bg.await.unwrap();
+
+        assert!(
+            flag_value,
+            "sleep_docker_busy_retry_delay did not yield to the runtime — \
+             background task flag was not set (expected true, got false). \
+             This would be a regression; the function must not block the Tokio thread."
         );
     }
 }

@@ -135,7 +135,8 @@ impl RuntimeContext {
     /// Return the names of snapshot plugins that would be eligible for `cwd`
     /// without creating any snapshots.
     pub fn applicable_snapshot_plugins(&self, cwd: &Path) -> Vec<&'static str> {
-        self.snapshot_registry().applicable_plugins(cwd)
+        self.async_handle
+            .block_on(self.snapshot_registry().applicable_plugins(cwd))
     }
 
     /// Return a reference to the persistent async handle.
@@ -298,9 +299,9 @@ mod tests {
     use time::OffsetDateTime;
 
     fn test_handle() -> Handle {
-        // Leak a single-threaded runtime so the Handle outlives each test.
+        // Leak a runtime so the Handle outlives each test.
         // This is fine for unit tests — the OS reclaims it on process exit.
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
@@ -629,7 +630,7 @@ expires_at = "2030-01-01T00:00:00Z"
         // 1. RuntimeContext::new accepts a Handle parameter
         // 2. create_snapshots works through the external handle
         // 3. No internal SnapshotRuntime::Ready(Runtime) exists
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
@@ -673,7 +674,7 @@ expires_at = "2030-01-01T00:00:00Z"
         // Verify the two-argument signature is the only way to construct.
         // This test will fail to compile if RuntimeContext::new still accepts
         // only Config (one argument).
-        let rt = tokio::runtime::Builder::new_current_thread()
+        let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();

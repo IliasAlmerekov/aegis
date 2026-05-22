@@ -127,7 +127,7 @@ pub trait SnapshotPlugin: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Return `true` when this plugin can act on the given working directory.
-    fn is_applicable(&self, cwd: &Path) -> bool;
+    async fn is_applicable(&self, cwd: &Path) -> bool;
 
     /// Create a snapshot and return its identifier.
     async fn snapshot(&self, cwd: &Path, cmd: &str) -> Result<String>;
@@ -283,7 +283,7 @@ impl SnapshotRegistry {
     pub async fn snapshot_all(&self, cwd: &Path, cmd: &str) -> Vec<SnapshotRecord> {
         let mut records = Vec::new();
         for plugin in &self.plugins {
-            if !plugin.is_applicable(cwd) {
+            if !plugin.is_applicable(cwd).await {
                 continue;
             }
             match plugin.snapshot(cwd, cmd).await {
@@ -305,12 +305,14 @@ impl SnapshotRegistry {
     /// [`available_provider_names`] (providers known to the binary/runtime) or
     /// [`SnapshotRegistry::configured_provider_names`] (providers materialized
     /// by the current runtime config). No snapshots are created.
-    pub fn applicable_plugins(&self, cwd: &Path) -> Vec<&'static str> {
-        self.plugins
-            .iter()
-            .filter(|plugin| plugin.is_applicable(cwd))
-            .map(|plugin| plugin.name())
-            .collect()
+    pub async fn applicable_plugins(&self, cwd: &Path) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        for plugin in &self.plugins {
+            if plugin.is_applicable(cwd).await {
+                names.push(plugin.name());
+            }
+        }
+        names
     }
 
     /// Roll back one snapshot using the named plugin.
@@ -348,7 +350,7 @@ mod tests {
             self.name
         }
 
-        fn is_applicable(&self, _cwd: &Path) -> bool {
+        async fn is_applicable(&self, _cwd: &Path) -> bool {
             self.applicable
         }
 
@@ -409,7 +411,7 @@ mod tests {
             fn name(&self) -> &'static str {
                 "failing"
             }
-            fn is_applicable(&self, _cwd: &Path) -> bool {
+            async fn is_applicable(&self, _cwd: &Path) -> bool {
                 true
             }
             async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
@@ -441,8 +443,8 @@ mod tests {
         assert_eq!(success_calls.load(Ordering::SeqCst), 1);
     }
 
-    #[test]
-    fn applicable_plugins_reports_only_applicable_plugin_names() {
+    #[tokio::test]
+    async fn applicable_plugins_reports_only_applicable_plugin_names() {
         let registry = SnapshotRegistry {
             plugins: vec![
                 Box::new(MockPlugin {
@@ -458,7 +460,9 @@ mod tests {
             ],
         };
 
-        let names = registry.applicable_plugins(std::path::Path::new("/tmp"));
+        let names = registry
+            .applicable_plugins(std::path::Path::new("/tmp"))
+            .await;
         assert_eq!(names, vec!["git"]);
     }
 
@@ -477,7 +481,7 @@ mod tests {
                 self.name
             }
 
-            fn is_applicable(&self, _cwd: &Path) -> bool {
+            async fn is_applicable(&self, _cwd: &Path) -> bool {
                 true
             }
 
@@ -796,8 +800,8 @@ mod tests {
         assert_eq!(registry.configured_provider_names(), vec!["supabase"]);
     }
 
-    #[test]
-    fn sqlite_relative_snapshot_path_is_applicable_from_command_cwd() {
+    #[tokio::test]
+    async fn sqlite_relative_snapshot_path_is_applicable_from_command_cwd() {
         let temp_dir = TempDir::new().unwrap();
         let db_dir = temp_dir.path().join("db");
         std::fs::create_dir_all(&db_dir).unwrap();
@@ -815,6 +819,9 @@ mod tests {
 
         let registry = SnapshotRegistry::from_config(&config);
 
-        assert_eq!(registry.applicable_plugins(temp_dir.path()), vec!["sqlite"]);
+        assert_eq!(
+            registry.applicable_plugins(temp_dir.path()).await,
+            vec!["sqlite"]
+        );
     }
 }
