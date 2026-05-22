@@ -198,27 +198,17 @@ fn registry_config_from_parts(config: &Config, snapshots_dir: PathBuf) -> Snapsh
     }
 }
 
-impl From<&Config> for SnapshotRegistryConfig {
-    fn from(config: &Config) -> Self {
-        let snapshots_dir = resolve_snapshots_dir()
-            .expect("HOME is not set; snapshot storage cannot be configured");
-        registry_config_from_parts(config, snapshots_dir)
-    }
-}
-
 impl SnapshotRegistryConfig {
-    /// Fallible constructor for production use — propagates `HOME`-unset error.
+    /// Fallible constructor — propagates `HOME`-unset error.
     pub fn try_new(config: &Config) -> Result<Self> {
         let snapshots_dir = resolve_snapshots_dir()?;
         Ok(registry_config_from_parts(config, snapshots_dir))
     }
-}
 
-impl SnapshotRegistryConfig {
     /// Build a rollback runtime config that preserves effective provider
     /// settings while forcing all built-in providers to be available.
-    pub fn for_rollback_from_config(config: &Config) -> Self {
-        let mut runtime_config = Self::from(config);
+    pub fn for_rollback_from_config(config: &Config) -> Result<Self> {
+        let mut runtime_config = Self::try_new(config)?;
         runtime_config.snapshot_policy = crate::config::SnapshotPolicy::Full;
         runtime_config.auto_snapshot_git = true;
         runtime_config.auto_snapshot_docker = true;
@@ -226,20 +216,14 @@ impl SnapshotRegistryConfig {
         runtime_config.auto_snapshot_mysql = true;
         runtime_config.auto_snapshot_supabase = true;
         runtime_config.auto_snapshot_sqlite = true;
-        runtime_config
-    }
-}
-
-impl Default for SnapshotRegistry {
-    fn default() -> Self {
-        Self::from_config(&Config::default())
+        Ok(runtime_config)
     }
 }
 
 impl SnapshotRegistry {
-    /// Build a snapshot registry that honours the effective runtime config.
-    pub fn from_config(config: &Config) -> Self {
-        Self::from_runtime_config(&SnapshotRegistryConfig::from(config))
+    /// Fallible constructor that honours the effective runtime config.
+    pub fn try_from_config(config: &Config) -> Result<Self> {
+        Ok(Self::from_runtime_config(&SnapshotRegistryConfig::try_new(config)?))
     }
 
     /// Build a snapshot registry from the eager runtime config.
@@ -286,9 +270,9 @@ impl SnapshotRegistry {
     /// This intentionally ignores per-plugin snapshot flags: operators must be
     /// able to restore previously recorded snapshots even if snapshot creation
     /// is disabled in the current config.
-    pub fn for_rollback() -> Self {
-        Self::from_runtime_config(&SnapshotRegistryConfig::for_rollback_from_config(
-            &Config::default(),
+    pub fn for_rollback() -> Result<Self> {
+        Ok(Self::from_runtime_config(
+            &SnapshotRegistryConfig::for_rollback_from_config(&Config::default())?,
         ))
     }
 
@@ -563,7 +547,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert!(registry.plugins.is_empty());
     }
@@ -576,7 +560,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let plugin_names: Vec<_> = registry
             .plugins
             .iter()
@@ -602,14 +586,14 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert_eq!(registry.configured_provider_names(), vec!["docker"]);
     }
 
     #[test]
     fn for_rollback_materializes_all_builtin_providers() {
-        let registry = SnapshotRegistry::for_rollback();
+        let registry = SnapshotRegistry::for_rollback().unwrap();
 
         assert_eq!(
             registry.configured_provider_names(),
@@ -622,7 +606,7 @@ mod tests {
     fn materialize_builtin_plugins_fails_closed_for_unknown_builtin_name() {
         let _ = materialize_builtin_plugins(
             &["git", "unknown-provider"],
-            &SnapshotRegistryConfig::from(&Config::default()),
+            &SnapshotRegistryConfig::try_new(&Config::default()).unwrap(),
         );
     }
 
@@ -639,7 +623,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         assert!(
             registry.plugins.is_empty(),
             "None policy must produce zero plugins"
@@ -657,7 +641,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
         assert_eq!(names, vec!["git"]);
     }
@@ -680,7 +664,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
 
         assert_eq!(names, vec!["postgres"]);
@@ -704,7 +688,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
 
         assert!(!names.contains(&"postgres"));
@@ -725,7 +709,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
         let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
         assert_eq!(
             names,
@@ -735,7 +719,7 @@ mod tests {
 
     #[test]
     fn for_rollback_includes_supabase_plugin() {
-        let registry = SnapshotRegistry::for_rollback();
+        let registry = SnapshotRegistry::for_rollback().unwrap();
 
         assert_eq!(
             registry.configured_provider_names(),
@@ -778,7 +762,7 @@ mod tests {
             ..Config::default()
         };
 
-        let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config);
+        let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config).unwrap();
 
         assert_eq!(
             runtime_config.snapshot_policy,
@@ -821,7 +805,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert_eq!(registry.configured_provider_names(), vec!["supabase"]);
     }
@@ -874,7 +858,7 @@ mod tests {
             ..Config::default()
         };
 
-        let registry = SnapshotRegistry::from_config(&config);
+        let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
         assert_eq!(
             registry.applicable_plugins(temp_dir.path()).await,
