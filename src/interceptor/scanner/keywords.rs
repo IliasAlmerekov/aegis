@@ -46,18 +46,18 @@ fn expanded_leading_keys(s: &str) -> Vec<String> {
     }
     let after_base = &s[base.len()..];
     // Detect `[chars]?` immediately after the literal.
-    if let Some(rest) = after_base.strip_prefix('[') {
-        if let Some(bracket_end) = rest.find(']') {
-            let class_content = &rest[..bracket_end];
-            let after_bracket = &rest[bracket_end + 1..];
-            // Only expand optional (`?`) classes with no ranges (`-`).
-            if after_bracket.starts_with('?') && !class_content.contains('-') {
-                let mut keys = vec![base.clone()];
-                for c in class_content.chars().filter(|c| c.is_ascii_alphanumeric()) {
-                    keys.push(format!("{base}{c}"));
-                }
-                return keys;
+    if let Some(rest) = after_base.strip_prefix('[')
+        && let Some(bracket_end) = rest.find(']')
+    {
+        let class_content = &rest[..bracket_end];
+        let after_bracket = &rest[bracket_end + 1..];
+        // Only expand optional (`?`) classes with no ranges (`-`).
+        if after_bracket.starts_with('?') && !class_content.contains('-') {
+            let mut keys = vec![base.clone()];
+            for c in class_content.chars().filter(|c| c.is_ascii_alphanumeric()) {
+                keys.push(format!("{base}{c}"));
             }
+            return keys;
         }
     }
     vec![base]
