@@ -14,7 +14,10 @@
 pub(super) fn derive_program_keys(pattern: &str) -> Vec<String> {
     let s = pattern.strip_prefix("(?i)").unwrap_or(pattern);
     // Accept only if every top-level alternative starts with `^`.
-    if !split_top_alternation(s).iter().all(|alt| alt.starts_with('^')) {
+    if !split_top_alternation(s)
+        .iter()
+        .all(|alt| alt.starts_with('^'))
+    {
         return Vec::new();
     }
     // Derive keys per alternative, expanding simple optional char classes.

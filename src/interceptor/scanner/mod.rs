@@ -94,7 +94,10 @@ impl Scanner {
                 universal.push(entry);
             } else {
                 for key in &prog_keys {
-                    by_program.entry(key.clone()).or_default().push(entry.clone());
+                    by_program
+                        .entry(key.clone())
+                        .or_default()
+                        .push(entry.clone());
                 }
                 // ^-anchored patterns are NOT pushed to universal: they only fire when
                 // the program token is at position 0, so skipping them for other programs
@@ -1367,7 +1370,10 @@ mod tests {
         // fires on inline script bodies like `require('cp').execSync('terraform destroy')`.
         // That body's first token is "require(...)", not "terraform", but the pattern
         // must still fire.
-        let matches = s.full_scan("require('cp').execSync('terraform destroy')", Some("require"));
+        let matches = s.full_scan(
+            "require('cp').execSync('terraform destroy')",
+            Some("require"),
+        );
         let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
         assert!(
             ids.contains(&"CL-001"),
