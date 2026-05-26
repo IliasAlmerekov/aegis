@@ -1,306 +1,508 @@
-# Aegis — Production Readiness Roadmap
+# Aegis — Transformation Roadmap
 
-This document is a catalogue of problems that currently prevent Aegis from
-being considered a production-ready, architecturally strong project.  
-It describes **only the problems** — no solutions or implementation advice.
+This document describes the path from Aegis's current state to a production-grade,
+architecturally strong security tool on par with the best-in-class agents in this
+space (e.g. OpenAI Codex). Each phase has a clear goal, concrete deliverables, and
+a definition of done. Phases are sequential: each one builds on the foundation laid
+by the previous.
 
----
-
-## 1. Blocking I/O inside async functions
-
-**`postgres.rs`, `mysql.rs`** — `output_with_busy_retry` is declared `async fn`
-but calls `std::thread::sleep` inside the retry loop. This occupies a Tokio
-worker thread for the entire sleep duration, reducing the runtime's ability to
-schedule other async work and violating the contract of cooperative async
-concurrency.
-
-**`docker.rs`** — `run_docker_output_blocking` calls `std::process::Command`
-(sync, blocking) and `std::thread::sleep` inside a `loop`. This function is
-called from `is_applicable`, which is itself called during `snapshot_all` — an
-async function. The result is a blocking operation on a Tokio thread.
-
-**`postgres.rs` — `is_applicable`** — spawns `std::process::Command::new("which")`
-synchronously to probe for the `pg_dump` binary. This is blocking I/O on the
-async executor thread.
-
-**`docker.rs` — `is_applicable`** — calls `run_docker_output_blocking` which
-spawns a blocking `std::process::Command` and may loop with `thread::sleep`.
-Called from `snapshot_all` in an async context.
+The north star: Aegis intercepts every shell command, classifies it with zero false
+negatives, persists every human decision as a machine-readable rule, and can
+optionally sandbox execution at the OS level — all in under 2 ms on the hot path.
 
 ---
 
-## 2. `SnapshotPlugin::is_applicable` is a synchronous method performing blocking I/O
+## Phase 0 — Foundation Repair
 
-The `SnapshotPlugin` trait exposes `is_applicable` as a plain (non-async) `fn`.
-Several implementations (`DockerPlugin`, `PostgresPlugin`, `MysqlPlugin`) do
-process spawning and blocking waits inside this method, but the trait signature
-provides no signal to callers that implementations may block. Callers in the
-async path (`SnapshotRegistry::snapshot_all`) invoke it without any
-off-thread dispatch.
+**Goal:** eliminate the critical defects that undermine Aegis's core value
+proposition. Nothing in Phase 1+ is safe to build until these are resolved.
+These are not cleanups — they are open security and correctness bugs.
 
----
+### 0.1 Async correctness in snapshot plugins
 
-## 3. Dead code suppression on production modules
+- Replace `std::thread::sleep` with `tokio::time::sleep` everywhere in retry loops
+  (`docker.rs`, `postgres.rs`, `mysql.rs`).
+- Change `SnapshotPlugin::is_applicable` trait signature from `fn` to
+  `async fn` — or remove blocking I/O from all implementations entirely.
+  Either decision must be consistent across the trait and all six plugins.
+- Remove `spawn_blocking` workarounds that exist only because `is_applicable`
+  wasn't async.
 
-**`src/error.rs:1`** — `#[allow(dead_code)]` is placed on the `AegisError` enum.
-This means at least some error variants are unused in the production code paths,
-but the dead-code warning is suppressed rather than the unused variants removed.
+**Done when:** `cargo clippy` reports no `blocking_in_async_context` equivalents;
+`tokio::test` with `#[timeout]` passes for all snapshot plugins.
 
-**`src/interceptor/parser/mod.rs:2`** — `#![allow(dead_code)]` is placed at the
-crate-inner module level, suppressing dead-code warnings across the entire
-parser module. For a hot-path security-critical module, dead code indicates
-either unused abstractions or feature scaffolding that was never completed.
+### 0.2 Audit log is a security artifact — treat it as one
 
----
+- Emit a hard error (not a `tracing::warn`) on every audit write failure,
+  regardless of the `verbose` flag.
+- Change the default for `AuditIntegrityMode` from `Off` to `ChainSha256`.
+  SHA-256 hash chaining is Aegis's only tamper-detection mechanism; it must be
+  opt-out, not opt-in.
+- Add `#[must_use]` to `AuditLogger::append` and every `Result`-returning
+  public function in the audit module.
 
-## 4. Missing MSRV (`rust-version`) in `Cargo.toml`
+**Done when:** deliberately breaking the audit file path causes a non-zero exit
+with a user-visible error; a new install's default config has `integrity_mode =
+"ChainSha256"`.
 
-The `Cargo.toml` does not declare a `rust-version` field. `CONVENTION.md`
-explicitly states that "declaring an explicit MSRV and enforcing it in CI"
-is a prerequisite for production readiness. Without this, there is no
-guarantee that the project compiles on the Rust versions used by downstream
-consumers, and CI does not catch MSRV regressions.
+### 0.3 Eliminate dead code in security-critical paths
 
----
+- Remove `#[allow(dead_code)]` from `src/error.rs` and `src/interceptor/parser/mod.rs`.
+  Either use the flagged code or delete it. There is no middle ground for dead
+  code in a hot-path security parser.
+- Remove `#[allow(clippy::too_many_arguments)]` from `append_watch_audit_entry`
+  by introducing a `WatchAuditContext` value type that aggregates its 11 parameters.
 
-## 5. Windows is not tested in CI
+**Done when:** `cargo clippy -- -D dead_code` passes with no suppressions in
+`src/interceptor/` and `src/audit/`.
 
-The CI workflow (`ci.yml`) runs only on `ubuntu-latest` and `macos-latest`.
-The codebase contains `#[cfg(windows)]` / `#[cfg(not(windows))]` branches
-(notably in `runtime.rs` for user detection), meaning Windows-specific code
-paths exist but are never exercised in CI. Breakage on Windows is undetectable
-from the current pipeline.
+### 0.4 Harden config loading
 
----
+- Fix `detect_effective_user_from_id_command`: resolve `id` via `PATH` lookup,
+  not the hardcoded `/usr/bin/id` path.
+- Fix `default_snapshots_dir`: replace the `HOME` fallback of `"."` with an
+  explicit error when `HOME` is unset.
+- Fix `custom_pattern_cache_key`: introduce a typed `CacheKey` newtype; validate
+  that pattern fields do not contain the separator characters at construction time.
+- Add a config migration path: `deserialize_config_version` must emit a
+  structured migration error (not a parse failure) when `config_version > 1`,
+  and must document the upgrade procedure.
 
-## 6. Incomplete own release-readiness checklist
+**Done when:** all four issues have regression tests; CI passes on a config file
+with `HOME` unset.
 
-`docs/release-readiness.md` lists a **Minimum Launch Checklist** where every
-item is unchecked (`[ ]`):
+### 0.5 Declare MSRV and add Windows to CI
 
-- README, docs, and release notes consistency
-- Convenience installer and troubleshooting documented for first-time users
-- Release workflow exercised on a real tag
-- Release artifacts with checksum sidecars
-- Install and uninstall guidance currency
-- Supported platforms stated clearly
-- Threat-model and limitation language visible
+- Add `rust-version = "1.80"` to `Cargo.toml` (minimum for `std::sync::LazyLock`).
+- Add a `windows-latest` job to `.github/workflows/ci.yml` that runs `cargo test`
+  on all `#[cfg(windows)]` paths.
 
-The project self-identifies these as launch blockers. None is marked complete.
-
----
-
-## 7. Audit log write failures are silently swallowed in non-verbose mode
-
-`RuntimeContext::append_audit_entry` and `append_watch_audit_entry` emit a
-warning about audit log write failures only when `verbose` is `true`. The audit
-log is described in `CONVENTION.md` as a **security artifact** that must remain
-append-only. Silent failure to append an entry means a decision may go
-unrecorded with no signal to the operator.
+**Done when:** CI has a green Windows job; a PR that uses `once_cell` fails CI.
 
 ---
 
-## 8. Audit integrity is `Off` by default
+## Phase 1 — Scanner Modernization
 
-`AuditIntegrityMode::Off` is the default for all new configs. SHA-256 hash
-chaining — the only tamper-detection mechanism — is therefore opt-in. For a
-tool whose primary value proposition includes an append-only security audit
-trail, the most secure mode is not active unless the user explicitly configures
-it.
+**Goal:** replace the current regex-on-raw-string scanner with a token-prefix
+engine that is semantically correct, faster on the hot path, and extensible.
+Inspired by codex's `execpolicy` crate.
 
----
+### 1.1 Command tokenizer as the single source of truth (Done)
 
-## 9. `append_watch_audit_entry` has 11 parameters
+The scanner currently applies patterns to the raw command string. This produces
+false positives (`echo "rm -rf"` triggers `rm -rf` patterns) and false negatives
+(quoting tricks bypass substring matches).
 
-`RuntimeContext::append_watch_audit_entry` takes 11 arguments and suppresses
-the `clippy::too_many_arguments` lint with `#[allow(clippy::too_many_arguments)]`.
-The suppression is in production library code rather than a test helper. This
-indicates a missing parameter-aggregation type and makes the function's contract
-difficult to read, audit, or call correctly.
+Introduce a dedicated tokenizer that always runs first:
 
----
+```
+raw command string
+    → tokenize (shlex)
+    → ParsedCommand { program: &str, argv: &[&str] }
+    → pattern matching on tokens
+```
 
-## 10. `custom_pattern_cache_key` is an undocumented fragile string protocol
+`ParsedCommand` becomes the canonical representation throughout the codebase.
+The raw string is only used for display and audit logging.
 
-The cache key for custom scanner instances (`interceptor/mod.rs`) is built by
-concatenating all pattern fields with ASCII control characters `\u{1f}` (unit
-separator) and `\u{1e}` (record separator). There is no type representing this
-key, no validation that the encoded content does not contain the separator
-characters, and no documentation of the encoding. A pattern value containing
-`\u{1f}` would silently produce an incorrect cache key.
+### 1.2 Replace `HashMap<id, pattern>` with `MultiMap<program, Rule>`
 
----
-
-## 11. `detect_effective_user_from_id_command` has a hardcoded binary path
-
-`runtime.rs` resolves the current OS user by invoking `/usr/bin/id`. On some
-Linux distributions, `id` is located at `/bin/id` or resolved via the shell's
-`PATH`. On those systems, user-scoped allowlist rules will silently fail to
-match because the user identity cannot be resolved.
-
----
-
-## 12. `SnapshotPlugin` trait mismatch with architecture specification
-
-`CLAUDE.md` specifies the `SnapshotPlugin` trait as:
+Index rules by the first token of the command (the program name). This gives O(1)
+lookup per command instead of scanning every pattern.
 
 ```rust
-#[async_trait]
-pub trait SnapshotPlugin: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn is_applicable(&self, cwd: &Path) -> bool;
-    async fn snapshot(&self, cwd: &Path, cmd: &str) -> Result<String>;
-    async fn rollback(&self, snapshot_id: &str) -> Result<()>;
+// Before: scan all N patterns for every command
+patterns.iter().filter(|p| p.regex.is_match(raw_cmd))
+
+// After: fetch only patterns relevant to this program
+rules_by_program.get_vec("git")  // returns only git-* rules
+```
+
+For commands where the program cannot be determined (e.g. variable expansion),
+fall back to a small set of universal patterns.
+
+### 1.3 `PrefixRule` — token-level pattern matching
+
+Replace free-form regex with token-prefix rules:
+
+```rust
+pub struct PrefixRule {
+    pub pattern: PrefixPattern,   // ["git", "push", Alts(["--force", "-f"])]
+    pub risk:    RiskLevel,
+    pub justification: Option<Cow<'static, str>>,
+}
+
+pub enum PatternToken {
+    Single(Cow<'static, str>),
+    Alts(Vec<Cow<'static, str>>),
 }
 ```
 
-The trait is implemented as specified, but `is_applicable` is synchronous while
-real implementations perform process spawning and blocking I/O. The architectural
-constraint — that `is_applicable` is a cheap, non-blocking eligibility check —
-is not enforced by the type system and is violated by multiple implementations.
+`Alts` lets one rule cover semantic equivalents (`--force` / `-f`) without
+duplicating entries.
 
----
+### 1.4 `justification` surfaces in the TUI
 
-## 13. Module structure divergence from `CONVENTION.md` and `ARCHITECTURE.md`
-
-`CONVENTION.md` prescribes the following module layout:
+Every rule gains an optional human-readable explanation of _why_ it is risky:
 
 ```
-src/
-  main.rs
-  error.rs
-  interceptor/{mod,scanner,parser,patterns}.rs
-  snapshot/{mod,git,docker}.rs
-  ui/confirm.rs
-  audit/logger.rs
-  config/model.rs
+⚠  git push --force
+
+This command rewrites remote history. Collaborators with local copies
+will have diverged refs and will need to force-pull or re-clone.
+Consider --force-with-lease to at least detect concurrent pushes.
+
+[A]llow  [D]eny  [Always allow]  [Always deny]
 ```
 
-The actual codebase has grown substantially beyond this:
+The `justification` field is shown in the confirmation dialog. It is set for
+all built-in rules and can be added to user-defined rules in config.
 
-- `src/planning/` — not in spec
-- `src/runtime.rs`, `src/runtime_gate.rs` — not in spec
-- `src/watch.rs` — not in spec
-- `src/decision.rs` — not in spec
-- `src/explanation.rs` — not in spec
-- `src/toggle.rs` — not in spec
-- `src/install.rs`, `src/rollback.rs` — not in spec
-- `src/cli_commands.rs`, `src/cli_dispatch.rs`, `src/shell_compat.rs`,
-  `src/shell_flow.rs`, `src/shell_wrapper.rs`, `src/policy_output.rs` — not in spec
-- `src/snapshot/` has grown to include `postgres`, `mysql`, `sqlite`,
-  `supabase` — only `git` and `docker` are mentioned in the spec
+### 1.5 `match_examples` / `not_match_examples` as first-class rule fields
 
-The architecture documentation has not been updated to reflect the actual module
-boundary layout, creating drift between the stated contract and the
-implementation.
+Rules self-document and self-test:
 
----
+```rust
+pub struct PrefixRule {
+    // ...
+    pub match_examples:     &'static [&'static str],
+    pub not_match_examples: &'static [&'static str],
+}
+```
 
-## 14. `AuditEntry` struct has 18+ fields, many optional
+At startup (in debug builds and tests), the scanner validates all built-in rules
+against their examples. A rule that fails its own examples is a compile-time
+error.
 
-`AuditEntry` is a flat struct with over 18 fields, the majority of which are
-`Option<T>` with `skip_serializing_if`. The structure does not distinguish
-between fields that are always present, fields specific to watch mode, and
-fields for audit integrity. This flat layout makes it difficult to reason about
-invariants (e.g. "watch-mode entries always have `source` and `cwd`"), perform
-exhaustive pattern matching, or guarantee consistency between related optional
-fields.
+**Done when:** `cargo test` exercises all 70+ built-in rules against their
+examples; the TUI shows `justification` text for all built-in `Warn` and `Danger`
+rules; `cargo criterion` shows hot-path latency unchanged or improved.
 
 ---
 
-## 15. No cross-compilation or non-x86 architecture testing in CI
+## Phase 2 — Decision Persistence
 
-The release pipeline produces binaries for multiple architectures, but the CI
-pipeline (`ci.yml`) does not include any cross-compilation or test jobs for
-ARM (`aarch64`), musl libc, or other non-default targets. Regressions on these
-targets are undetectable before a release.
+**Goal:** when a human makes a decision about a command, that decision is
+automatically persisted as a rule. The user never sees the same prompt twice for
+the same command pattern. Inspired by codex's `amend.rs`.
 
----
+### 2.1 "Always allow" writes a rule to config
 
-## 16. `AegisConfig` vs `Config` public type alias adds API ambiguity
+When the user chooses "Always allow" in the TUI, Aegis:
 
-The config module re-exports `AegisConfig` under the alias `pub type Config =
-AegisConfig`. The actual struct is named `AegisConfig` internally but all
-public-facing code uses `Config`. This creates a disconnect between the
-canonical name in source code, documentation, error messages, and the external
-API.
+1. Tokenizes the command into its prefix (program + meaningful flags, stripping
+   variable arguments like file paths).
+2. Calls `amend::append_allow_rule(config_path, &prefix)` which appends a new
+   rule to `~/.aegis/aegis.toml` (or the active project config).
+3. Invalidates the scanner cache so the new rule takes effect immediately.
 
----
+The appended rule is human-readable TOML:
 
-## 17. `PartialConfig` duplicates every field of `AegisConfig` without abstraction
+```toml
+[[allow]]
+pattern = ["git", "push", "--force-with-lease"]
+reason  = "Approved by user on 2025-05-22"
+```
 
-The layered config merge uses a `PartialConfig` struct that mirrors every scalar
-field of `AegisConfig` as `Option<T>`. Any new field added to `AegisConfig`
-requires a parallel addition in `PartialConfig` and a corresponding merge arm in
-`merge_layer`. There is no compile-time enforcement that these stay in sync, and
-the `merge_layer` function is already very long due to this per-field expansion.
+### 2.2 "Always deny" writes a block rule
 
----
+Same mechanism for the "Always deny" choice:
 
-## 18. `runtime.rs` leaks a Tokio runtime in tests via `std::mem::forget`
+```toml
+[[block]]
+pattern = ["rm", "-rf", "/"]
+reason  = "Blocked by user on 2025-05-22"
+```
 
-The `test_handle` helper in `runtime.rs` creates a `tokio::runtime::Runtime`
-and intentionally leaks it with `std::mem::forget`. Each test call accumulates
-a permanently leaked runtime for the process lifetime. While this is test-only
-code, it establishes a pattern that can mask resource handling bugs and inflates
-memory use across the test suite.
+### 2.3 Rule deduplication on write
 
----
+`amend` checks whether an equivalent rule already exists before appending.
+A duplicate rule is silently skipped; a conflicting rule (same pattern, different
+decision) produces a warning with the existing rule's location.
 
-## 19. No `#[must_use]` on `Result`-returning public functions where applicable
+### 2.4 Allowlist merges into the unified rule system
 
-Several public-facing functions that return `Result<T>` (e.g. `AuditLogger::append`,
-`PatternSet::load`, `Allowlist::from_layered_rules`) lack `#[must_use]`
-annotations. Callers that accidentally discard the result will not receive a
-compiler warning, which is especially problematic for the audit logger where a
-silently ignored error means a security event goes unrecorded.
+The current `allowlist` config field (`allowed_commands`, `allowed_patterns`) is
+deprecated and replaced by the `[[allow]]` rule table. A migration function reads
+the old format on first load and writes the equivalent `[[allow]]` entries. The
+old field is accepted but emits a deprecation warning.
 
----
-
-## 20. `config_version` validation blocks loading older configs without migration path
-
-`deserialize_config_version` rejects any `config_version` other than the current
-value (`1`) at deserialization time with an error. There is no migration or
-upgrade path for future config versions. If `config_version` is ever incremented,
-all existing user config files will become instantly unreadable with no automated
-recovery mechanism.
+**Done when:** after one interactive session, `~/.aegis/aegis.toml` contains the
+user's allow/block decisions as typed rules; those decisions are respected on the
+next run without re-prompting; the old allowlist format still loads with a warning.
 
 ---
 
-## 21. Fuzz targets run only 2000 iterations in CI
+## Phase 3 — Module Architecture
 
-The CI fuzz job runs both `parser` and `scanner` fuzz targets with `-runs=2000`.
-This is a coverage-theater level of fuzzing — 2000 iterations provides
-effectively no probabilistic security guarantee for a security-critical input
-parser. The fuzz corpus is maintained, but its coverage under CI constraints is
-negligible.
+**Goal:** enforce strict module boundaries through the type system and directory
+structure. Eliminate the monolithic files that have grown beyond 800 lines. Update
+all documentation to match the actual module layout.
+
+### 3.1 File size budget — hard limit 800 LoC
+
+The following files exceed the 800-line limit and must be split:
+
+| File             | Current size | Target                                                  |
+| ---------------- | ------------ | ------------------------------------------------------- |
+| `runtime.rs`     | ~1100 lines  | `runtime/context.rs` + `runtime/user.rs`                |
+| `decision.rs`    | ~900 lines   | `decision/engine.rs` + `decision/types.rs`              |
+| `explanation.rs` | ~800 lines   | `explanation/formatter.rs` + `explanation/templates.rs` |
+| `install.rs`     | ~1600 lines  | `install/` submodule (3–4 files)                        |
+| `watch.rs`       | ~1100 lines  | `watch/` submodule (loop + protocol)                    |
+
+Rule: when extracting a file, move its tests and type docs into the new file.
+Never leave tests behind in the old file for code that moved.
+
+### 3.2 Update `ARCHITECTURE.md` to match reality
+
+`ARCHITECTURE.md` describes seven layers. The actual code has grown to include
+`planning/`, `toggle.rs`, `runtime_gate.rs`, `shell_flow.rs`, and five additional
+snapshot backends. Update the document to be authoritative again:
+
+- Add `planning/` to the policy engine layer.
+- Add `toggle.rs` and `runtime_gate.rs` to the entrypoint layer.
+- Add all six snapshot backends to the snapshot layer description.
+- Document the `watch` mode NDJSON protocol as a first-class protocol (currently
+  only mentioned in passing).
+
+### 3.3 `AuditEntry` — typed variant instead of flat struct
+
+Replace the 18-field flat struct with a typed enum:
+
+```rust
+pub enum AuditEntry {
+    Decision(DecisionEntry),   // always-present fields + decision outcome
+    Watch(WatchEntry),         // watch-mode source, cwd, exit code
+}
+
+pub struct DecisionEntry {
+    pub timestamp: DateTime<Utc>,
+    pub command:   String,
+    pub risk:      RiskLevel,
+    pub decision:  Decision,
+    // ... 4-5 always-present fields, no Option<T>
+}
+```
+
+This makes it impossible to construct a watch entry without a `cwd`, and
+impossible to construct a decision entry without a `risk` level.
+
+### 3.4 `AegisConfig` — remove type alias ambiguity
+
+Remove `pub type Config = AegisConfig`. All code uses `AegisConfig` directly.
+Generate a JSON schema from the type (`just write-config-schema`) so editors can
+validate `aegis.toml` files with autocompletion.
+
+**Done when:** no file in `src/` exceeds 800 lines; `ARCHITECTURE.md` matches the
+actual module tree with no undocumented modules; `cargo doc --no-deps` produces
+zero `missing_docs` warnings.
 
 ---
 
-## 22. `src/lib.rs` has no `#![warn(missing_docs)]` lint gate
+## Phase 4 — Multi-Crate Workspace
 
-The library crate does not enforce documentation coverage with
-`#![warn(missing_docs)]` or `#![deny(missing_docs)]`. Many public items in
-`src/snapshot/`, `src/planning/`, and `src/watch.rs` lack `///` documentation,
-despite `CONVENTION.md` requiring that "all new public items must have `///`
-doc comments."
+**Goal:** split the single-crate monolith into focused library crates with
+enforced dependency boundaries. This is the structural prerequisite for the policy
+DSL in Phase 5 and the sandboxing layer in Phase 6.
+
+### 4.1 Crate extraction order
+
+Extract in this order — each crate must compile and pass its tests before the
+next extraction begins:
+
+```
+aegis/                          (workspace root)
+  crates/
+    aegis-types/                RiskLevel, Decision, Pattern, Assessment — zero deps
+    aegis-parser/               command tokenizer, PrefixPattern matching
+    aegis-scanner/              Scanner, PatternSet — depends on aegis-types, aegis-parser
+    aegis-policy/               PolicyEngine, PrefixRule, amend — depends on aegis-scanner
+    aegis-audit/                AuditLogger, AuditEntry — depends on aegis-types
+    aegis-snapshot/             SnapshotPlugin trait + 6 backends — depends on aegis-types
+    aegis-tui/                  crossterm confirmation dialog — depends on aegis-types
+    aegis-config/               AegisConfig, loader, schema — depends on aegis-types
+  src/                          binary — thin wiring, depends on all crates above
+```
+
+Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
+application crate. Dependency arrows flow inward toward `aegis-types`.
+
+### 4.2 Dependency rule enforcement via `cargo deny`
+
+Extend `deny.toml` to ban cycles and enforce the dependency DAG:
+
+```toml
+[[bans.deny]]
+# aegis-parser must not depend on aegis-audit
+name = "aegis-audit"
+wrappers = ["aegis-parser"]
+```
+
+CI fails if any crate violates the dependency boundary.
+
+### 4.3 `aegis-parser` becomes a fuzz target
+
+With the parser in its own crate, `fuzz/` can target it directly. Increase CI
+fuzz iterations from 2000 to 100 000. Add the corpus from production runs
+(sanitized command strings) to the fuzz corpus directory.
+
+**Done when:** `cargo build --workspace` succeeds; `cargo test --workspace` passes;
+a PR that adds a dependency from `aegis-parser` to `aegis-audit` fails CI via
+`cargo deny`.
 
 ---
 
-## 23. `HOME` fallback in `default_snapshots_dir` defaults to `"."`
+## Phase 5 — Policy DSL
 
-`snapshot/mod.rs::default_snapshots_dir` uses `env::var_os("HOME").unwrap_or_else(|| ".".into())`.
-When `HOME` is unset (CI environments, containers, some service accounts),
-the snapshots directory resolves to `./.aegis/snapshots` — relative to the
-current working directory. Snapshot files accumulate in the project directory
-rather than a stable per-user location.
+**Goal:** replace TOML pattern tables with a typed, programmable policy language.
+Users can express rules that require conditional logic, environment context, or
+programmatic construction — without modifying Rust source. Inspired by codex's
+Starlark-based `execpolicy` parser.
+
+### 5.1 Evaluate DSL options
+
+Before committing to an implementation, benchmark three approaches against Aegis's
+2 ms hot-path constraint:
+
+| Option          | Expressiveness | Binary size impact | Startup cost |
+| --------------- | -------------- | ------------------ | ------------ |
+| Starlark (rhaï) | High           | +3–5 MB            | ~1 ms warmup |
+| Lua (mlua)      | Medium         | +1–2 MB            | < 0.5 ms     |
+| Typed TOML DSL  | Low–Medium     | Zero               | Zero         |
+
+Recommended starting point: **typed TOML DSL** (Phase 5.1), with Starlark/Lua as
+an opt-in power-user feature (Phase 5.2). The typed DSL covers 95% of real use
+cases without embedding an interpreter.
+
+### 5.2 Typed TOML policy DSL
+
+Extend `aegis.toml` with a richer rule type:
+
+```toml
+[[rules]]
+pattern     = ["git", "push", ["--force", "-f"]]
+decision    = "prompt"
+justification = "Force-push rewrites remote history."
+match_examples     = ["git push --force origin main"]
+not_match_examples = ["git push origin main"]
+
+[[rules]]
+pattern  = ["rm", "-rf", "/"]
+decision = "block"
+
+[[rules]]
+pattern  = ["docker", "run"]
+decision = "prompt"
+when     = { env = "CI", value = "true", then = "allow" }
+```
+
+The `when` clause adds environment-conditional decisions. The rule is validated
+at load time (not at match time) — invalid rules are a startup error.
+
+### 5.3 Starlark policy DSL (power-user tier)
+
+For users who need programmatic rules, offer an opt-in Starlark policy file
+(`~/.aegis/policy.star`):
+
+```python
+prefix_rule(
+    pattern = ["kubectl", "delete"],
+    decision = "prompt",
+    justification = "Deleting Kubernetes resources is irreversible.",
+    match_examples = [["kubectl", "delete", "pod", "mypod"]],
+)
+
+def on_command(cmd):
+    if cmd[0] == "git" and "--force" in cmd:
+        return "prompt"
+    return "allow"
+```
+
+Starlark is evaluated at startup and the resulting rule set is compiled to the
+same `MultiMap<program, PrefixRule>` used by the typed DSL. There is no runtime
+Starlark evaluation on the hot path.
+
+**Done when:** a user can write `~/.aegis/aegis.toml` with `[[rules]]` entries
+using `Alts`, `when`, `justification`, and `match_examples`; invalid rules produce
+a human-readable error with line numbers; the hot path shows no regression on
+`cargo criterion`.
 
 ---
 
-## 24. No integration test coverage for snapshot rollback end-to-end
+## Phase 6 — Sandboxing Layer
 
-`tests/snapshot_integration.rs` exists, but actual database (Postgres, MySQL,
-SQLite) and Docker snapshot-then-rollback flows cannot run in CI without the
-respective daemons. The test file presumably skips or mocks these flows. There
-is no documented strategy or CI job that validates the rollback path against
-real database or container state.
+**Goal:** move Aegis from "block risky decisions" to "restrict capabilities at the
+OS level." An approved command runs, but within a sandbox that limits what it can
+actually do. This is the architecture used by codex for all tool executions.
+
+### 6.1 Linux — bubblewrap + Landlock
+
+- `bwrap` (bubblewrap): namespace-based sandbox. Approved commands run in a
+  new mount namespace with a read-only view of the filesystem except for
+  explicitly allowed write paths.
+- `landlock`: Linux Security Module for fine-grained filesystem access control.
+  Applied in addition to bwrap for defense in depth.
+
+```toml
+[sandbox]
+enabled = true
+allow_write = [".", "/tmp"]
+allow_network = false
+```
+
+### 6.2 macOS — Seatbelt (`sandbox-exec`)
+
+Apply a `.sbpl` sandbox profile via `/usr/bin/sandbox-exec` before exec'ing the
+approved command. Profile templates live in `crates/aegis-sandbox/profiles/`.
+
+### 6.3 Windows — Job Objects
+
+Use Windows Job Objects to restrict the child process's ability to create new
+processes, modify the filesystem outside allowed paths, or open network sockets.
+
+### 6.4 Sandbox bypass is an audit event
+
+If the sandbox cannot be applied (kernel version too old, missing capabilities,
+unsupported platform), Aegis logs a `SandboxUnavailable` audit entry and proceeds
+without sandboxing. The user can configure `sandbox.required = true` to turn
+unavailability into a hard block.
+
+**Done when:** `cargo test --workspace` passes with sandbox enabled on
+`ubuntu-latest` and `macos-latest`; a command that attempts to write outside the
+allowed paths is killed by the sandbox; the audit log records the sandbox profile
+applied for every executed command.
+
+---
+
+## Phase 7 — Release Readiness
+
+**Goal:** complete the launch checklist in `docs/release-readiness.md` and ship
+a 1.0 release.
+
+- [ ] README and docs accurately describe all features through Phase 4.
+- [ ] Convenience installer documented and tested (`curl | sh` or package manager).
+- [ ] Release workflow exercised on a real tag; artifacts include checksum sidecars.
+- [ ] Supported platforms (Linux x86_64/aarch64, macOS arm64/x86_64, Windows x86_64)
+      stated clearly with notes on sandboxing availability per platform.
+- [ ] CI includes ARM cross-compilation jobs (`aarch64-unknown-linux-musl`).
+- [ ] Threat model and known limitations visible on the project README.
+- [ ] Snapshot rollback integration tests run in CI against real Docker / SQLite daemons.
+- [ ] Fuzz corpus in CI at ≥ 100 000 iterations per target.
+- [ ] `cargo audit` and `cargo deny check` both pass with zero findings.
+- [ ] CHANGELOG.md updated for every release via `git-cliff` or equivalent.
+
+---
+
+## Summary
+
+| Phase | Name                  | Key deliverable                                    |
+| ----- | --------------------- | -------------------------------------------------- |
+| 0     | Foundation Repair     | No silent failures; async correct; CI on Windows   |
+| 1     | Scanner Modernization | Token-prefix matching; `justification` in TUI      |
+| 2     | Decision Persistence  | "Always allow/block" writes rules to config        |
+| 3     | Module Architecture   | No file > 800 lines; typed `AuditEntry`; live docs |
+| 4     | Multi-Crate Workspace | 8 focused crates; enforced dependency DAG          |
+| 5     | Policy DSL            | Typed TOML rules + optional Starlark               |
+| 6     | Sandboxing Layer      | bwrap/Landlock/Seatbelt on approved commands       |
+| 7     | Release Readiness     | 1.0 ships                                          |

@@ -6,6 +6,7 @@ mod keywords;
 mod pipeline_semantics;
 mod recursive;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use aho_corasick::AhoCorasick;
@@ -35,17 +36,27 @@ pub use highlighting::sorted_highlight_ranges_for_tests;
 const MAX_SCAN_COMMAND_LEN: usize = 64 * 1024;
 const MAX_INLINE_SCRIPT_LEN: usize = 16 * 1024;
 
+type CompiledPattern = (Arc<Pattern>, Regex);
+
 pub struct Scanner {
     ac: AhoCorasick,
     /// `true` when ≥ 1 pattern yielded no extractable keyword.
     /// In that case `quick_scan` always returns `true` so we never miss a match.
     has_uncovered: bool,
-    /// Each pattern's regex compiled once at construction — reused on every `full_scan` call.
+    /// `^`-anchored patterns indexed by first-token program name (lowercase).
     ///
-    /// We compile at `Scanner::new()` rather than using per-static `LazyLock<Regex>` because
-    /// the pattern strings come from an embedded TOML file at runtime, not from static literals.
-    /// The semantics are identical: compile once, use many times, zero recompilation overhead.
-    compiled: Vec<(Arc<Pattern>, Regex)>,
+    /// Only patterns whose every top-level alternation starts with `^` are stored
+    /// here — they can only fire when the program token is at position 0, so it is
+    /// safe to skip them for commands with a different leading program name.
+    ///
+    /// Built at construction time; looked up O(1) in `full_scan`.
+    by_program: HashMap<String, Vec<CompiledPattern>>,
+    /// Non-`^`-anchored patterns — always run regardless of the leading program.
+    ///
+    /// Non-anchored patterns (e.g. `\brm\s+`, `git\s+reset`) can match anywhere in
+    /// a string, including inside quoted arguments to an unrelated command. They must
+    /// be evaluated for every target regardless of the detected program name.
+    universal: Vec<CompiledPattern>,
 }
 
 impl Scanner {
@@ -56,26 +67,38 @@ impl Scanner {
     pub fn new(patterns: PatternSet) -> Self {
         let effective_patterns = patterns.patterns();
 
-        // Compile each regex once. An invalid pattern in patterns.toml is a programming error —
-        // panic at startup is the correct response (fail fast, not silently skip).
-        let compiled: Vec<(Arc<Pattern>, Regex)> = effective_patterns
-            .iter()
-            .map(|p| {
-                let rx = Regex::new(&p.pattern)
-                    .unwrap_or_else(|e| panic!("invalid regex in pattern {}: {e}", p.id));
-                (Arc::clone(p), rx)
-            })
-            .collect();
-
         let mut keywords: Vec<String> = Vec::new();
         let mut has_uncovered = false;
+        let mut by_program: HashMap<String, Vec<CompiledPattern>> = HashMap::new();
+        let mut universal: Vec<CompiledPattern> = Vec::new();
 
-        for pattern in effective_patterns {
-            let kws = keywords::extract_keywords(&pattern.pattern);
+        for p in effective_patterns {
+            // Compile each regex once — panic on invalid pattern (programming error).
+            let rx = Regex::new(&p.pattern)
+                .unwrap_or_else(|e| panic!("invalid regex in pattern {}: {e}", p.id));
+            let entry = (Arc::clone(p), rx);
+
+            // Build AC keyword set.
+            let kws = keywords::extract_keywords(&p.pattern);
             if kws.is_empty() {
                 has_uncovered = true;
             } else {
                 keywords.extend(kws);
+            }
+
+            // Route to the right index bucket.
+            // `^`-anchored patterns go into `by_program` under each alternative's program key.
+            // Non-anchored patterns go into `universal` — they must run for every command.
+            let prog_keys = keywords::derive_program_keys(&p.pattern);
+            if prog_keys.is_empty() {
+                universal.push(entry);
+            } else {
+                for key in &prog_keys {
+                    by_program.entry(key.clone()).or_default().push(entry.clone());
+                }
+                // ^-anchored patterns are NOT pushed to universal: they only fire when
+                // the program token is at position 0, so skipping them for other programs
+                // is safe.
             }
         }
 
@@ -90,7 +113,8 @@ impl Scanner {
         Scanner {
             ac,
             has_uncovered,
-            compiled,
+            by_program,
+            universal,
         }
     }
 
@@ -105,26 +129,41 @@ impl Scanner {
         self.has_uncovered || self.ac.is_match(cmd)
     }
 
-    /// Slow path: run every compiled regex against `cmd` and return all matching patterns.
+    /// Slow path: run compiled regexes against `cmd` and return all matching patterns.
     ///
-    /// Called only after `quick_scan` returns `true`. Filters out the Aho-Corasick
-    /// false positives and produces the authoritative match list.
+    /// Always runs the `universal` set (non-`^`-anchored patterns). When `program`
+    /// is `Some(p)` and `p` has indexed `^`-anchored patterns, those are additionally
+    /// appended — O(universal + indexed) rather than O(all).
     ///
-    /// **Complexity:** O(p × n) where p = number of patterns, n = command length.
-    pub fn full_scan(&self, cmd: &str) -> Vec<MatchResult> {
-        self.compiled
+    /// Called only after `quick_scan` returns `true`.
+    pub fn full_scan(&self, cmd: &str, program: Option<&str>) -> Vec<MatchResult> {
+        let program_patterns: &[CompiledPattern] = program
+            .and_then(|prog| self.by_program.get(&prog.to_ascii_lowercase()))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+
+        self.universal
             .iter()
-            .filter_map(|(pattern, rx)| {
-                rx.find(cmd).map(|m| MatchResult {
-                    pattern: Arc::clone(pattern),
-                    matched_text: m.as_str().to_string(),
-                    highlight_range: Some(HighlightRange {
-                        start: m.start(),
-                        end: m.end(),
-                    }),
-                })
-            })
+            .chain(program_patterns.iter())
+            .filter_map(|(pattern, rx)| Self::match_one(cmd, pattern, rx))
             .collect()
+    }
+
+    fn match_one(cmd: &str, pattern: &Arc<Pattern>, rx: &Regex) -> Option<MatchResult> {
+        rx.find(cmd).map(|m| MatchResult {
+            pattern: Arc::clone(pattern),
+            matched_text: m.as_str().to_string(),
+            highlight_range: Some(HighlightRange {
+                start: m.start(),
+                end: m.end(),
+            }),
+        })
+    }
+
+    /// Returns the number of patterns indexed for the given program name.
+    #[cfg(test)]
+    pub(crate) fn indexed_program_count(&self, program: &str) -> usize {
+        self.by_program.get(program).map_or(0, Vec::len)
     }
 }
 
@@ -1195,6 +1234,144 @@ mod tests {
             "10,000 quick_scan calls took {}ms ({}µs), expected < 25ms",
             elapsed.as_millis(),
             elapsed.as_micros(),
+        );
+    }
+
+    // ── Phase 1.2: program-indexed pattern lookup ────────────────────────────
+    //
+    // All program-specific patterns (`^prog\s+…`) are indexed in `by_program` and
+    // skipped for commands with a different leading program.  Patterns that must run
+    // for any leading program (FS-*, DB-*, PS-*, PKG-*, EXEC-001/003/004/…) live in
+    // `universal`.
+
+    #[test]
+    fn scanner_indexes_anchored_patterns_for_bash() {
+        let s = scanner();
+        // EXEC-006: `^bash\s+...-c\b|^sh\s+...|...` — all alternatives start with `^`
+        assert!(
+            s.indexed_program_count("bash") > 0,
+            "scanner must have ^-anchored patterns indexed for 'bash'"
+        );
+    }
+
+    #[test]
+    fn scanner_indexes_anchored_patterns_for_eval() {
+        let s = scanner();
+        // Pattern `^eval\b` is ^-anchored → indexed
+        assert!(
+            s.indexed_program_count("eval") > 0,
+            "scanner must have ^-anchored patterns indexed for 'eval'"
+        );
+    }
+
+    #[test]
+    fn scanner_indexes_anchored_patterns_for_ruby() {
+        let s = scanner();
+        // Pattern `^ruby\s+-e\b` is ^-anchored → indexed
+        assert!(
+            s.indexed_program_count("ruby") > 0,
+            "scanner must have ^-anchored patterns indexed for 'ruby'"
+        );
+    }
+
+    #[test]
+    fn scanner_indexes_git_patterns_by_program() {
+        let s = scanner();
+        // GIT-001..GIT-008 are all `^git\s+…` anchored — they live in by_program["git"]
+        // and are skipped for commands whose leading program is not "git".
+        assert!(
+            s.indexed_program_count("git") > 0,
+            "scanner must have git patterns indexed under 'git' (all GIT-* are ^-anchored)"
+        );
+    }
+
+    #[test]
+    fn full_scan_with_git_program_hint_still_returns_git_patterns() {
+        let s = scanner();
+        // GIT-001 is `^git\s+reset\s+--hard` — indexed in by_program["git"],
+        // so it runs when the program hint is "git".
+        let matches = s.full_scan("git reset --hard HEAD~1", Some("git"));
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            ids.contains(&"GIT-001"),
+            "GIT-001 must fire for 'git reset --hard' via by_program['git']: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn full_scan_with_none_program_still_catches_rm_patterns() {
+        let s = scanner();
+        // FS-001 is universal — fires even when no program hint is given.
+        let matches = s.full_scan("rm -rf /home/user", None);
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            ids.contains(&"FS-001"),
+            "FS-001 must fire for 'rm -rf' with program=None: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn full_scan_universal_patterns_run_for_any_program() {
+        let s = scanner();
+        // FS-009 is universal (no `^`) — fires regardless of program token.
+        let matches = s.full_scan("echo data > /dev/sda", Some("echo"));
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            ids.contains(&"FS-009"),
+            "FS-009 must fire for redirect to block device regardless of program: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn full_scan_universal_pattern_fork_bomb_fires_for_any_program() {
+        let s = scanner();
+        // PS-004 (fork bomb) is universal — no `^` anchor.
+        let matches = s.full_scan(":(){ :|:& };:", None);
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            ids.contains(&"PS-004"),
+            "PS-004 (fork bomb) must fire with program=None: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn full_scan_anchored_bash_pattern_does_not_fire_for_ls_command() {
+        let s = scanner();
+        // EXEC-006 (^bash\s+-c...) is ^-anchored → indexed only under bash/sh/etc.
+        // It must NOT fire when scanning an unrelated "ls" command.
+        let matches = s.full_scan("ls -la /home/user", Some("ls"));
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            !ids.contains(&"EXEC-006"),
+            "EXEC-006 (^bash anchored) must NOT fire for 'ls' program: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn git_patterns_skipped_for_non_git_program() {
+        let s = scanner();
+        // GIT-001..GIT-008 are in by_program["git"] only. A command whose leading
+        // program is not "git" must not match any of them, reducing useless regex work.
+        let matches = s.full_scan("ls -la /home/user", Some("ls"));
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            !ids.iter().any(|id| id.starts_with("GIT-")),
+            "GIT-* patterns must not fire for 'ls' program: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn cloud_patterns_remain_universal_to_catch_inline_script_bodies() {
+        let s = scanner();
+        // CL-001 (terraform destroy) is NOT ^-anchored — it stays in universal so it
+        // fires on inline script bodies like `require('cp').execSync('terraform destroy')`.
+        // That body's first token is "require(...)", not "terraform", but the pattern
+        // must still fire.
+        let matches = s.full_scan("require('cp').execSync('terraform destroy')", Some("require"));
+        let ids: Vec<&str> = matches.iter().map(|m| m.pattern.id.as_ref()).collect();
+        assert!(
+            ids.contains(&"CL-001"),
+            "CL-001 must fire on inline script body containing 'terraform destroy': {ids:?}"
         );
     }
 }

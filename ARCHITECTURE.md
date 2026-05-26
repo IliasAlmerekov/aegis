@@ -588,7 +588,7 @@ conversation to happen.
 | `src/audit/logger.rs`            | 2 199 | Split into `writer.rs`, `query.rs`, `integrity.rs`, `rotation.rs`.  |
 | `src/config/model.rs`            | 1 891 | Split nested snapshot configs into `config/snapshot.rs`.            |
 | `src/ui/confirm.rs`              | 1 739 | Split confirmation vs block screens; split TTY vs stdout renderers. |
-| `src/interceptor/scanner/mod.rs` | 1 106 | Candidate; already has sibling submodules.                          |
+| `src/interceptor/scanner/mod.rs` | 1 326 | Phase 1.2 adds by-program index + tests; split when tests migrate.  |
 | `src/snapshot/supabase.rs`       | 1 596 | Acceptable — isolates one CLI integration.                          |
 | `src/main.rs`                    | 893   | Move `#[cfg(test)]` imports out; already uses `cli_*` modules.      |
 

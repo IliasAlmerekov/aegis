@@ -96,7 +96,7 @@ safe_alt = "Copy and modify files under /etc instead of moving them"
 id = "GIT-001"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+reset\s+--hard'
+pattern = '^git\s+reset\s+--hard'
 description = "git reset --hard — discards all uncommitted changes in the working tree and index"
 safe_alt = "Stash changes first: 'git stash push -m \"backup\"' then reset if needed"
 
@@ -104,7 +104,7 @@ safe_alt = "Stash changes first: 'git stash push -m \"backup\"' then reset if ne
 id = "GIT-002"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+clean\s+.*-[a-zA-Z]*f'
+pattern = '^git\s+clean\s+.*-[a-zA-Z]*f'
 description = "git clean -f — permanently removes untracked files from the working tree"
 safe_alt = "Preview first: 'git clean -n' (dry-run) before using -f"
 
@@ -112,7 +112,7 @@ safe_alt = "Preview first: 'git clean -n' (dry-run) before using -f"
 id = "GIT-003"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+push\s+.*--force(-with-lease)?'
+pattern = '^git\s+push\s+.*--force(-with-lease)?'
 description = "git push --force — rewrites remote history, can discard other contributors' commits"
 safe_alt = "Prefer '--force-with-lease' over '--force' to avoid overwriting unseen commits"
 
@@ -120,7 +120,7 @@ safe_alt = "Prefer '--force-with-lease' over '--force' to avoid overwriting unse
 id = "GIT-004"
 category = "Git"
 risk = "Danger"
-pattern = 'git\s+filter-branch'
+pattern = '^git\s+filter-branch'
 description = "git filter-branch — rewrites entire repository history; extremely destructive on shared repos"
 safe_alt = "Use 'git filter-repo' (faster, safer) and coordinate with all contributors first"
 
@@ -128,7 +128,7 @@ safe_alt = "Use 'git filter-repo' (faster, safer) and coordinate with all contri
 id = "GIT-005"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+rebase\s+'
+pattern = '^git\s+rebase\s+'
 description = "git rebase — rewrites commit history; can cause conflicts and lose work if misused"
 safe_alt = "Ensure your branch is up-to-date and create a backup branch before rebasing"
 
@@ -136,7 +136,7 @@ safe_alt = "Ensure your branch is up-to-date and create a backup branch before r
 id = "GIT-006"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+branch\s+(-D|-d\s+-f)'
+pattern = '^git\s+branch\s+(-D|-d\s+-f)'
 description = "git branch -D — force-deletes a branch even with unmerged commits"
 safe_alt = "Verify the branch is fully merged: 'git branch --merged' before deleting"
 
@@ -144,7 +144,7 @@ safe_alt = "Verify the branch is fully merged: 'git branch --merged' before dele
 id = "GIT-007"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+checkout\s+--\s+\.'
+pattern = '^git\s+checkout\s+--\s+\.'
 description = "git checkout -- . — discards all unstaged changes in the working directory"
 safe_alt = "Stage or stash changes you want to keep before running this"
 
@@ -152,7 +152,7 @@ safe_alt = "Stage or stash changes you want to keep before running this"
 id = "GIT-008"
 category = "Git"
 risk = "Warn"
-pattern = 'git\s+stash\s+(drop|clear)'
+pattern = '^git\s+stash\s+(drop|clear)'
 description = "git stash drop/clear — permanently removes saved stash entries with no recovery"
 safe_alt = "Apply the stash before dropping: 'git stash apply && git stash drop'"
 
@@ -468,7 +468,7 @@ safe_alt = "Write the command to a script file, review it, then execute explicit
 id = "EXEC-002"
 category = "Process"
 risk = "Warn"
-pattern = 'python[23]?\s+-[a-zA-Z]*c\b'
+pattern = '^python[23]?\s+-[a-zA-Z]*c\b'
 description = "python -c — executes an inline Python script; dangerous code inside may evade shell-level pattern scanning"
 safe_alt = "Write the code to a .py file and run it: 'python3 script.py'"
 
