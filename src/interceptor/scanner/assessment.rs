@@ -140,7 +140,10 @@ impl Scanner {
         }
 
         for target in target_report.targets {
-            for pattern in self.full_scan(&target) {
+            // Derive the program from the target's first token (lowercase) so
+            // full_scan can use the by-program index on the fast path.
+            let prog = target.split_whitespace().next().map(str::to_lowercase);
+            for pattern in self.full_scan(&target, prog.as_deref()) {
                 if !matched
                     .iter()
                     .any(|existing: &MatchResult| existing.pattern.id == pattern.pattern.id)

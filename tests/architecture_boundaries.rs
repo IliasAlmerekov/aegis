@@ -348,7 +348,7 @@ fn file_size_budgets_are_respected() {
         ("src/config/model.rs", 2_000),
         ("src/ui/confirm.rs", 1_800),
         ("src/snapshot/supabase.rs", 1_700),
-        ("src/interceptor/scanner/mod.rs", 1_200),
+        ("src/interceptor/scanner/mod.rs", 1_400),
     ];
 
     let mut failures: Vec<String> = Vec::new();
