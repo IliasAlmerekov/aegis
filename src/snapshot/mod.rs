@@ -350,6 +350,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
+    // Serialises tests that read or mutate HOME/USERPROFILE so they don't race.
+    static HOME_ENV: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
     struct MockPlugin {
         name: &'static str,
         applicable: bool,
@@ -818,6 +822,7 @@ mod tests {
         // (the Windows equivalent) so that home_dir() returns None on all
         // platforms. Restore both before asserting so a failure doesn't poison
         // the environment for parallel tests.
+        let _guard = HOME_ENV.lock().unwrap();
         let saved_home = std::env::var_os("HOME");
         let saved_userprofile = std::env::var_os("USERPROFILE");
         unsafe {
@@ -845,6 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn sqlite_relative_snapshot_path_is_applicable_from_command_cwd() {
+        let _guard = HOME_ENV.lock().unwrap();
         let temp_dir = TempDir::new().unwrap();
         let db_dir = temp_dir.path().join("db");
         std::fs::create_dir_all(&db_dir).unwrap();
