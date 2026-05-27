@@ -140,16 +140,18 @@ impl SnapshotPlugin for GitPlugin {
                 AegisError::Snapshot(format!("stash entry not found for hash {hash}"))
             })?;
 
-        let pop_out = Command::new("git")
-            .args(["stash", "pop", "--index", &stash_ref])
+        // Apply by hash (not positional ref) so the operation is stable even if
+        // another stash is pushed into this repo between `stash list` and now.
+        let apply_out = Command::new("git")
+            .args(["stash", "apply", "--index", hash])
             .current_dir(cwd_str)
             .output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("git stash pop failed: {e}")))?;
+            .map_err(|e| AegisError::Snapshot(format!("git stash apply failed: {e}")))?;
 
-        if !pop_out.status.success() {
-            let stderr = String::from_utf8_lossy(&pop_out.stderr);
-            let stdout = String::from_utf8_lossy(&pop_out.stdout);
+        if !apply_out.status.success() {
+            let stderr = String::from_utf8_lossy(&apply_out.stderr);
+            let stdout = String::from_utf8_lossy(&apply_out.stdout);
             // Combine both streams — git writes conflict details to stdout and
             // error diagnostics to stderr, so we need both for a useful message.
             let details = format!("{stdout}{stderr}").trim().to_string();
@@ -158,7 +160,7 @@ impl SnapshotPlugin for GitPlugin {
                 stash_ref = %stash_ref,
                 cwd = %cwd_str,
                 details = %details,
-                "git stash pop conflicted — stash entry is preserved for manual recovery"
+                "git stash apply conflicted — stash entry is preserved for manual recovery"
             );
 
             return Err(AegisError::RollbackConflict {
@@ -166,6 +168,18 @@ impl SnapshotPlugin for GitPlugin {
                 cwd: cwd_str.to_string(),
                 details,
             });
+        }
+
+        // Drop the stash entry after a successful apply. If drop fails (e.g.
+        // because the entry was already removed), log a warning but do not
+        // propagate — the working tree is already restored correctly.
+        let drop_out = Command::new("git")
+            .args(["stash", "drop", &stash_ref])
+            .current_dir(cwd_str)
+            .output()
+            .await;
+        if !drop_out.map(|o| o.status.success()).unwrap_or(false) {
+            tracing::warn!(stash_ref = %stash_ref, "git stash drop failed after successful apply");
         }
 
         tracing::info!(stash_ref = %stash_ref, "git snapshot rolled back");
@@ -187,18 +201,21 @@ mod tests {
             .output()
             .await
             .unwrap();
+        // Set local identity so stash commits don't depend on global git config.
+        for (key, val) in [
+            ("user.email", "test@aegis.dev"),
+            ("user.name", "Aegis Test"),
+        ] {
+            Command::new("git")
+                .args(["config", key, val])
+                .current_dir(dir)
+                .output()
+                .await
+                .unwrap();
+        }
         // Stash requires at least one commit; create an empty one.
         Command::new("git")
-            .args([
-                "-c",
-                "user.email=test@aegis.dev",
-                "-c",
-                "user.name=Aegis Test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ])
+            .args(["commit", "--allow-empty", "-m", "init"])
             .current_dir(dir)
             .output()
             .await

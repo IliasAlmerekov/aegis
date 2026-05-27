@@ -34,7 +34,7 @@ As a result, `curl | sh` installs often finish without Claude Code or Codex hook
 
 - the installed binary is present
 - the user expects Aegis integration to be complete
-- the repository already contains binary-side hook installation logic in `src/install.rs`
+- the repository already contains binary-side hook installation logic in `src/install/`
 
 This creates avoidable confusion, especially for Codex and Claude Code users who expect command interception to begin immediately.
 
@@ -120,7 +120,7 @@ Repeated runs must:
 
 The installed binary becomes the source of truth for hook installation.
 
-The existing installation logic in `src/install.rs` already covers most of the needed work:
+The existing installation logic in `src/install/` already covers most of the needed work:
 
 - Claude Code settings patching
 - Codex hook payload materialization
@@ -215,7 +215,7 @@ If hook files or config files cannot be written:
 
 ### Unit tests
 
-Extend `src/install.rs` coverage for:
+Extend `src/install/` coverage for:
 
 - explicit selection logic for `--all`, `--claude-code`, and `--codex`
 - Claude Code installation idempotence
