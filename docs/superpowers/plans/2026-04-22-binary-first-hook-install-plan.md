@@ -62,13 +62,13 @@ Dependencies:
 
 - `src/main.rs`
 - `src/cli_dispatch.rs`
-- `src/install.rs`
+- `src/install/`
 
 **Implementation notes**
 
 - Prefer routing both `install` and `install-hooks` into the same implementation path
 - If `--local` remains, document and keep its scope narrow to Claude local settings behavior
-- Keep `src/main.rs` thin by pushing argument interpretation into `src/install.rs` or adjacent dispatch glue
+- Keep `src/main.rs` thin by pushing argument interpretation into `src/install/` or adjacent dispatch glue
 
 **Verification**
 
@@ -85,7 +85,7 @@ Dependencies:
 
 **Scope**
 
-- Refine `src/install.rs` into the canonical installation path for:
+- Refine `src/install/` into the canonical installation path for:
   - Claude Code hook registration
   - Codex hook file materialization
   - Codex hooks.json registration
@@ -97,7 +97,7 @@ Dependencies:
 
 **Likely files**
 
-- `src/install.rs`
+- `src/install/`
 
 **Implementation notes**
 
@@ -197,7 +197,7 @@ Dependencies:
 **Likely files**
 
 - `src/main.rs` tests
-- `src/install.rs` tests
+- `src/install/` tests
 - `tests/installer_flow.rs`
 - `tests/agent_hooks.rs`
 
@@ -289,5 +289,5 @@ Approved design source:
 Implementation should begin only against the plan above, with reviewer and security review attention on:
 
 - `src/main.rs`
-- `src/install.rs`
+- `src/install/`
 - installer messaging and release-install behavior

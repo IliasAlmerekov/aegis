@@ -69,13 +69,13 @@ of the interception path described in this document.
 │                       shell_compat.rs, shell_wrapper.rs, rollback.rs,   │
 │                       policy_output.rs)                                 │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ 2. Policy Engine     src/decision.rs  +  src/planning/                  │
+│ 2. Policy Engine     src/decision/  +  src/planning/                  │
 │                      (pure function: PolicyInput → PolicyDecision)      │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 3. Scanner           src/interceptor/                                   │
 │                      (command → Assessment: RiskLevel + matched)        │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ 4. Approval Flow     src/shell_flow.rs, src/watch.rs, src/install.rs    │
+│ 4. Approval Flow     src/shell_flow.rs, src/watch/, src/install/    │
 │                      + src/ui/confirm.rs (TUI)                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 5. Snapshot Layer    src/snapshot/ (plugin trait + 6 built-ins)         │
@@ -85,7 +85,7 @@ of the interception path described in this document.
 │ 7. Agent Protocols   watch (NDJSON stdin/stdout)                        │
 │                      hook  (Claude Code PreToolUse JSON)                │
 └─────────────────────────────────────────────────────────────────────────┘
-     Support:  src/config/   src/runtime.rs   src/explanation.rs
+     Support:  src/config/   src/runtime/   src/explanation/
                src/toggle.rs src/error.rs     src/runtime_gate.rs
 ```
 
@@ -133,12 +133,12 @@ so a child may numerically return the same values. Callers that need
 collision-free decision data must use `--output json` or watch-mode result
 frames. Changing Aegis' own 2/3/4 mapping is a breaking change.
 
-### 2.2 Policy Engine — `src/decision.rs` + `src/planning/`
+### 2.2 Policy Engine — `src/decision/` + `src/planning/`
 
 **Responsibility:** given a fully collected input (assessment, mode, CI,
 allowlist, transport), produce a decision. Nothing else.
 
-**`src/decision.rs` (`evaluate_policy`) is a pure function.**
+**`src/decision/engine.rs` (`evaluate_policy`) is a pure function.**
 No I/O, no filesystem, no process spawning, no logging, no global state.
 
 ```rust
@@ -216,7 +216,7 @@ effective config; the merged scanner is cached by content hash in
 `MAX_SCAN_COMMAND_LEN = 64 KiB` and `MAX_INLINE_SCRIPT_LEN = 16 KiB` cap
 scanner input to bound worst-case work.
 
-### 2.4 Approval Flow — `src/shell_flow.rs`, `src/watch.rs`, `src/install.rs`
+### 2.4 Approval Flow — `src/shell_flow.rs`, `src/watch/`, `src/install/`
 
 **Responsibility:** execute an `InterceptionPlan`. This is where side effects
 happen — snapshots, TUI, exec, audit append.
@@ -335,10 +335,10 @@ Both protocols are public contracts. Changing them is a breaking change.
   `AegisConfig` +
   `Allowlist` + `validate_config_layers`. All new fields must be optional with
   `#[serde(default)]`.
-- **`src/runtime.rs`** — `RuntimeContext`: scanner, allowlist, snapshot
+- **`src/runtime/`** — `RuntimeContext`: scanner, allowlist, snapshot
   registry (lazy), audit logger, async handle, effective `RuntimeConfig`.
   Built exactly **once per CLI invocation**.
-- **`src/explanation.rs`** — `CommandExplanation { scan, policy, context,
+- **`src/explanation/`** — `CommandExplanation { scan, policy, context,
 outcome }`. Deterministic, serializable; consumed by UI, audit, and
   `--output json`.
 - **`src/policy_output.rs`** — evaluation-only mode
@@ -443,7 +443,7 @@ and `tests/main_thin_entrypoint.rs`, to be extended):
 patterns, scanner}`, `explanation::CommandExplanation`. These are **data
   types** for rendering, not behavior. UI must never call `.snapshot()` or
   `.rollback()`.
-- `runtime.rs` is the one place that stitches scanner + allowlist + snapshot
+- `src/runtime/context.rs` is the one place that stitches scanner + allowlist + snapshot
   registry + audit logger together. Nothing else is allowed to.
 
 ---

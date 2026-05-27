@@ -220,7 +220,7 @@ reason  = "Blocked by user on 2025-05-22"
 A duplicate rule is silently skipped; a conflicting rule (same pattern, different
 decision) produces a warning with the existing rule's location.
 
-### 2.4 Allowlist merges into the unified rule system
+### 2.4 Allowlist merges into the unified rule system(Done)
 
 The current `allowlist` config field (`allowed_commands`, `allowed_patterns`) is
 deprecated and replaced by the `[[allow]]` rule table. A migration function reads
@@ -239,7 +239,7 @@ next run without re-prompting; the old allowlist format still loads with a warni
 structure. Eliminate the monolithic files that have grown beyond 800 lines. Update
 all documentation to match the actual module layout.
 
-### 3.1 File size budget — hard limit 800 LoC
+### 3.1 File size budget — hard limit 800 LoC(Done)
 
 The following files exceed the 800-line limit and must be split:
 

@@ -30,7 +30,7 @@ modules:
 - `src/interceptor/patterns.rs` — built-in and user pattern loading
 - `src/runtime_gate.rs` — Rust-side CI detection contract
 - `src/toggle.rs` — global on/off toggle state rooted at `~/.aegis/disabled`
-- `src/watch.rs` — NDJSON watch-mode control loop
+- `src/watch/` — NDJSON watch-mode control loop
 - `src/snapshot/` — best-effort Git / Docker / database snapshot providers
 - `src/audit/logger.rs` — append-only JSONL audit writer and integrity handling
 - `scripts/hooks/` — Claude / Codex hook payloads and the shared shell-side

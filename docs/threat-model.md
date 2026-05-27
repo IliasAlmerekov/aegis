@@ -236,11 +236,11 @@ Use Aegis as one layer in a larger safety posture:
 
 ## Code and test references
 
-- `src/decision.rs`
+- `src/decision/`
 - `src/planning/core.rs`
-- `src/runtime.rs`
+- `src/runtime/`
 - `src/ui/confirm.rs`
-- `src/watch.rs`
+- `src/watch/`
 - `src/snapshot/mod.rs`
 - `src/snapshot/git.rs`
 - `src/snapshot/docker.rs`

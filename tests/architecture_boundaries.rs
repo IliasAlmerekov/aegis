@@ -169,23 +169,30 @@ fn assert_absent(source: &str, needle: &str, file: &str, rule: &str) {
 /// no tokio, no filesystem, no logging.
 #[test]
 fn decision_engine_is_pure_no_io() {
-    let src = read_production("src/decision.rs");
-    for forbidden in [
-        "std::fs",
-        "std::process",
-        "tokio::",
-        "std::io",
-        "std::env",
-        "tracing::",
-        "eprintln!",
-        "println!",
-    ] {
-        assert_absent(
-            &src,
-            forbidden,
-            "src/decision.rs",
-            "I1: policy engine must be a pure function — no I/O",
-        );
+    for path in rs_files_under("src/decision") {
+        let src = strip_test_code(&fs::read_to_string(&path).unwrap());
+        let rel = path
+            .strip_prefix(repo_root())
+            .unwrap()
+            .display()
+            .to_string();
+        for forbidden in [
+            "std::fs",
+            "std::process",
+            "tokio::",
+            "std::io",
+            "std::env",
+            "tracing::",
+            "eprintln!",
+            "println!",
+        ] {
+            assert_absent(
+                &src,
+                forbidden,
+                &rel,
+                "I1: policy engine must be a pure function — no I/O",
+            );
+        }
     }
 }
 
@@ -315,7 +322,16 @@ fn config_is_a_leaf() {
 /// Only `src/decision.rs` defines it and `src/planning/core.rs` consumes it.
 #[test]
 fn transports_route_policy_through_planning_module() {
-    for relative in ["src/shell_flow.rs", "src/watch.rs", "src/install.rs"] {
+    for relative in [
+        "src/shell_flow.rs",
+        "src/watch/mod.rs",
+        "src/watch/runner.rs",
+        "src/watch/protocol.rs",
+        "src/install/mod.rs",
+        "src/install/hook.rs",
+        "src/install/claude.rs",
+        "src/install/codex.rs",
+    ] {
         let src = read_production(relative);
         assert_absent(
             &src,
