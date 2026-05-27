@@ -7,8 +7,9 @@ pub(super) fn scan_targets(cmd: &str, parsed: &ParsedCommand) -> RecursiveScanRe
         return recursive_scan_targets(cmd);
     }
 
-    // Primary target is the raw string until Phase 1.3 converts patterns to PrefixRules.
-    // The normalized form will replace this once token-level matching is in place.
+    // Token-level prefix rules (Git, Database, Cloud) are already in place via
+    // prefix_scan, but regex patterns (Filesystem, Docker, Process, Package, etc.)
+    // still require the raw string as the primary scan target.
     let mut targets = vec![cmd.to_string()];
 
     for segment in logical_segments(cmd) {

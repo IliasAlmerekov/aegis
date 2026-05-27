@@ -139,16 +139,28 @@ impl Scanner {
             );
         }
 
-        for target in target_report.targets {
+        for target in &target_report.targets {
             // Derive the program from the target's first token (lowercase) so
             // full_scan can use the by-program index on the fast path.
             let prog = target.split_whitespace().next().map(str::to_lowercase);
-            for pattern in self.full_scan(&target, prog.as_deref()) {
+            for pattern in self.full_scan(target, prog.as_deref()) {
                 if !matched
                     .iter()
                     .any(|existing: &MatchResult| existing.pattern.id == pattern.pattern.id)
                 {
                     matched.push(pattern);
+                }
+            }
+
+            // Token-prefix scan: parsed tokens, not raw string.
+            let tokens = crate::interceptor::parser::split_tokens(target);
+            let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+            for result in self.prefix_scan(&token_refs) {
+                if !matched
+                    .iter()
+                    .any(|existing: &MatchResult| existing.pattern.id == result.pattern.id)
+                {
+                    matched.push(result);
                 }
             }
         }
