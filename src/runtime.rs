@@ -325,6 +325,7 @@ mod tests {
                 pattern: "echo hello".to_string(),
                 description: "custom warning".to_string(),
                 safe_alt: None,
+                justification: None,
             }],
             ..Config::default()
         };
@@ -347,6 +348,7 @@ mod tests {
                 pattern: "echo hello".to_string(),
                 description: "duplicate id".to_string(),
                 safe_alt: None,
+                justification: None,
             }],
             ..Config::default()
         };
@@ -729,6 +731,7 @@ expires_at = "2030-01-01T00:00:00Z"
                     risk: RiskLevel::Danger,
                     description: "recursive delete".to_string(),
                     matched_text: "rm -rf".to_string(),
+                    justification: None,
                 }],
             },
             policy: PolicyExplanation {
@@ -802,6 +805,7 @@ expires_at = "2030-01-01T00:00:00Z"
                     risk: RiskLevel::Danger,
                     description: "recursive delete".to_string(),
                     matched_text: "rm -rf".to_string(),
+                    justification: None,
                 }],
             },
             policy: PolicyExplanation {

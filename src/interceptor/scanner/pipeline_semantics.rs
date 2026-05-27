@@ -75,6 +75,7 @@ fn push_semantic_match(
             pattern: id.into(),
             description: description.into(),
             safe_alt: safe_alt.map(Into::into),
+            justification: None,
             source: PatternSource::Builtin,
         }),
         matched_text: matched_text.to_string(),

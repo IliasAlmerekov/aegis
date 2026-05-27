@@ -91,6 +91,7 @@ impl PrefixRule {
                 ),
                 description: self.description.clone(),
                 safe_alt: self.safe_alt.clone(),
+                justification: self.justification.clone(),
                 source: self.source,
             }),
             matched_text: consumed,
@@ -321,5 +322,24 @@ mod tests {
         assert!(rule.matches_tokens(&["git", "log", "status"]));
         assert!(!rule.matches_tokens(&["git", "status"])); // Any needs one token
         assert!(!rule.matches_tokens(&["git", "a", "b", "status"])); // Any matches exactly one
+    }
+
+    #[test]
+    fn prefix_rule_to_match_result_copies_justification() {
+        let rule = PrefixRule {
+            id: Cow::Borrowed("T-013"),
+            category: Category::Git,
+            pattern: vec![single("git"), single("push"), single("--force")],
+            risk: RiskLevel::Warn,
+            description: Cow::Borrowed("test"),
+            safe_alt: None,
+            justification: Some(Cow::Borrowed("rewrites remote history")),
+            source: PatternSource::Builtin,
+        };
+        let result = rule.to_match_result(&["git", "push", "--force"]);
+        assert_eq!(
+            result.pattern.justification.as_deref(),
+            Some("rewrites remote history")
+        );
     }
 }

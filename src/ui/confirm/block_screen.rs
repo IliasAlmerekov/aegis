@@ -48,6 +48,14 @@ pub(super) fn render_block<W: Write>(
                 )),
                 ResetColor,
             );
+            if let Some(justification) = &m.pattern.justification {
+                let _ = queue!(
+                    out,
+                    SetForegroundColor(Color::DarkGrey),
+                    Print(format!("         {}\n", justification)),
+                    ResetColor,
+                );
+            }
         }
     }
 

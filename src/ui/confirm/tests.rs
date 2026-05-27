@@ -35,6 +35,31 @@ fn make_match(
             description: Cow::Borrowed(description),
             safe_alt: safe_alt.map(Cow::Borrowed),
             source: PatternSource::Builtin,
+            justification: None,
+        }),
+        matched_text: String::new(),
+        highlight_range: None,
+    }
+}
+
+fn make_match_with_justification(
+    id: &'static str,
+    risk: RiskLevel,
+    pattern: &'static str,
+    description: &'static str,
+    safe_alt: Option<&'static str>,
+    justification: Option<&'static str>,
+) -> MatchResult {
+    MatchResult {
+        pattern: Arc::new(Pattern {
+            id: Cow::Borrowed(id),
+            category: Category::Filesystem,
+            risk,
+            pattern: Cow::Borrowed(pattern),
+            description: Cow::Borrowed(description),
+            safe_alt: safe_alt.map(Cow::Borrowed),
+            source: PatternSource::Builtin,
+            justification: justification.map(Cow::Borrowed),
         }),
         matched_text: String::new(),
         highlight_range: None,
@@ -57,6 +82,7 @@ fn make_match_with_text(
             description: Cow::Borrowed(description),
             safe_alt: None,
             source: PatternSource::Builtin,
+            justification: None,
         }),
         matched_text: matched_text.to_string(),
         highlight_range: None,
@@ -80,6 +106,7 @@ fn make_match_with_text_and_range(
             description: Cow::Borrowed(description),
             safe_alt: None,
             source: PatternSource::Builtin,
+            justification: None,
         }),
         matched_text: matched_text.to_string(),
         highlight_range: Some(HighlightRange {
@@ -1109,5 +1136,91 @@ fn tty_unavailable_block_is_denied() {
     assert!(
         !tty_unavailable_decision(&assessment),
         "Block must be denied when /dev/tty is unavailable"
+    );
+}
+
+// ── Justification rendering ───────────────────────────────────────────────
+
+#[test]
+fn render_dialog_shows_justification_when_present() {
+    let p = make_match_with_justification(
+        "GIT-003",
+        RiskLevel::Warn,
+        "git push --force",
+        "git push --force — rewrites remote history",
+        Some("--force-with-lease"),
+        Some(
+            "This command rewrites remote history. Collaborators with local copies will have diverged refs and will need to force-pull or re-clone.",
+        ),
+    );
+    let assessment = make_assessment("git push --force origin main", RiskLevel::Warn, vec![p]);
+
+    let mut output = Vec::new();
+    show_confirmation_with_input(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"no\n".as_ref(),
+        &mut output,
+    );
+
+    let text = strip_ansi(&String::from_utf8_lossy(&output));
+    assert!(
+        text.contains("rewrites remote history"),
+        "dialog must show the justification text; got:\n{text}"
+    );
+}
+
+#[test]
+fn render_block_shows_justification_when_present() {
+    let p = make_match_with_justification(
+        "PS-006",
+        RiskLevel::Block,
+        "rm -rf /",
+        "Deletes the entire root filesystem",
+        None,
+        Some(
+            "This command recursively and forcefully deletes everything on the root filesystem. It will brick the machine immediately and permanently.",
+        ),
+    );
+    let assessment = make_assessment("rm -rf /", RiskLevel::Block, vec![p]);
+
+    let mut output = Vec::new();
+    show_confirmation_with_input(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"".as_ref(),
+        &mut output,
+    );
+
+    let text = strip_ansi(&String::from_utf8_lossy(&output));
+    assert!(
+        text.contains("brick the machine"),
+        "block screen must show the justification text; got:\n{text}"
+    );
+}
+
+#[test]
+fn render_dialog_does_not_show_justification_when_absent() {
+    let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+    let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+    let mut output = Vec::new();
+    show_confirmation_with_input(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"no\n".as_ref(),
+        &mut output,
+    );
+
+    let text = strip_ansi(&String::from_utf8_lossy(&output));
+    assert!(
+        !text.contains("Justification:"),
+        "dialog must not synthesize a justification label when absent; got:\n{text}"
     );
 }

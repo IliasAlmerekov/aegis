@@ -66,6 +66,7 @@ fn explanation_with_match_text(matched_text: &str) -> CommandExplanation {
                 risk: RiskLevel::Danger,
                 description: "recursive delete".to_string(),
                 matched_text: matched_text.to_string(),
+                justification: None,
             }],
         },
         policy: PolicyExplanation {
@@ -414,6 +415,7 @@ fn audit_entry_serializes_nested_explanation_sections() {
                 risk: RiskLevel::Danger,
                 description: "recursive delete".to_string(),
                 matched_text: "rm -rf".to_string(),
+                justification: None,
             }],
         },
         policy: PolicyExplanation {
@@ -509,6 +511,7 @@ fn audit_entry_keeps_existing_top_level_fields_for_backward_compatibility() {
                 risk: RiskLevel::Danger,
                 description: "recursive delete".to_string(),
                 matched_text: "rm -rf".to_string(),
+                justification: None,
             }],
         },
         policy: PolicyExplanation {

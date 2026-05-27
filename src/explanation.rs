@@ -53,6 +53,8 @@ pub struct ExplainedPatternMatch {
     pub description: String,
     /// Concrete matched text captured by the scanner.
     pub matched_text: String,
+    /// Optional human-readable explanation of why the rule is risky.
+    pub justification: Option<String>,
 }
 
 /// Policy facts resolved during planning.
@@ -226,6 +228,7 @@ impl From<&crate::interceptor::scanner::MatchResult> for ExplainedPatternMatch {
             risk: value.pattern.risk,
             description: value.pattern.description.to_string(),
             matched_text: value.matched_text.clone(),
+            justification: value.pattern.justification.as_deref().map(str::to_owned),
         }
     }
 }
@@ -277,6 +280,7 @@ mod tests {
                     risk: RiskLevel::Warn,
                     description: "hard reset".to_string(),
                     matched_text: "git reset --hard".to_string(),
+                    justification: None,
                 }],
             },
             policy: PolicyExplanation {
@@ -311,6 +315,7 @@ mod tests {
                         pattern: Cow::Borrowed("rm -rf"),
                         description: Cow::Borrowed("recursive delete"),
                         safe_alt: None,
+                        justification: None,
                         source: PatternSource::Builtin,
                     }),
                     matched_text: "rm -rf".to_string(),
@@ -324,6 +329,7 @@ mod tests {
                         pattern: Cow::Borrowed("curl | sh"),
                         description: Cow::Borrowed("custom shell pipe"),
                         safe_alt: None,
+                        justification: None,
                         source: PatternSource::Custom,
                     }),
                     matched_text: "curl | sh".to_string(),
@@ -433,6 +439,7 @@ mod tests {
                     risk: RiskLevel::Warn,
                     description: "package install".to_string(),
                     matched_text: "npm install".to_string(),
+                    justification: None,
                 }],
             },
             policy: PolicyExplanation {
