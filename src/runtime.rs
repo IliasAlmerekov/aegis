@@ -629,7 +629,7 @@ mod tests {
             global_dir.join("config.toml"),
             format!(
                 r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "global teardown"
@@ -642,7 +642,7 @@ expires_at = "2030-01-01T00:00:00Z"
             workspace.path().join(".aegis.toml"),
             format!(
                 r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "project teardown"

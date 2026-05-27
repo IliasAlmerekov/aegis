@@ -449,7 +449,7 @@ mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "strict override allowlist"
@@ -527,7 +527,7 @@ exit 0
         format!(
             r#"
 allowlist_override_level = "Danger"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "test allowlist"
@@ -638,7 +638,7 @@ mode = "Protect"
 allowlist_override_level = "Warn"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/aegis-test-scope"
 reason = "protect warn ceiling"
@@ -690,7 +690,7 @@ fn block_command_is_never_allowlisted() {
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "rm -rf /"
 cwd = "/aegis-test-scope"
 reason = "test block allowlist"
@@ -757,7 +757,7 @@ fn verbose_allowlist_match_prints_rule_name() {
         format!(
             r#"
 allowlist_override_level = "Danger"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
 reason = "verbose allowlist test"
@@ -805,7 +805,7 @@ fn quiet_allowlist_match_suppresses_aegis_diagnostics() {
         format!(
             r#"
 allowlist_override_level = "Danger"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
 reason = "quiet allowlist test"
@@ -848,7 +848,7 @@ fn verbosity_verbose_allowlist_match_prints_rule_name() {
         format!(
             r#"
 allowlist_override_level = "Danger"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
 reason = "verbosity verbose test"
@@ -1846,7 +1846,7 @@ fn config_show_prints_effective_allowlist_override_level() {
         r#"
 mode = "Strict"
 allowlist_override_level = "Danger"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/srv/infra"
 reason = "ephemeral test teardown"
@@ -1864,7 +1864,7 @@ reason = "ephemeral test teardown"
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("mode = \"Strict\""));
     assert!(stdout.contains("allowlist_override_level = \"Danger\""));
-    assert!(stdout.contains("[[allowlist]]"));
+    assert!(stdout.contains("[[allow]]"));
     assert!(stdout.contains("pattern = \"terraform destroy -target=module.test.*\""));
     assert!(stdout.contains("reason = \"ephemeral test teardown\""));
     assert!(
@@ -1881,7 +1881,7 @@ fn unscoped_structured_allowlist_fails_runtime_execution() {
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy *"
 reason = "too broad"
 "#,
@@ -1946,7 +1946,7 @@ fn config_show_uses_inspection_path_for_legacy_allowlist() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[[allowlist]]"));
+    assert!(stdout.contains("[[allow]]"));
     assert!(stdout.contains("pattern = \"terraform destroy *\""));
     assert!(stdout.contains("reason = \"migrated from legacy allowlist entry\""));
 }
@@ -1970,9 +1970,9 @@ fn config_init_writes_truthful_mode_comments() {
     assert!(contents.contains("Audit is non-blocking audit-only"));
     assert!(contents.contains("Strict blocks non-safe and indirect execution forms by default"));
     assert!(contents.contains("allowlist_override_level = \"Warn\""));
-    assert!(contents.contains("[[allowlist]]"));
+    assert!(contents.contains("[[allow]]"));
     assert!(contents.contains("Protect/Strict allowlist ceiling"));
-    assert!(contents.contains("allowlist rule must declare cwd or user scope"));
+    assert!(contents.contains("allow rule must declare cwd or user scope"));
     assert!(contents.contains("Warn auto-approves allowlisted Warn commands in Protect/Strict"));
     assert!(contents.contains("Danger also auto-approves allowlisted Danger commands"));
     assert!(contents.contains("Never disables allowlist auto-approval for non-safe commands"));
@@ -1998,7 +1998,7 @@ rotation_enabled = true
 max_file_size_bytes = 0
 retention_files = 0
 
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy *"
 reason = "broad rule"
 "#,
@@ -2191,7 +2191,7 @@ max_file_size_bytes = 0
     fs::write(
         &project_path,
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy *"
 reason = "would warn if reached"
 "#,
@@ -2231,7 +2231,7 @@ fn config_validate_project_rule_uses_file_local_index_in_location() {
     fs::write(
         &global_path,
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.global.api"
 cwd = "/srv/global"
 user = "ci"
@@ -2242,7 +2242,7 @@ reason = "scoped global"
     fs::write(
         &project_path,
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy *"
 reason = "broad project"
 "#,
@@ -2351,7 +2351,7 @@ fn config_validate_invalid_allowlist_reports_offending_entry_only() {
     fs::write(
         &global_path,
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.global.api"
 cwd = "/srv/global"
 reason = "global valid"
@@ -2361,11 +2361,11 @@ reason = "global valid"
     fs::write(
         &project_path,
         r#"
-[[allowlist]]
+[[allow]]
 pattern = ""
 reason = "invalid project rule"
 
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.project.api"
 reason = "never reached"
 "#,
@@ -2407,7 +2407,7 @@ fn config_validate_warnings_only_exits_zero_and_prints_text_report() {
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy *"
 cwd = "/srv/infra"
 reason = "broad warning only"
@@ -2459,7 +2459,7 @@ ci_policy = "Block"
 allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "protect allowlist"
@@ -2526,7 +2526,7 @@ mode = "Strict"
 allowlist_override_level = "Warn"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "*"
 cwd = "{workspace_cwd}"
 reason = "structured ceiling test"
@@ -2605,7 +2605,7 @@ mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "ephemeral test teardown"
@@ -2673,7 +2673,7 @@ allowlist = ["terraform destroy *"]
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("config_version = 1"));
-    assert!(stdout.contains("[[allowlist]]"));
+    assert!(stdout.contains("[[allow]]"));
     assert!(stdout.contains("pattern = \"terraform destroy *\""));
     assert!(stdout.contains("reason = \"migrated from legacy allowlist entry\""));
     assert!(!stdout.contains("allowlist = ["));
@@ -2703,7 +2703,7 @@ mode = "Audit"
 ci_policy = "Block"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "rm -rf /"
 cwd = "/aegis-test-scope"
 reason = "audit mode should not attribute allowlist authorization"
@@ -2936,7 +2936,7 @@ mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "strict override allowlist"
@@ -3015,7 +3015,7 @@ exit 0
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
 reason = "rollback test allowlist"

@@ -12,8 +12,9 @@ use crate::error::AegisError;
 type Result<T> = std::result::Result<T, AegisError>;
 
 /// Which table an append targets.
+#[derive(Clone, Copy)]
 enum TableKind {
-    Allowlist,
+    Allow,
     Blocklist,
 }
 
@@ -78,7 +79,7 @@ fn check_dedup_and_conflict(
     location: ConfigSourceLayer,
 ) -> Option<AppendOutcome> {
     match target_table {
-        TableKind::Allowlist => {
+        TableKind::Allow => {
             if config
                 .allowlist
                 .iter()
@@ -181,16 +182,18 @@ fn append_config_table_entry(
         tmp.write_all(content.as_bytes())?;
         tmp.sync_all()?;
     }
-    fs::rename(&tmp_path, config_path)?;
+    fs::rename(&tmp_path, config_path).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp_path);
+    })?;
 
     Ok(())
 }
 
-/// Append an `[[allowlist]]` rule to the config file at `config_path`.
-pub fn append_allow_rule(
+fn append_rule(
     config_path: &Path,
     prefix: &[String],
     cwd: &Path,
+    kind: TableKind,
 ) -> Result<AppendOutcome> {
     let pattern = prefix.join(" ");
     let cwd_str = cwd.to_string_lossy().into_owned();
@@ -205,7 +208,7 @@ pub fn append_allow_rule(
             &config,
             &pattern,
             &cwd_str,
-            TableKind::Allowlist,
+            kind,
             config_layer_from_path(config_path),
         ) {
             return Ok(outcome);
@@ -214,12 +217,21 @@ pub fn append_allow_rule(
         existing_content = Some(contents);
     }
 
-    let reason = allow_reason_for_date(OffsetDateTime::now_utc());
+    let (header, reason) = match kind {
+        TableKind::Allow => (
+            "[[allow]]",
+            allow_reason_for_date(OffsetDateTime::now_utc()),
+        ),
+        TableKind::Blocklist => (
+            "[[block]]",
+            block_reason_for_date(OffsetDateTime::now_utc()),
+        ),
+    };
 
     append_config_table_entry(
         config_path,
         existing_content.as_deref(),
-        "[[allowlist]]",
+        header,
         &[
             ("pattern".to_string(), pattern),
             ("cwd".to_string(), cwd_str),
@@ -228,6 +240,15 @@ pub fn append_allow_rule(
     )?;
 
     Ok(AppendOutcome::Appended)
+}
+
+/// Append an `[[allow]]` rule to the config file at `config_path`.
+pub fn append_allow_rule(
+    config_path: &Path,
+    prefix: &[String],
+    cwd: &Path,
+) -> Result<AppendOutcome> {
+    append_rule(config_path, prefix, cwd, TableKind::Allow)
 }
 
 /// Append a `[[block]]` rule to the config file at `config_path`.
@@ -236,42 +257,7 @@ pub fn append_block_rule(
     prefix: &[String],
     cwd: &Path,
 ) -> Result<AppendOutcome> {
-    let pattern = prefix.join(" ");
-    let cwd_str = cwd.to_string_lossy().into_owned();
-    let mut existing_content: Option<String> = None;
-
-    if config_path.exists() {
-        let contents = fs::read_to_string(config_path)?;
-        let config: AegisConfig = toml::from_str(&contents)
-            .map_err(|e| AegisError::Config(format!("failed to parse config: {e}")))?;
-
-        if let Some(outcome) = check_dedup_and_conflict(
-            &config,
-            &pattern,
-            &cwd_str,
-            TableKind::Blocklist,
-            config_layer_from_path(config_path),
-        ) {
-            return Ok(outcome);
-        }
-
-        existing_content = Some(contents);
-    }
-
-    let reason = block_reason_for_date(OffsetDateTime::now_utc());
-
-    append_config_table_entry(
-        config_path,
-        existing_content.as_deref(),
-        "[[block]]",
-        &[
-            ("pattern".to_string(), pattern),
-            ("cwd".to_string(), cwd_str),
-            ("reason".to_string(), reason),
-        ],
-    )?;
-
-    Ok(AppendOutcome::Appended)
+    append_rule(config_path, prefix, cwd, TableKind::Blocklist)
 }
 
 /// Build the human-readable reason string for an auto-appended allow rule.
@@ -302,7 +288,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn append_allow_rule_adds_allowlist_entry() {
+    fn append_allow_rule_adds_allow_header() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "mode = \"Protect\"\n").unwrap();
@@ -311,17 +297,50 @@ mod tests {
 
         let contents = fs::read_to_string(&path).unwrap();
         assert!(
-            contents.contains("[[allowlist]]"),
+            contents.contains("[[allow]]"),
             "must add array-of-tables header; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_allow_rule_adds_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_allow_rule(&path, &["git".to_string(), "push".to_string()], dir.path()).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("pattern = \"git push\""),
             "must add joined pattern string; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_allow_rule_adds_cwd() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_allow_rule(&path, &["git".to_string(), "push".to_string()], dir.path()).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("cwd = "),
             "must add cwd scope; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_allow_rule_adds_reason() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_allow_rule(&path, &["git".to_string(), "push".to_string()], dir.path()).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("reason = \"Approved by user on"),
             "must add reason with date; got:\n{contents}"
@@ -337,11 +356,11 @@ mod tests {
 
         assert!(path.exists(), "must create missing config file");
         let contents = fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("[[allowlist]]"));
+        assert!(contents.contains("[[allow]]"));
     }
 
     #[test]
-    fn append_allow_rule_preserves_existing_content() {
+    fn append_allow_rule_preserves_mode() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "mode = \"Protect\"\nauto_snapshot_git = false\n").unwrap();
@@ -360,11 +379,31 @@ mod tests {
         let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("mode = \"Protect\""),
-            "must preserve existing config fields; got:\n{contents}"
+            "must preserve existing mode; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_allow_rule_preserves_auto_snapshot_git() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\nauto_snapshot_git = false\n").unwrap();
+
+        append_allow_rule(
+            &path,
+            &[
+                "docker".to_string(),
+                "system".to_string(),
+                "prune".to_string(),
+            ],
+            dir.path(),
+        )
+        .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("auto_snapshot_git = false"),
-            "must preserve existing config fields; got:\n{contents}"
+            "must preserve existing auto_snapshot_git; got:\n{contents}"
         );
     }
 
@@ -400,7 +439,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         let existing = r#"mode = "Protect"
 
-[[allowlist]]
+[[allow]]
 pattern = "git status"
 cwd = "/srv/infra"
 reason = "Approved by user on 2025-01-01"
@@ -410,10 +449,10 @@ reason = "Approved by user on 2025-01-01"
         append_allow_rule(&path, &["git".to_string(), "push".to_string()], dir.path()).unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
-        let allowlist_count = contents.matches("[[allowlist]]").count();
+        let allowlist_count = contents.matches("[[allow]]").count();
         assert_eq!(
             allowlist_count, 2,
-            "must append a second [[allowlist]] entry; got:\n{contents}"
+            "must append a second [[allow]] entry; got:\n{contents}"
         );
     }
 
@@ -431,12 +470,12 @@ reason = "Approved by user on 2025-01-01"
 
         let contents = fs::read_to_string(&path).unwrap();
         let parsed: toml::Value = toml::from_str(&contents).unwrap();
-        let cwd = parsed["allowlist"][0]["cwd"].as_str().unwrap();
+        let cwd = parsed["allow"][0]["cwd"].as_str().unwrap();
         assert_eq!(cwd, dir.path().to_string_lossy().as_ref());
     }
 
     #[test]
-    fn append_block_rule_adds_block_entry() {
+    fn append_block_rule_adds_block_header() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "mode = \"Protect\"\n").unwrap();
@@ -453,14 +492,62 @@ reason = "Approved by user on 2025-01-01"
             contents.contains("[[block]]"),
             "must add array-of-tables header; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_block_rule_adds_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_block_rule(
+            &path,
+            &["rm".to_string(), "-rf".to_string(), "/".to_string()],
+            dir.path(),
+        )
+        .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("pattern = \"rm -rf /\""),
             "must add joined pattern string; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_block_rule_adds_cwd() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_block_rule(
+            &path,
+            &["rm".to_string(), "-rf".to_string(), "/".to_string()],
+            dir.path(),
+        )
+        .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("cwd = "),
             "must add cwd scope; got:\n{contents}"
         );
+    }
+
+    #[test]
+    fn append_block_rule_adds_reason() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_block_rule(
+            &path,
+            &["rm".to_string(), "-rf".to_string(), "/".to_string()],
+            dir.path(),
+        )
+        .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
         assert!(
             contents.contains("reason = \"Blocked by user on"),
             "must add reason with date; got:\n{contents}"
@@ -498,7 +585,7 @@ reason = "Approved by user on 2025-01-01"
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         let existing = format!(
-            r#"[[allowlist]]
+            r#"[[allow]]
 pattern = "git push"
 cwd = "{}"
 reason = "Approved by user on 2025-01-01"
@@ -516,7 +603,7 @@ reason = "Approved by user on 2025-01-01"
         );
 
         let contents = fs::read_to_string(&path).unwrap();
-        let allowlist_count = contents.matches("[[allowlist]]").count();
+        let allowlist_count = contents.matches("[[allow]]").count();
         assert_eq!(
             allowlist_count, 1,
             "must not append duplicate; got:\n{contents}"
@@ -551,7 +638,7 @@ reason = "Blocked by user on 2025-01-01"
         );
 
         let contents = fs::read_to_string(&path).unwrap();
-        let allowlist_count = contents.matches("[[allowlist]]").count();
+        let allowlist_count = contents.matches("[[allow]]").count();
         assert_eq!(
             allowlist_count, 0,
             "must not append on conflict; got:\n{contents}"
@@ -597,7 +684,7 @@ reason = "Blocked by user on 2025-01-01"
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         let existing = format!(
-            r#"[[allowlist]]
+            r#"[[allow]]
 pattern = "rm -rf /"
 cwd = "{}"
 reason = "Approved by user on 2025-01-01"
@@ -636,7 +723,7 @@ reason = "Approved by user on 2025-01-01"
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         let existing = format!(
-            r#"[[allowlist]]
+            r#"[[allow]]
 pattern = "git status"
 cwd = "{}"
 reason = "Approved by user on 2025-01-01"
@@ -660,7 +747,7 @@ reason = "Blocked by user on 2025-01-01"
         );
 
         let contents = fs::read_to_string(&path).unwrap();
-        let allowlist_count = contents.matches("[[allowlist]]").count();
+        let allowlist_count = contents.matches("[[allow]]").count();
         assert_eq!(
             allowlist_count, 2,
             "must append non-conflicting rule; got:\n{contents}"
@@ -729,7 +816,7 @@ reason = "Blocked by user on 2025-01-01"
         let dir_b = TempDir::new().unwrap();
         let path = dir_a.path().join("config.toml");
         let existing = format!(
-            r#"[[allowlist]]
+            r#"[[allow]]
 pattern = "git push"
 cwd = "{}"
 reason = "Approved by user on 2025-01-01"
@@ -751,10 +838,10 @@ reason = "Approved by user on 2025-01-01"
         );
 
         let contents = fs::read_to_string(&path).unwrap();
-        let allowlist_count = contents.matches("[[allowlist]]").count();
+        let allowlist_count = contents.matches("[[allow]]").count();
         assert_eq!(
             allowlist_count, 2,
-            "must append a second [[allowlist]] entry for different cwd; got:\n{contents}"
+            "must append a second [[allow]] entry for different cwd; got:\n{contents}"
         );
     }
 }

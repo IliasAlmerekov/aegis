@@ -204,7 +204,7 @@ pattern = ["git", "push", "--force-with-lease"]
 reason  = "Approved by user on 2025-05-22"
 ```
 
-### 2.2 "Always deny" writes a block rule
+### 2.2 "Always deny" writes a block rule(Done)
 
 Same mechanism for the "Always deny" choice:
 
@@ -214,7 +214,7 @@ pattern = ["rm", "-rf", "/"]
 reason  = "Blocked by user on 2025-05-22"
 ```
 
-### 2.3 Rule deduplication on write
+### 2.3 Rule deduplication on write(Done)
 
 `amend` checks whether an equivalent rule already exists before appending.
 A duplicate rule is silently skipped; a conflicting rule (same pattern, different

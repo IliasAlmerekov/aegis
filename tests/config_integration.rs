@@ -170,7 +170,7 @@ exit 0
 allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "cwd-scoped allowlist"
@@ -254,7 +254,7 @@ mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{enabled_cwd}"
 reason = "snapshot enabled"
@@ -270,7 +270,7 @@ mode = "Strict"
 allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{disabled_cwd}"
 reason = "snapshot disabled"
