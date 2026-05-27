@@ -532,7 +532,7 @@ fn danger_prompt_shows_always_allow_hint() {
 
     let text = strip_ansi(&String::from_utf8_lossy(&output));
     assert!(
-        text.contains("[y/N/a]:"),
+        text.contains("[y/N/a/d]:"),
         "Danger dialog must show [y/N/a] prompt; got:\n{text}"
     );
 }
@@ -554,7 +554,7 @@ fn warn_prompt_shows_always_allow_hint() {
 
     let text = strip_ansi(&String::from_utf8_lossy(&output));
     assert!(
-        text.contains("[y/N/a]:"),
+        text.contains("[y/N/a/d]:"),
         "Warn dialog must show [y/N/a] prompt; got:\n{text}"
     );
 }
@@ -1411,5 +1411,96 @@ fn render_dialog_does_not_show_justification_when_absent() {
     assert!(
         !text.contains("Justification:"),
         "dialog must not synthesize a justification label when absent; got:\n{text}"
+    );
+}
+
+#[test]
+fn danger_deny_always_returns_deny_always() {
+    let p = make_match(
+        "FS-001",
+        RiskLevel::Danger,
+        r"rm\s+",
+        "Recursive delete",
+        None,
+    );
+    let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+    let decision = super::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"d\n".as_ref(),
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        decision,
+        PromptDecision::DenyAlways,
+        "'d' must return DenyAlways"
+    );
+}
+
+#[test]
+fn danger_deny_always_alias_returns_deny_always() {
+    let p = make_match(
+        "FS-001",
+        RiskLevel::Danger,
+        r"rm\s+",
+        "Recursive delete",
+        None,
+    );
+    let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
+
+    let decision = super::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"denyalways\n".as_ref(),
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        decision,
+        PromptDecision::DenyAlways,
+        "'denyalways' must return DenyAlways"
+    );
+}
+
+#[test]
+fn warn_deny_always_returns_deny_always() {
+    let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+    let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+    let decision = super::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"d\n".as_ref(),
+        &mut Vec::new(),
+    );
+    assert_eq!(
+        decision,
+        PromptDecision::DenyAlways,
+        "'d' must return DenyAlways for Warn"
+    );
+}
+
+#[test]
+fn deny_always_is_not_approved_by_show_confirmation_with_input() {
+    let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
+    let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
+
+    let approved = show_confirmation_with_input(
+        &assessment,
+        &default_explanation_for_assessment(&assessment),
+        &[],
+        true,
+        &mut b"d\n".as_ref(),
+        &mut Vec::new(),
+    );
+    assert!(
+        !approved,
+        "DenyAlways must not be treated as approved by show_confirmation_with_input"
     );
 }

@@ -17,6 +17,8 @@ pub enum PromptDecision {
     ApproveAlways,
     /// Deny this command.
     Deny,
+    /// Deny this command and persist a block rule for its prefix.
+    DenyAlways,
 }
 
 pub fn show_confirmation(

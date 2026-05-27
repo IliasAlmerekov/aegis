@@ -229,6 +229,18 @@ pub struct AllowlistRule {
     pub reason: String,
 }
 
+/// A structured block rule with optional scope, expiry, and rationale.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockRule {
+    pub pattern: String,
+    pub cwd: Option<String>,
+    pub user: Option<String>,
+    #[serde(default, with = "offset_datetime_option")]
+    pub expires_at: Option<OffsetDateTime>,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
@@ -245,6 +257,10 @@ pub struct AegisConfig {
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
     pub(crate) allowlist_layers: Vec<AllowlistSourceLayer>,
+    #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
+    pub blocklist: Vec<BlockRule>,
+    #[serde(skip)]
+    pub(crate) blocklist_layers: Vec<AllowlistSourceLayer>,
     #[serde(skip)]
     pub(crate) audit_max_file_size_bytes_source: Option<AllowlistSourceLayer>,
     #[serde(skip)]
@@ -333,6 +349,8 @@ impl AegisConfig {
             custom_pattern_layers: Vec::new(),
             allowlist: Vec::new(),
             allowlist_layers: Vec::new(),
+            blocklist: Vec::new(),
+            blocklist_layers: Vec::new(),
             audit_max_file_size_bytes_source: None,
             audit_retention_files_source: None,
             allowlist_override_level: AllowlistOverrideLevel::Warn,
@@ -476,6 +494,13 @@ impl AegisConfig {
         let mut allowlist_layers = base.allowlist_layers;
         allowlist_layers.extend(std::iter::repeat_n(allowlist_layer, allowlist_count));
 
+        let mut blocklist = base.blocklist;
+        let blocklist_count = overlay.blocklist.len();
+        blocklist.extend(overlay.blocklist);
+
+        let mut blocklist_layers = base.blocklist_layers;
+        blocklist_layers.extend(std::iter::repeat_n(allowlist_layer, blocklist_count));
+
         Self {
             config_version: overlay.config_version.unwrap_or(base.config_version),
             mode: overlay.mode.unwrap_or(base.mode),
@@ -483,6 +508,8 @@ impl AegisConfig {
             custom_pattern_layers,
             allowlist,
             allowlist_layers,
+            blocklist,
+            blocklist_layers,
             audit_max_file_size_bytes_source: if overlay.audit.max_file_size_bytes.is_some() {
                 Some(allowlist_layer)
             } else {
@@ -569,6 +596,17 @@ impl AegisConfig {
         {
             return Err(AegisError::Config(format!(
                 "allowlist rule '{}' is expired and cannot be used at runtime",
+                rule.pattern
+            )));
+        }
+
+        if let Some(rule) = self
+            .blocklist
+            .iter()
+            .find(|rule| rule.expires_at.is_some_and(|expires_at| expires_at <= now))
+        {
+            return Err(AegisError::Config(format!(
+                "blocklist rule '{}' is expired and cannot be used at runtime",
                 rule.pattern
             )));
         }
@@ -686,6 +724,16 @@ where
             })
             .collect(),
     })
+}
+
+fn deserialize_blocklist_rules<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Vec<BlockRule>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let field = Option::<Vec<BlockRule>>::deserialize(deserializer)?;
+    Ok(field.unwrap_or_default())
 }
 
 fn default_config_version() -> u32 {

@@ -123,7 +123,7 @@ pub(super) fn prompt_danger_with_always<R: BufRead, W: Write>(
         out,
         SetForegroundColor(Color::Red),
         SetAttribute(Attribute::Bold),
-        Print("\n  Execute dangerous command? [y/N/a]: "),
+        Print("\n  Execute dangerous command? [y/N/a/d]: "),
         ResetColor,
     );
     let _ = out.flush();
@@ -143,6 +143,7 @@ pub(super) fn prompt_danger_with_always<R: BufRead, W: Write>(
     match line.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => PromptDecision::Approve,
         "a" | "always" => PromptDecision::ApproveAlways,
+        "d" | "denyalways" | "deny-always" => PromptDecision::DenyAlways,
         _ => {
             let _ = queue!(
                 out,
@@ -156,7 +157,7 @@ pub(super) fn prompt_danger_with_always<R: BufRead, W: Write>(
     }
 }
 
-/// Warn prompt with "Always allow" option.
+/// Warn prompt with "Always allow" and "Always deny" options.
 pub(super) fn prompt_warn_with_always<R: BufRead, W: Write>(
     input: &mut R,
     out: &mut W,
@@ -164,7 +165,7 @@ pub(super) fn prompt_warn_with_always<R: BufRead, W: Write>(
     let _ = queue!(
         out,
         SetForegroundColor(Color::Yellow),
-        Print("\n  Execute suspicious command? [y/N/a]: "),
+        Print("\n  Execute suspicious command? [y/N/a/d]: "),
         ResetColor,
     );
     let _ = out.flush();
@@ -184,6 +185,7 @@ pub(super) fn prompt_warn_with_always<R: BufRead, W: Write>(
     match line.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => PromptDecision::Approve,
         "a" | "always" => PromptDecision::ApproveAlways,
+        "d" | "denyalways" | "deny-always" => PromptDecision::DenyAlways,
         _ => {
             let _ = queue!(
                 out,
