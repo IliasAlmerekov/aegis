@@ -275,6 +275,10 @@ fn validate_scope_fields(rule_type: &str, cwd: Option<&str>, user: Option<&str>)
     }
 }
 
+pub(crate) fn validate_single_rule(rule: LayeredAllowlistRule) -> Result<()> {
+    compile_rule(rule).map(|_| ())
+}
+
 fn compile_rule(rule: LayeredAllowlistRule) -> Result<CompiledRule> {
     compile_fields(
         "allowlist",

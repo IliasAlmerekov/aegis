@@ -139,7 +139,7 @@ fn git_snapshot_and_rollback_work_from_repo_subdirectory() {
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "subdir snapshot test"
@@ -214,7 +214,7 @@ fn git_snapshot_and_rollback_work_from_git_worktree() {
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "worktree snapshot test"
@@ -280,7 +280,7 @@ fn rollback_conflict_reports_manual_recovery_commands_and_preserves_stash() {
 allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "rollback conflict test"

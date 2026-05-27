@@ -33,16 +33,22 @@ allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Dan
 # Never disables allowlist auto-approval for non-safe commands.
 # Block never bypasses in Protect/Strict.
 
-# Structured allowlist rules use array-of-tables entries.
-# Every runtime-effective allowlist rule must declare cwd or user scope.
+# Structured allow rules use array-of-tables entries.
+# Every runtime-effective allow rule must declare cwd or user scope.
 # Legacy string-array allowlist entries stay readable for migration and
 # inspection, but they are invalid for runtime until you add scope.
-# [[allowlist]]
+# [[allow]]
 # pattern = "terraform destroy -target=module.test.*"
 # cwd = "/srv/infra"
 # user = "ci"
 # expires_at = "2030-01-01T00:00:00Z"
 # reason = "ephemeral test teardown"
+
+# Structured block rules also use array-of-tables entries.
+# [[block]]
+# pattern = "rm -rf /"
+# cwd = "/srv/infra"
+# reason = "never allow recursive root deletion"
 
 snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin flags below, Full = all plugins.
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
@@ -224,9 +230,15 @@ mod offset_datetime_option {
 #[serde(deny_unknown_fields)]
 pub struct AllowlistRule {
     pub pattern: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    #[serde(default, with = "offset_datetime_option")]
+    #[serde(
+        default,
+        with = "offset_datetime_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub expires_at: Option<OffsetDateTime>,
     pub reason: String,
 }
@@ -236,9 +248,15 @@ pub struct AllowlistRule {
 #[serde(deny_unknown_fields)]
 pub struct BlockRule {
     pub pattern: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
-    #[serde(default, with = "offset_datetime_option")]
+    #[serde(
+        default,
+        with = "offset_datetime_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub expires_at: Option<OffsetDateTime>,
     pub reason: String,
 }
@@ -255,11 +273,16 @@ pub struct AegisConfig {
     pub custom_patterns: Vec<UserPattern>,
     #[serde(skip)]
     pub(crate) custom_pattern_layers: Vec<ConfigSourceLayer>,
-    #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
+    #[serde(
+        default,
+        rename = "allow",
+        alias = "allowlist",
+        deserialize_with = "deserialize_allowlist_rules"
+    )]
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
     pub(crate) allowlist_layers: Vec<ConfigSourceLayer>,
-    #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
+    #[serde(default, rename = "block", alias = "blocklist")]
     pub blocklist: Vec<BlockRule>,
     #[serde(skip)]
     pub(crate) blocklist_layers: Vec<ConfigSourceLayer>,
@@ -675,9 +698,14 @@ struct PartialConfig {
     config_version: Option<u32>,
     mode: Option<Mode>,
     custom_patterns: Vec<UserPattern>,
-    #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
+    #[serde(
+        default,
+        rename = "allow",
+        alias = "allowlist",
+        deserialize_with = "deserialize_allowlist_rules"
+    )]
     allowlist: Vec<AllowlistRule>,
-    #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
+    #[serde(default, rename = "block", alias = "blocklist")]
     blocklist: Vec<BlockRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
     snapshot_policy: Option<SnapshotPolicy>,
@@ -706,12 +734,126 @@ struct PartialAuditConfig {
     integrity_mode: Option<AuditIntegrityMode>,
 }
 
+/// Find the text bounds of a TOML array assignment `key = [...]`.
+///
+/// Returns `(start, end)` byte indices in `text` covering the entire
+/// `key = [ ... ]` declaration, or `None` if not found.
+fn find_toml_array_bounds(text: &str, key: &str) -> Option<(usize, usize)> {
+    let prefix = format!("{key} = [");
+    let start = text.find(&prefix)?;
+    let mut depth = 1usize;
+    let mut in_string = false;
+    let mut in_literal = false;
+    let mut escaped = false;
+
+    for (i, ch) in text[start + prefix.len()..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_literal {
+            if ch == '\'' {
+                in_literal = false;
+            }
+            continue;
+        }
+        if ch == '\\' && !in_literal {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' && !in_string {
+            in_string = true;
+        } else if ch == '"' && in_string {
+            in_string = false;
+        } else if ch == '\'' && !in_string {
+            in_literal = true;
+        } else if !in_string && !in_literal {
+            match ch {
+                '[' => depth += 1,
+                ']' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some((start, start + prefix.len() + i + 1));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Migrate deprecated `allowlist` syntax in a config file to `[[allow]]`.
+///
+/// Called after parsing succeeds so the file is known-valid TOML.
+/// Replaces `[[allowlist]]` with `[[allow]]` and converts `allowlist = [...]`
+/// to equivalent `[[allow]]` tables.  The write is atomic (temp file + rename).
+fn migrate_deprecated_allowlist_in_file(
+    contents: &str,
+    path: &Path,
+    migrated_rules: &[AllowlistRule],
+) -> Result<()> {
+    let mut new_contents = contents.to_string();
+    let mut migrated = false;
+
+    // 1. Replace deprecated table headers.
+    if contents.contains("[[allowlist]]") {
+        new_contents = new_contents.replace("[[allowlist]]", "[[allow]]");
+        migrated = true;
+    }
+
+    // 2. Convert legacy string array to structured tables.
+    if contents.contains("allowlist = [")
+        && let Some((start, end)) = find_toml_array_bounds(contents, "allowlist")
+    {
+        let mut replacement = String::new();
+        for rule in migrated_rules {
+            let body = toml::to_string_pretty(rule).map_err(|error| {
+                AegisError::Config(format!("failed to serialize migrated rule: {error}"))
+            })?;
+            replacement.push_str(&format!("[[allow]]\n{body}"));
+        }
+        new_contents.replace_range(start..end, &replacement);
+        migrated = true;
+    }
+
+    if migrated {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp_path = path.with_extension(format!("tmp.{pid}.{nanos}"));
+        {
+            let mut tmp = fs::File::create(&tmp_path)?;
+            std::io::Write::write_all(&mut tmp, new_contents.as_bytes())?;
+            tmp.sync_all()?;
+        }
+        fs::rename(&tmp_path, path).inspect_err(|_| {
+            let _ = fs::remove_file(&tmp_path);
+        })?;
+        tracing::info!(
+            "Migrated deprecated allowlist syntax to [[allow]] in {}",
+            path.display()
+        );
+    }
+
+    Ok(())
+}
+
 impl PartialConfig {
     fn from_path(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path)?;
-        toml::from_str(&contents).map_err(|error| {
+        let config: Self = toml::from_str(&contents).map_err(|error| {
             AegisError::Config(format!("failed to parse {}: {error}", path.display()))
-        })
+        })?;
+
+        let deprecated = contents.contains("[[allowlist]]") || contents.contains("allowlist = [");
+        if deprecated {
+            migrate_deprecated_allowlist_in_file(&contents, path, &config.allowlist)?;
+        }
+
+        Ok(config)
     }
 }
 
@@ -743,16 +885,6 @@ where
             })
             .collect(),
     })
-}
-
-fn deserialize_blocklist_rules<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Vec<BlockRule>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let field = Option::<Vec<BlockRule>>::deserialize(deserializer)?;
-    Ok(field.unwrap_or_default())
 }
 
 fn default_config_version() -> u32 {
@@ -798,1131 +930,4 @@ fn validate_config_version(version: u32) -> std::result::Result<u32, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-
-    #[test]
-    fn structured_allowlist_rule_deserializes() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-allowlist_override_level = "Warn"
-
-[[allowlist]]
-pattern = "terraform destroy -target=module.test.*"
-cwd = "/srv/infra"
-user = "ci"
-expires_at = "2030-01-01T00:00:00Z"
-reason = "ephemeral test teardown"
-"#,
-        )
-        .unwrap();
-
-        assert_eq!(config.allowlist.len(), 1);
-        assert_eq!(
-            config.allowlist[0].pattern,
-            "terraform destroy -target=module.test.*"
-        );
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Warn
-        );
-    }
-
-    #[test]
-    fn legacy_string_allowlist_is_migrated_to_structured_rules() {
-        let config: AegisConfig = toml::from_str(r#"allowlist = ["terraform destroy *"]"#).unwrap();
-
-        assert_eq!(config.allowlist.len(), 1);
-        assert_eq!(config.allowlist[0].pattern, "terraform destroy *");
-        assert_eq!(
-            config.allowlist[0].reason,
-            "migrated from legacy allowlist entry"
-        );
-    }
-
-    #[test]
-    fn config_version_newer_than_binary_emits_migration_error() {
-        let err = toml::from_str::<AegisConfig>("config_version = 99").unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("requires a newer version of Aegis"),
-            "expected migration error, got: {msg}"
-        );
-        assert!(
-            msg.contains("aegis config init"),
-            "error must include downgrade instructions: {msg}"
-        );
-    }
-
-    #[test]
-    fn config_version_below_minimum_emits_legacy_error() {
-        let err = toml::from_str::<AegisConfig>("config_version = 0").unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("below the minimum supported version"),
-            "expected legacy error, got: {msg}"
-        );
-        assert!(
-            msg.contains("aegis config init"),
-            "error must include regen instructions: {msg}"
-        );
-    }
-
-    #[test]
-    fn expired_rule_is_invalid_for_runtime() {
-        let config = AegisConfig {
-            allowlist: vec![AllowlistRule {
-                pattern: "terraform destroy -target=module.test.*".to_string(),
-                cwd: None,
-                user: None,
-                expires_at: Some(OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).unwrap()),
-                reason: "expired teardown".to_string(),
-            }],
-            ..AegisConfig::defaults()
-        };
-
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("expired"));
-    }
-
-    #[test]
-    fn unscoped_allowlist_rule_is_invalid_for_runtime_validation() {
-        let config = AegisConfig {
-            allowlist: vec![AllowlistRule {
-                pattern: "terraform destroy *".to_string(),
-                cwd: None,
-                user: None,
-                expires_at: None,
-                reason: "legacy broad rule".to_string(),
-            }],
-            ..AegisConfig::defaults()
-        };
-
-        let err = config.validate_runtime_requirements().unwrap_err();
-        assert!(err.to_string().contains("must declare cwd or user scope"));
-    }
-
-    #[test]
-    fn legacy_allowlist_remains_parseable_but_fails_runtime_requirements() {
-        let config: AegisConfig = toml::from_str(r#"allowlist = ["terraform destroy *"]"#).unwrap();
-
-        let err = config.validate_runtime_requirements().unwrap_err();
-        assert!(err.to_string().contains("must declare cwd or user scope"));
-    }
-
-    #[test]
-    fn scoped_allowlist_rule_with_cwd_is_valid_for_runtime() {
-        let config = AegisConfig {
-            allowlist: vec![AllowlistRule {
-                pattern: "terraform destroy -target=module.test.*".to_string(),
-                cwd: Some("/srv/infra".to_string()),
-                user: None,
-                expires_at: None,
-                reason: "scoped teardown".to_string(),
-            }],
-            ..AegisConfig::defaults()
-        };
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn scoped_allowlist_rule_with_user_is_valid_for_runtime() {
-        let config = AegisConfig {
-            allowlist: vec![AllowlistRule {
-                pattern: "terraform destroy -target=module.test.*".to_string(),
-                cwd: None,
-                user: Some("ci".to_string()),
-                expires_at: None,
-                reason: "scoped teardown".to_string(),
-            }],
-            ..AegisConfig::defaults()
-        };
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn load_minimal_project_config_without_errors() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Audit\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        assert_eq!(config.mode, Mode::Audit);
-        assert!(config.custom_patterns.is_empty());
-        assert!(config.allowlist.is_empty());
-        assert!(config.auto_snapshot_git);
-        assert!(!config.auto_snapshot_docker); // default is false (opt-in)
-    }
-
-    #[test]
-    fn postgres_snapshot_config_deserializes() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-auto_snapshot_postgres = true
-
-[postgres_snapshot]
-database = "myapp"
-host = "db.local"
-port = 5433
-user = "appuser"
-"#,
-        )
-        .unwrap();
-
-        assert!(config.auto_snapshot_postgres);
-        assert_eq!(config.postgres_snapshot.database, "myapp");
-        assert_eq!(config.postgres_snapshot.host, "db.local");
-        assert_eq!(config.postgres_snapshot.port, 5433);
-        assert_eq!(config.postgres_snapshot.user, "appuser");
-    }
-
-    #[test]
-    fn supabase_snapshot_config_deserializes() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-auto_snapshot_supabase = true
-
-[supabase_snapshot]
-project_ref = "proj_123"
-require_config_target_match_on_rollback = false
-
-[supabase_snapshot.db]
-database = "postgres"
-host = "db.supabase.co"
-port = 6543
-user = "postgres"
-"#,
-        )
-        .unwrap();
-
-        assert!(config.auto_snapshot_supabase);
-        assert_eq!(config.supabase_snapshot.project_ref, "proj_123");
-        assert!(
-            !config
-                .supabase_snapshot
-                .require_config_target_match_on_rollback
-        );
-        assert_eq!(config.supabase_snapshot.db.database, "postgres");
-        assert_eq!(config.supabase_snapshot.db.host, "db.supabase.co");
-        assert_eq!(config.supabase_snapshot.db.port, 6543);
-        assert_eq!(config.supabase_snapshot.db.user, "postgres");
-    }
-
-    #[test]
-    fn mysql_snapshot_config_deserializes() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-auto_snapshot_mysql = true
-
-[mysql_snapshot]
-database = "shop"
-host = "127.0.0.1"
-port = 3307
-user = "root"
-"#,
-        )
-        .unwrap();
-
-        assert!(config.auto_snapshot_mysql);
-        assert_eq!(config.mysql_snapshot.database, "shop");
-        assert_eq!(config.mysql_snapshot.host, "127.0.0.1");
-        assert_eq!(config.mysql_snapshot.port, 3307);
-        assert_eq!(config.mysql_snapshot.user, "root");
-    }
-
-    #[test]
-    fn sqlite_snapshot_config_deserializes() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-auto_snapshot_sqlite = true
-sqlite_snapshot_path = "db/app.db"
-"#,
-        )
-        .unwrap();
-
-        assert!(config.auto_snapshot_sqlite);
-        assert_eq!(config.sqlite_snapshot_path, "db/app.db");
-    }
-
-    #[test]
-    fn supabase_snapshot_defaults_are_disabled() {
-        let config = AegisConfig::defaults();
-
-        assert!(!config.auto_snapshot_supabase);
-        assert!(config.supabase_snapshot.project_ref.is_empty());
-        assert!(
-            config
-                .supabase_snapshot
-                .require_config_target_match_on_rollback
-        );
-        assert_eq!(
-            config.supabase_snapshot.db,
-            PostgresSnapshotConfig::default()
-        );
-    }
-
-    #[test]
-    fn db_snapshot_defaults_are_disabled() {
-        let config = AegisConfig::defaults();
-
-        assert!(!config.auto_snapshot_postgres);
-        assert!(!config.auto_snapshot_mysql);
-        assert!(!config.auto_snapshot_sqlite);
-        assert!(config.postgres_snapshot.database.is_empty());
-        assert!(config.mysql_snapshot.database.is_empty());
-        assert!(config.sqlite_snapshot_path.is_empty());
-    }
-
-    #[test]
-    fn supabase_snapshot_fields_merge_by_replacement_and_scalar_override() {
-        let base = AegisConfig {
-            auto_snapshot_supabase: false,
-            supabase_snapshot: SupabaseSnapshotConfig {
-                project_ref: "base_proj".to_string(),
-                require_config_target_match_on_rollback: true,
-                db: PostgresSnapshotConfig {
-                    database: "base_db".to_string(),
-                    host: "base.supabase.co".to_string(),
-                    port: 6001,
-                    user: "base_user".to_string(),
-                },
-            },
-            ..AegisConfig::defaults()
-        };
-
-        let overlay = PartialConfig {
-            auto_snapshot_supabase: Some(true),
-            supabase_snapshot: Some(SupabaseSnapshotConfig {
-                project_ref: "overlay_proj".to_string(),
-                require_config_target_match_on_rollback: false,
-                db: PostgresSnapshotConfig {
-                    database: "overlay_db".to_string(),
-                    host: "overlay.supabase.co".to_string(),
-                    port: 6543,
-                    user: "overlay_user".to_string(),
-                },
-            }),
-            ..PartialConfig::default()
-        };
-
-        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
-
-        assert!(merged.auto_snapshot_supabase);
-        assert_eq!(merged.supabase_snapshot.project_ref, "overlay_proj");
-        assert!(
-            !merged
-                .supabase_snapshot
-                .require_config_target_match_on_rollback
-        );
-        assert_eq!(merged.supabase_snapshot.db.database, "overlay_db");
-        assert_eq!(merged.supabase_snapshot.db.host, "overlay.supabase.co");
-        assert_eq!(merged.supabase_snapshot.db.port, 6543);
-        assert_eq!(merged.supabase_snapshot.db.user, "overlay_user");
-    }
-
-    #[test]
-    fn partial_supabase_snapshot_overlay_replaces_entire_bundle() {
-        let base = AegisConfig {
-            supabase_snapshot: SupabaseSnapshotConfig {
-                project_ref: "base_proj".to_string(),
-                require_config_target_match_on_rollback: false,
-                db: PostgresSnapshotConfig {
-                    database: "base_db".to_string(),
-                    host: "base.supabase.co".to_string(),
-                    port: 6001,
-                    user: "base_user".to_string(),
-                },
-            },
-            ..AegisConfig::defaults()
-        };
-
-        let overlay = PartialConfig {
-            supabase_snapshot: Some(SupabaseSnapshotConfig {
-                project_ref: "overlay_proj".to_string(),
-                ..SupabaseSnapshotConfig::default()
-            }),
-            ..PartialConfig::default()
-        };
-
-        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
-
-        assert_eq!(merged.supabase_snapshot.project_ref, "overlay_proj");
-        assert!(
-            merged
-                .supabase_snapshot
-                .require_config_target_match_on_rollback
-        );
-        assert_eq!(
-            merged.supabase_snapshot.db,
-            PostgresSnapshotConfig::default()
-        );
-    }
-
-    #[test]
-    fn db_snapshot_fields_merge_by_replacement_and_scalar_override() {
-        let base = AegisConfig {
-            auto_snapshot_postgres: false,
-            postgres_snapshot: PostgresSnapshotConfig {
-                database: "base_pg".to_string(),
-                host: "base-pg.local".to_string(),
-                port: 6001,
-                user: "base_pg_user".to_string(),
-            },
-            auto_snapshot_mysql: false,
-            mysql_snapshot: MysqlSnapshotConfig {
-                database: "base_mysql".to_string(),
-                host: "base-mysql.local".to_string(),
-                port: 6002,
-                user: "base_mysql_user".to_string(),
-            },
-            auto_snapshot_sqlite: false,
-            sqlite_snapshot_path: "base/db.sqlite".to_string(),
-            ..AegisConfig::defaults()
-        };
-
-        let overlay = PartialConfig {
-            auto_snapshot_postgres: Some(true),
-            postgres_snapshot: Some(PostgresSnapshotConfig {
-                database: "overlay_pg".to_string(),
-                host: "db.local".to_string(),
-                port: 5433,
-                user: "appuser".to_string(),
-            }),
-            auto_snapshot_mysql: Some(true),
-            mysql_snapshot: Some(MysqlSnapshotConfig {
-                database: "shop".to_string(),
-                host: "127.0.0.1".to_string(),
-                port: 3307,
-                user: "root".to_string(),
-            }),
-            auto_snapshot_sqlite: Some(true),
-            sqlite_snapshot_path: Some("db/app.db".to_string()),
-            ..PartialConfig::default()
-        };
-
-        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
-
-        assert!(merged.auto_snapshot_postgres);
-        assert_eq!(merged.postgres_snapshot.database, "overlay_pg");
-        assert_eq!(merged.postgres_snapshot.host, "db.local");
-        assert_eq!(merged.postgres_snapshot.port, 5433);
-        assert_eq!(merged.postgres_snapshot.user, "appuser");
-
-        assert!(merged.auto_snapshot_mysql);
-        assert_eq!(merged.mysql_snapshot.database, "shop");
-        assert_eq!(merged.mysql_snapshot.host, "127.0.0.1");
-        assert_eq!(merged.mysql_snapshot.port, 3307);
-        assert_eq!(merged.mysql_snapshot.user, "root");
-
-        assert!(merged.auto_snapshot_sqlite);
-        assert_eq!(merged.sqlite_snapshot_path, "db/app.db");
-    }
-
-    #[test]
-    fn db_snapshot_nested_tables_do_not_inherit_base_values_on_overlay_replacement() {
-        let base = AegisConfig {
-            postgres_snapshot: PostgresSnapshotConfig {
-                database: "base_pg".to_string(),
-                host: "base-pg.local".to_string(),
-                port: 6001,
-                user: "base_pg_user".to_string(),
-            },
-            mysql_snapshot: MysqlSnapshotConfig {
-                database: "base_mysql".to_string(),
-                host: "base-mysql.local".to_string(),
-                port: 6002,
-                user: "base_mysql_user".to_string(),
-            },
-            ..AegisConfig::defaults()
-        };
-
-        let overlay = PartialConfig {
-            postgres_snapshot: Some(PostgresSnapshotConfig {
-                database: "overlay_pg".to_string(),
-                ..PostgresSnapshotConfig::default()
-            }),
-            mysql_snapshot: Some(MysqlSnapshotConfig {
-                host: "mysql.overlay".to_string(),
-                ..MysqlSnapshotConfig::default()
-            }),
-            ..PartialConfig::default()
-        };
-
-        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
-
-        assert_eq!(merged.postgres_snapshot.database, "overlay_pg");
-        assert_eq!(merged.postgres_snapshot.host, "localhost");
-        assert_eq!(merged.postgres_snapshot.port, 5432);
-        assert!(merged.postgres_snapshot.user.is_empty());
-
-        assert_eq!(merged.mysql_snapshot.database, "");
-        assert_eq!(merged.mysql_snapshot.host, "mysql.overlay");
-        assert_eq!(merged.mysql_snapshot.port, 3306);
-        assert!(merged.mysql_snapshot.user.is_empty());
-    }
-
-    #[test]
-    fn load_full_global_config_without_errors() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-
-        fs::create_dir_all(&global_dir).unwrap();
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            r#"
-mode = "Strict"
-auto_snapshot_git = false
-auto_snapshot_docker = true
-
-[[allowlist]]
-pattern = "terraform destroy -target=module.test.*"
-cwd = "/srv/infra"
-reason = "global terraform teardown"
-expires_at = "2030-01-01T00:00:00Z"
-
-[[allowlist]]
-pattern = "docker system prune --volumes"
-cwd = "/srv/infra"
-reason = "global cleanup"
-expires_at = "2030-01-01T00:00:00Z"
-
-[[custom_patterns]]
-id = "USR-001"
-category = "Cloud"
-risk = "Danger"
-pattern = "terraform destroy"
-description = "User-defined Terraform destroy rule"
-safe_alt = "terraform plan"
-"#,
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        assert_eq!(config.mode, Mode::Strict);
-        assert_eq!(config.allowlist.len(), 2);
-        assert_eq!(config.custom_patterns.len(), 1);
-        assert!(!config.auto_snapshot_git);
-        assert!(config.auto_snapshot_docker);
-        assert_eq!(config.custom_patterns[0].id, "USR-001");
-        assert_eq!(config.custom_patterns[0].category, Category::Cloud);
-        assert_eq!(config.custom_patterns[0].risk, RiskLevel::Danger);
-    }
-
-    #[test]
-    fn defaults_work_without_any_config_file() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        assert_eq!(config, AegisConfig::defaults());
-    }
-
-    #[test]
-    fn project_config_overrides_global_scalars_and_vecs_are_merged() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-
-        fs::create_dir_all(&global_dir).unwrap();
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            r#"
-mode = "Strict"
-auto_snapshot_git = false
-
-[[allowlist]]
-pattern = "global-safe-cmd"
-cwd = "/srv/infra"
-reason = "global command"
-expires_at = "2030-01-01T00:00:00Z"
-
-[[custom_patterns]]
-id = "GLB-001"
-category = "Cloud"
-risk = "Danger"
-pattern = "aws nuke"
-description = "Global cloud nuke rule"
-"#,
-        )
-        .unwrap();
-
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            r#"
-mode = "Audit"
-[[allowlist]]
-pattern = "project-safe-cmd"
-cwd = "/srv/infra"
-reason = "project command"
-expires_at = "2030-01-01T00:00:00Z"
-
-[[custom_patterns]]
-id = "PRJ-001"
-category = "Filesystem"
-risk = "Warn"
-pattern = "rm build"
-description = "Project build dir removal"
-"#,
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        // project wins for mode
-        assert_eq!(config.mode, Mode::Audit);
-        // global wins for auto_snapshot_git (project didn't set it)
-        assert!(!config.auto_snapshot_git);
-        // allowlists are merged: global first, then project
-        assert_eq!(config.allowlist[0].pattern, "global-safe-cmd");
-        assert_eq!(config.allowlist[1].pattern, "project-safe-cmd");
-        // patterns are merged: global first, then project
-        assert_eq!(config.custom_patterns.len(), 2);
-        assert_eq!(config.custom_patterns[0].id, "GLB-001");
-        assert_eq!(config.custom_patterns[1].id, "PRJ-001");
-    }
-
-    // --- partial override cases ---
-
-    #[test]
-    fn global_mode_and_snapshot_used_when_project_omits_them() {
-        // Global sets mode and auto_snapshot_docker; project sets only auto_snapshot_git.
-        // The global values must survive into the final config.
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "mode = \"Strict\"\nauto_snapshot_docker = false\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "auto_snapshot_git = false\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        assert_eq!(config.mode, Mode::Strict); // from global
-        assert!(!config.auto_snapshot_docker); // from global
-        assert!(!config.auto_snapshot_git); // from project
-    }
-
-    #[test]
-    fn audit_rotation_settings_merge_per_field() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            r#"
-[audit]
-rotation_enabled = true
-max_file_size_bytes = 2048
-retention_files = 7
-compress_rotated = true
-"#,
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            r#"
-[audit]
-retention_files = 2
-compress_rotated = false
-"#,
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        assert!(config.audit.rotation_enabled);
-        assert_eq!(config.audit.max_file_size_bytes, 2048);
-        assert_eq!(config.audit.retention_files, 2);
-        assert!(!config.audit.compress_rotated);
-    }
-
-    #[test]
-    fn invalid_audit_rotation_config_is_rejected() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
-
-        fs::write(
-            &config_path,
-            r#"
-[audit]
-rotation_enabled = true
-max_file_size_bytes = 0
-retention_files = 0
-"#,
-        )
-        .unwrap();
-
-        let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
-        let message = err.to_string();
-        assert!(
-            message.contains(&config_path.display().to_string()),
-            "validation error must identify the offending config file: {message}"
-        );
-        assert!(
-            message.contains("audit.max_file_size_bytes")
-                || message.contains("audit.retention_files")
-        );
-    }
-
-    #[test]
-    fn invalid_custom_pattern_config_is_rejected_with_source_path() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
-
-        fs::write(
-            &config_path,
-            r#"
-[[custom_patterns]]
-id = "FS-001"
-category = "Filesystem"
-risk = "Warn"
-pattern = "echo hello"
-description = "Conflicts with built-in pattern id"
-"#,
-        )
-        .unwrap();
-
-        let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
-        let message = err.to_string();
-
-        assert!(
-            message.contains(&config_path.display().to_string()),
-            "custom pattern error must identify the offending config file: {message}"
-        );
-        assert!(
-            message.contains("duplicate pattern id"),
-            "custom pattern error must preserve scanner validation details: {message}"
-        );
-    }
-
-    #[test]
-    fn load_for_rejects_malformed_allowlist_fields_with_source_path() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let config_path = workspace.path().join(PROJECT_CONFIG_FILE);
-
-        let cases = [
-            (
-                "pattern",
-                r#"
-[[allowlist]]
-pattern = "   "
-reason = "valid reason"
-expires_at = "2030-01-01T00:00:00Z"
-"#,
-                "pattern must not be empty",
-            ),
-            (
-                "reason",
-                r#"
-[[allowlist]]
-pattern = "terraform destroy -target=module.test.*"
-reason = "   "
-expires_at = "2030-01-01T00:00:00Z"
-"#,
-                "reason must not be empty",
-            ),
-            (
-                "cwd",
-                r#"
-[[allowlist]]
-pattern = "terraform destroy -target=module.test.*"
-cwd = "   "
-reason = "valid reason"
-expires_at = "2030-01-01T00:00:00Z"
-"#,
-                "cwd must not be empty",
-            ),
-            (
-                "user",
-                r#"
-[[allowlist]]
-pattern = "terraform destroy -target=module.test.*"
-user = "   "
-reason = "valid reason"
-expires_at = "2030-01-01T00:00:00Z"
-"#,
-                "user must not be empty",
-            ),
-        ];
-
-        for (field, contents, expected_message) in cases {
-            fs::write(&config_path, contents).unwrap();
-
-            let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
-            let message = err.to_string();
-
-            assert!(
-                message.contains(&config_path.display().to_string()),
-                "{field} validation error must identify the offending config file: {message}"
-            );
-            assert!(
-                message.contains(expected_message),
-                "{field} validation message mismatch: {message}"
-            );
-        }
-    }
-
-    #[test]
-    fn project_false_wins_over_global_true_for_bool_scalar() {
-        // When both files set the same bool field, the project value must win
-        // even when it is `false` (so it can't be confused with "not set").
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "auto_snapshot_git = true\nauto_snapshot_docker = true\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "auto_snapshot_git = false\nauto_snapshot_docker = false\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-        assert!(!config.auto_snapshot_git);
-        assert!(!config.auto_snapshot_docker);
-    }
-
-    #[test]
-    fn no_home_dir_loads_project_config_only() {
-        // When HOME is unavailable there is no global config to look for; the
-        // project config and built-in defaults must still be applied correctly.
-        let workspace = TempDir::new().unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Audit\"\nauto_snapshot_git = false\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), None).unwrap();
-
-        assert_eq!(config.mode, Mode::Audit);
-        assert!(!config.auto_snapshot_git);
-        assert!(!config.auto_snapshot_docker); // default is false (opt-in)
-        assert!(config.allowlist.is_empty());
-    }
-
-    // --- malformed project config ---
-
-    #[test]
-    fn allowlist_override_level_defaults_warn_and_serializes() {
-        let config = AegisConfig::defaults();
-
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Warn
-        );
-
-        let toml = config.to_toml_string().unwrap();
-        assert!(toml.contains("allowlist_override_level = \"Warn\""));
-    }
-
-    #[test]
-    fn init_template_uses_array_of_tables_for_allowlist() {
-        let template = AegisConfig::init_template();
-
-        assert!(
-            !template.contains("allowlist = []"),
-            "template must not define an empty array that conflicts with [[allowlist]] entries"
-        );
-        assert!(
-            template.contains("[[allowlist]]"),
-            "template must show the structured allowlist entry form"
-        );
-        assert!(
-            template.contains("Warn | Danger | Never"),
-            "template must document the structured allowlist ceiling"
-        );
-        assert!(
-            template.contains("Block never bypasses in Protect/Strict"),
-            "template must state that Block cannot be bypassed"
-        );
-        assert!(
-            template.contains("auto_snapshot_postgres = false"),
-            "template must surface PostgreSQL snapshot toggles"
-        );
-        assert!(
-            template.contains("[postgres_snapshot]"),
-            "template must include the PostgreSQL snapshot section"
-        );
-        assert!(
-            template.contains("auto_snapshot_mysql = false"),
-            "template must surface MySQL snapshot toggles"
-        );
-        assert!(
-            template.contains("[mysql_snapshot]"),
-            "template must include the MySQL snapshot section"
-        );
-        assert!(
-            template.contains("auto_snapshot_supabase = false"),
-            "template must surface Supabase snapshot toggles"
-        );
-        assert!(
-            template.contains("[supabase_snapshot]"),
-            "template must include the Supabase snapshot section"
-        );
-        assert!(
-            template.contains("[supabase_snapshot.db]"),
-            "template must include the Supabase PostgreSQL transport section"
-        );
-        assert!(
-            template.contains("auto_snapshot_sqlite = false"),
-            "template must surface SQLite snapshot toggles"
-        );
-        assert!(
-            template.contains("sqlite_snapshot_path = \"\""),
-            "template must include the SQLite snapshot file path"
-        );
-    }
-
-    #[test]
-    fn allowlist_override_level_project_value_overrides_global() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "allowlist_override_level = \"Never\"\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "allowlist_override_level = \"Danger\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(
-            config.allowlist_override_level,
-            AllowlistOverrideLevel::Danger
-        );
-    }
-
-    #[test]
-    fn malformed_project_config_is_fatal() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-        fs::create_dir_all(&global_dir).unwrap();
-
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "mode = \"Strict\"\nauto_snapshot_git = false\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = <<<THIS IS NOT VALID TOML\n",
-        )
-        .unwrap();
-
-        let err = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap_err();
-        let message = err.to_string();
-
-        assert!(
-            message.contains(
-                &workspace
-                    .path()
-                    .join(PROJECT_CONFIG_FILE)
-                    .display()
-                    .to_string()
-            ),
-            "error must identify the malformed project config file: {message}"
-        );
-        assert!(
-            message.contains("failed to parse"),
-            "error must preserve the parse failure details: {message}"
-        );
-    }
-
-    // ── Snapshot policy tests ───────────────────────────────────────
-
-    #[test]
-    fn snapshot_policy_defaults_to_selective() {
-        let config = AegisConfig::defaults();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::Selective);
-    }
-
-    #[test]
-    fn snapshot_policy_none_deserializes() {
-        let config: AegisConfig = toml::from_str(r#"snapshot_policy = "None""#).unwrap();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
-    }
-
-    #[test]
-    fn snapshot_policy_selective_deserializes() {
-        let config: AegisConfig = toml::from_str(r#"snapshot_policy = "Selective""#).unwrap();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::Selective);
-    }
-
-    #[test]
-    fn snapshot_policy_full_deserializes() {
-        let config: AegisConfig = toml::from_str(r#"snapshot_policy = "Full""#).unwrap();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
-    }
-
-    #[test]
-    fn snapshot_policy_none_ignores_per_plugin_flags() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-snapshot_policy = "None"
-auto_snapshot_git = true
-auto_snapshot_docker = true
-"#,
-        )
-        .unwrap();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
-    }
-
-    #[test]
-    fn snapshot_policy_full_enables_all_regardless_of_flags() {
-        let config: AegisConfig = toml::from_str(
-            r#"
-snapshot_policy = "Full"
-auto_snapshot_git = false
-auto_snapshot_docker = false
-"#,
-        )
-        .unwrap();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
-    }
-
-    #[test]
-    fn snapshot_policy_merges_from_overlay() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-
-        fs::create_dir_all(&global_dir).unwrap();
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "snapshot_policy = \"Full\"\n",
-        )
-        .unwrap();
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "snapshot_policy = \"None\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        // Project layer overrides global.
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
-    }
-
-    #[test]
-    fn snapshot_policy_absent_in_overlay_keeps_base() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-        let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-
-        fs::create_dir_all(&global_dir).unwrap();
-        fs::write(
-            global_dir.join(GLOBAL_CONFIG_FILE),
-            "snapshot_policy = \"None\"\n",
-        )
-        .unwrap();
-        // Project sets only mode, not snapshot_policy.
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            "mode = \"Audit\"\n",
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
-    }
-
-    #[test]
-    fn user_pattern_deserializes_justification() {
-        let pattern: UserPattern = toml::from_str(
-            r#"
-id = "USR-001"
-category = "Cloud"
-risk = "Warn"
-pattern = "test"
-description = "desc"
-justification = "because"
-"#,
-        )
-        .unwrap();
-        assert_eq!(pattern.justification, Some("because".to_string()));
-    }
-
-    #[test]
-    fn user_pattern_justification_is_optional() {
-        let pattern: UserPattern = toml::from_str(
-            r#"
-id = "USR-002"
-category = "Cloud"
-risk = "Warn"
-pattern = "test"
-description = "desc"
-"#,
-        )
-        .unwrap();
-        assert_eq!(pattern.justification, None);
-    }
-
-    #[test]
-    fn custom_pattern_with_justification_roundtrips_through_config() {
-        let workspace = TempDir::new().unwrap();
-        let home = TempDir::new().unwrap();
-
-        fs::write(
-            workspace.path().join(PROJECT_CONFIG_FILE),
-            r#"
-[[custom_patterns]]
-id = "USR-JST"
-category = "Cloud"
-risk = "Danger"
-pattern = "terraform destroy"
-description = "Terraform destroy guard"
-justification = "This tears down all provisioned infrastructure. Confirm you are in the correct workspace and have state backups."
-safe_alt = "terraform plan -destroy"
-"#,
-        )
-        .unwrap();
-
-        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-        assert_eq!(config.custom_patterns.len(), 1);
-        assert_eq!(config.custom_patterns[0].id, "USR-JST");
-        assert_eq!(
-            config.custom_patterns[0].justification,
-            Some("This tears down all provisioned infrastructure. Confirm you are in the correct workspace and have state backups.".to_string())
-        );
-    }
-}
+mod tests;

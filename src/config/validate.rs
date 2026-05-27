@@ -4,7 +4,9 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use crate::config::Config;
-use crate::config::allowlist::{Allowlist, ConfigSourceLayer, analyze_allowlist_rule};
+use crate::config::allowlist::{
+    Allowlist, ConfigSourceLayer, analyze_allowlist_rule, validate_single_rule,
+};
 use crate::error::AegisError;
 use crate::interceptor;
 
@@ -295,8 +297,15 @@ fn first_invalid_allowlist_issue(
     source_map: &ConfigSourceMap,
 ) -> Option<ValidationIssue> {
     let layered_rules = config.layered_allowlist_rules();
-    for index in 0..layered_rules.len() {
-        if let Err(err) = Allowlist::new(&layered_rules[..=index]) {
+
+    // Fast path: try to compile all rules at once (O(n)).
+    if Allowlist::new(&layered_rules).is_ok() {
+        return None;
+    }
+
+    // Slow path: find the first invalid rule by compiling individually (O(n)).
+    for (index, rule) in layered_rules.iter().enumerate() {
+        if let Err(err) = validate_single_rule(rule.clone()) {
             return Some(ValidationIssue {
                 code: "invalid_allowlist_rule",
                 message: err.to_string(),
@@ -513,7 +522,7 @@ mod tests {
 rotation_enabled = true
 max_file_size_bytes = 0
 retention_files = 0
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy *"
 reason = "wide"
 "#,

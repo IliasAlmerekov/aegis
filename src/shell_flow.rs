@@ -3,7 +3,9 @@ use std::path::Path;
 use aegis::audit::Decision;
 #[cfg(test)]
 use aegis::config::AllowlistMatch;
-use aegis::config::amend::{active_config_path_for_append, append_allow_rule, append_block_rule};
+use aegis::config::amend::{
+    AppendOutcome, active_config_path_for_append, append_allow_rule, append_block_rule,
+};
 use aegis::decision::BlockReason;
 #[cfg(test)]
 use aegis::decision::{
@@ -35,7 +37,7 @@ fn persist_rule(
         &std::path::Path,
         &[String],
         &std::path::Path,
-    ) -> Result<(), aegis::error::AegisError>,
+    ) -> Result<AppendOutcome, aegis::error::AegisError>,
     label: &str,
 ) -> Result<(), String> {
     match active_config_path_for_append() {
@@ -46,7 +48,22 @@ fn persist_rule(
                 CwdState::Resolved(path) => path.clone(),
                 CwdState::Unavailable => std::path::PathBuf::from("."),
             };
-            append_fn(&config_path, &prefix, &cwd).map_err(|err| format!("{err}"))?;
+            match append_fn(&config_path, &prefix, &cwd) {
+                Ok(AppendOutcome::Conflict {
+                    pattern,
+                    existing_location,
+                }) => {
+                    let location = match existing_location {
+                        aegis::config::allowlist::ConfigSourceLayer::Project => "project",
+                        aegis::config::allowlist::ConfigSourceLayer::Global => "global",
+                    };
+                    eprintln!(
+                        "warning: conflicting rule for '{pattern}' already exists in {location} config"
+                    );
+                }
+                Ok(AppendOutcome::SkippedDuplicate | AppendOutcome::Appended) => {}
+                Err(err) => return Err(format!("{err}")),
+            }
         }
         None => {
             eprintln!("warning: cannot persist {label} rule: no config file found");

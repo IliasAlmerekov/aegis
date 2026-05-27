@@ -92,7 +92,7 @@ This `mode semantics` section documents the current runtime behavior.
 Allowlist rules use the structured array-of-tables form:
 
 ```toml
-[[allowlist]]
+[[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/srv/infra"
 user = "ci"
