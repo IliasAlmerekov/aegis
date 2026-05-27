@@ -13,7 +13,7 @@ pub use embedded_scripts::{
 };
 pub use nested_shells::extract_nested_commands;
 pub use segmentation::{logical_segments, top_level_pipelines};
-pub use tokenizer::split_tokens;
+pub use tokenizer::{extract_prefix, split_tokens};
 
 // ── T2.4: ParsedCommand struct and public API ─────────────────────────────────
 
@@ -968,6 +968,70 @@ mod tests {
             elapsed.as_millis() < 5,
             "50 parses took {}µs, expected < 5ms (run criterion benchmarks for precise numbers)",
             elapsed.as_micros()
+        );
+    }
+
+    // ── extract_prefix tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn extract_prefix_strips_file_paths() {
+        let tokens = split_tokens("git push origin main");
+        assert_eq!(extract_prefix(&tokens), vec!["git", "push"]);
+    }
+
+    #[test]
+    fn extract_prefix_keeps_flags() {
+        let tokens = split_tokens("rm -rf /tmp/old");
+        assert_eq!(extract_prefix(&tokens), vec!["rm", "-rf"]);
+    }
+
+    #[test]
+    fn extract_prefix_keeps_subcommands() {
+        let tokens = split_tokens("docker system prune");
+        assert_eq!(extract_prefix(&tokens), vec!["docker", "system", "prune"]);
+    }
+
+    #[test]
+    fn extract_prefix_stops_at_double_dash() {
+        let tokens = split_tokens("git log --oneline --");
+        assert_eq!(extract_prefix(&tokens), vec!["git", "log", "--oneline"]);
+    }
+
+    #[test]
+    fn extract_prefix_empty_tokens_returns_empty() {
+        assert!(extract_prefix(&[]).is_empty());
+    }
+
+    #[test]
+    fn extract_prefix_single_token_is_program_only() {
+        let tokens = split_tokens("ls");
+        assert_eq!(extract_prefix(&tokens), vec!["ls"]);
+    }
+
+    #[test]
+    fn extract_prefix_stops_at_dotted_path() {
+        let tokens = split_tokens("cat /etc/hosts");
+        assert_eq!(extract_prefix(&tokens), vec!["cat"]);
+    }
+
+    #[test]
+    fn extract_prefix_stops_at_relative_path() {
+        let tokens = split_tokens("rm -rf ./build");
+        assert_eq!(extract_prefix(&tokens), vec!["rm", "-rf"]);
+    }
+
+    #[test]
+    fn extract_prefix_stops_at_tilde_path() {
+        let tokens = split_tokens("rm -rf ~/Documents");
+        assert_eq!(extract_prefix(&tokens), vec!["rm", "-rf"]);
+    }
+
+    #[test]
+    fn extract_prefix_keeps_multiple_flags() {
+        let tokens = split_tokens("git log --oneline --graph --all");
+        assert_eq!(
+            extract_prefix(&tokens),
+            vec!["git", "log", "--oneline", "--graph", "--all"]
         );
     }
 }

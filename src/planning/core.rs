@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::decision::{
-    ExecutionTransport, PolicyAllowlistResult, PolicyCiState, PolicyConfigFlags,
-    PolicyExecutionContext, PolicyInput, evaluate_policy,
+    ExecutionTransport, PolicyAllowlistResult, PolicyBlocklistResult, PolicyCiState,
+    PolicyConfigFlags, PolicyExecutionContext, PolicyInput, evaluate_policy,
 };
 use crate::planning::types::{CwdState, DecisionContext, InterceptionPlan, PlanningOutcome};
 use crate::runtime::RuntimeContext;
@@ -32,6 +32,12 @@ pub fn plan_with_context(
         }
         CwdState::Unavailable => context.allowlist_match_for_command(request.command, None),
     };
+    let blocklist_match = match &request.cwd_state {
+        CwdState::Resolved(path) => {
+            context.is_blocked_for_command(request.command, Some(path.as_path()))
+        }
+        CwdState::Unavailable => context.is_blocked_for_command(request.command, None),
+    };
     let applicable_snapshot_plugins = if assessment.risk == crate::interceptor::RiskLevel::Danger
         && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
     {
@@ -60,6 +66,9 @@ pub fn plan_with_context(
         },
         allowlist: PolicyAllowlistResult {
             matched: decision_context.allowlist_match().is_some(),
+        },
+        blocklist: PolicyBlocklistResult {
+            matched: blocklist_match,
         },
         config_flags: PolicyConfigFlags {
             ci_policy: context.config().ci_policy,

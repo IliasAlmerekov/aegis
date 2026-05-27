@@ -9,6 +9,7 @@ use crate::explanation::CommandExplanation;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::scanner::Assessment;
 use crate::snapshot::SnapshotRecord;
+use crate::ui::confirm::PromptDecision;
 
 use super::shared::{
     confirmation_reason_text, decision_source_label, pattern_source_label, print_command_line,
@@ -113,25 +114,22 @@ pub(super) fn render_dialog<W: Write>(
     let _ = out.flush();
 }
 
-pub(super) fn prompt_danger<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
+/// Danger prompt with "Always allow" option.
+pub(super) fn prompt_danger_with_always<R: BufRead, W: Write>(
+    input: &mut R,
+    out: &mut W,
+) -> PromptDecision {
     let _ = queue!(
         out,
         SetForegroundColor(Color::Red),
         SetAttribute(Attribute::Bold),
-        Print("\n  Execute dangerous command? [y/N]: "),
+        Print("\n  Execute dangerous command? [y/N/a/d]: "),
         ResetColor,
     );
     let _ = out.flush();
 
     let mut line = String::new();
     if input.read_line(&mut line).is_err() {
-        return false;
-    }
-
-    let answer = line.trim().to_ascii_lowercase();
-    if answer == "y" || answer == "yes" {
-        true
-    } else {
         let _ = queue!(
             out,
             SetForegroundColor(Color::Yellow),
@@ -139,16 +137,35 @@ pub(super) fn prompt_danger<R: BufRead, W: Write>(input: &mut R, out: &mut W) ->
             ResetColor,
         );
         let _ = out.flush();
-        false
+        return PromptDecision::Deny;
+    }
+
+    match line.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => PromptDecision::Approve,
+        "a" | "always" => PromptDecision::ApproveAlways,
+        "d" | "denyalways" | "deny-always" => PromptDecision::DenyAlways,
+        _ => {
+            let _ = queue!(
+                out,
+                SetForegroundColor(Color::Yellow),
+                Print("  Command cancelled.\n"),
+                ResetColor,
+            );
+            let _ = out.flush();
+            PromptDecision::Deny
+        }
     }
 }
 
-/// Warn prompt: the user must type `y`/`yes` to proceed.
-pub(super) fn prompt_warn<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> bool {
+/// Warn prompt with "Always allow" and "Always deny" options.
+pub(super) fn prompt_warn_with_always<R: BufRead, W: Write>(
+    input: &mut R,
+    out: &mut W,
+) -> PromptDecision {
     let _ = queue!(
         out,
         SetForegroundColor(Color::Yellow),
-        Print("\n  Execute suspicious command? [y/N]: "),
+        Print("\n  Execute suspicious command? [y/N/a/d]: "),
         ResetColor,
     );
     let _ = out.flush();
@@ -162,21 +179,23 @@ pub(super) fn prompt_warn<R: BufRead, W: Write>(input: &mut R, out: &mut W) -> b
             ResetColor,
         );
         let _ = out.flush();
-        return false;
+        return PromptDecision::Deny;
     }
 
-    let answer = line.trim().to_ascii_lowercase();
-    if answer == "y" || answer == "yes" {
-        true
-    } else {
-        let _ = queue!(
-            out,
-            SetForegroundColor(Color::Yellow),
-            Print("  Command cancelled.\n"),
-            ResetColor,
-        );
-        let _ = out.flush();
-        false
+    match line.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => PromptDecision::Approve,
+        "a" | "always" => PromptDecision::ApproveAlways,
+        "d" | "denyalways" | "deny-always" => PromptDecision::DenyAlways,
+        _ => {
+            let _ = queue!(
+                out,
+                SetForegroundColor(Color::Yellow),
+                Print("  Command cancelled.\n"),
+                ResetColor,
+            );
+            let _ = out.flush();
+            PromptDecision::Deny
+        }
     }
 }
 

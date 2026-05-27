@@ -4,7 +4,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use crate::config::Config;
-use crate::config::allowlist::{Allowlist, AllowlistSourceLayer, analyze_allowlist_rule};
+use crate::config::allowlist::{Allowlist, ConfigSourceLayer, analyze_allowlist_rule};
 use crate::error::AegisError;
 use crate::interceptor;
 
@@ -342,7 +342,7 @@ fn config_load_error_code(err: &AegisError) -> &'static str {
 
 fn vector_locations(
     item_count: usize,
-    layers: &[AllowlistSourceLayer],
+    layers: &[ConfigSourceLayer],
     field: &str,
     project_path: Option<&Path>,
     global_path: Option<&Path>,
@@ -355,14 +355,14 @@ fn vector_locations(
             let layer = layers
                 .get(index)
                 .copied()
-                .unwrap_or(AllowlistSourceLayer::Project);
+                .unwrap_or(ConfigSourceLayer::Project);
             let local_index = match layer {
-                AllowlistSourceLayer::Global => {
+                ConfigSourceLayer::Global => {
                     let current = global_index;
                     global_index += 1;
                     current
                 }
-                AllowlistSourceLayer::Project => {
+                ConfigSourceLayer::Project => {
                     let current = project_index;
                     project_index += 1;
                     current
@@ -378,22 +378,22 @@ fn vector_locations(
 }
 
 fn layer_location(
-    layer: AllowlistSourceLayer,
+    layer: ConfigSourceLayer,
     project_path: Option<&Path>,
     global_path: Option<&Path>,
 ) -> String {
     match layer {
-        AllowlistSourceLayer::Global => global_path
+        ConfigSourceLayer::Global => global_path
             .map(path_string)
             .unwrap_or_else(|| "global".to_string()),
-        AllowlistSourceLayer::Project => project_path
+        ConfigSourceLayer::Project => project_path
             .map(path_string)
             .unwrap_or_else(|| "project".to_string()),
     }
 }
 
 fn scalar_field_location(
-    source_layer: Option<AllowlistSourceLayer>,
+    source_layer: Option<ConfigSourceLayer>,
     field: &str,
     project_path: Option<&Path>,
     global_path: Option<&Path>,

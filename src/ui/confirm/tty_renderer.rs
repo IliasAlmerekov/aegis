@@ -6,33 +6,46 @@ use crate::interceptor::RiskLevel;
 use crate::interceptor::scanner::Assessment;
 use crate::snapshot::SnapshotRecord;
 
+use super::PromptDecision;
 use super::block_screen::{render_block, render_policy_block};
-use super::stdout_renderer::show_confirmation_with_input;
+use super::stdout_renderer::show_confirmation_with_decision;
 
 pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {
     matches!(assessment.risk, RiskLevel::Safe)
 }
 
-/// Show the confirmation dialog via `/dev/tty`.
+/// Show the confirmation dialog via `/dev/tty` and return a [`PromptDecision`].
 ///
 /// Opens `/dev/tty` for both input (keystrokes) and output (dialog
-/// rendering).  If the device cannot be opened, returns
+/// rendering). If the device cannot be opened, returns
 /// `tty_unavailable_decision(assessment)` — fail-closed for Warn/Danger.
-pub fn show_confirmation_via_tty(
+pub fn show_confirmation_via_tty_with_decision(
     assessment: &Assessment,
     explanation: &CommandExplanation,
     snapshots: &[SnapshotRecord],
-) -> bool {
+) -> PromptDecision {
     let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
         Ok(f) => f,
-        Err(_) => return tty_unavailable_decision(assessment),
+        Err(_) => {
+            return if tty_unavailable_decision(assessment) {
+                PromptDecision::Approve
+            } else {
+                PromptDecision::Deny
+            };
+        }
     };
     let tty_write = match tty.try_clone() {
         Ok(f) => f,
-        Err(_) => return tty_unavailable_decision(assessment),
+        Err(_) => {
+            return if tty_unavailable_decision(assessment) {
+                PromptDecision::Approve
+            } else {
+                PromptDecision::Deny
+            };
+        }
     };
 
-    show_confirmation_with_input(
+    show_confirmation_with_decision(
         assessment,
         explanation,
         snapshots,

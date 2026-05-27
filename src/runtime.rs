@@ -10,7 +10,8 @@ use tokio::runtime::Handle;
 
 use crate::audit::{AuditEntry, AuditLogger, Decision};
 use crate::config::{
-    Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Config, SnapshotPolicy,
+    Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Blocklist, Config,
+    SnapshotPolicy,
 };
 use crate::error::AegisError;
 use crate::explanation::{CommandExplanation, ExecutionOutcomeExplanation};
@@ -50,6 +51,7 @@ impl From<&Config> for RuntimeConfig {
 pub struct RuntimeContext {
     runtime_config: RuntimeConfig,
     allowlist: Allowlist,
+    blocklist: Blocklist,
     current_user: Option<String>,
     scanner: Arc<Scanner>,
     snapshot_registry_config: SnapshotRegistryConfig,
@@ -89,6 +91,7 @@ impl RuntimeContext {
 
         Ok(Self {
             allowlist: Allowlist::from_layered_rules(&config.layered_allowlist_rules())?,
+            blocklist: Blocklist::from_layered_rules(&config.layered_blocklist_rules())?,
             snapshot_registry_config: SnapshotRegistryConfig::try_new(&config)?,
             snapshot_registry: OnceLock::new(),
             async_handle: handle,
@@ -134,6 +137,19 @@ impl RuntimeContext {
         let context = AllowlistContext::with_optional_scope(command, cwd, self.current_user(), now);
 
         self.allowlist_match(&context)
+    }
+
+    /// Returns `true` when any effective blocklist entry matches the context.
+    pub fn is_blocked(&self, context: &AllowlistContext<'_>) -> bool {
+        self.blocklist.is_blocked(context)
+    }
+
+    /// Returns `true` when any effective blocklist entry matches the command.
+    pub fn is_blocked_for_command(&self, command: &str, cwd: Option<&Path>) -> bool {
+        let now = OffsetDateTime::now_utc();
+        let context = AllowlistContext::with_optional_scope(command, cwd, self.current_user(), now);
+
+        self.is_blocked(&context)
     }
 
     /// Create best-effort snapshots using the context-bound registry and the
@@ -648,7 +664,7 @@ expires_at = "2030-01-01T00:00:00Z"
         assert_eq!(matched.reason, "project teardown");
         assert_eq!(
             matched.source_layer,
-            crate::config::AllowlistSourceLayer::Project
+            crate::config::ConfigSourceLayer::Project
         );
     }
 

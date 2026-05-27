@@ -8,14 +8,17 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
+use crate::config::amend::{active_config_path_for_append, append_allow_rule, append_block_rule};
 use crate::decision::{BlockReason, ExecutionTransport};
+use crate::interceptor::parser::{extract_prefix, split_tokens};
 use crate::planning::{
     CwdState, ExecutionDisposition, InterceptionPlan, PlanningOutcome, PreparedPlanner,
     SetupFailureKind, SetupFailurePlan, prepare_and_plan,
 };
 use crate::runtime::{RuntimeContext, WatchAuditContext};
 use crate::ui::confirm::{
-    show_block_via_tty, show_confirmation_via_tty, show_policy_block_via_tty,
+    PromptDecision, show_block_via_tty, show_confirmation_via_tty_with_decision,
+    show_policy_block_via_tty,
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -430,10 +433,39 @@ async fn run_watch_plan(
     let runtime_decision = match plan.execution_disposition() {
         ExecutionDisposition::Execute => Decision::AutoApproved,
         ExecutionDisposition::RequiresApproval => {
-            let approved = tokio::task::block_in_place(|| {
-                show_confirmation_via_tty(plan.assessment(), plan.explanation(), &snapshots)
+            let decision = tokio::task::block_in_place(|| {
+                show_confirmation_via_tty_with_decision(
+                    plan.assessment(),
+                    plan.explanation(),
+                    &snapshots,
+                )
             });
-            if approved {
+            if decision == PromptDecision::ApproveAlways {
+                if let Some(config_path) = active_config_path_for_append() {
+                    let tokens = split_tokens(&frame.cmd);
+                    let prefix = extract_prefix(&tokens);
+                    if let Err(err) = append_allow_rule(&config_path, &prefix, &cwd) {
+                        eprintln!("error: failed to append allow rule: {err}");
+                    }
+                } else {
+                    eprintln!("warning: cannot persist allow rule: no config file found");
+                }
+            }
+            if decision == PromptDecision::DenyAlways {
+                if let Some(config_path) = active_config_path_for_append() {
+                    let tokens = split_tokens(&frame.cmd);
+                    let prefix = extract_prefix(&tokens);
+                    if let Err(err) = append_block_rule(&config_path, &prefix, &cwd) {
+                        eprintln!("error: failed to append block rule: {err}");
+                    }
+                } else {
+                    eprintln!("warning: cannot persist block rule: no config file found");
+                }
+            }
+            if matches!(
+                decision,
+                PromptDecision::Approve | PromptDecision::ApproveAlways
+            ) {
                 Decision::Approved
             } else {
                 Decision::Denied
@@ -448,6 +480,9 @@ async fn run_watch_plan(
                     show_policy_block_via_tty(plan.assessment(), plan.explanation())
                 }
                 Some(BlockReason::ProtectCiPolicy) => {
+                    show_policy_block_via_tty(plan.assessment(), plan.explanation())
+                }
+                Some(BlockReason::BlocklistOverride) => {
                     show_policy_block_via_tty(plan.assessment(), plan.explanation())
                 }
                 None => {}

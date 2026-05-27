@@ -7,7 +7,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::audit::{AuditEntry, AuditLogger, Decision};
-use crate::config::allowlist::AllowlistSourceLayer;
+use crate::config::allowlist::ConfigSourceLayer;
 use crate::config::{Config, model::ConfigLayerPath};
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
@@ -200,10 +200,10 @@ fn audit_logger() -> Result<AuditLogger> {
 fn config_status_for_layers(layers: &[ConfigLayerPath]) -> String {
     match layers.last() {
         Some(layer) => match layer.source_layer {
-            AllowlistSourceLayer::Project => {
+            ConfigSourceLayer::Project => {
                 format!("project config: {}", layer.path.display())
             }
-            AllowlistSourceLayer::Global => {
+            ConfigSourceLayer::Global => {
                 format!("global config: {}", layer.path.display())
             }
         },
@@ -264,11 +264,11 @@ mod tests {
     #[test]
     fn config_status_prefers_project_over_global() {
         let global = ConfigLayerPath {
-            source_layer: AllowlistSourceLayer::Global,
+            source_layer: ConfigSourceLayer::Global,
             path: PathBuf::from("/tmp/global-config.toml"),
         };
         let project = ConfigLayerPath {
-            source_layer: AllowlistSourceLayer::Project,
+            source_layer: ConfigSourceLayer::Project,
             path: PathBuf::from("/tmp/project-config.toml"),
         };
 
