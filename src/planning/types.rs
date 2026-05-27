@@ -360,9 +360,9 @@ mod tests {
     use crate::config::allowlist::ConfigSourceLayer;
     use crate::decision::BlockReason;
     use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
-    use crate::explanation::{
-        CommandExplanation, from_plan_inputs_call_count_for_tests,
-        reset_from_plan_inputs_call_count_for_tests,
+    use crate::explanation::CommandExplanation;
+    use crate::explanation::formatter::{
+        from_plan_inputs_call_count_for_tests, reset_from_plan_inputs_call_count_for_tests,
     };
     use crate::interceptor;
 
