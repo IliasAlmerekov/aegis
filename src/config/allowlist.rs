@@ -332,7 +332,11 @@ fn required_field<'a>(rule_type: &str, field: &str, value: &'a str) -> Result<&'
     Ok(trimmed)
 }
 
-fn optional_scope_field(rule_type: &str, field: &str, value: Option<&str>) -> Result<Option<String>> {
+fn optional_scope_field(
+    rule_type: &str,
+    field: &str,
+    value: Option<&str>,
+) -> Result<Option<String>> {
     match value {
         Some(value) => Ok(Some(required_field(rule_type, field, value)?.to_string())),
         None => Ok(None),
@@ -485,7 +489,9 @@ pub fn analyze_blocklist_rule(rule: &BlockRule) -> Vec<BlocklistWarning> {
     if !has_scope(rule.cwd.as_deref()) && !has_scope(rule.user.as_deref()) {
         warnings.push(BlocklistWarning {
             code: "missing_scope",
-            message: "blocklist rule blocks globally; consider adding cwd or user scope to narrow impact".to_string(),
+            message:
+                "blocklist rule blocks globally; consider adding cwd or user scope to narrow impact"
+                    .to_string(),
             location: location.clone(),
         });
     }
@@ -502,7 +508,6 @@ pub fn analyze_blocklist_rule(rule: &BlockRule) -> Vec<BlocklistWarning> {
 
     warnings
 }
-
 
 fn compile_block_rule(rule: LayeredBlocklistRule) -> Result<CompiledRule> {
     compile_fields(
@@ -791,10 +796,8 @@ mod tests {
 
     // ── Blocklist tests ───────────────────────────────────────────────────────
 
+    use super::{Blocklist, BlocklistMatch, LayeredBlocklistRule, analyze_blocklist_rule};
     use crate::config::BlockRule;
-    use super::{
-        Blocklist, BlocklistMatch, LayeredBlocklistRule, analyze_blocklist_rule,
-    };
 
     fn block_rule(pattern: &str, reason: &str) -> BlockRule {
         BlockRule {
@@ -808,8 +811,10 @@ mod tests {
 
     #[test]
     fn blocklist_exact_pattern_blocks_matching_command() {
-        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(block_rule("rm -rf /", "nuke"))]
-        ).unwrap();
+        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(
+            block_rule("rm -rf /", "nuke"),
+        )])
+        .unwrap();
 
         assert!(blocklist.is_blocked(&ctx("rm -rf /")));
         assert!(!blocklist.is_blocked(&ctx("rm -rf /tmp")));
@@ -817,22 +822,25 @@ mod tests {
 
     #[test]
     fn blocklist_does_not_block_non_matching_command() {
-        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(block_rule("docker system prune", "prune"))]
-        ).unwrap();
+        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(
+            block_rule("docker system prune", "prune"),
+        )])
+        .unwrap();
 
         assert!(!blocklist.is_blocked(&ctx("docker images")));
     }
 
     #[test]
     fn expired_blocklist_rule_is_not_effective() {
-        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(BlockRule {
+        let blocklist =
+            Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(BlockRule {
                 pattern: "rm -rf /".to_string(),
                 cwd: Some("/srv/infra".to_string()),
                 user: None,
                 expires_at: Some(now_utc() - Duration::minutes(1)),
                 reason: "expired".to_string(),
-            })]
-        ).unwrap();
+            })])
+            .unwrap();
 
         assert!(!blocklist.is_blocked(&ctx("rm -rf /")));
     }
@@ -840,16 +848,17 @@ mod tests {
     #[test]
     fn unscoped_blocklist_rule_is_rejected_by_compilation() {
         let err = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(BlockRule {
-                pattern: "rm -rf /".to_string(),
-                cwd: None,
-                user: None,
-                expires_at: None,
-                reason: "too broad".to_string(),
-            })]
-        ).expect_err("unscoped blocklist rule must be rejected");
+            pattern: "rm -rf /".to_string(),
+            cwd: None,
+            user: None,
+            expires_at: None,
+            reason: "too broad".to_string(),
+        })])
+        .expect_err("unscoped blocklist rule must be rejected");
 
         assert!(
-            err.to_string().contains("blocklist rule must declare cwd or user scope"),
+            err.to_string()
+                .contains("blocklist rule must declare cwd or user scope"),
             "error must say 'blocklist rule', not 'allowlist rule': {}",
             err
         );
@@ -890,8 +899,10 @@ mod tests {
 
     #[test]
     fn blocklist_match_reason_returns_matching_pattern() {
-        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(block_rule("rm -rf /", "nuke"))]
-        ).unwrap();
+        let blocklist = Blocklist::from_layered_rules(&[LayeredBlocklistRule::project(
+            block_rule("rm -rf /", "nuke"),
+        )])
+        .unwrap();
 
         assert_eq!(
             blocklist.match_reason(&ctx("rm -rf /")),

@@ -5,8 +5,8 @@ pub mod snapshot;
 pub mod validate;
 
 pub use allowlist::{
-    Allowlist, AllowlistContext, AllowlistMatch, ConfigSourceLayer, AllowlistWarning, Blocklist,
-    BlocklistMatch, BlocklistWarning, LayeredAllowlistRule, LayeredBlocklistRule,
+    Allowlist, AllowlistContext, AllowlistMatch, AllowlistWarning, Blocklist, BlocklistMatch,
+    BlocklistWarning, ConfigSourceLayer, LayeredAllowlistRule, LayeredBlocklistRule,
     analyze_allowlist_rule, analyze_blocklist_rule,
 };
 pub use amend::{active_config_path_for_append, append_allow_rule, append_block_rule};

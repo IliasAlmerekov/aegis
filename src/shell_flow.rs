@@ -31,7 +31,10 @@ use crate::{EXIT_BLOCKED, EXIT_DENIED, EXIT_INTERNAL};
 fn persist_rule(
     cmd: &str,
     plan: &InterceptionPlan,
-    append_fn: impl FnOnce(&std::path::Path, &[String], &std::path::Path,
+    append_fn: impl FnOnce(
+        &std::path::Path,
+        &[String],
+        &std::path::Path,
     ) -> Result<(), aegis::error::AegisError>,
     label: &str,
 ) -> Result<(), String> {
@@ -43,8 +46,7 @@ fn persist_rule(
                 CwdState::Resolved(path) => path.clone(),
                 CwdState::Unavailable => std::path::PathBuf::from("."),
             };
-            append_fn(&config_path, &prefix, &cwd)
-                .map_err(|err| format!("{err}"))?;
+            append_fn(&config_path, &prefix, &cwd).map_err(|err| format!("{err}"))?;
         }
         None => {
             eprintln!("warning: cannot persist {label} rule: no config file found");

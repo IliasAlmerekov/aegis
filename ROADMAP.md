@@ -105,7 +105,7 @@ raw command string
 `ParsedCommand` becomes the canonical representation throughout the codebase.
 The raw string is only used for display and audit logging.
 
-### 1.2 Replace `HashMap<id, pattern>` with `MultiMap<program, Rule>`
+### 1.2 Replace `HashMap<id, pattern>` with `MultiMap<program, Rule>` (Done)
 
 Index rules by the first token of the command (the program name). This gives O(1)
 lookup per command instead of scanning every pattern.
@@ -121,7 +121,7 @@ rules_by_program.get_vec("git")  // returns only git-* rules
 For commands where the program cannot be determined (e.g. variable expansion),
 fall back to a small set of universal patterns.
 
-### 1.3 `PrefixRule` — token-level pattern matching
+### 1.3 `PrefixRule` — token-level pattern matching(Done)
 
 Replace free-form regex with token-prefix rules:
 
@@ -141,7 +141,7 @@ pub enum PatternToken {
 `Alts` lets one rule cover semantic equivalents (`--force` / `-f`) without
 duplicating entries.
 
-### 1.4 `justification` surfaces in the TUI
+### 1.4 `justification` surfaces in the TUI (Done)
 
 Every rule gains an optional human-readable explanation of _why_ it is risky:
 
@@ -158,7 +158,7 @@ Consider --force-with-lease to at least detect concurrent pushes.
 The `justification` field is shown in the confirmation dialog. It is set for
 all built-in rules and can be added to user-defined rules in config.
 
-### 1.5 `match_examples` / `not_match_examples` as first-class rule fields
+### 1.5 `match_examples` / `not_match_examples` as first-class rule fields (Done)
 
 Rules self-document and self-test:
 
@@ -186,7 +186,7 @@ rules; `cargo criterion` shows hot-path latency unchanged or improved.
 automatically persisted as a rule. The user never sees the same prompt twice for
 the same command pattern. Inspired by codex's `amend.rs`.
 
-### 2.1 "Always allow" writes a rule to config
+### 2.1 "Always allow" writes a rule to config(Done)
 
 When the user chooses "Always allow" in the TUI, Aegis:
 

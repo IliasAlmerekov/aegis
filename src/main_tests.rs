@@ -19,7 +19,7 @@ use crate::shell_compat::{
     same_file,
 };
 use crate::shell_flow::decide_command;
-use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, ConfigSourceLayer, CiPolicy, Mode};
+use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, CiPolicy, ConfigSourceLayer, Mode};
 use aegis::error::AegisError;
 
 // ── Scanner init failure ──────────────────────────────────────────────────

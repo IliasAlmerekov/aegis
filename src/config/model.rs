@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 use super::allowlist::{
-    Allowlist, ConfigSourceLayer, Blocklist, LayeredAllowlistRule, LayeredBlocklistRule,
+    Allowlist, Blocklist, ConfigSourceLayer, LayeredAllowlistRule, LayeredBlocklistRule,
 };
 use super::snapshot::{
     DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SupabaseSnapshotConfig,
@@ -478,11 +478,7 @@ impl AegisConfig {
         Ok(merged)
     }
 
-    fn merge_layer(
-        base: Self,
-        overlay: PartialConfig,
-        allowlist_layer: ConfigSourceLayer,
-    ) -> Self {
+    fn merge_layer(base: Self, overlay: PartialConfig, allowlist_layer: ConfigSourceLayer) -> Self {
         let mut custom_patterns = base.custom_patterns;
         let custom_pattern_count = overlay.custom_patterns.len();
         custom_patterns.extend(overlay.custom_patterns);
