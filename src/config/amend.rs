@@ -250,8 +250,9 @@ reason = "Approved by user on 2025-01-01"
         .unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
-        let cwd_line = contents.lines().find(|l| l.starts_with("cwd = ")).unwrap();
-        assert_eq!(cwd_line, format!("cwd = \"{}\"", dir.path().display()));
+        let parsed: toml::Value = toml::from_str(&contents).unwrap();
+        let cwd = parsed["allowlist"][0]["cwd"].as_str().unwrap();
+        assert_eq!(cwd, dir.path().to_string_lossy().as_ref());
     }
 
     #[test]
