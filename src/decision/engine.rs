@@ -1,9 +1,7 @@
 use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 use crate::interceptor::RiskLevel;
 
-use super::types::{
-    PolicyAction, PolicyDecision, PolicyInput, PolicyRationale,
-};
+use super::types::{PolicyAction, PolicyDecision, PolicyInput, PolicyRationale};
 
 /// Side-effect-free policy evaluator.
 pub trait PolicyEngine {

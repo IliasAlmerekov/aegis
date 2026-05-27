@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{ConfigSourceLayer, Mode};
-use crate::decision::{
-    BlockReason, ExecutionTransport, PolicyAction, PolicyRationale,
-};
+use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyRationale};
 use crate::interceptor::RiskLevel;
 use crate::interceptor::scanner::DecisionSource;
 

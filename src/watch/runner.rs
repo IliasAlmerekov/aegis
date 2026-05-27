@@ -20,8 +20,8 @@ use crate::ui::confirm::{
 };
 
 use super::protocol::{
-    InputFrame, OutputDecision, OutputFrame, ReadLineResult, emit_frame, read_bounded_line,
-    MAX_FRAME_BYTES,
+    InputFrame, MAX_FRAME_BYTES, OutputDecision, OutputFrame, ReadLineResult, emit_frame,
+    read_bounded_line,
 };
 
 /// mpsc channel capacity for the stdout/stderr pump tasks.

@@ -14,8 +14,8 @@ fn run_install_inner(global: bool) -> Result<InstallOutcome, String> {
         return run_global_claude_install_at_home(home.as_deref());
     }
 
-    let cwd =
-        std::env::current_dir().map_err(|err| format!("failed to resolve current directory: {err}"))?;
+    let cwd = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve current directory: {err}"))?;
     let settings_path = super::settings_path_local(&cwd);
     run_install_at_path(&settings_path)
 }

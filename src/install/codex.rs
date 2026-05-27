@@ -9,7 +9,8 @@ use serde_json::Value;
 use super::{AgentInstallResult, InstallOutcome, agent_dir_exists, write_settings_atomically};
 
 const CODEX_PRE_TOOL_USE_HOOK_SH: &str = include_str!("../../scripts/hooks/codex-pre-tool-use.sh");
-const CODEX_SESSION_START_HOOK_SH: &str = include_str!("../../scripts/hooks/codex-session-start.sh");
+const CODEX_SESSION_START_HOOK_SH: &str =
+    include_str!("../../scripts/hooks/codex-session-start.sh");
 
 pub(crate) fn run_codex_install() -> AgentInstallResult {
     AgentInstallResult::from_result(run_codex_install_inner())

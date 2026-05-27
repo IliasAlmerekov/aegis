@@ -1,7 +1,7 @@
 use super::templates::{
-    AllowlistExplanation, CommandExplanation, ExecutionContextExplanation, ExecutionDecisionExplanation,
-    ExecutionOutcomeExplanation, ExplainedPatternMatch, PolicyExplanation, ScanExplanation,
-    SnapshotOutcomeExplanation,
+    AllowlistExplanation, CommandExplanation, ExecutionContextExplanation,
+    ExecutionDecisionExplanation, ExecutionOutcomeExplanation, ExplainedPatternMatch,
+    PolicyExplanation, ScanExplanation, SnapshotOutcomeExplanation,
 };
 
 #[cfg(test)]

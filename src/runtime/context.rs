@@ -265,4 +265,3 @@ fn build_audit_logger(config: &Config) -> AuditLogger {
 
 #[cfg(test)]
 mod tests;
-
