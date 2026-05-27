@@ -19,7 +19,7 @@ use crate::shell_compat::{
     same_file,
 };
 use crate::shell_flow::decide_command;
-use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, AllowlistSourceLayer, CiPolicy, Mode};
+use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, ConfigSourceLayer, CiPolicy, Mode};
 use aegis::error::AegisError;
 
 // ── Scanner init failure ──────────────────────────────────────────────────
@@ -687,7 +687,7 @@ fn strict_mode_allowlisted_danger_respects_allowlist_override_level() {
     let allowlist_match = AllowlistMatch {
         pattern: "terraform destroy -target=module.test.*".to_string(),
         reason: "test allowlist".to_string(),
-        source_layer: AllowlistSourceLayer::Project,
+        source_layer: ConfigSourceLayer::Project,
     };
 
     let (decision, snapshots, _) = decide_command(
@@ -709,7 +709,7 @@ fn strict_mode_allowlisted_warn_respects_warn_override_level() {
     let allowlist_match = AllowlistMatch {
         pattern: "git stash clear".to_string(),
         reason: "test allowlist".to_string(),
-        source_layer: AllowlistSourceLayer::Project,
+        source_layer: ConfigSourceLayer::Project,
     };
 
     let (decision, snapshots, _) = decide_command(
@@ -731,7 +731,7 @@ fn strict_mode_allowlisted_warn_still_blocks_with_never_override_level() {
     let allowlist_match = AllowlistMatch {
         pattern: "git stash clear".to_string(),
         reason: "test allowlist".to_string(),
-        source_layer: AllowlistSourceLayer::Project,
+        source_layer: ConfigSourceLayer::Project,
     };
 
     let (decision, snapshots, _) = decide_command(

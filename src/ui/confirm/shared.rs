@@ -153,7 +153,8 @@ pub(super) fn confirmation_reason_text(explanation: &CommandExplanation) -> Stri
         }
         (crate::decision::PolicyRationale::IntrinsicRiskBlock, _)
         | (crate::decision::PolicyRationale::ProtectCiPolicy, _)
-        | (crate::decision::PolicyRationale::StrictPolicy, _) => {
+        | (crate::decision::PolicyRationale::StrictPolicy, _)
+        | (crate::decision::PolicyRationale::BlocklistOverride, _) => {
             explanation.policy.concise_reason_label().to_string()
         }
     }
@@ -173,6 +174,9 @@ pub(super) fn block_reason_text(explanation: &CommandExplanation) -> &'static st
         }
         Some(crate::decision::BlockReason::ProtectCiPolicy) => {
             "blocked by CI policy (Protect mode + ci_policy=Block)"
+        }
+        Some(crate::decision::BlockReason::BlocklistOverride) => {
+            "blocked by a user-defined blocklist rule"
         }
         None => "blocked by policy",
     }

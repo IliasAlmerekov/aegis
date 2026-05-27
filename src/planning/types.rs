@@ -357,7 +357,7 @@ impl AuditFacts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::allowlist::AllowlistSourceLayer;
+    use crate::config::allowlist::ConfigSourceLayer;
     use crate::decision::BlockReason;
     use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
     use crate::explanation::{
@@ -372,7 +372,7 @@ mod tests {
         let allowlist_match = AllowlistMatch {
             pattern: "echo *".to_string(),
             reason: "trusted local echo".to_string(),
-            source_layer: AllowlistSourceLayer::Project,
+            source_layer: ConfigSourceLayer::Project,
         };
         let applicable_snapshot_plugins = vec!["git"];
         let context = DecisionContext::new(
@@ -462,7 +462,7 @@ mod tests {
         let allowlist_match = AllowlistMatch {
             pattern: "cargo test *".to_string(),
             reason: "safe local verification".to_string(),
-            source_layer: AllowlistSourceLayer::Global,
+            source_layer: ConfigSourceLayer::Global,
         };
         let decision_context = DecisionContext::new(
             Mode::Strict,

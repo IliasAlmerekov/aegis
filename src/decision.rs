@@ -28,6 +28,13 @@ pub struct PolicyAllowlistResult {
     pub matched: bool,
 }
 
+/// Blocklist match state visible to policy evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PolicyBlocklistResult {
+    /// Whether the command matched a blocklist rule in the current context.
+    pub matched: bool,
+}
+
 /// Policy-relevant config flags already resolved by config loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PolicyConfigFlags {
@@ -59,6 +66,8 @@ pub struct PolicyInput<'a> {
     pub ci_state: PolicyCiState,
     /// Allowlist outcome for the current command and scope.
     pub allowlist: PolicyAllowlistResult,
+    /// Blocklist outcome for the current command and scope.
+    pub blocklist: PolicyBlocklistResult,
     /// Effective policy-related config flags.
     pub config_flags: PolicyConfigFlags,
     /// Execution-specific context such as transport and snapshot applicability.
@@ -82,6 +91,8 @@ pub enum BlockReason {
     StrictPolicy,
     /// Protect mode is running in CI and `ci_policy = Block` forced a block.
     ProtectCiPolicy,
+    /// The command matched an explicit user-defined blocklist rule.
+    BlocklistOverride,
 }
 
 /// Human-readable policy rationale classified for runtime/UI handling.
@@ -101,6 +112,8 @@ pub enum PolicyRationale {
     ProtectCiPolicy,
     /// Strict mode forced a block.
     StrictPolicy,
+    /// An explicit user-defined blocklist rule matched.
+    BlocklistOverride,
 }
 
 impl PolicyRationale {
@@ -111,6 +124,7 @@ impl PolicyRationale {
             Self::IntrinsicRiskBlock => Some(BlockReason::IntrinsicRiskBlock),
             Self::ProtectCiPolicy => Some(BlockReason::ProtectCiPolicy),
             Self::StrictPolicy => Some(BlockReason::StrictPolicy),
+            Self::BlocklistOverride => Some(BlockReason::BlocklistOverride),
             Self::AuditMode
             | Self::SafeCommand
             | Self::AllowlistOverride
@@ -154,6 +168,9 @@ pub struct DefaultPolicyEngine;
 
 impl PolicyEngine for DefaultPolicyEngine {
     fn evaluate(&self, input: PolicyInput<'_>) -> PolicyDecision {
+        if input.blocklist.matched {
+            return block(input, PolicyRationale::BlocklistOverride);
+        }
         match input.mode {
             Mode::Audit => auto_approve(input, PolicyRationale::AuditMode, false, false),
             Mode::Protect => evaluate_protect(input),
@@ -288,9 +305,9 @@ fn snapshots_required(input: PolicyInput<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyCiState,
-        PolicyConfigFlags, PolicyDecision, PolicyExecutionContext, PolicyInput, PolicyRationale,
-        evaluate_policy,
+        BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult,
+        PolicyBlocklistResult, PolicyCiState, PolicyConfigFlags, PolicyDecision,
+        PolicyExecutionContext, PolicyInput, PolicyRationale, evaluate_policy,
     };
     use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
     use crate::interceptor::RiskLevel;
@@ -312,6 +329,7 @@ mod tests {
         ci_detected: bool,
         ci_policy: CiPolicy,
         allowlist_matched: bool,
+        blocklist_matched: bool,
         allowlist_override_level: AllowlistOverrideLevel,
         snapshot_policy: SnapshotPolicy,
         applicable_snapshot_plugins: &'a [&'static str],
@@ -327,6 +345,9 @@ mod tests {
             },
             allowlist: PolicyAllowlistResult {
                 matched: input.allowlist_matched,
+            },
+            blocklist: PolicyBlocklistResult {
+                matched: input.blocklist_matched,
             },
             config_flags: PolicyConfigFlags {
                 ci_policy: input.ci_policy,
@@ -364,6 +385,7 @@ mod tests {
             mode: Mode::Audit,
             ci_detected: true,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: true,
             allowlist_override_level: AllowlistOverrideLevel::Danger,
             snapshot_policy: SnapshotPolicy::Full,
@@ -388,6 +410,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: false,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: false,
             allowlist_override_level: AllowlistOverrideLevel::Never,
             snapshot_policy: SnapshotPolicy::Selective,
@@ -412,6 +435,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: false,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: true,
             allowlist_override_level: AllowlistOverrideLevel::Warn,
             snapshot_policy: SnapshotPolicy::Selective,
@@ -436,6 +460,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: false,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: false,
             allowlist_override_level: AllowlistOverrideLevel::Never,
             snapshot_policy: SnapshotPolicy::Selective,
@@ -460,6 +485,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: false,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: false,
             allowlist_override_level: AllowlistOverrideLevel::Never,
             snapshot_policy: SnapshotPolicy::None,
@@ -484,6 +510,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: false,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: false,
             allowlist_override_level: AllowlistOverrideLevel::Never,
             snapshot_policy: SnapshotPolicy::Selective,
@@ -508,6 +535,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: true,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: false,
             allowlist_override_level: AllowlistOverrideLevel::Never,
             snapshot_policy: SnapshotPolicy::Selective,
@@ -532,6 +560,7 @@ mod tests {
             mode: Mode::Protect,
             ci_detected: true,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: true,
             allowlist_override_level: AllowlistOverrideLevel::Danger,
             snapshot_policy: SnapshotPolicy::Full,
@@ -556,6 +585,7 @@ mod tests {
             mode: Mode::Strict,
             ci_detected: false,
             ci_policy: CiPolicy::Allow,
+            blocklist_matched: false,
             allowlist_matched: false,
             allowlist_override_level: AllowlistOverrideLevel::Never,
             snapshot_policy: SnapshotPolicy::Selective,
@@ -580,6 +610,7 @@ mod tests {
             mode: Mode::Strict,
             ci_detected: false,
             ci_policy: CiPolicy::Block,
+            blocklist_matched: false,
             allowlist_matched: true,
             allowlist_override_level: AllowlistOverrideLevel::Danger,
             snapshot_policy: SnapshotPolicy::Full,
@@ -604,6 +635,7 @@ mod tests {
             mode: Mode::Strict,
             ci_detected: false,
             ci_policy: CiPolicy::Allow,
+            blocklist_matched: false,
             allowlist_matched: true,
             allowlist_override_level: AllowlistOverrideLevel::Danger,
             snapshot_policy: SnapshotPolicy::Full,
@@ -618,6 +650,81 @@ mod tests {
             false,
             false,
             Some(BlockReason::IntrinsicRiskBlock),
+        );
+    }
+
+    #[test]
+    fn blocklist_override_blocks_in_protect_mode() {
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Warn,
+            mode: Mode::Protect,
+            ci_detected: false,
+            ci_policy: CiPolicy::Block,
+            blocklist_matched: true,
+            allowlist_matched: true,
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
+
+        assert_decision(
+            decision,
+            PolicyAction::Block,
+            PolicyRationale::BlocklistOverride,
+            false,
+            false,
+            false,
+            Some(BlockReason::BlocklistOverride),
+        );
+    }
+
+    #[test]
+    fn blocklist_override_blocks_in_strict_mode() {
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Danger,
+            mode: Mode::Strict,
+            ci_detected: false,
+            ci_policy: CiPolicy::Allow,
+            blocklist_matched: true,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Full,
+            applicable_snapshot_plugins: &["git"],
+        });
+
+        assert_decision(
+            decision,
+            PolicyAction::Block,
+            PolicyRationale::BlocklistOverride,
+            false,
+            false,
+            false,
+            Some(BlockReason::BlocklistOverride),
+        );
+    }
+
+    #[test]
+    fn blocklist_override_blocks_safe_commands() {
+        let decision = evaluate(EvalInput {
+            risk: RiskLevel::Safe,
+            mode: Mode::Audit,
+            ci_detected: false,
+            ci_policy: CiPolicy::Allow,
+            blocklist_matched: true,
+            allowlist_matched: false,
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            snapshot_policy: SnapshotPolicy::Selective,
+            applicable_snapshot_plugins: &["git"],
+        });
+
+        assert_decision(
+            decision,
+            PolicyAction::Block,
+            PolicyRationale::BlocklistOverride,
+            false,
+            false,
+            false,
+            Some(BlockReason::BlocklistOverride),
         );
     }
 }

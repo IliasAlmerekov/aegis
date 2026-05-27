@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::audit::Decision;
-use crate::config::{AllowlistMatch, AllowlistSourceLayer, Mode};
+use crate::config::{AllowlistMatch, ConfigSourceLayer, Mode};
 use crate::decision::{
     BlockReason, ExecutionTransport, PolicyAction, PolicyDecision, PolicyRationale,
 };
@@ -86,6 +86,7 @@ impl PolicyExplanation {
             PolicyRationale::IntrinsicRiskBlock => "blocked by intrinsic risk",
             PolicyRationale::ProtectCiPolicy => "blocked by protect-mode CI policy",
             PolicyRationale::StrictPolicy => "blocked by strict mode",
+            PolicyRationale::BlocklistOverride => "blocked by user-defined blocklist rule",
         }
     }
 }
@@ -113,7 +114,7 @@ pub struct AllowlistExplanation {
     /// Operator-facing reason stored on the allowlist rule.
     pub reason: String,
     /// Config layer that supplied the effective rule.
-    pub source_layer: AllowlistSourceLayer,
+    pub source_layer: ConfigSourceLayer,
 }
 
 /// Runtime-only execution outcome facts.
@@ -261,7 +262,7 @@ mod tests {
     use std::thread;
 
     use crate::audit::Decision;
-    use crate::config::{AllowlistMatch, AllowlistSourceLayer, Mode};
+    use crate::config::{AllowlistMatch, ConfigSourceLayer, Mode};
     use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyRationale};
     use crate::interceptor::parser::Parser;
     use crate::interceptor::patterns::{Category, Pattern, PatternSource};
@@ -347,7 +348,7 @@ mod tests {
             Some(AllowlistMatch {
                 pattern: "cargo test *".to_string(),
                 reason: "owned repo automation".to_string(),
-                source_layer: AllowlistSourceLayer::Project,
+                source_layer: ConfigSourceLayer::Project,
             }),
             vec!["git", "docker"],
         );
@@ -390,7 +391,7 @@ mod tests {
             .expect("allowlist match should be present");
         assert_eq!(allowlist.pattern, "cargo test *");
         assert_eq!(allowlist.reason, "owned repo automation");
-        assert_eq!(allowlist.source_layer, AllowlistSourceLayer::Project);
+        assert_eq!(allowlist.source_layer, ConfigSourceLayer::Project);
         assert_eq!(
             explanation.context.applicable_snapshot_plugins,
             vec!["git".to_string(), "docker".to_string()]

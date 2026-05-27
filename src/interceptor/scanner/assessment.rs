@@ -265,8 +265,6 @@ pub(super) fn assess_for_tests(scanner: &Scanner, cmd: &str) -> Assessment {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn uncertain_match_produces_pattern_with_no_justification() {
         let result = super::uncertain_match("SCAN-001", "desc".to_string(), None);

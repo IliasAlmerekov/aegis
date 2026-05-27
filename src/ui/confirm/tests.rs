@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::*;
-use crate::config::{AllowlistSourceLayer, Mode};
+use crate::config::{ConfigSourceLayer, Mode};
 use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyRationale};
 use crate::explanation::{
     AllowlistExplanation, CommandExplanation, ExecutionContextExplanation, PolicyExplanation,
@@ -533,7 +533,7 @@ fn danger_prompt_shows_always_allow_hint() {
     let text = strip_ansi(&String::from_utf8_lossy(&output));
     assert!(
         text.contains("[y/N/a/d]:"),
-        "Danger dialog must show [y/N/a] prompt; got:\n{text}"
+        "Danger dialog must show [y/N/a/d] prompt; got:\n{text}"
     );
 }
 
@@ -555,7 +555,7 @@ fn warn_prompt_shows_always_allow_hint() {
     let text = strip_ansi(&String::from_utf8_lossy(&output));
     assert!(
         text.contains("[y/N/a/d]:"),
-        "Warn dialog must show [y/N/a] prompt; got:\n{text}"
+        "Warn dialog must show [y/N/a/d] prompt; got:\n{text}"
     );
 }
 
@@ -738,7 +738,7 @@ fn warn_output_contains_explicit_yes_no_prompt() {
 
     let text = strip_ansi(&String::from_utf8_lossy(&output));
     assert!(
-        text.contains("Execute suspicious command? [y/N/a]:"),
+        text.contains("Execute suspicious command? [y/N/a/d]:"),
         "Warn dialog must use the explicit yes/no/always prompt; got:\n{text}"
     );
 }
@@ -860,7 +860,7 @@ fn danger_output_contains_explicit_yes_no_prompt() {
 
     let text = strip_ansi(&String::from_utf8_lossy(&output));
     assert!(
-        text.contains("Execute dangerous command? [y/N/a]:"),
+        text.contains("Execute dangerous command? [y/N/a/d]:"),
         "dialog must use the explicit yes/no/always prompt; got:\n{text}"
     );
 }
@@ -1056,7 +1056,7 @@ fn confirmation_renders_policy_reason_from_explanation() {
         Some(AllowlistExplanation {
             pattern: "rm -rf /tmp/*".to_string(),
             reason: "temporary workspace cleanup".to_string(),
-            source_layer: AllowlistSourceLayer::Project,
+            source_layer: ConfigSourceLayer::Project,
         }),
     );
 
@@ -1147,7 +1147,7 @@ fn ui_rendering_does_not_need_to_synthesize_missing_optional_sections() {
 
     let rendered = strip_ansi(&String::from_utf8(output).expect("ui output should be utf8"));
     assert!(
-        rendered.contains("Execute suspicious command? [y/N/a]:"),
+        rendered.contains("Execute suspicious command? [y/N/a/d]:"),
         "test must exercise the interactive confirmation dialog path; got:\n{rendered}"
     );
     assert!(

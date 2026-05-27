@@ -171,6 +171,7 @@ fn block_reason_string(reason: BlockReason) -> &'static str {
         BlockReason::IntrinsicRiskBlock => "intrinsic_risk_block",
         BlockReason::StrictPolicy => "strict_policy",
         BlockReason::ProtectCiPolicy => "protect_ci_policy",
+        BlockReason::BlocklistOverride => "blocklist_override",
     }
 }
 

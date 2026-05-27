@@ -5,11 +5,11 @@ pub mod snapshot;
 pub mod validate;
 
 pub use allowlist::{
-    Allowlist, AllowlistContext, AllowlistMatch, AllowlistSourceLayer, AllowlistWarning, Blocklist,
+    Allowlist, AllowlistContext, AllowlistMatch, ConfigSourceLayer, AllowlistWarning, Blocklist,
     BlocklistMatch, BlocklistWarning, LayeredAllowlistRule, LayeredBlocklistRule,
     analyze_allowlist_rule, analyze_blocklist_rule,
 };
-pub use amend::{active_config_path_for_append, append_allow_rule};
+pub use amend::{active_config_path_for_append, append_allow_rule, append_block_rule};
 pub use model::{
     AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, AuditIntegrityMode, BlockRule,
     CiPolicy, Mode, SnapshotPolicy, UserPattern,

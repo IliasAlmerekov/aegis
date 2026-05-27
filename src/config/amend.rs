@@ -44,50 +44,33 @@ fn toml_escape(s: &str) -> String {
     escaped
 }
 
-/// Append an `[[allowlist]]` rule to the config file at `config_path`.
-///
-/// The rule is written using the existing [`AllowlistRule`] schema so it is
-/// immediately loadable by the next config reload:
-/// ```toml
-/// [[allowlist]]
-/// pattern = "git push --force-with-lease"
-/// cwd     = "/home/user/projects/myapp"
-/// reason  = "Approved by user on 2025-05-22"
-/// ```
-///
-/// `cwd` is mandatory so the rule passes runtime validation.  `prefix` tokens are
-/// joined with a single space to produce the glob-friendly pattern string.
+/// Append a TOML array-of-tables entry to the config file at `config_path`.
 ///
 /// The write is atomic (temp file + `rename`) so concurrent callers in watch
 /// mode cannot corrupt the config.
 ///
 /// If the file does not exist, it is created (including parent directories).
-pub fn append_allow_rule(config_path: &Path, prefix: &[String], cwd: &Path) -> Result<()> {
+fn append_config_table_entry(
+    config_path: &Path,
+    header: &str,
+    fields: &[(String, String)],
+) -> Result<()> {
     let mut content = if config_path.exists() {
         fs::read_to_string(config_path)?
     } else {
         String::new()
     };
 
-    let pattern = prefix.join(" ");
-    let reason = allow_reason_for_date(OffsetDateTime::now_utc());
-    let cwd_str = cwd.to_string_lossy();
-
-    let fragment = format!(
-        "\n[[allowlist]]\npattern = {}\ncwd = {}\nreason = {}\n",
-        toml_escape(&pattern),
-        toml_escape(&cwd_str),
-        toml_escape(&reason),
-    );
+    let mut fragment = format!("\n{header}\n");
+    for (key, value) in fields {
+        fragment.push_str(&format!("{key} = {}\n", toml_escape(value)));
+    }
     content.push_str(&fragment);
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Atomic write: write to a uniquely-named temp file next to the target,
-    // then rename.  The unique name prevents collisions in watch mode where
-    // multiple frames may append concurrently.
     let pid = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -104,6 +87,40 @@ pub fn append_allow_rule(config_path: &Path, prefix: &[String], cwd: &Path) -> R
     Ok(())
 }
 
+/// Append an `[[allowlist]]` rule to the config file at `config_path`.
+pub fn append_allow_rule(config_path: &Path, prefix: &[String], cwd: &Path) -> Result<()> {
+    let pattern = prefix.join(" ");
+    let reason = allow_reason_for_date(OffsetDateTime::now_utc());
+    let cwd_str = cwd.to_string_lossy().into_owned();
+
+    append_config_table_entry(
+        config_path,
+        "[[allowlist]]",
+        &[
+            ("pattern".to_string(), pattern),
+            ("cwd".to_string(), cwd_str),
+            ("reason".to_string(), reason),
+        ],
+    )
+}
+
+/// Append a `[[block]]` rule to the config file at `config_path`.
+pub fn append_block_rule(config_path: &Path, prefix: &[String], cwd: &Path) -> Result<()> {
+    let pattern = prefix.join(" ");
+    let reason = block_reason_for_date(OffsetDateTime::now_utc());
+    let cwd_str = cwd.to_string_lossy().into_owned();
+
+    append_config_table_entry(
+        config_path,
+        "[[block]]",
+        &[
+            ("pattern".to_string(), pattern),
+            ("cwd".to_string(), cwd_str),
+            ("reason".to_string(), reason),
+        ],
+    )
+}
+
 /// Build the human-readable reason string for an auto-appended allow rule.
 pub(crate) fn allow_reason_for_date(date: OffsetDateTime) -> String {
     let date = date.date();
@@ -115,10 +132,20 @@ pub(crate) fn allow_reason_for_date(date: OffsetDateTime) -> String {
     )
 }
 
+/// Build the human-readable reason string for an auto-appended block rule.
+pub(crate) fn block_reason_for_date(date: OffsetDateTime) -> String {
+    let date = date.date();
+    format!(
+        "Blocked by user on {:04}-{:02}-{:02}",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     #[test]
@@ -256,16 +283,60 @@ reason = "Approved by user on 2025-01-01"
     }
 
     #[test]
-    fn allow_reason_for_date_formats_correctly() {
+    fn append_block_rule_adds_block_entry() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "mode = \"Protect\"\n").unwrap();
+
+        append_block_rule(
+            &path,
+            &["rm".to_string(), "-rf".to_string(), "/".to_string()],
+            dir.path(),
+        )
+        .unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(
+            contents.contains("[[block]]"),
+            "must add array-of-tables header; got:\n{contents}"
+        );
+        assert!(
+            contents.contains("pattern = \"rm -rf /\""),
+            "must add joined pattern string; got:\n{contents}"
+        );
+        assert!(
+            contents.contains("cwd = "),
+            "must add cwd scope; got:\n{contents}"
+        );
+        assert!(
+            contents.contains("reason = \"Blocked by user on"),
+            "must add reason with date; got:\n{contents}"
+        );
+    }
+
+    #[test]
+    fn append_block_rule_creates_file_if_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+
+        append_block_rule(&path, &["rm".to_string(), "-rf".to_string()], dir.path()).unwrap();
+
+        assert!(path.exists(), "must create missing config file");
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("[[block]]"));
+    }
+
+    #[test]
+    fn block_reason_for_date_formats_correctly() {
         let date = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
-        let reason = allow_reason_for_date(date);
+        let reason = block_reason_for_date(date);
         assert!(
             reason.contains("2023-11-14"),
             "reason must contain the date in ISO format; got: {reason}"
         );
         assert!(
-            reason.starts_with("Approved by user on "),
-            "reason must start with 'Approved by user on'; got: {reason}"
+            reason.starts_with("Blocked by user on "),
+            "reason must start with 'Blocked by user on'; got: {reason}"
         );
     }
 }

@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 
 use crate::audit::Decision;
-use crate::config::amend::{active_config_path_for_append, append_allow_rule};
+use crate::config::amend::{active_config_path_for_append, append_allow_rule, append_block_rule};
 use crate::decision::{BlockReason, ExecutionTransport};
 use crate::interceptor::parser::{extract_prefix, split_tokens};
 use crate::planning::{
@@ -441,17 +441,25 @@ async fn run_watch_plan(
                 )
             });
             if decision == PromptDecision::ApproveAlways {
-                match active_config_path_for_append() {
-                    Some(config_path) => {
-                        let tokens = split_tokens(&frame.cmd);
-                        let prefix = extract_prefix(&tokens);
-                        if let Err(err) = append_allow_rule(&config_path, &prefix, &cwd) {
-                            eprintln!("error: failed to append allow rule: {err}");
-                        }
+                if let Some(config_path) = active_config_path_for_append() {
+                    let tokens = split_tokens(&frame.cmd);
+                    let prefix = extract_prefix(&tokens);
+                    if let Err(err) = append_allow_rule(&config_path, &prefix, &cwd) {
+                        eprintln!("error: failed to append allow rule: {err}");
                     }
-                    None => {
-                        eprintln!("warning: cannot persist allow rule: no config file found");
+                } else {
+                    eprintln!("warning: cannot persist allow rule: no config file found");
+                }
+            }
+            if decision == PromptDecision::DenyAlways {
+                if let Some(config_path) = active_config_path_for_append() {
+                    let tokens = split_tokens(&frame.cmd);
+                    let prefix = extract_prefix(&tokens);
+                    if let Err(err) = append_block_rule(&config_path, &prefix, &cwd) {
+                        eprintln!("error: failed to append block rule: {err}");
                     }
+                } else {
+                    eprintln!("warning: cannot persist block rule: no config file found");
                 }
             }
             if matches!(
@@ -472,6 +480,9 @@ async fn run_watch_plan(
                     show_policy_block_via_tty(plan.assessment(), plan.explanation())
                 }
                 Some(BlockReason::ProtectCiPolicy) => {
+                    show_policy_block_via_tty(plan.assessment(), plan.explanation())
+                }
+                Some(BlockReason::BlocklistOverride) => {
                     show_policy_block_via_tty(plan.assessment(), plan.explanation())
                 }
                 None => {}

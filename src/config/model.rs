@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use super::allowlist::{Allowlist, AllowlistSourceLayer, LayeredAllowlistRule};
+use super::allowlist::{
+    Allowlist, ConfigSourceLayer, Blocklist, LayeredAllowlistRule, LayeredBlocklistRule,
+};
 use super::snapshot::{
     DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SupabaseSnapshotConfig,
 };
@@ -102,7 +104,7 @@ type Result<T> = std::result::Result<T, AegisError>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConfigLayerPath {
-    pub source_layer: AllowlistSourceLayer,
+    pub source_layer: ConfigSourceLayer,
     pub path: PathBuf,
 }
 
@@ -252,19 +254,19 @@ pub struct AegisConfig {
     pub mode: Mode,
     pub custom_patterns: Vec<UserPattern>,
     #[serde(skip)]
-    pub(crate) custom_pattern_layers: Vec<AllowlistSourceLayer>,
+    pub(crate) custom_pattern_layers: Vec<ConfigSourceLayer>,
     #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
-    pub(crate) allowlist_layers: Vec<AllowlistSourceLayer>,
+    pub(crate) allowlist_layers: Vec<ConfigSourceLayer>,
     #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
     pub blocklist: Vec<BlockRule>,
     #[serde(skip)]
-    pub(crate) blocklist_layers: Vec<AllowlistSourceLayer>,
+    pub(crate) blocklist_layers: Vec<ConfigSourceLayer>,
     #[serde(skip)]
-    pub(crate) audit_max_file_size_bytes_source: Option<AllowlistSourceLayer>,
+    pub(crate) audit_max_file_size_bytes_source: Option<ConfigSourceLayer>,
     #[serde(skip)]
-    pub(crate) audit_retention_files_source: Option<AllowlistSourceLayer>,
+    pub(crate) audit_retention_files_source: Option<ConfigSourceLayer>,
     pub allowlist_override_level: AllowlistOverrideLevel,
     pub snapshot_policy: SnapshotPolicy,
     pub auto_snapshot_git: bool,
@@ -402,6 +404,7 @@ impl AegisConfig {
         self.validate()?;
         interceptor::scanner_for(&self.custom_patterns).map(|_| ())?;
         Allowlist::from_layered_rules(&self.layered_allowlist_rules()).map(|_| ())?;
+        Blocklist::from_layered_rules(&self.layered_blocklist_rules()).map(|_| ())?;
         Ok(())
     }
 
@@ -423,14 +426,14 @@ impl AegisConfig {
 
         if let Some(path) = global_path.filter(|path| path.is_file()) {
             layers.push(ConfigLayerPath {
-                source_layer: AllowlistSourceLayer::Global,
+                source_layer: ConfigSourceLayer::Global,
                 path,
             });
         }
 
         if project_path.is_file() {
             layers.push(ConfigLayerPath {
-                source_layer: AllowlistSourceLayer::Project,
+                source_layer: ConfigSourceLayer::Project,
                 path: project_path,
             });
         }
@@ -458,7 +461,7 @@ impl AegisConfig {
 
         if let Some(path) = global_path.as_deref().filter(|p| p.is_file()) {
             let global = PartialConfig::from_path(path)?;
-            merged = Self::merge_layer(merged, global, AllowlistSourceLayer::Global);
+            merged = Self::merge_layer(merged, global, ConfigSourceLayer::Global);
             if validate_runtime_requirements {
                 merged.validate_runtime_requirements_for_path(path)?;
             }
@@ -466,7 +469,7 @@ impl AegisConfig {
 
         if project_path.is_file() {
             let project = PartialConfig::from_path(&project_path)?;
-            merged = Self::merge_layer(merged, project, AllowlistSourceLayer::Project);
+            merged = Self::merge_layer(merged, project, ConfigSourceLayer::Project);
             if validate_runtime_requirements {
                 merged.validate_runtime_requirements_for_path(&project_path)?;
             }
@@ -478,7 +481,7 @@ impl AegisConfig {
     fn merge_layer(
         base: Self,
         overlay: PartialConfig,
-        allowlist_layer: AllowlistSourceLayer,
+        allowlist_layer: ConfigSourceLayer,
     ) -> Self {
         let mut custom_patterns = base.custom_patterns;
         let custom_pattern_count = overlay.custom_patterns.len();
@@ -639,9 +642,27 @@ impl AegisConfig {
                     .allowlist_layers
                     .get(index)
                     .copied()
-                    .unwrap_or(AllowlistSourceLayer::Project);
+                    .unwrap_or(ConfigSourceLayer::Project);
 
                 LayeredAllowlistRule { rule, source_layer }
+            })
+            .collect()
+    }
+
+    /// Return the layered blocklist input annotated with source layer.
+    pub(crate) fn layered_blocklist_rules(&self) -> Vec<LayeredBlocklistRule> {
+        self.blocklist
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, rule)| {
+                let source_layer = self
+                    .blocklist_layers
+                    .get(index)
+                    .copied()
+                    .unwrap_or(ConfigSourceLayer::Project);
+
+                LayeredBlocklistRule { rule, source_layer }
             })
             .collect()
     }
@@ -660,6 +681,8 @@ struct PartialConfig {
     custom_patterns: Vec<UserPattern>,
     #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
     allowlist: Vec<AllowlistRule>,
+    #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
+    blocklist: Vec<BlockRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
     snapshot_policy: Option<SnapshotPolicy>,
     auto_snapshot_git: Option<bool>,
@@ -1096,7 +1119,7 @@ sqlite_snapshot_path = "db/app.db"
             ..PartialConfig::default()
         };
 
-        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
 
         assert!(merged.auto_snapshot_supabase);
         assert_eq!(merged.supabase_snapshot.project_ref, "overlay_proj");
@@ -1135,7 +1158,7 @@ sqlite_snapshot_path = "db/app.db"
             ..PartialConfig::default()
         };
 
-        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
 
         assert_eq!(merged.supabase_snapshot.project_ref, "overlay_proj");
         assert!(
@@ -1191,7 +1214,7 @@ sqlite_snapshot_path = "db/app.db"
             ..PartialConfig::default()
         };
 
-        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
 
         assert!(merged.auto_snapshot_postgres);
         assert_eq!(merged.postgres_snapshot.database, "overlay_pg");
@@ -1239,7 +1262,7 @@ sqlite_snapshot_path = "db/app.db"
             ..PartialConfig::default()
         };
 
-        let merged = AegisConfig::merge_layer(base, overlay, AllowlistSourceLayer::Project);
+        let merged = AegisConfig::merge_layer(base, overlay, ConfigSourceLayer::Project);
 
         assert_eq!(merged.postgres_snapshot.database, "overlay_pg");
         assert_eq!(merged.postgres_snapshot.host, "localhost");
