@@ -580,18 +580,42 @@ reason = "Approved by user on 2025-01-01"
         );
     }
 
+    fn make_toml_config(tables: Vec<(&str, Vec<(&str, &str, &str)>)>) -> String {
+        let mut doc = toml::value::Table::new();
+        for (table_name, entries) in tables {
+            let array: Vec<toml::Value> = entries
+                .into_iter()
+                .map(|(pattern, cwd, reason)| {
+                    let mut map = toml::value::Table::new();
+                    map.insert(
+                        "pattern".to_string(),
+                        toml::Value::String(pattern.to_string()),
+                    );
+                    map.insert("cwd".to_string(), toml::Value::String(cwd.to_string()));
+                    map.insert(
+                        "reason".to_string(),
+                        toml::Value::String(reason.to_string()),
+                    );
+                    toml::Value::Table(map)
+                })
+                .collect();
+            doc.insert(table_name.to_string(), toml::Value::Array(array));
+        }
+        toml::to_string(&doc).unwrap()
+    }
+
     #[test]
     fn append_allow_rule_skips_exact_duplicate_in_allowlist() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        let existing = format!(
-            r#"[[allow]]
-pattern = "git push"
-cwd = "{}"
-reason = "Approved by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "allow",
+            vec![(
+                "git push",
+                &dir.path().to_string_lossy(),
+                "Approved by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome =
@@ -614,14 +638,14 @@ reason = "Approved by user on 2025-01-01"
     fn append_allow_rule_warns_when_same_pattern_exists_in_blocklist() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        let existing = format!(
-            r#"[[block]]
-pattern = "git push"
-cwd = "{}"
-reason = "Blocked by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "block",
+            vec![(
+                "git push",
+                &dir.path().to_string_lossy(),
+                "Blocked by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome =
@@ -649,14 +673,14 @@ reason = "Blocked by user on 2025-01-01"
     fn append_block_rule_skips_exact_duplicate_in_blocklist() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        let existing = format!(
-            r#"[[block]]
-pattern = "rm -rf /"
-cwd = "{}"
-reason = "Blocked by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "block",
+            vec![(
+                "rm -rf /",
+                &dir.path().to_string_lossy(),
+                "Blocked by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome = append_block_rule(
@@ -683,14 +707,14 @@ reason = "Blocked by user on 2025-01-01"
     fn append_block_rule_warns_when_same_pattern_exists_in_allowlist() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        let existing = format!(
-            r#"[[allow]]
-pattern = "rm -rf /"
-cwd = "{}"
-reason = "Approved by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "allow",
+            vec![(
+                "rm -rf /",
+                &dir.path().to_string_lossy(),
+                "Approved by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome = append_block_rule(
@@ -722,20 +746,17 @@ reason = "Approved by user on 2025-01-01"
     fn append_non_conflicting_rules_still_appends_normally() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        let existing = format!(
-            r#"[[allow]]
-pattern = "git status"
-cwd = "{}"
-reason = "Approved by user on 2025-01-01"
-
-[[block]]
-pattern = "rm -rf /"
-cwd = "{}"
-reason = "Blocked by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy(),
-            dir.path().to_string_lossy()
-        );
+        let cwd = dir.path().to_string_lossy().to_string();
+        let existing = make_toml_config(vec![
+            (
+                "allow",
+                vec![("git status", &cwd, "Approved by user on 2025-01-01")],
+            ),
+            (
+                "block",
+                vec![("rm -rf /", &cwd, "Blocked by user on 2025-01-01")],
+            ),
+        ]);
         fs::write(&path, &existing).unwrap();
 
         let outcome =
@@ -758,14 +779,14 @@ reason = "Blocked by user on 2025-01-01"
     fn conflict_location_reports_project() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(".aegis.toml");
-        let existing = format!(
-            r#"[[block]]
-pattern = "git push"
-cwd = "{}"
-reason = "Blocked by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "block",
+            vec![(
+                "git push",
+                &dir.path().to_string_lossy(),
+                "Blocked by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome =
@@ -786,14 +807,14 @@ reason = "Blocked by user on 2025-01-01"
     fn conflict_location_reports_global() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        let existing = format!(
-            r#"[[block]]
-pattern = "git push"
-cwd = "{}"
-reason = "Blocked by user on 2025-01-01"
-"#,
-            dir.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "block",
+            vec![(
+                "git push",
+                &dir.path().to_string_lossy(),
+                "Blocked by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome =
@@ -815,14 +836,14 @@ reason = "Blocked by user on 2025-01-01"
         let dir_a = TempDir::new().unwrap();
         let dir_b = TempDir::new().unwrap();
         let path = dir_a.path().join("config.toml");
-        let existing = format!(
-            r#"[[allow]]
-pattern = "git push"
-cwd = "{}"
-reason = "Approved by user on 2025-01-01"
-"#,
-            dir_a.path().to_string_lossy()
-        );
+        let existing = make_toml_config(vec![(
+            "allow",
+            vec![(
+                "git push",
+                &dir_a.path().to_string_lossy(),
+                "Approved by user on 2025-01-01",
+            )],
+        )]);
         fs::write(&path, &existing).unwrap();
 
         let outcome = append_allow_rule(
