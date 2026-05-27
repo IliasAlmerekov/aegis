@@ -44,6 +44,12 @@ allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Dan
 # expires_at = "2030-01-01T00:00:00Z"
 # reason = "ephemeral test teardown"
 
+# Structured block rules also use array-of-tables entries.
+# [[block]]
+# pattern = "rm -rf /"
+# cwd = "/srv/infra"
+# reason = "never allow recursive root deletion"
+
 snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin flags below, Full = all plugins.
 auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
 auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
@@ -259,7 +265,7 @@ pub struct AegisConfig {
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
     pub(crate) allowlist_layers: Vec<ConfigSourceLayer>,
-    #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
+    #[serde(default, rename = "block", alias = "blocklist")]
     pub blocklist: Vec<BlockRule>,
     #[serde(skip)]
     pub(crate) blocklist_layers: Vec<ConfigSourceLayer>,
@@ -677,7 +683,7 @@ struct PartialConfig {
     custom_patterns: Vec<UserPattern>,
     #[serde(default, deserialize_with = "deserialize_allowlist_rules")]
     allowlist: Vec<AllowlistRule>,
-    #[serde(default, deserialize_with = "deserialize_blocklist_rules")]
+    #[serde(default, rename = "block", alias = "blocklist")]
     blocklist: Vec<BlockRule>,
     allowlist_override_level: Option<AllowlistOverrideLevel>,
     snapshot_policy: Option<SnapshotPolicy>,
@@ -743,16 +749,6 @@ where
             })
             .collect(),
     })
-}
-
-fn deserialize_blocklist_rules<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Vec<BlockRule>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let field = Option::<Vec<BlockRule>>::deserialize(deserializer)?;
-    Ok(field.unwrap_or_default())
 }
 
 fn default_config_version() -> u32 {
@@ -1924,5 +1920,23 @@ safe_alt = "terraform plan -destroy"
             config.custom_patterns[0].justification,
             Some("This tears down all provisioned infrastructure. Confirm you are in the correct workspace and have state backups.".to_string())
         );
+    }
+
+    #[test]
+    fn legacy_blocklist_table_name_deserializes_into_block_field() {
+        let config: AegisConfig = toml::from_str(
+            r#"
+[[blocklist]]
+pattern = "rm -rf /"
+cwd = "/tmp"
+reason = "never delete root"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.blocklist.len(), 1);
+        assert_eq!(config.blocklist[0].pattern, "rm -rf /");
+        assert_eq!(config.blocklist[0].cwd, Some("/tmp".to_string()));
+        assert_eq!(config.blocklist[0].reason, "never delete root");
     }
 }
