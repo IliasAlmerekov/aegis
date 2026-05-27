@@ -98,6 +98,34 @@ impl PrefixRule {
             highlight_range: None,
         }
     }
+
+    /// Validate that [`match_examples`] all match and [`not_match_examples`] all do not.
+    ///
+    /// Called at startup in debug builds and tests. A rule that fails its own
+    /// examples is treated as a bug and must be fixed before the binary ships.
+    pub(crate) fn validate_examples(&self) -> Result<(), String> {
+        for example in self.match_examples {
+            let tokens = crate::interceptor::parser::split_tokens(example);
+            let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+            if !self.matches_tokens(&token_refs) {
+                return Err(format!(
+                    "match_example {:?} does not match pattern {:?}",
+                    example, self.pattern
+                ));
+            }
+        }
+        for example in self.not_match_examples {
+            let tokens = crate::interceptor::parser::split_tokens(example);
+            let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+            if self.matches_tokens(&token_refs) {
+                return Err(format!(
+                    "not_match_example {:?} unexpectedly matches pattern {:?}",
+                    example, self.pattern
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -125,6 +153,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["rm", "-rf", "/"]));
     }
@@ -140,6 +170,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["git", "push", "origin", "main"]));
     }
@@ -155,6 +187,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["git", "push", "--force"]));
         assert!(rule.matches_tokens(&["git", "push", "-f"]));
@@ -171,6 +205,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(!rule.matches_tokens(&["git", "status"]));
     }
@@ -186,6 +222,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(!rule.matches_tokens(&["git", "push"]));
     }
@@ -201,6 +239,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(!rule.matches_tokens(&["git", "push", "--dry-run"]));
     }
@@ -216,6 +256,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["rm", "-rf"]));
     }
@@ -231,6 +273,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(!rule.matches_tokens(&["anything", "here"]));
         assert!(!rule.matches_tokens(&[]));
@@ -247,6 +291,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["git"])); // case-insensitive for non-flag tokens
         assert!(rule.matches_tokens(&["Git"]));
@@ -263,6 +309,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["git", "branch", "-D"]));
         assert!(!rule.matches_tokens(&["git", "branch", "-d"])); // flags are case-sensitive
@@ -283,6 +331,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["aws", "ec2", "delete"]));
         assert!(rule.matches_tokens(&["aws", "s3", "terminate"]));
@@ -300,6 +350,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["git", "status"]));
         assert!(rule.matches_tokens(&["git", "log", "status"]));
@@ -318,6 +370,8 @@ mod tests {
             safe_alt: None,
             justification: None,
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         assert!(rule.matches_tokens(&["git", "log", "status"]));
         assert!(!rule.matches_tokens(&["git", "status"])); // Any needs one token
@@ -335,11 +389,53 @@ mod tests {
             safe_alt: None,
             justification: Some(Cow::Borrowed("rewrites remote history")),
             source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
         };
         let result = rule.to_match_result(&["git", "push", "--force"]);
         assert_eq!(
             result.pattern.justification.as_deref(),
             Some("rewrites remote history")
+        );
+    }
+
+    #[test]
+    fn prefix_rule_validate_examples_detects_bad_match_example() {
+        let rule = PrefixRule {
+            id: Cow::Borrowed("BAD-001"),
+            category: Category::Process,
+            pattern: vec![single("rm")],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed("test"),
+            safe_alt: None,
+            justification: Some(Cow::Borrowed("test")),
+            source: PatternSource::Builtin,
+            match_examples: &["echo hello"],
+            not_match_examples: &[],
+        };
+        assert!(
+            rule.validate_examples().is_err(),
+            "validate_examples must reject a rule whose match_examples do not actually match"
+        );
+    }
+
+    #[test]
+    fn prefix_rule_validate_examples_detects_bad_not_match_example() {
+        let rule = PrefixRule {
+            id: Cow::Borrowed("BAD-002"),
+            category: Category::Process,
+            pattern: vec![single("rm")],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed("test"),
+            safe_alt: None,
+            justification: Some(Cow::Borrowed("test")),
+            source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &["rm -rf /"],
+        };
+        assert!(
+            rule.validate_examples().is_err(),
+            "validate_examples must reject a rule whose not_match_examples actually match"
         );
     }
 }

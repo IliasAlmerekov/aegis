@@ -47,6 +47,10 @@ pub struct PrefixRule {
     pub safe_alt: Option<Cow<'static, str>>,
     pub justification: Option<Cow<'static, str>>,
     pub source: PatternSource,
+    /// Example commands that MUST match this prefix rule.
+    pub match_examples: &'static [&'static str],
+    /// Example commands that MUST NOT match this prefix rule.
+    pub not_match_examples: &'static [&'static str],
 }
 
 /// A sequence of pattern tokens to match against command tokens.
@@ -195,6 +199,18 @@ impl PatternSet {
         // 5) compile built-in prefix rules.
         let prefix_rules = builtin_prefix_rules();
 
+        // 5a) validate built-in prefix rules against their examples in debug builds and tests.
+        //    A rule that fails its own examples is a bug and must be fixed before the binary ships.
+        #[cfg(debug_assertions)]
+        for rule in &prefix_rules {
+            if let Err(e) = rule.validate_examples() {
+                panic!(
+                    "built-in prefix rule {} failed example validation: {e}",
+                    rule.id
+                );
+            }
+        }
+
         // 6) validate prefix rules: required fields + no conflict with regex pattern IDs.
         //    Duplicate IDs within prefix rules are intentional: the same logical rule can
         //    have multiple syntactic forms (e.g. "docker-compose" vs "docker compose").
@@ -323,6 +339,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Discards all uncommitted changes permanently with no recovery. Stash first if you need any of the work.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git reset --hard HEAD~1"],
+            not_match_examples: &["git reset --soft HEAD~1"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-002"),
@@ -344,6 +362,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Untracked files are deleted immediately without going to trash. A typo in the path can destroy important files.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git clean -fd .", "git clean --force ."],
+            not_match_examples: &["git clean -n ."],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-003"),
@@ -365,6 +385,11 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "This command rewrites remote history. Collaborators with local copies will have diverged refs and will need to force-pull or re-clone. Consider --force-with-lease to at least detect concurrent pushes.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &[
+                "git push origin main --force",
+                "git push origin main --force-with-lease",
+            ],
+            not_match_examples: &["git push origin main"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-004"),
@@ -381,6 +406,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Rewrites every commit in the repository. On a shared repo this invalidates all clones and requires coordinated action.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git filter-branch --tree-filter 'rm -f secret.txt' HEAD"],
+            not_match_examples: &["git filter-repo --path secret.txt"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-005"),
@@ -397,6 +424,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Rewrites commit history which changes SHAs. If pushed, collaborators must resolve conflicts. Never rebase public branches.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git rebase -i HEAD~3"],
+            not_match_examples: &["git merge feature-branch"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-006"),
@@ -413,6 +442,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Force-deletes a branch with unmerged commits. Those commits become unreachable and may be garbage-collected.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git branch -D feature/old-experiment"],
+            not_match_examples: &["git branch -d old"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-006B"),
@@ -429,6 +460,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Force-deletes a branch with unmerged commits. Those commits become unreachable and may be garbage-collected.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git branch --delete --force old"],
+            not_match_examples: &["git branch --delete old"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-006C"),
@@ -445,6 +478,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Force-deletes a branch with unmerged commits. Those commits become unreachable and may be garbage-collected.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git branch -d --force old"],
+            not_match_examples: &["git branch -d old"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-007"),
@@ -461,6 +496,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Discards all unstaged changes in the working directory. There is no undo after this command.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git checkout -- ."],
+            not_match_examples: &["git checkout -- file.txt"],
         },
         PrefixRule {
             id: Cow::Borrowed("GIT-008"),
@@ -477,6 +514,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Dropped stashes are immediately removed from the reflog and cannot be recovered.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["git stash drop stash@{0}"],
+            not_match_examples: &["git stash list"],
         },
         // ── Database ───────────────────────────────────────────────────────
         PrefixRule {
@@ -494,6 +533,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Destroys the table and all data. In most engines this is immediate and irreversible without a backup.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["DROP TABLE users;"],
+            not_match_examples: &["SELECT * FROM users;"],
         },
         PrefixRule {
             id: Cow::Borrowed("DB-002"),
@@ -510,6 +551,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Destroys the entire database. This removes all schemas, tables, indexes, and data permanently.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["DROP DATABASE myapp_production;"],
+            not_match_examples: &["CREATE DATABASE myapp_production;"],
         },
         PrefixRule {
             id: Cow::Borrowed("DB-006"),
@@ -526,6 +569,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Wipes all keys instantly. Redis has no undo; if you lack persistence backups the data is gone forever.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["FLUSHALL"],
+            not_match_examples: &["GET mykey"],
         },
         PrefixRule {
             id: Cow::Borrowed("DB-007"),
@@ -542,6 +587,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Removes a schema and every object inside it. Dependencies on those objects will break.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["DROP SCHEMA public CASCADE;"],
+            not_match_examples: &["CREATE SCHEMA public;"],
         },
         PrefixRule {
             id: Cow::Borrowed("DB-008"),
@@ -564,6 +611,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Removes a column and all its data permanently. Dependent views, triggers, and queries will fail.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["ALTER TABLE users DROP COLUMN avatar;"],
+            not_match_examples: &["ALTER TABLE users ADD COLUMN avatar;"],
         },
         // ── Cloud ──────────────────────────────────────────────────────────
         PrefixRule {
@@ -581,6 +630,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Destroys all managed infrastructure. State backups are critical; accidental destroy in the wrong workspace can delete production.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["terraform destroy -auto-approve"],
+            not_match_examples: &["terraform plan"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-002"),
@@ -597,6 +648,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Termination is permanent. EBS volumes may be deleted depending on settings; recovery is only possible from backups.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["aws ec2 terminate-instances --instance-ids i-1234abcd"],
+            not_match_examples: &["aws ec2 describe-instances"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-003"),
@@ -613,6 +666,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Some deletions cascade and remove persistent storage. Verify the resource type and use --dry-run first.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["kubectl delete deployment my-app"],
+            not_match_examples: &["kubectl get pods"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-004"),
@@ -627,6 +682,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Destroys every resource in the stack. There is no automatic recovery; you must re-import or re-create everything.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["pulumi destroy --yes"],
+            not_match_examples: &["pulumi preview"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-005"),
@@ -649,6 +706,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Bulk deletion in S3 is fast and permanent unless versioning is enabled. There is no trash or undo.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["aws s3 rm s3://my-bucket/data --recursive"],
+            not_match_examples: &["aws s3 rm s3://bucket/file.txt"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-006"),
@@ -665,6 +724,10 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Deleting an RDS instance removes the instance and optionally its automated backups. Final snapshots are your only safety net.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &[
+                "aws rds delete-db-instance --db-instance-identifier mydb --skip-final-snapshot",
+            ],
+            not_match_examples: &["aws rds describe-db-instances"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-007"),
@@ -681,6 +744,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "VM deletion is permanent. Unless you kept the boot disk, the instance and its local state are gone.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["gcloud compute instances delete my-vm --zone us-east1-b"],
+            not_match_examples: &["gcloud compute instances list"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-008"),
@@ -697,6 +762,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Azure VM deletion removes the VM. Attached disks may persist, but the VM configuration is lost.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["az vm delete --name myvm --resource-group rg1 --yes"],
+            not_match_examples: &["az vm list"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-009"),
@@ -722,6 +789,13 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Deleting IAM roles or policies can break running services and pipelines that depend on them. Audit dependencies first.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &[
+                "aws iam delete-role my-service-role",
+                "aws iam delete-policy my-policy",
+                "aws iam delete-user my-user",
+                "aws iam delete-group my-group",
+            ],
+            not_match_examples: &["aws iam list-roles"],
         },
         PrefixRule {
             id: Cow::Borrowed("CL-010"),
@@ -738,6 +812,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Deletes every resource in the namespace, including secrets, config maps, and potentially persistent volumes.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["kubectl delete namespace staging"],
+            not_match_examples: &["kubectl get namespace staging"],
         },
         // ── Docker ────────────────────────────────────────────────────────────
         PrefixRule {
@@ -755,6 +831,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Removes stopped containers, dangling images, networks, and build cache. Some of these may be needed for rollback or debugging.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker system prune -f"],
+            not_match_examples: &["docker system info"],
         },
         PrefixRule {
             id: Cow::Borrowed("DK-002"),
@@ -771,6 +849,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Deletes all unused volumes. If a volume is unmounted but contains important data, it will be lost permanently.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker volume prune -f"],
+            not_match_examples: &["docker volume ls"],
         },
         PrefixRule {
             id: Cow::Borrowed("DK-003"),
@@ -792,6 +872,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "The -v flag removes named volumes, deleting persistent data that would otherwise survive container restarts.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker-compose down -v"],
+            not_match_examples: &["docker-compose up"],
         },
         PrefixRule {
             id: Cow::Borrowed("DK-003"),
@@ -814,6 +896,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "The -v flag removes named volumes, deleting persistent data that would otherwise survive container restarts.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker compose down -v"],
+            not_match_examples: &["docker compose up"],
         },
         PrefixRule {
             id: Cow::Borrowed("DK-004"),
@@ -830,6 +914,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Deleting images forces rebuilds and removes layers that other images may depend on.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker rmi my-image:latest"],
+            not_match_examples: &["docker image ls"],
         },
         PrefixRule {
             id: Cow::Borrowed("DK-005"),
@@ -846,6 +932,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Removes all stopped containers, including those with useful logs or forensic evidence.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker container prune -f"],
+            not_match_examples: &["docker container ls"],
         },
         PrefixRule {
             id: Cow::Borrowed("DK-006"),
@@ -862,6 +950,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Removes networks that disconnected containers may still reference, causing reconnection failures.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["docker network prune -f"],
+            not_match_examples: &["docker network ls"],
         },
         // ── Process ───────────────────────────────────────────────────────────
         PrefixRule {
@@ -887,6 +977,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "SIGKILL to PID 1 crashes the entire system immediately. There is no graceful shutdown of services or sync of data.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["kill -9 1"],
+            not_match_examples: &["kill -15 1"],
         },
         PrefixRule {
             id: Cow::Borrowed("PS-002"),
@@ -903,6 +995,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "SIGKILL prevents cleanup. Databases, editors, and services may leave corrupted files or lose unsaved work.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["pkill -9 nginx"],
+            not_match_examples: &["pkill -15 nginx"],
         },
         PrefixRule {
             id: Cow::Borrowed("PS-005"),
@@ -919,6 +1013,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "World-writable root allows any user to modify system binaries and config. This is a critical security vulnerability.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["chmod 777 /"],
+            not_match_examples: &["chmod 755 /"],
         },
         // ── Package ───────────────────────────────────────────────────────────
         PrefixRule {
@@ -941,6 +1037,8 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
                 "Disables TLS certificate validation. An attacker on the network can inject malicious packages during install.",
             )),
             source: PatternSource::Builtin,
+            match_examples: &["pip install requests --trusted-host pypi.org"],
+            not_match_examples: &["pip install requests"],
         },
     ]
 }

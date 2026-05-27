@@ -70,3 +70,37 @@ fn builtin_prefix_rules_danger_rules_have_justification() {
         );
     }
 }
+
+#[test]
+fn builtin_prefix_rules_warn_and_danger_have_match_examples() {
+    let set = PatternSet::load().unwrap();
+    for rule in set.prefix_rules() {
+        if matches!(
+            rule.risk,
+            aegis::interceptor::RiskLevel::Warn
+                | aegis::interceptor::RiskLevel::Danger
+                | aegis::interceptor::RiskLevel::Block
+        ) {
+            assert!(
+                !rule.match_examples.is_empty(),
+                "{} ({:?}) is {:?} and must have match_examples",
+                rule.id,
+                rule.description,
+                rule.risk
+            );
+        }
+    }
+}
+
+#[test]
+fn builtin_prefix_rules_all_have_not_match_examples() {
+    let set = PatternSet::load().unwrap();
+    for rule in set.prefix_rules() {
+        assert!(
+            !rule.not_match_examples.is_empty(),
+            "{} ({:?}) must have not_match_examples",
+            rule.id,
+            rule.description
+        );
+    }
+}
