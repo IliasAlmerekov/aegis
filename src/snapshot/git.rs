@@ -202,7 +202,10 @@ mod tests {
             .await
             .unwrap();
         // Set local identity so stash commits don't depend on global git config.
-        for (key, val) in [("user.email", "test@aegis.dev"), ("user.name", "Aegis Test")] {
+        for (key, val) in [
+            ("user.email", "test@aegis.dev"),
+            ("user.name", "Aegis Test"),
+        ] {
             Command::new("git")
                 .args(["config", key, val])
                 .current_dir(dir)
