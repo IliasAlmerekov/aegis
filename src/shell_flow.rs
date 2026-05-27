@@ -242,6 +242,7 @@ fn test_command_explanation(
                     risk: matched.pattern.risk,
                     description: matched.pattern.description.to_string(),
                     matched_text: matched.matched_text.clone(),
+                    justification: matched.pattern.justification.as_deref().map(str::to_owned),
                 })
                 .collect(),
         },

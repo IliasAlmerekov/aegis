@@ -140,13 +140,15 @@ impl CacheKey {
             let category_str = format!("{:?}", pattern.category);
             let risk_str = pattern.risk.to_string();
             let safe_alt = pattern.safe_alt.as_deref().unwrap_or("");
-            let fields: [&str; 6] = [
+            let justification = pattern.justification.as_deref().unwrap_or("");
+            let fields: [&str; 7] = [
                 &pattern.id,
                 &category_str,
                 &risk_str,
                 &pattern.pattern,
                 &pattern.description,
                 safe_alt,
+                justification,
             ];
             for field in fields {
                 if field.contains(Self::FIELD_SEP) || field.contains(Self::RECORD_SEP) {
@@ -199,6 +201,7 @@ mod tests {
             pattern: "test".to_string(),
             description: "test".to_string(),
             safe_alt: None,
+            justification: None,
         };
         let err = CacheKey::new(&[bad]).unwrap_err();
         assert!(
@@ -216,6 +219,7 @@ mod tests {
             pattern: "test\u{1e}injected".to_string(),
             description: "test".to_string(),
             safe_alt: None,
+            justification: None,
         };
         let err = CacheKey::new(&[bad]).unwrap_err();
         assert!(
@@ -233,6 +237,7 @@ mod tests {
             pattern: "internal-teardown".to_string(),
             description: "test".to_string(),
             safe_alt: None,
+            justification: None,
         };
         assert!(CacheKey::new(&[ok]).is_ok());
     }
@@ -246,6 +251,7 @@ mod tests {
             pattern: "internal-teardown".to_string(),
             description: "Internal teardown guard".to_string(),
             safe_alt: Some("internal-teardown --dry-run".to_string()),
+            justification: None,
         };
 
         let assessment =
@@ -265,5 +271,34 @@ mod tests {
                 .iter()
                 .any(|matched| matched.pattern.source == PatternSource::Builtin)
         );
+    }
+
+    #[test]
+    fn cache_key_includes_justification_in_serialization() {
+        let with_justification = UserPattern {
+            id: "USR-001".to_string(),
+            category: Category::Cloud,
+            risk: RiskLevel::Warn,
+            pattern: "test".to_string(),
+            description: "test".to_string(),
+            safe_alt: None,
+            justification: Some("because".to_string()),
+        };
+        let without_justification = UserPattern {
+            id: "USR-001".to_string(),
+            category: Category::Cloud,
+            risk: RiskLevel::Warn,
+            pattern: "test".to_string(),
+            description: "test".to_string(),
+            safe_alt: None,
+            justification: None,
+        };
+        let key_with = CacheKey::new(&[with_justification]).unwrap();
+        let key_without = CacheKey::new(&[without_justification]).unwrap();
+        assert_ne!(
+            key_with.0, key_without.0,
+            "CacheKey must differentiate patterns with and without justification"
+        );
+        assert!(key_with.0.contains("because"));
     }
 }

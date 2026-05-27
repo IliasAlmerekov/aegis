@@ -242,6 +242,7 @@ fn uncertain_match(
             pattern: id.into(),
             description: description.into(),
             safe_alt: safe_alt.map(Into::into),
+            justification: None,
             source: PatternSource::Builtin,
         }),
         matched_text: String::new(),
@@ -260,4 +261,15 @@ fn recursive_limit_description(limit: RecursiveScanLimit) -> String {
 #[cfg(test)]
 pub(super) fn assess_for_tests(scanner: &Scanner, cmd: &str) -> Assessment {
     scanner.assess(cmd)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uncertain_match_produces_pattern_with_no_justification() {
+        let result = super::uncertain_match("SCAN-001", "desc".to_string(), None);
+        assert!(result.pattern.justification.is_none());
+    }
 }

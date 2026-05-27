@@ -21,6 +21,7 @@ fn test_match_result(matched_text: &str, start: usize, end: usize) -> MatchResul
             pattern: "test".into(),
             description: "test helper".into(),
             safe_alt: None,
+            justification: None,
             source: PatternSource::Builtin,
         }),
         matched_text: matched_text.to_string(),
@@ -445,6 +446,7 @@ fn custom_pattern_changes_assessment_and_marks_custom_source() {
         pattern: r"deploy-prod-now".to_string(),
         description: "Project-specific destructive deploy shortcut".to_string(),
         safe_alt: Some("deploy-prod-now --dry-run".to_string()),
+        justification: None,
     };
 
     let patterns =

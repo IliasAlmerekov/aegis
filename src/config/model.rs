@@ -184,6 +184,7 @@ pub struct UserPattern {
     pub pattern: String,
     pub description: String,
     pub safe_alt: Option<String>,
+    pub justification: Option<String>,
 }
 
 mod offset_datetime_option {
@@ -1796,5 +1797,65 @@ auto_snapshot_docker = false
 
         let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
         assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
+    }
+
+    #[test]
+    fn user_pattern_deserializes_justification() {
+        let pattern: UserPattern = toml::from_str(
+            r#"
+id = "USR-001"
+category = "Cloud"
+risk = "Warn"
+pattern = "test"
+description = "desc"
+justification = "because"
+"#,
+        )
+        .unwrap();
+        assert_eq!(pattern.justification, Some("because".to_string()));
+    }
+
+    #[test]
+    fn user_pattern_justification_is_optional() {
+        let pattern: UserPattern = toml::from_str(
+            r#"
+id = "USR-002"
+category = "Cloud"
+risk = "Warn"
+pattern = "test"
+description = "desc"
+"#,
+        )
+        .unwrap();
+        assert_eq!(pattern.justification, None);
+    }
+
+    #[test]
+    fn custom_pattern_with_justification_roundtrips_through_config() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+
+        fs::write(
+            workspace.path().join(PROJECT_CONFIG_FILE),
+            r#"
+[[custom_patterns]]
+id = "USR-JST"
+category = "Cloud"
+risk = "Danger"
+pattern = "terraform destroy"
+description = "Terraform destroy guard"
+justification = "This tears down all provisioned infrastructure. Confirm you are in the correct workspace and have state backups."
+safe_alt = "terraform plan -destroy"
+"#,
+        )
+        .unwrap();
+
+        let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+        assert_eq!(config.custom_patterns.len(), 1);
+        assert_eq!(config.custom_patterns[0].id, "USR-JST");
+        assert_eq!(
+            config.custom_patterns[0].justification,
+            Some("This tears down all provisioned infrastructure. Confirm you are in the correct workspace and have state backups.".to_string())
+        );
     }
 }

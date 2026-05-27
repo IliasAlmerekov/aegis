@@ -81,6 +81,7 @@ pub struct Pattern {
     pub pattern: Cow<'static, str>,
     pub description: Cow<'static, str>,
     pub safe_alt: Option<Cow<'static, str>>,
+    pub justification: Option<Cow<'static, str>>,
     pub source: PatternSource,
 }
 
@@ -93,6 +94,7 @@ struct RawPattern {
     pattern: String,
     description: String,
     safe_alt: Option<String>,
+    justification: Option<String>,
 }
 
 impl From<RawPattern> for Pattern {
@@ -104,6 +106,7 @@ impl From<RawPattern> for Pattern {
             pattern: Cow::Owned(raw.pattern),
             description: Cow::Owned(raw.description),
             safe_alt: raw.safe_alt.map(Cow::Owned),
+            justification: raw.justification.map(Cow::Owned),
             source: PatternSource::Builtin,
         }
     }
@@ -118,6 +121,7 @@ impl From<UserPattern> for Pattern {
             pattern: Cow::Owned(user.pattern),
             description: Cow::Owned(user.description),
             safe_alt: user.safe_alt.map(Cow::Owned),
+            justification: user.justification.map(Cow::Owned),
             source: PatternSource::Custom,
         }
     }
@@ -315,7 +319,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Stash changes first: 'git stash push -m \"backup\"' then reset if needed",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Discards all uncommitted changes permanently with no recovery. Stash first if you need any of the work.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -334,7 +340,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Preview first: 'git clean -n' (dry-run) before using -f",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Untracked files are deleted immediately without going to trash. A typo in the path can destroy important files.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -353,7 +361,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Prefer '--force-with-lease' over '--force' to avoid overwriting unseen commits",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "This command rewrites remote history. Collaborators with local copies will have diverged refs and will need to force-pull or re-clone. Consider --force-with-lease to at least detect concurrent pushes.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -367,7 +377,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use 'git filter-repo' (faster, safer) and coordinate with all contributors first",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Rewrites every commit in the repository. On a shared repo this invalidates all clones and requires coordinated action.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -381,7 +393,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Ensure your branch is up-to-date and create a backup branch before rebasing",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Rewrites commit history which changes SHAs. If pushed, collaborators must resolve conflicts. Never rebase public branches.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -395,7 +409,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Verify the branch is fully merged: 'git branch --merged' before deleting",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Force-deletes a branch with unmerged commits. Those commits become unreachable and may be garbage-collected.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -409,7 +425,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Verify the branch is fully merged: 'git branch --merged' before deleting",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Force-deletes a branch with unmerged commits. Those commits become unreachable and may be garbage-collected.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -423,7 +441,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Verify the branch is fully merged: 'git branch --merged' before deleting",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Force-deletes a branch with unmerged commits. Those commits become unreachable and may be garbage-collected.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -437,7 +457,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Stage or stash changes you want to keep before running this",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Discards all unstaged changes in the working directory. There is no undo after this command.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -451,7 +473,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Apply the stash before dropping: 'git stash apply && git stash drop'",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Dropped stashes are immediately removed from the reflog and cannot be recovered.",
+            )),
             source: PatternSource::Builtin,
         },
         // ── Database ───────────────────────────────────────────────────────
@@ -466,7 +490,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Back up the table first: 'CREATE TABLE backup AS SELECT * FROM <table>'",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Destroys the table and all data. In most engines this is immediate and irreversible without a backup.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -480,7 +506,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Take a full backup with pg_dump / mysqldump before dropping",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Destroys the entire database. This removes all schemas, tables, indexes, and data permanently.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -494,7 +522,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use key-pattern-based deletion: 'SCAN + DEL' to remove only the intended keys",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Wipes all keys instantly. Redis has no undo; if you lack persistence backups the data is gone forever.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -508,7 +538,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Back up the schema first and verify all dependent objects are accounted for",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Removes a schema and every object inside it. Dependencies on those objects will break.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -528,7 +560,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Add a NOT NULL DEFAULT before removing to safely migrate dependent queries first",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Removes a column and all its data permanently. Dependent views, triggers, and queries will fail.",
+            )),
             source: PatternSource::Builtin,
         },
         // ── Cloud ──────────────────────────────────────────────────────────
@@ -543,7 +577,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use 'terraform plan -destroy' first to review what will be removed",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Destroys all managed infrastructure. State backups are critical; accidental destroy in the wrong workspace can delete production.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -557,7 +593,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Stop instances first: 'aws ec2 stop-instances' to preserve data before terminating",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Termination is permanent. EBS volumes may be deleted depending on settings; recovery is only possible from backups.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -571,7 +609,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use '--dry-run=client' first to preview affected resources",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Some deletions cascade and remove persistent storage. Verify the resource type and use --dry-run first.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -583,7 +623,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Run 'pulumi preview --diff' to review what will be destroyed before executing",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Destroys every resource in the stack. There is no automatic recovery; you must re-import or re-create everything.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -603,7 +645,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "List objects first: 'aws s3 ls <path>' and enable versioning before bulk deletes",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Bulk deletion in S3 is fast and permanent unless versioning is enabled. There is no trash or undo.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -617,7 +661,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Enable deletion protection and take a final snapshot before deleting",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Deleting an RDS instance removes the instance and optionally its automated backups. Final snapshots are your only safety net.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -631,7 +677,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Create a snapshot of the boot disk before deletion for recovery",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "VM deletion is permanent. Unless you kept the boot disk, the instance and its local state are gone.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -645,7 +693,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Deallocate first: 'az vm deallocate' and capture an image before deleting",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Azure VM deletion removes the VM. Attached disks may persist, but the VM configuration is lost.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -668,7 +718,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Detach all policies and verify no services depend on the role before deleting",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Deleting IAM roles or policies can break running services and pipelines that depend on them. Audit dependencies first.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -682,7 +734,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "List all resources in the namespace first: 'kubectl get all -n <ns>'",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Deletes every resource in the namespace, including secrets, config maps, and potentially persistent volumes.",
+            )),
             source: PatternSource::Builtin,
         },
         // ── Docker ────────────────────────────────────────────────────────────
@@ -697,7 +751,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use '--filter until=24h' to limit pruning to older resources only",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Removes stopped containers, dangling images, networks, and build cache. Some of these may be needed for rollback or debugging.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -711,7 +767,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "List volumes first: 'docker volume ls' and back up data before pruning",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Deletes all unused volumes. If a volume is unmounted but contains important data, it will be lost permanently.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -730,7 +788,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Omit '-v' to keep volumes: 'docker-compose down' preserves volume data",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "The -v flag removes named volumes, deleting persistent data that would otherwise survive container restarts.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -750,7 +810,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Omit '-v' to keep volumes: 'docker compose down' preserves volume data",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "The -v flag removes named volumes, deleting persistent data that would otherwise survive container restarts.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -764,7 +826,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Tag images you want to keep before running bulk rmi commands",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Deleting images forces rebuilds and removes layers that other images may depend on.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -778,7 +842,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Inspect stopped containers first: 'docker ps -a' before pruning",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Removes all stopped containers, including those with useful logs or forensic evidence.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -792,7 +858,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "List networks in use: 'docker network ls' before pruning",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Removes networks that disconnected containers may still reference, causing reconnection failures.",
+            )),
             source: PatternSource::Builtin,
         },
         // ── Process ───────────────────────────────────────────────────────────
@@ -815,7 +883,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use 'systemctl stop <service>' to stop individual services safely",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "SIGKILL to PID 1 crashes the entire system immediately. There is no graceful shutdown of services or sync of data.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -829,7 +899,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Use 'pkill -15' (SIGTERM) first to allow graceful shutdown before escalating",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "SIGKILL prevents cleanup. Databases, editors, and services may leave corrupted files or lose unsaved work.",
+            )),
             source: PatternSource::Builtin,
         },
         PrefixRule {
@@ -843,7 +915,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Apply permissions only to the specific directory that needs them",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "World-writable root allows any user to modify system binaries and config. This is a critical security vulnerability.",
+            )),
             source: PatternSource::Builtin,
         },
         // ── Package ───────────────────────────────────────────────────────────
@@ -863,7 +937,9 @@ fn builtin_prefix_rules() -> Vec<PrefixRule> {
             safe_alt: Some(Cow::Borrowed(
                 "Fix the SSL/TLS issue instead of bypassing verification; use a proper certificate",
             )),
-            justification: None,
+            justification: Some(Cow::Borrowed(
+                "Disables TLS certificate validation. An attacker on the network can inject malicious packages during install.",
+            )),
             source: PatternSource::Builtin,
         },
     ]
@@ -923,6 +999,7 @@ mod tests {
             pattern: r"internal-teardown".to_string(),
             description: "Internal teardown guard".to_string(),
             safe_alt: Some("internal-teardown --dry-run".to_string()),
+            justification: None,
         };
 
         let set = PatternSet::from_sources(&[custom]).expect("custom pattern set should compile");
@@ -945,6 +1022,7 @@ mod tests {
             pattern: r"dummy-pattern".to_string(),
             description: "dummy".to_string(),
             safe_alt: None,
+            justification: None,
         };
 
         let err = PatternSet::from_sources(&[duplicate]).expect_err("duplicate id must fail");
@@ -960,6 +1038,7 @@ mod tests {
             pattern: r"first".to_string(),
             description: "first".to_string(),
             safe_alt: None,
+            justification: None,
         };
         let second = UserPattern {
             id: "USR-DUP".to_string(),
@@ -968,9 +1047,101 @@ mod tests {
             pattern: r"second".to_string(),
             description: "second".to_string(),
             safe_alt: None,
+            justification: None,
         };
 
         let err = PatternSet::from_sources(&[first, second]).expect_err("duplicate id must fail");
         assert!(err.to_string().contains("duplicate pattern id 'USR-DUP'"));
+    }
+
+    #[test]
+    fn pattern_struct_has_justification_field() {
+        let p = Pattern {
+            id: Cow::Borrowed("T-001"),
+            category: Category::Git,
+            risk: RiskLevel::Warn,
+            pattern: Cow::Borrowed("test"),
+            description: Cow::Borrowed("desc"),
+            safe_alt: None,
+            source: PatternSource::Builtin,
+            justification: Some(Cow::Borrowed("because")),
+        };
+        assert_eq!(p.justification.as_deref(), Some("because"));
+    }
+
+    #[test]
+    fn raw_pattern_struct_has_justification_field() {
+        let raw: RawPattern = toml::from_str(
+            r#"
+id = "T-002"
+category = "Git"
+risk = "Warn"
+pattern = "test"
+description = "desc"
+justification = "because"
+"#,
+        )
+        .unwrap();
+        assert_eq!(raw.justification, Some("because".to_string()));
+    }
+
+    #[test]
+    fn from_raw_pattern_copies_justification() {
+        let raw = RawPattern {
+            id: "T-003".to_string(),
+            category: Category::Git,
+            risk: RiskLevel::Warn,
+            pattern: "test".to_string(),
+            description: "desc".to_string(),
+            safe_alt: None,
+            justification: Some("because".to_string()),
+        };
+        let p: Pattern = raw.into();
+        assert_eq!(p.justification.as_deref(), Some("because"));
+    }
+
+    #[test]
+    fn from_user_pattern_copies_justification() {
+        let user = UserPattern {
+            id: "T-004".to_string(),
+            category: Category::Git,
+            risk: RiskLevel::Warn,
+            pattern: "test".to_string(),
+            description: "desc".to_string(),
+            safe_alt: None,
+            justification: Some("because".to_string()),
+        };
+        let p: Pattern = user.into();
+        assert_eq!(p.justification.as_deref(), Some("because"));
+    }
+
+    #[test]
+    fn builtin_regex_patterns_have_justification_populated() {
+        let set = PatternSet::load().unwrap();
+        let fs001 = set
+            .patterns()
+            .iter()
+            .find(|p| p.id.as_ref() == "FS-001")
+            .expect("FS-001 should exist");
+        assert!(
+            fs001.justification.is_some(),
+            "FS-001 should have a justification loaded from patterns.toml"
+        );
+    }
+
+    #[test]
+    fn validate_pattern_allows_empty_justification() {
+        let pattern = Pattern {
+            id: Cow::Borrowed("T-005"),
+            category: Category::Git,
+            risk: RiskLevel::Warn,
+            pattern: Cow::Borrowed("test"),
+            description: Cow::Borrowed("desc"),
+            safe_alt: None,
+            source: PatternSource::Builtin,
+            justification: None,
+        };
+        let mut ids = std::collections::HashSet::new();
+        assert!(PatternSet::validate_pattern(&pattern, &mut ids).is_ok());
     }
 }
