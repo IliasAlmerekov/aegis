@@ -127,12 +127,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         fs::write(&path, "mode = \"Protect\"\n").unwrap();
 
-        append_allow_rule(
-            &path,
-            &["git".to_string(), "push".to_string()],
-            dir.path(),
-        )
-        .unwrap();
+        append_allow_rule(&path, &["git".to_string(), "push".to_string()], dir.path()).unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
         assert!(
@@ -158,12 +153,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
 
-        append_allow_rule(
-            &path,
-            &["rm".to_string(), "-rf".to_string()],
-            dir.path(),
-        )
-        .unwrap();
+        append_allow_rule(&path, &["rm".to_string(), "-rf".to_string()], dir.path()).unwrap();
 
         assert!(path.exists(), "must create missing config file");
         let contents = fs::read_to_string(&path).unwrap();
@@ -237,12 +227,7 @@ reason = "Approved by user on 2025-01-01"
 "#;
         fs::write(&path, existing).unwrap();
 
-        append_allow_rule(
-            &path,
-            &["git".to_string(), "push".to_string()],
-            dir.path(),
-        )
-        .unwrap();
+        append_allow_rule(&path, &["git".to_string(), "push".to_string()], dir.path()).unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
         let allowlist_count = contents.matches("[[allowlist]]").count();

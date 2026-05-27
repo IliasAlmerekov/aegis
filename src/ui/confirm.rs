@@ -11,8 +11,8 @@ pub use stdout_renderer::{
     show_confirmation_with_input, show_policy_block,
 };
 pub use tty_renderer::{
-    show_block_via_tty, show_confirmation_via_tty_with_decision,
-    show_policy_block_via_tty, tty_unavailable_decision,
+    show_block_via_tty, show_confirmation_via_tty_with_decision, show_policy_block_via_tty,
+    tty_unavailable_decision,
 };
 
 #[cfg(test)]
