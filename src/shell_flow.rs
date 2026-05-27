@@ -3,6 +3,7 @@ use std::path::Path;
 use aegis::audit::Decision;
 #[cfg(test)]
 use aegis::config::AllowlistMatch;
+use aegis::config::amend::{active_config_path_for_append, append_allow_rule};
 use aegis::decision::BlockReason;
 #[cfg(test)]
 use aegis::decision::{
@@ -14,12 +15,15 @@ use aegis::explanation::{
     AllowlistExplanation, CommandExplanation, ExecutionContextExplanation, PolicyExplanation,
     ScanExplanation,
 };
+use aegis::interceptor::parser::{extract_prefix, split_tokens};
 use aegis::planning::{CwdState, ExecutionDisposition, InterceptionPlan, PreparedPlanner};
 use aegis::runtime::AuditWriteOptions;
 #[cfg(test)]
 use aegis::runtime::RuntimeContext;
 use aegis::snapshot::SnapshotRecord;
-use aegis::ui::confirm::{show_confirmation, show_policy_block};
+use aegis::ui::confirm::{
+    PromptDecision, show_confirmation, show_confirmation_decision, show_policy_block,
+};
 
 use crate::shell_compat::{ShellLaunchOptions, exec_command};
 use crate::{EXIT_BLOCKED, EXIT_DENIED, EXIT_INTERNAL};
@@ -43,7 +47,30 @@ pub(crate) fn run_planned_shell_command(
         }
         ExecutionDisposition::RequiresApproval => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
-            let approved = show_confirmation(plan.assessment(), plan.explanation(), &snapshots);
+            let prompt_decision =
+                show_confirmation_decision(plan.assessment(), plan.explanation(), &snapshots);
+            if prompt_decision == PromptDecision::ApproveAlways {
+                match active_config_path_for_append() {
+                    Some(config_path) => {
+                        let tokens = split_tokens(cmd);
+                        let prefix = extract_prefix(&tokens);
+                        let cwd = match plan.decision_context().cwd_state() {
+                            CwdState::Resolved(path) => path.clone(),
+                            CwdState::Unavailable => std::path::PathBuf::from("."),
+                        };
+                        if let Err(err) = append_allow_rule(&config_path, &prefix, &cwd) {
+                            eprintln!("error: failed to append allow rule: {err}");
+                        }
+                    }
+                    None => {
+                        eprintln!("warning: cannot persist allow rule: no config file found");
+                    }
+                }
+            }
+            let approved = matches!(
+                prompt_decision,
+                PromptDecision::Approve | PromptDecision::ApproveAlways
+            );
             let decision = if approved {
                 Decision::Approved
             } else {
@@ -190,7 +217,11 @@ fn execute_policy_decision(
             policy_decision.allowlist_effective,
         ),
         PolicyAction::Prompt => {
-            let approved = show_confirmation(assessment, explanation, &snapshots);
+            let prompt_decision = show_confirmation_decision(assessment, explanation, &snapshots);
+            let approved = matches!(
+                prompt_decision,
+                PromptDecision::Approve | PromptDecision::ApproveAlways
+            );
             let decision = if approved {
                 Decision::Approved
             } else {

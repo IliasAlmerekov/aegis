@@ -1,4 +1,5 @@
 pub mod allowlist;
+pub mod amend;
 pub mod model;
 pub mod snapshot;
 pub mod validate;
@@ -7,6 +8,7 @@ pub use allowlist::{
     Allowlist, AllowlistContext, AllowlistMatch, AllowlistSourceLayer, AllowlistWarning,
     LayeredAllowlistRule, analyze_allowlist_rule,
 };
+pub use amend::{active_config_path_for_append, append_allow_rule};
 pub use model::{
     AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, AuditIntegrityMode, CiPolicy,
     Mode, SnapshotPolicy, UserPattern,
