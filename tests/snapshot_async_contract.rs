@@ -3,23 +3,26 @@ use std::path::Path;
 
 const SNAPSHOT_PLUGINS: &[(&str, &str)] = &[
     ("src/snapshot/git.rs", "GitPlugin"),
-    ("src/snapshot/docker.rs", "DockerPlugin"),
-    ("src/snapshot/postgres.rs", "PostgresPlugin"),
-    ("src/snapshot/mysql.rs", "MysqlPlugin"),
+    ("src/snapshot/docker/mod.rs", "DockerPlugin"),
+    ("src/snapshot/postgres/mod.rs", "PostgresPlugin"),
+    ("src/snapshot/mysql/mod.rs", "MysqlPlugin"),
     ("src/snapshot/sqlite.rs", "SqlitePlugin"),
-    ("src/snapshot/supabase.rs", "SupabasePlugin"),
+    ("src/snapshot/supabase/runtime.rs", "SupabasePlugin"),
 ];
 
 const RETRY_HELPERS: &[(&str, &str)] = &[
     (
-        "src/snapshot/docker.rs",
+        "src/snapshot/docker/mod.rs",
         "async fn sleep_docker_busy_retry_delay",
     ),
     (
-        "src/snapshot/postgres.rs",
+        "src/snapshot/postgres/mod.rs",
         "async fn output_with_busy_retry",
     ),
-    ("src/snapshot/mysql.rs", "async fn spawn_with_busy_retry"),
+    (
+        "src/snapshot/mysql/mod.rs",
+        "async fn spawn_with_busy_retry",
+    ),
 ];
 
 #[test]

@@ -1,3 +1,5 @@
+//! Audit logger: append-only JSONL with optional hash-chain integrity.
+
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 
@@ -36,12 +38,14 @@ impl AuditTimestamp {
         Self(OffsetDateTime::now_utc())
     }
 
+    /// Create a timestamp from Unix seconds.
     pub fn from_unix_seconds(seconds: i64) -> std::result::Result<Self, String> {
         OffsetDateTime::from_unix_timestamp(seconds)
             .map(Self)
             .map_err(|err| format!("invalid unix timestamp {seconds}: {err}"))
     }
 
+    /// Parse a timestamp from an RFC 3339 string.
     pub fn parse_rfc3339(value: &str) -> std::result::Result<Self, String> {
         OffsetDateTime::parse(value, &Rfc3339)
             .map(Self)
@@ -109,28 +113,44 @@ impl<'de> Deserialize<'de> for AuditTimestamp {
 /// `AuditEntry::Watch(WatchEntry)`, which embeds this struct via `base`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecisionEntry {
+    /// When the decision was recorded.
     pub timestamp: AuditTimestamp,
     /// Monotonic sequence number within the current Aegis process.
     ///
     /// Disambiguates entries with very similar timestamps. Zero in older logs
     /// that predate this field.
     pub sequence: u64,
+    /// The command string that was intercepted.
     pub command: String,
+    /// Risk level assessed by the scanner.
     pub risk: RiskLevel,
+    /// Patterns that matched the command.
     pub matched_patterns: Vec<MatchedPattern>,
     /// Top-level projection of `matched_patterns[].id` for log aggregation.
     pub pattern_ids: Vec<String>,
+    /// Final user or system decision.
     pub decision: Decision,
+    /// Snapshots taken before command execution.
     pub snapshots: Vec<AuditSnapshot>,
+    /// Human-readable explanation of the decision.
     pub explanation: Option<CommandExplanation>,
+    /// Aegis operating mode at the time.
     pub mode: Option<Mode>,
+    /// Whether a CI environment was detected.
     pub ci_detected: Option<bool>,
+    /// Whether an allowlist pattern matched.
     pub allowlist_matched: Option<bool>,
+    /// Whether the allowlist overrode the risk level.
     pub allowlist_effective: Option<bool>,
+    /// Hash algorithm used for the integrity chain.
     pub chain_alg: Option<String>,
+    /// Hash of the previous audit entry.
     pub prev_hash: Option<String>,
+    /// Hash of this audit entry.
     pub entry_hash: Option<String>,
+    /// ID of the allowlist pattern that matched.
     pub allowlist_pattern: Option<String>,
+    /// Reason the allowlist matched.
     pub allowlist_reason: Option<String>,
 }
 
@@ -142,6 +162,7 @@ pub struct DecisionEntry {
 /// `transport` is implicit — it is always `"watch"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchEntry {
+    /// Core decision fields shared with shell-wrapper entries.
     pub base: DecisionEntry,
     /// Agent/caller identity from the watch-mode input frame.
     pub source: Option<String>,
@@ -158,7 +179,9 @@ pub struct WatchEntry {
 /// with existing `~/.aegis/audit.jsonl` files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuditEntry {
+    /// Shell-wrapper or direct-invocation entry.
     Decision(DecisionEntry),
+    /// Watch-mode entry with extra correlation context.
     Watch(WatchEntry),
 }
 
@@ -330,58 +353,91 @@ impl<'de> Deserialize<'de> for AuditEntry {
 /// User-visible outcome of the interception flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Decision {
+    /// User explicitly approved the command.
     Approved,
+    /// User explicitly denied the command.
     Denied,
+    /// Approved automatically by allowlist or safe path.
     AutoApproved,
+    /// Blocked by policy or because the command is too dangerous.
     Blocked,
 }
 
+/// Parameters for filtering the audit log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AuditQuery {
+    /// Maximum number of recent entries to return.
     pub last: Option<usize>,
+    /// Filter by assessed risk level.
     pub risk: Option<RiskLevel>,
+    /// Filter by final decision.
     pub decision: Option<Decision>,
+    /// Only entries at or after this timestamp.
     pub since: Option<AuditTimestamp>,
+    /// Only entries at or before this timestamp.
     pub until: Option<AuditTimestamp>,
+    /// Only entries whose command contains this substring.
     pub command_contains: Option<String>,
 }
 
+/// Aggregated statistics over a slice of the audit log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuditSummary {
+    /// Total number of entries matched by the query.
     pub total_entries: usize,
+    /// Breakdown of decisions.
     pub decision_counts: DecisionCounts,
+    /// Breakdown of risk levels.
     pub risk_counts: RiskCounts,
+    /// Most frequently matched patterns.
     pub top_patterns: Vec<PatternCount>,
 }
 
+/// Count of each decision type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct DecisionCounts {
+    /// Number of `Approved` decisions.
     pub approved: usize,
+    /// Number of `Denied` decisions.
     pub denied: usize,
+    /// Number of `AutoApproved` decisions.
     pub auto_approved: usize,
+    /// Number of `Blocked` decisions.
     pub blocked: usize,
 }
 
+/// Count of each risk level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct RiskCounts {
+    /// Number of `Safe` assessments.
     pub safe: usize,
+    /// Number of `Warn` assessments.
     pub warn: usize,
+    /// Number of `Danger` assessments.
     pub danger: usize,
+    /// Number of `Block` assessments.
     pub block: usize,
 }
 
+/// How many times a specific pattern matched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PatternCount {
+    /// Pattern identifier.
     pub id: String,
+    /// Number of occurrences.
     pub count: usize,
 }
 
 /// Stable audit representation of a matched scanner pattern.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchedPattern {
+    /// Pattern identifier (e.g. "FS-001").
     pub id: String,
+    /// Risk level assigned by the pattern.
     pub risk: RiskLevel,
+    /// Human-readable description of what the pattern detects.
     pub description: String,
+    /// Suggested safe alternative, if any.
     pub safe_alt: Option<String>,
     /// Category of the pattern (e.g. Filesystem, Git). Optional for backwards compat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -397,10 +453,13 @@ pub struct MatchedPattern {
 /// Stable audit representation of one snapshot created before execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditSnapshot {
+    /// Name of the snapshot plugin that created it.
     pub plugin: String,
+    /// Opaque identifier used to restore the snapshot.
     pub snapshot_id: String,
 }
 
+/// Policy for rotating the append-only audit log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditRotationPolicy {
     max_file_size_bytes: u64,
@@ -419,18 +478,27 @@ struct AuditLock {
     file: std::fs::File,
 }
 
+/// Result of verifying the cryptographic integrity chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditIntegrityReport {
+    /// Overall verification status.
     pub status: AuditIntegrityStatus,
+    /// Total entries examined.
     pub checked_entries: usize,
+    /// Entries linked by a valid hash chain.
     pub chained_entries: usize,
+    /// Human-readable summary message.
     pub message: String,
 }
 
+/// Outcome of an integrity chain verification pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditIntegrityStatus {
+    /// Every chained entry verified successfully.
     Verified,
+    /// No integrity metadata present in the log.
     NoIntegrityData,
+    /// At least one chain link is broken or tampered.
     Corrupt,
 }
 

@@ -1,3 +1,5 @@
+//! Policy types: inputs, actions, rationales, and execution transport.
+
 use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 use crate::interceptor::scanner::Assessment;
 use serde::{Deserialize, Serialize};
@@ -76,8 +78,11 @@ pub struct PolicyInput<'a> {
 /// The action Aegis should take after evaluating policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PolicyAction {
+    /// Execute without user confirmation.
     AutoApprove,
+    /// Show an interactive confirmation dialog.
     Prompt,
+    /// Refuse execution entirely.
     Block,
 }
 

@@ -1,4 +1,4 @@
-// Scanner: assess(cmd) -> RiskLevel
+//! Scanner: assess(cmd) -> RiskLevel
 
 mod assessment;
 mod highlighting;
@@ -40,6 +40,7 @@ const MAX_INLINE_SCRIPT_LEN: usize = 16 * 1024;
 
 type CompiledPattern = (Arc<Pattern>, Regex);
 
+/// Compiled pattern scanner with Aho-Corasick quick pass + regex full scan.
 pub struct Scanner {
     ac: AhoCorasick,
     /// `true` when ≥ 1 pattern yielded no extractable keyword.
@@ -71,7 +72,7 @@ impl Scanner {
     /// Build a [`Scanner`] from a compiled [`PatternSet`].
     ///
     /// The Aho-Corasick automaton is constructed once here; subsequent calls to
-    /// [`quick_scan`] are allocation-free.
+    /// [`Scanner::quick_scan`] are allocation-free.
     pub fn new(patterns: PatternSet) -> Self {
         let effective_patterns = patterns.patterns();
 

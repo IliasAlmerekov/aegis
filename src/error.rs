@@ -1,5 +1,7 @@
+/// Typed error hierarchy for all Aegis operations.
 #[derive(thiserror::Error, Debug)]
 pub enum AegisError {
+    /// Snapshot creation or rollback failed.
     #[error("snapshot error: {0}")]
     Snapshot(String),
 
@@ -17,8 +19,11 @@ pub enum AegisError {
          Details: {details}"
     )]
     RollbackConflict {
+        /// The stash reference that failed to pop.
         stash_ref: String,
+        /// Working directory where the rollback was attempted.
         cwd: String,
+        /// Underlying error details.
         details: String,
     },
 
@@ -26,21 +31,29 @@ pub enum AegisError {
     #[error(
         "rollback failed: dump file not found at '{path}'. The file may have been deleted manually."
     )]
-    RollbackDumpNotFound { path: String },
+    RollbackDumpNotFound {
+        /// Expected path of the missing dump file.
+        path: String,
+    },
 
     /// The persisted rollback artifact no longer matches the manifest checksum.
     #[error(
         "rollback failed: artifact integrity verification failed for '{path}' (expected SHA-256 {expected_sha256}, got {actual_sha256})"
     )]
     RollbackIntegrityCheckFailed {
+        /// Path to the artifact that failed verification.
         path: String,
+        /// Expected SHA-256 checksum recorded at snapshot time.
         expected_sha256: String,
+        /// Actual SHA-256 checksum computed at rollback time.
         actual_sha256: String,
     },
 
+    /// Configuration loading, parsing, or validation error.
     #[error("config error: {0}")]
     Config(String),
 
+    /// Wrapped I/O error from the standard library.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

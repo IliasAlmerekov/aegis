@@ -1,4 +1,4 @@
-// crossterm TUI confirmation dialog
+//! crossterm TUI confirmation dialog.
 
 mod block_screen;
 mod confirm_screen;

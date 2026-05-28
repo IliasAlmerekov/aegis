@@ -1,3 +1,5 @@
+//! Audit layer: append-only JSONL log with optional hash-chain integrity.
+
 pub mod logger;
 
 pub use logger::{

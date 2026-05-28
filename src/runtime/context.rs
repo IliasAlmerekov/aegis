@@ -1,3 +1,5 @@
+//! Runtime context: config, scanner, allowlist, snapshot registry wiring.
+
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
@@ -6,7 +8,7 @@ use tokio::runtime::Handle;
 
 use crate::audit::{AuditEntry, AuditLogger, Decision};
 use crate::config::{
-    Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Blocklist, Config,
+    AegisConfig, Allowlist, AllowlistContext, AllowlistMatch, AllowlistOverrideLevel, Blocklist,
     SnapshotPolicy,
 };
 use crate::error::AegisError;
@@ -34,8 +36,8 @@ pub struct RuntimeConfig {
     pub snapshot_policy: SnapshotPolicy,
 }
 
-impl From<&Config> for RuntimeConfig {
-    fn from(config: &Config) -> Self {
+impl From<&AegisConfig> for RuntimeConfig {
+    fn from(config: &AegisConfig) -> Self {
         Self {
             mode: config.mode,
             ci_policy: config.ci_policy,
@@ -58,31 +60,41 @@ pub struct RuntimeContext {
     audit_logger: AuditLogger,
 }
 
+/// Options controlling how an audit entry is written.
 #[derive(Clone, Copy)]
 pub struct AuditWriteOptions<'a> {
+    /// Matched allowlist rule, if any.
     pub allowlist_match: Option<&'a AllowlistMatch>,
+    /// Whether the allowlist was effective for this command.
     pub allowlist_effective: bool,
+    /// Whether CI was detected for this invocation.
     pub ci_detected: bool,
 }
 
 /// Watch-mode correlation fields attached to each audit entry in watch transport.
 pub struct WatchAuditContext<'a> {
+    /// Matched allowlist rule, if any.
     pub allowlist_match: Option<&'a AllowlistMatch>,
+    /// Whether the allowlist was effective for this command.
     pub allowlist_effective: bool,
+    /// Whether CI was detected for this invocation.
     pub ci_detected: bool,
+    /// Origin label for the watch-mode source.
     pub source: Option<String>,
+    /// Current working directory at the time of invocation.
     pub cwd: Option<String>,
+    /// Correlation ID for tracing across watch-mode frames.
     pub id: Option<String>,
 }
 
 impl RuntimeContext {
     /// Load config, build runtime dependencies once, and keep them consistent.
     pub fn load(_verbose: bool, handle: Handle) -> Result<Self, AegisError> {
-        Config::load().and_then(|config| Self::new(config, handle))
+        AegisConfig::load().and_then(|config| Self::new(config, handle))
     }
 
     /// Build a runtime context from an already resolved config.
-    pub fn new(config: Config, handle: Handle) -> Result<Self, AegisError> {
+    pub fn new(config: AegisConfig, handle: Handle) -> Result<Self, AegisError> {
         config.validate_runtime_requirements()?;
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
         let current_user = detect_effective_user();
@@ -259,7 +271,7 @@ impl RuntimeContext {
     }
 }
 
-fn build_audit_logger(config: &Config) -> AuditLogger {
+fn build_audit_logger(config: &AegisConfig) -> AuditLogger {
     AuditLogger::from_audit_config(&config.audit)
 }
 

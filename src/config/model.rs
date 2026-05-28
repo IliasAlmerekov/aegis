@@ -13,12 +13,17 @@ use super::snapshot::{
 };
 use crate::error::AegisError;
 use crate::interceptor;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::patterns::Category;
+
+mod enums;
+mod rules;
+
+pub use enums::{AllowlistOverrideLevel, AuditIntegrityMode, CiPolicy, Mode, SnapshotPolicy};
+pub use rules::{AllowlistRule, AuditConfig, BlockRule, UserPattern};
 
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
 const GLOBAL_CONFIG_FILE: &str = "config.toml";
+/// Current configuration schema version.
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
 const LEGACY_ALLOWLIST_REASON: &str = "migrated from legacy allowlist entry";
 
@@ -114,165 +119,27 @@ pub(crate) struct ConfigLayerPath {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-pub enum Mode {
-    #[default]
-    Protect,
-    Audit,
-    Strict,
-}
-
-/// What aegis does when it detects a CI environment.
+/// Top-level Aegis runtime configuration.
 ///
-/// `Block` is the safe default: no interactive TTY is available in CI, so
-/// prompting would hang the pipeline.  Instead, non-safe commands are
-/// hard-blocked and the pipeline fails fast with a clear error message.
-///
-/// `Allow` is an explicit opt-in override for cases where a project has
-/// audited its CI pipeline and is confident that destructive commands are
-/// intentional (e.g., a release script that runs `terraform destroy` in a
-/// tear-down job).  Set this only in `.aegis.toml`, not globally.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-pub enum CiPolicy {
-    /// Hard-block all non-safe commands. No dialog. Pipeline fails fast.
-    #[default]
-    Block,
-    /// Pass-through: commands run without prompting. Use only when you have
-    /// deliberately reviewed the CI pipeline for destructive commands.
-    Allow,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-pub enum AuditIntegrityMode {
-    Off,
-    #[default]
-    ChainSha256,
-}
-
-/// Controls when and how snapshot plugins run before dangerous commands.
-///
-/// - `None`      — never snapshot.
-/// - `Selective` — only plugins enabled by `auto_snapshot_git` /
-///   `auto_snapshot_docker` / `auto_snapshot_postgres` /
-///   `auto_snapshot_mysql` / `auto_snapshot_supabase` /
-///   `auto_snapshot_sqlite`.
-/// - `Full`      — run every registered plugin regardless of per-plugin flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-pub enum SnapshotPolicy {
-    /// Never create snapshots.
-    None,
-    /// Honour per-plugin flags (default — backwards-compatible).
-    #[default]
-    Selective,
-    /// Run all snapshot plugins unconditionally.
-    Full,
-}
-
-/// Maximum override level that structured allowlist rules may grant for
-/// non-safe commands in Protect/Strict mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "PascalCase")]
-pub enum AllowlistOverrideLevel {
-    #[default]
-    Warn,
-    Danger,
-    Never,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UserPattern {
-    pub id: String,
-    pub category: Category,
-    pub risk: RiskLevel,
-    pub pattern: String,
-    pub description: String,
-    pub safe_alt: Option<String>,
-    pub justification: Option<String>,
-}
-
-mod offset_datetime_option {
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
-    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
-
-    pub fn serialize<S>(value: &Option<OffsetDateTime>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(value) => serializer
-                .serialize_some(&value.format(&Rfc3339).map_err(serde::ser::Error::custom)?),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<OffsetDateTime>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Option::<String>::deserialize(deserializer)?;
-        value
-            .map(|value| {
-                OffsetDateTime::parse(&value, &Rfc3339).map_err(|error| {
-                    D::Error::custom(format!("invalid RFC 3339 timestamp: {error}"))
-                })
-            })
-            .transpose()
-    }
-}
-
-/// A structured allowlist rule with optional scope, expiry, and rationale.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AllowlistRule {
-    pub pattern: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
-    #[serde(
-        default,
-        with = "offset_datetime_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub expires_at: Option<OffsetDateTime>,
-    pub reason: String,
-}
-
-/// A structured block rule with optional scope, expiry, and rationale.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BlockRule {
-    pub pattern: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user: Option<String>,
-    #[serde(
-        default,
-        with = "offset_datetime_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub expires_at: Option<OffsetDateTime>,
-    pub reason: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Loaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)
+/// → `.aegis.toml` (project). Later layers override scalar fields; `allow`/`block`
+/// rules are concatenated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
+    /// Schema version. Must equal [`CURRENT_CONFIG_VERSION`].
     #[serde(
         default = "default_config_version",
         deserialize_with = "deserialize_config_version"
     )]
     pub config_version: u32,
+    /// Operating mode: `Protect`, `Audit`, or `Strict`.
     pub mode: Mode,
+    /// Extra user-defined patterns merged with built-in patterns at runtime.
     pub custom_patterns: Vec<UserPattern>,
     #[serde(skip)]
     pub(crate) custom_pattern_layers: Vec<ConfigSourceLayer>,
+    /// Structured allow-list rules (TOML: `[[allow]]`).
     #[serde(
         default,
         rename = "allow",
@@ -282,6 +149,7 @@ pub struct AegisConfig {
     pub allowlist: Vec<AllowlistRule>,
     #[serde(skip)]
     pub(crate) allowlist_layers: Vec<ConfigSourceLayer>,
+    /// Structured block-list rules (TOML: `[[block]]`).
     #[serde(default, rename = "block", alias = "blocklist")]
     pub blocklist: Vec<BlockRule>,
     #[serde(skip)]
@@ -290,9 +158,13 @@ pub struct AegisConfig {
     pub(crate) audit_max_file_size_bytes_source: Option<ConfigSourceLayer>,
     #[serde(skip)]
     pub(crate) audit_retention_files_source: Option<ConfigSourceLayer>,
+    /// Maximum risk level the allow-list may auto-approve in Protect/Strict mode.
     pub allowlist_override_level: AllowlistOverrideLevel,
+    /// Controls which snapshot plugins run before dangerous commands.
     pub snapshot_policy: SnapshotPolicy,
+    /// Enable Git snapshots before dangerous commands.
     pub auto_snapshot_git: bool,
+    /// Enable Docker container snapshots before dangerous commands.
     pub auto_snapshot_docker: bool,
     /// Enable PostgreSQL snapshots before dangerous commands.
     pub auto_snapshot_postgres: bool,
@@ -312,31 +184,12 @@ pub struct AegisConfig {
     /// Path to a SQLite database file, relative to the current working
     /// directory or absolute.
     pub sqlite_snapshot_path: String,
+    /// Which Docker containers to include in snapshots.
     pub docker_scope: DockerScope,
+    /// Behaviour when a CI environment is detected.
     pub ci_policy: CiPolicy,
+    /// Audit log rotation and integrity settings.
     pub audit: AuditConfig,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct AuditConfig {
-    pub rotation_enabled: bool,
-    pub max_file_size_bytes: u64,
-    pub retention_files: usize,
-    pub compress_rotated: bool,
-    pub integrity_mode: AuditIntegrityMode,
-}
-
-impl Default for AuditConfig {
-    fn default() -> Self {
-        Self {
-            rotation_enabled: false,
-            max_file_size_bytes: 10 * 1024 * 1024,
-            retention_files: 5,
-            compress_rotated: true,
-            integrity_mode: AuditIntegrityMode::ChainSha256,
-        }
-    }
 }
 
 impl Default for AegisConfig {
@@ -346,6 +199,7 @@ impl Default for AegisConfig {
 }
 
 impl AegisConfig {
+    /// Load the effective config for the current working directory.
     pub fn load() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
@@ -356,6 +210,7 @@ impl AegisConfig {
         Self::load_for(&current_dir, home_dir.as_deref())
     }
 
+    /// Load config without triggering runtime validation (for `aegis config show`).
     pub fn load_inspection() -> Result<Self> {
         let current_dir = env::current_dir()?;
         let home_dir = env::var_os("HOME")
@@ -366,6 +221,7 @@ impl AegisConfig {
         Self::load_for_inspection(&current_dir, home_dir.as_deref())
     }
 
+    /// Return the built-in default configuration.
     pub fn defaults() -> Self {
         Self {
             config_version: CURRENT_CONFIG_VERSION,
@@ -396,15 +252,19 @@ impl AegisConfig {
         }
     }
 
+    /// Serialize the config to a pretty-printed TOML string.
     pub fn to_toml_string(&self) -> Result<String> {
         toml::to_string_pretty(self)
             .map_err(|error| AegisError::Config(format!("failed to serialize config: {error}")))
     }
 
+    /// Return the starter `aegis.toml` template text.
     pub fn init_template() -> &'static str {
         INIT_TEMPLATE
     }
 
+    /// Write the starter `aegis.toml` to `current_dir`. Returns the path to the
+    /// new file. Errors if a config file already exists at that path.
     pub fn init_in(current_dir: &Path) -> Result<PathBuf> {
         let path = current_dir.join(PROJECT_CONFIG_FILE);
         if path.exists() {
@@ -435,6 +295,7 @@ impl AegisConfig {
         Self::load_for_internal(current_dir, home_dir, true)
     }
 
+    /// Load config for a specific directory without runtime validation.
     pub fn load_for_inspection(current_dir: &Path, home_dir: Option<&Path>) -> Result<Self> {
         Self::load_for_internal(current_dir, home_dir, false)
     }

@@ -21,6 +21,7 @@ pub enum PromptDecision {
     DenyAlways,
 }
 
+/// Show an interactive confirmation prompt on stdout and read the answer from stdin.
 pub fn show_confirmation(
     assessment: &Assessment,
     explanation: &CommandExplanation,

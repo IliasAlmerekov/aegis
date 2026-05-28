@@ -2,7 +2,7 @@ use std::env;
 use std::path::PathBuf;
 
 use aegis::audit::{AuditEntry, AuditIntegrityStatus, AuditLogger, AuditQuery};
-use aegis::config::{Config, ValidationReport, validate_config_layers};
+use aegis::config::{AegisConfig, ValidationReport, validate_config_layers};
 use aegis::error::AegisError;
 use aegis::toggle;
 
@@ -83,7 +83,7 @@ pub(crate) fn handle_audit_command(args: AuditArgs) -> i32 {
 pub(crate) fn handle_config_command(args: ConfigArgs) -> i32 {
     match args.command {
         ConfigCommand::Init => match env::current_dir() {
-            Ok(current_dir) => match Config::init_in(&current_dir) {
+            Ok(current_dir) => match AegisConfig::init_in(&current_dir) {
                 Ok(path) => {
                     println!("{}", path.display());
                     0
@@ -98,7 +98,7 @@ pub(crate) fn handle_config_command(args: ConfigArgs) -> i32 {
                 EXIT_INTERNAL
             }
         },
-        ConfigCommand::Show => match Config::load_inspection() {
+        ConfigCommand::Show => match AegisConfig::load_inspection() {
             Ok(config) => match config.to_toml_string() {
                 Ok(toml) => {
                     print!("{toml}");

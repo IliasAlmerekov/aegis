@@ -9,6 +9,7 @@ use crate::config::AuditConfig;
 use crate::error::AegisError;
 
 impl AuditEntry {
+    /// Build a decision audit entry with all fields computed at the decision point.
     pub fn new(
         command: impl Into<String>,
         risk: RiskLevel,
@@ -152,6 +153,7 @@ impl Drop for AuditLock {
 }
 
 impl AuditLogger {
+    /// Create a logger that writes to the given path.
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
@@ -160,11 +162,13 @@ impl AuditLogger {
         }
     }
 
+    /// Enable log rotation with the given policy.
     pub fn with_rotation(mut self, policy: AuditRotationPolicy) -> Self {
         self.rotation = Some(policy);
         self
     }
 
+    /// Set the integrity mode for future entries.
     pub fn with_integrity_mode(mut self, mode: AuditIntegrityMode) -> Self {
         self.integrity_mode = mode;
         self
@@ -184,10 +188,14 @@ impl AuditLogger {
         }
     }
 
+    /// Return the configured audit log file path.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Append one entry to the audit log, acquiring the file lock first.
+    ///
+    /// Failures must be handled — ignoring them silently defeats tamper-detection.
     #[must_use = "audit write failures must be handled — ignoring them silently defeats tamper-detection"]
     pub fn append(&self, entry: AuditEntry) -> Result<()> {
         if let Some(parent) = self.path.parent() {

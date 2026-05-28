@@ -1,3 +1,5 @@
+//! Pure policy engine: evaluate a prepared policy input and return a decision.
+
 use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 use crate::interceptor::RiskLevel;
 

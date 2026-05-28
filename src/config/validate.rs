@@ -1,9 +1,11 @@
+//! Config validation: layered merge, custom patterns, allowlist rules.
+
 use std::path::Path;
 
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use crate::config::Config;
+use crate::config::AegisConfig;
 use crate::config::allowlist::{
     Allowlist, ConfigSourceLayer, analyze_allowlist_rule, validate_single_rule,
 };
@@ -47,13 +49,13 @@ pub struct ConfigSourceMap {
 
 impl ConfigSourceMap {
     /// Build a source map for the effective config.
-    pub fn for_config(config: &Config) -> Self {
+    pub fn for_config(config: &AegisConfig) -> Self {
         Self::for_config_with_paths(config, None, None)
     }
 
     /// Build a source map for the effective config using resolved config paths.
     pub fn for_config_with_paths(
-        config: &Config,
+        config: &AegisConfig,
         current_dir: Option<&Path>,
         home_dir: Option<&Path>,
     ) -> Self {
@@ -129,8 +131,8 @@ pub fn validate_config_layers(current_dir: &Path, home_dir: Option<&Path>) -> Va
         warnings: Vec::new(),
     };
 
-    let layer_paths = Config::layer_paths_for(current_dir, home_dir);
-    let mut merged = Config::defaults();
+    let layer_paths = AegisConfig::layer_paths_for(current_dir, home_dir);
+    let mut merged = AegisConfig::defaults();
 
     if layer_paths.is_empty() {
         let source_map =
@@ -140,7 +142,7 @@ pub fn validate_config_layers(current_dir: &Path, home_dir: Option<&Path>) -> Va
     }
 
     for layer in layer_paths {
-        match Config::merge_layer_path_unvalidated(merged, &layer) {
+        match AegisConfig::merge_layer_path_unvalidated(merged, &layer) {
             Ok(next) => {
                 merged = next;
                 let source_map =
@@ -172,7 +174,7 @@ pub fn validate_config_layers(current_dir: &Path, home_dir: Option<&Path>) -> Va
 }
 
 /// Validate an effective config.
-pub fn validate_config(config: &Config, source_map: &ConfigSourceMap) -> ValidationReport {
+pub fn validate_config(config: &AegisConfig, source_map: &ConfigSourceMap) -> ValidationReport {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
@@ -264,7 +266,7 @@ pub fn validation_load_error(err: &AegisError) -> ValidationReport {
 }
 
 fn custom_pattern_validation_issue(
-    config: &Config,
+    config: &AegisConfig,
     source_map: &ConfigSourceMap,
 ) -> Option<ValidationIssue> {
     if let Err(err) = interceptor::scanner_for(&config.custom_patterns) {
@@ -293,7 +295,7 @@ fn custom_pattern_validation_issue(
 }
 
 fn first_invalid_allowlist_issue(
-    config: &Config,
+    config: &AegisConfig,
     source_map: &ConfigSourceMap,
 ) -> Option<ValidationIssue> {
     let layered_rules = config.layered_allowlist_rules();
@@ -423,14 +425,14 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ConfigSourceMap, validate_config, validate_config_layers};
-    use crate::config::{AllowlistRule, Config};
+    use crate::config::{AegisConfig, AllowlistRule};
     use crate::error::AegisError;
     use tempfile::TempDir;
     use time::{Duration, OffsetDateTime};
 
     #[test]
     fn validate_reports_warning_for_broad_rule_without_scope() {
-        let config = Config {
+        let config = AegisConfig {
             allowlist: vec![AllowlistRule {
                 pattern: "terraform destroy *".to_string(),
                 cwd: None,
@@ -438,7 +440,7 @@ mod tests {
                 expires_at: None,
                 reason: "broad test rule".to_string(),
             }],
-            ..Config::defaults()
+            ..AegisConfig::defaults()
         };
 
         let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
@@ -454,7 +456,7 @@ mod tests {
 
     #[test]
     fn validate_reports_error_for_unscoped_rule() {
-        let config = Config {
+        let config = AegisConfig {
             allowlist: vec![AllowlistRule {
                 pattern: "terraform destroy *".to_string(),
                 cwd: None,
@@ -462,7 +464,7 @@ mod tests {
                 expires_at: None,
                 reason: "too broad".to_string(),
             }],
-            ..Config::defaults()
+            ..AegisConfig::defaults()
         };
 
         let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
@@ -472,7 +474,7 @@ mod tests {
 
     #[test]
     fn validate_reports_error_for_expired_rule() {
-        let config = Config {
+        let config = AegisConfig {
             allowlist: vec![AllowlistRule {
                 pattern: "terraform destroy -target=module.test.*".to_string(),
                 cwd: None,
@@ -480,7 +482,7 @@ mod tests {
                 expires_at: Some(OffsetDateTime::now_utc() - Duration::days(1)),
                 reason: "expired test rule".to_string(),
             }],
-            ..Config::defaults()
+            ..AegisConfig::defaults()
         };
 
         let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
@@ -490,7 +492,7 @@ mod tests {
 
     #[test]
     fn validate_reports_multiple_audit_errors() {
-        let mut config = Config::defaults();
+        let mut config = AegisConfig::defaults();
         config.audit.rotation_enabled = true;
         config.audit.max_file_size_bytes = 0;
         config.audit.retention_files = 0;
@@ -556,7 +558,7 @@ reason = "wide"
 
     #[test]
     fn validate_scanner_path_runs_when_no_custom_patterns() {
-        let config = Config::defaults();
+        let config = AegisConfig::defaults();
         let report = validate_config(&config, &ConfigSourceMap::for_config(&config));
         assert!(
             !report

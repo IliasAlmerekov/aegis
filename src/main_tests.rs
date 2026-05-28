@@ -2,7 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use aegis::config::Config;
+use aegis::config::AegisConfig;
 use aegis::decision::ExecutionTransport;
 use aegis::interceptor::parser::Parser as CommandParser;
 use aegis::interceptor::scanner::Assessment;
@@ -451,10 +451,10 @@ fn test_handle() -> Handle {
 }
 
 fn context() -> RuntimeContext {
-    RuntimeContext::new(Config::default(), test_handle()).unwrap()
+    RuntimeContext::new(AegisConfig::default(), test_handle()).unwrap()
 }
 
-fn config_from_toml(src: &str) -> Config {
+fn config_from_toml(src: &str) -> AegisConfig {
     toml::from_str(src).unwrap()
 }
 

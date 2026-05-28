@@ -1,5 +1,5 @@
 use aegis::audit::{AuditEntry, AuditLogger, AuditSnapshot, Decision};
-use aegis::config::Config;
+use aegis::config::AegisConfig;
 use aegis::error::AegisError;
 use aegis::interceptor::RiskLevel;
 use aegis::snapshot::{SnapshotRegistry, SnapshotRegistryConfig};
@@ -13,7 +13,7 @@ pub(crate) struct RollbackTarget {
 }
 
 pub(crate) async fn execute(snapshot_id: String) -> Result<RollbackTarget> {
-    let config = Config::load()?;
+    let config = AegisConfig::load()?;
     let audit_logger = AuditLogger::from_audit_config(&config.audit);
     let target = find_snapshot_target(&audit_logger, &snapshot_id)?;
 

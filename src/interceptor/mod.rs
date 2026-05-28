@@ -1,6 +1,10 @@
+/// Nested command extraction (heredocs, inline scripts, process substitution).
 pub(crate) mod nested;
+/// Tokenizer and parser for shell commands.
 pub mod parser;
+/// Pattern definitions, categories, and built-in pattern loading.
 pub mod patterns;
+/// Scanner: keyword-based quick scan + regex full scan.
 pub mod scanner;
 
 use std::collections::HashMap;
@@ -29,11 +33,17 @@ static CUSTOM_SCANNER_CACHE: LazyLock<Mutex<HashMap<String, Arc<scanner::Scanner
 /// `#[non_exhaustive]` ensures match arms in external crates require a wildcard,
 /// preserving forward-compatibility if new levels are added in v2.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, schemars::JsonSchema,
+)]
 pub enum RiskLevel {
+    /// No risk detected; command is safe to execute.
     Safe,
+    /// Potentially dangerous; prompt for confirmation.
     Warn,
+    /// Dangerous; strong confirmation required.
     Danger,
+    /// Never allow this command to run.
     Block,
 }
 

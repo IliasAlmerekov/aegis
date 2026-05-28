@@ -1,0 +1,602 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AegisConfig",
+  "description": "Top-level Aegis runtime configuration.\n\nLoaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)\n→ `.aegis.toml` (project). Later layers override scalar fields; `allow`/`block`\nrules are concatenated.",
+  "type": "object",
+  "properties": {
+    "allow": {
+      "description": "Structured allow-list rules (TOML: `[[allow]]`).",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AllowlistRule"
+      }
+    },
+    "allowlist_override_level": {
+      "description": "Maximum risk level the allow-list may auto-approve in Protect/Strict mode.",
+      "$ref": "#/$defs/AllowlistOverrideLevel",
+      "default": "Warn"
+    },
+    "audit": {
+      "description": "Audit log rotation and integrity settings.",
+      "$ref": "#/$defs/AuditConfig",
+      "default": {
+        "compress_rotated": true,
+        "integrity_mode": "ChainSha256",
+        "max_file_size_bytes": 10485760,
+        "retention_files": 5,
+        "rotation_enabled": false
+      }
+    },
+    "auto_snapshot_docker": {
+      "description": "Enable Docker container snapshots before dangerous commands.",
+      "type": "boolean",
+      "default": false
+    },
+    "auto_snapshot_git": {
+      "description": "Enable Git snapshots before dangerous commands.",
+      "type": "boolean",
+      "default": true
+    },
+    "auto_snapshot_mysql": {
+      "description": "Enable MySQL snapshots before dangerous commands.",
+      "type": "boolean",
+      "default": false
+    },
+    "auto_snapshot_postgres": {
+      "description": "Enable PostgreSQL snapshots before dangerous commands.",
+      "type": "boolean",
+      "default": false
+    },
+    "auto_snapshot_sqlite": {
+      "description": "Enable SQLite snapshots before dangerous commands.",
+      "type": "boolean",
+      "default": false
+    },
+    "auto_snapshot_supabase": {
+      "description": "Enable Supabase snapshots before dangerous commands.",
+      "type": "boolean",
+      "default": false
+    },
+    "block": {
+      "description": "Structured block-list rules (TOML: `[[block]]`).",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BlockRule"
+      }
+    },
+    "ci_policy": {
+      "description": "Behaviour when a CI environment is detected.",
+      "$ref": "#/$defs/CiPolicy",
+      "default": "Block"
+    },
+    "config_version": {
+      "description": "Schema version. Must equal [`CURRENT_CONFIG_VERSION`].",
+      "type": "integer",
+      "format": "uint32",
+      "default": 1,
+      "minimum": 0
+    },
+    "custom_patterns": {
+      "description": "Extra user-defined patterns merged with built-in patterns at runtime.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UserPattern"
+      }
+    },
+    "docker_scope": {
+      "description": "Which Docker containers to include in snapshots.",
+      "$ref": "#/$defs/DockerScope",
+      "default": {
+        "label": "aegis.snapshot",
+        "mode": "Labeled",
+        "name_patterns": []
+      }
+    },
+    "mode": {
+      "description": "Operating mode: `Protect`, `Audit`, or `Strict`.",
+      "$ref": "#/$defs/Mode",
+      "default": "Protect"
+    },
+    "mysql_snapshot": {
+      "description": "MySQL connection details used when snapshotting is enabled.",
+      "$ref": "#/$defs/MysqlSnapshotConfig",
+      "default": {
+        "database": "",
+        "host": "localhost",
+        "port": 3306,
+        "user": ""
+      }
+    },
+    "postgres_snapshot": {
+      "description": "PostgreSQL connection details used when snapshotting is enabled.",
+      "$ref": "#/$defs/PostgresSnapshotConfig",
+      "default": {
+        "database": "",
+        "host": "localhost",
+        "port": 5432,
+        "user": ""
+      }
+    },
+    "snapshot_policy": {
+      "description": "Controls which snapshot plugins run before dangerous commands.",
+      "$ref": "#/$defs/SnapshotPolicy",
+      "default": "Selective"
+    },
+    "sqlite_snapshot_path": {
+      "description": "Path to a SQLite database file, relative to the current working\ndirectory or absolute.",
+      "type": "string",
+      "default": ""
+    },
+    "supabase_snapshot": {
+      "description": "Supabase snapshot provider settings used when snapshotting is enabled.\nLayered config replaces this provider config as a whole.",
+      "$ref": "#/$defs/SupabaseSnapshotConfig",
+      "default": {
+        "db": {
+          "database": "",
+          "host": "localhost",
+          "port": 5432,
+          "user": ""
+        },
+        "project_ref": "",
+        "require_config_target_match_on_rollback": true
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "AllowlistOverrideLevel": {
+      "description": "Maximum override level that structured allowlist rules may grant for\nnon-safe commands in Protect/Strict mode.",
+      "oneOf": [
+        {
+          "description": "Auto-approve allowlisted Warn commands (default).",
+          "type": "string",
+          "const": "Warn"
+        },
+        {
+          "description": "Also auto-approve allowlisted Danger commands.",
+          "type": "string",
+          "const": "Danger"
+        },
+        {
+          "description": "Disable allowlist auto-approval.",
+          "type": "string",
+          "const": "Never"
+        }
+      ]
+    },
+    "AllowlistRule": {
+      "description": "A structured allowlist rule with optional scope, expiry, and rationale.",
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "description": "Optional working-directory scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "description": "Optional expiry timestamp (RFC 3339).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "Command pattern to allow.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Human-readable reason for allowing this pattern.",
+          "type": "string"
+        },
+        "user": {
+          "description": "Optional user scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "reason"
+      ]
+    },
+    "AuditConfig": {
+      "description": "Audit log rotation and integrity configuration.",
+      "type": "object",
+      "properties": {
+        "compress_rotated": {
+          "description": "Compress rotated audit files with gzip.",
+          "type": "boolean",
+          "default": true
+        },
+        "integrity_mode": {
+          "description": "Integrity chaining mode for tamper evidence.",
+          "$ref": "#/$defs/AuditIntegrityMode",
+          "default": "ChainSha256"
+        },
+        "max_file_size_bytes": {
+          "description": "Max audit file size in bytes before rotation.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 10485760,
+          "minimum": 0
+        },
+        "retention_files": {
+          "description": "Number of rotated audit files to retain.",
+          "type": "integer",
+          "format": "uint",
+          "default": 5,
+          "minimum": 0
+        },
+        "rotation_enabled": {
+          "description": "Enable automatic audit log rotation.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "AuditIntegrityMode": {
+      "description": "Audit log integrity protection mode.",
+      "oneOf": [
+        {
+          "description": "No integrity chaining.",
+          "type": "string",
+          "const": "Off"
+        },
+        {
+          "description": "Tamper-evident chained SHA-256 (default).",
+          "type": "string",
+          "const": "ChainSha256"
+        }
+      ]
+    },
+    "BlockRule": {
+      "description": "A structured block rule with optional scope, expiry, and rationale.",
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "description": "Optional working-directory scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expires_at": {
+          "description": "Optional expiry timestamp (RFC 3339).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "Command pattern to block.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Human-readable reason for blocking this pattern.",
+          "type": "string"
+        },
+        "user": {
+          "description": "Optional user scope.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "reason"
+      ]
+    },
+    "Category": {
+      "description": "Which class of operation the pattern guards against.",
+      "oneOf": [
+        {
+          "description": "File system operations (delete, overwrite, chmod, etc.).",
+          "type": "string",
+          "const": "Filesystem"
+        },
+        {
+          "description": "Git history rewrite operations.",
+          "type": "string",
+          "const": "Git"
+        },
+        {
+          "description": "Database DDL/DML operations.",
+          "type": "string",
+          "const": "Database"
+        },
+        {
+          "description": "Cloud-provider resource mutations.",
+          "type": "string",
+          "const": "Cloud"
+        },
+        {
+          "description": "Docker container and image management.",
+          "type": "string",
+          "const": "Docker"
+        },
+        {
+          "description": "Process and system-level operations.",
+          "type": "string",
+          "const": "Process"
+        },
+        {
+          "description": "Package manager operations.",
+          "type": "string",
+          "const": "Package"
+        }
+      ]
+    },
+    "CiPolicy": {
+      "description": "What aegis does when it detects a CI environment.\n\n`Block` is the safe default: no interactive TTY is available in CI, so\nprompting would hang the pipeline.  Instead, non-safe commands are\nhard-blocked and the pipeline fails fast with a clear error message.\n\n`Allow` is an explicit opt-in override for cases where a project has\naudited its CI pipeline and is confident that destructive commands are\nintentional (e.g., a release script that runs `terraform destroy` in a\ntear-down job).  Set this only in `.aegis.toml`, not globally.",
+      "oneOf": [
+        {
+          "description": "Hard-block all non-safe commands. No dialog. Pipeline fails fast.",
+          "type": "string",
+          "const": "Block"
+        },
+        {
+          "description": "Pass-through: commands run without prompting. Use only when you have\ndeliberately reviewed the CI pipeline for destructive commands.",
+          "type": "string",
+          "const": "Allow"
+        }
+      ]
+    },
+    "DockerScope": {
+      "description": "Scoping rules that decide *which* Docker containers are eligible for snapshot.\n\nStored under `[docker_scope]` in `aegis.toml`.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Label selector for `Labeled` mode.  The container must carry this label\nwith value `\"true\"` to be eligible (e.g. `aegis.snapshot=true`).",
+          "type": "string",
+          "default": "aegis.snapshot"
+        },
+        "mode": {
+          "description": "Selection strategy.",
+          "$ref": "#/$defs/DockerScopeMode",
+          "default": "Labeled"
+        },
+        "name_patterns": {
+          "description": "Name patterns for `Names` mode.  Each pattern is passed as a separate\n`--filter name=<pat>` argument to `docker ps` (Docker ORs them).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DockerScopeMode": {
+      "description": "Which Docker containers to include in snapshots.\n\n- `Labeled` (default) — only containers with a specific label.\n- `All`               — every running container (legacy blanket behaviour).\n- `Names`             — containers whose name matches one of the given patterns.",
+      "oneOf": [
+        {
+          "description": "Only snapshot containers carrying the opt-in label (default).",
+          "type": "string",
+          "const": "Labeled"
+        },
+        {
+          "description": "Snapshot every running container — use with care on busy hosts.",
+          "type": "string",
+          "const": "All"
+        },
+        {
+          "description": "Snapshot containers whose name matches at least one pattern.",
+          "type": "string",
+          "const": "Names"
+        }
+      ]
+    },
+    "Mode": {
+      "description": "Aegis operating mode.",
+      "oneOf": [
+        {
+          "description": "Prompt on Warn/Danger (default).",
+          "type": "string",
+          "const": "Protect"
+        },
+        {
+          "description": "Non-blocking audit-only mode.",
+          "type": "string",
+          "const": "Audit"
+        },
+        {
+          "description": "Block non-safe and indirect execution by default.",
+          "type": "string",
+          "const": "Strict"
+        }
+      ]
+    },
+    "MysqlSnapshotConfig": {
+      "description": "Connection settings for a MySQL snapshot plugin.\n\nCredentials are provided externally via `MYSQL_PWD` or `~/.my.cnf`.\nThe plugin is a no-op when [`database`](Self::database) is empty.",
+      "type": "object",
+      "properties": {
+        "database": {
+          "description": "MySQL database name to snapshot.",
+          "type": "string",
+          "default": ""
+        },
+        "host": {
+          "description": "MySQL host name or address.",
+          "type": "string",
+          "default": "localhost"
+        },
+        "port": {
+          "description": "MySQL port.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 3306,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "user": {
+          "description": "MySQL user name.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    },
+    "PostgresSnapshotConfig": {
+      "description": "Connection settings for a PostgreSQL snapshot plugin.\n\nCredentials are provided externally via `PGPASSWORD` or `~/.pgpass`.\nThe plugin is a no-op when [`database`](Self::database) is empty.",
+      "type": "object",
+      "properties": {
+        "database": {
+          "description": "PostgreSQL database name to snapshot.",
+          "type": "string",
+          "default": ""
+        },
+        "host": {
+          "description": "PostgreSQL host name or address.",
+          "type": "string",
+          "default": "localhost"
+        },
+        "port": {
+          "description": "PostgreSQL port.",
+          "type": "integer",
+          "format": "uint16",
+          "default": 5432,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "user": {
+          "description": "PostgreSQL user name.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    },
+    "RiskLevel": {
+      "description": "Classifies the risk level of a shell command.\n\nOrdered by severity: `Safe < Warn < Danger < Block`.\n\n`#[non_exhaustive]` ensures match arms in external crates require a wildcard,\npreserving forward-compatibility if new levels are added in v2.",
+      "oneOf": [
+        {
+          "description": "No risk detected; command is safe to execute.",
+          "type": "string",
+          "const": "Safe"
+        },
+        {
+          "description": "Potentially dangerous; prompt for confirmation.",
+          "type": "string",
+          "const": "Warn"
+        },
+        {
+          "description": "Dangerous; strong confirmation required.",
+          "type": "string",
+          "const": "Danger"
+        },
+        {
+          "description": "Never allow this command to run.",
+          "type": "string",
+          "const": "Block"
+        }
+      ]
+    },
+    "SnapshotPolicy": {
+      "description": "Controls when and how snapshot plugins run before dangerous commands.\n\n- `None`      — never snapshot.\n- `Selective` — only plugins enabled by `auto_snapshot_git` /\n  `auto_snapshot_docker` / `auto_snapshot_postgres` /\n  `auto_snapshot_mysql` / `auto_snapshot_supabase` /\n  `auto_snapshot_sqlite`.\n- `Full`      — run every registered plugin regardless of per-plugin flags.",
+      "oneOf": [
+        {
+          "description": "Never create snapshots.",
+          "type": "string",
+          "const": "None"
+        },
+        {
+          "description": "Honour per-plugin flags (default — backwards-compatible).",
+          "type": "string",
+          "const": "Selective"
+        },
+        {
+          "description": "Run all snapshot plugins unconditionally.",
+          "type": "string",
+          "const": "Full"
+        }
+      ]
+    },
+    "SupabaseSnapshotConfig": {
+      "description": "Configuration settings for the Supabase snapshot provider.\n\n`project_ref` is advisory-only for audit/UI and future phases. The\nrollback target-match setting is part of the bundle definition for later\nrollback flows that compare the active config target with the manifest\ntarget. Phase 1 uses the direct PostgreSQL transport in [`db`](Self::db).",
+      "type": "object",
+      "properties": {
+        "db": {
+          "description": "Phase 1 direct PostgreSQL transport for Supabase snapshots.",
+          "$ref": "#/$defs/PostgresSnapshotConfig",
+          "default": {
+            "database": "",
+            "host": "localhost",
+            "port": 5432,
+            "user": ""
+          }
+        },
+        "project_ref": {
+          "description": "Advisory-only Supabase project reference for audit/UI and future phases.",
+          "type": "string",
+          "default": ""
+        },
+        "require_config_target_match_on_rollback": {
+          "description": "Target-match preference for rollback flows that compare config targets.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "UserPattern": {
+      "description": "A user-defined pattern loaded from `aegis.toml`.",
+      "type": "object",
+      "properties": {
+        "category": {
+          "description": "Semantic category (e.g. Filesystem, Database).",
+          "$ref": "#/$defs/Category"
+        },
+        "description": {
+          "description": "Human-readable explanation of what this pattern detects.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Unique identifier for this pattern.",
+          "type": "string"
+        },
+        "justification": {
+          "description": "Optional rationale for adding this pattern.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pattern": {
+          "description": "Regex or literal pattern string.",
+          "type": "string"
+        },
+        "risk": {
+          "description": "Risk level assigned when this pattern matches.",
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "safe_alt": {
+          "description": "Safer alternative command to suggest, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "category",
+        "risk",
+        "pattern",
+        "description"
+      ]
+    }
+  }
+}
