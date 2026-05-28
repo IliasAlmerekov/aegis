@@ -8,6 +8,7 @@ use super::*;
 use crate::config::AuditConfig;
 
 impl AuditRotationPolicy {
+    /// Build a rotation policy from the effective audit config, if enabled.
     pub fn from_config(config: &AuditConfig) -> Option<Self> {
         config.rotation_enabled.then_some(Self {
             max_file_size_bytes: config.max_file_size_bytes,

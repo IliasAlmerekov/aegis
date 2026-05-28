@@ -10,6 +10,7 @@ use super::PromptDecision;
 use super::block_screen::{render_block, render_policy_block};
 use super::stdout_renderer::show_confirmation_with_decision;
 
+/// Return the default decision when a TTY is not available.
 pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {
     matches!(assessment.risk, RiskLevel::Safe)
 }

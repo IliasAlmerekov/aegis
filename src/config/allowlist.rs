@@ -1,3 +1,5 @@
+//! Allowlist and blocklist compilation, matching, and analysis.
+
 use std::path::Path;
 
 use regex::Regex;
@@ -8,6 +10,13 @@ use crate::config::{AllowlistRule, BlockRule};
 use crate::error::AegisError;
 
 type Result<T> = std::result::Result<T, AegisError>;
+
+mod analysis;
+mod compile;
+
+pub use analysis::{analyze_allowlist_rule, analyze_blocklist_rule};
+pub(crate) use compile::validate_single_rule;
+use compile::{compile_block_rule, compile_rule};
 
 /// Configuration layer that supplied an allowlist rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,36 +213,6 @@ impl Allowlist {
     }
 }
 
-/// Produce advisory warnings for one structured allowlist rule.
-///
-/// This analysis is informational only. It does not participate in
-/// authoritative runtime allow/deny matching, which is performed exclusively
-/// by the compiled [`Allowlist`].
-pub fn analyze_allowlist_rule(rule: &AllowlistRule) -> Vec<AllowlistWarning> {
-    let mut warnings = Vec::new();
-    let location = warning_location(rule);
-
-    if !has_scope(rule.cwd.as_deref()) && !has_scope(rule.user.as_deref()) {
-        warnings.push(AllowlistWarning {
-            code: "missing_scope",
-            message: "allowlist rule has no cwd or user scope".to_string(),
-            location: location.clone(),
-        });
-    }
-
-    if is_broad_pattern(rule.pattern.trim()) {
-        warnings.push(AllowlistWarning {
-            code: "broad_pattern",
-            message:
-                "allowlist rule uses wildcard matching that may be broader than intended and can span compound shell commands like `&&`, `;`, or `|`"
-                    .to_string(),
-            location,
-        });
-    }
-
-    warnings
-}
-
 impl CompiledRule {
     fn is_effective(&self, context: &AllowlistContext<'_>) -> bool {
         self.matches_pattern(context.command)
@@ -263,119 +242,6 @@ impl CompiledRule {
     fn is_expired(&self, now: OffsetDateTime) -> bool {
         self.expires_at.is_some_and(|expires_at| expires_at <= now)
     }
-}
-
-fn validate_scope_fields(rule_type: &str, cwd: Option<&str>, user: Option<&str>) -> Result<()> {
-    if has_scope(cwd) || has_scope(user) {
-        Ok(())
-    } else {
-        Err(AegisError::Config(format!(
-            "{rule_type} rule must declare cwd or user scope"
-        )))
-    }
-}
-
-pub(crate) fn validate_single_rule(rule: LayeredAllowlistRule) -> Result<()> {
-    compile_rule(rule).map(|_| ())
-}
-
-fn compile_rule(rule: LayeredAllowlistRule) -> Result<CompiledRule> {
-    compile_fields(
-        "allowlist",
-        &rule.rule.pattern,
-        &rule.rule.reason,
-        rule.rule.cwd.as_deref(),
-        rule.rule.user.as_deref(),
-        rule.rule.expires_at,
-        rule.source_layer,
-    )
-}
-
-fn compile_fields(
-    rule_type: &str,
-    pattern: &str,
-    reason: &str,
-    cwd: Option<&str>,
-    user: Option<&str>,
-    expires_at: Option<OffsetDateTime>,
-    source_layer: ConfigSourceLayer,
-) -> Result<CompiledRule> {
-    let pattern = required_field(rule_type, "pattern", pattern)?;
-    let reason = required_field(rule_type, "reason", reason)?;
-    let cwd = optional_scope_field(rule_type, "cwd", cwd)?;
-    let user = optional_scope_field(rule_type, "user", user)?;
-
-    validate_scope_fields(rule_type, cwd.as_deref(), user.as_deref())?;
-
-    let regex = Regex::new(&glob_to_regex(pattern)).map_err(|error| {
-        AegisError::Config(format!(
-            "invalid {rule_type} rule pattern {:?}: {error}",
-            pattern
-        ))
-    })?;
-
-    Ok(CompiledRule {
-        pattern: pattern.to_string(),
-        cwd,
-        user,
-        expires_at,
-        reason: reason.to_string(),
-        source_layer,
-        regex,
-    })
-}
-
-fn required_field<'a>(rule_type: &str, field: &str, value: &'a str) -> Result<&'a str> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(AegisError::Config(format!(
-            "{rule_type} rule {field} must not be empty"
-        )));
-    }
-
-    Ok(trimmed)
-}
-
-fn optional_scope_field(
-    rule_type: &str,
-    field: &str,
-    value: Option<&str>,
-) -> Result<Option<String>> {
-    match value {
-        Some(value) => Ok(Some(required_field(rule_type, field, value)?.to_string())),
-        None => Ok(None),
-    }
-}
-
-fn has_scope(value: Option<&str>) -> bool {
-    value.is_some_and(|value| !value.trim().is_empty())
-}
-
-fn is_broad_pattern(pattern: &str) -> bool {
-    pattern.contains('*') || pattern.contains('?')
-}
-
-fn warning_location(rule: &AllowlistRule) -> String {
-    format!("allowlist:{}", rule.pattern.trim())
-}
-
-fn glob_to_regex(pattern: &str) -> String {
-    let mut regex = String::from("^");
-
-    for ch in pattern.chars() {
-        match ch {
-            '*' => regex.push_str("[^;&|]+"),
-            '?' => regex.push('.'),
-            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | '[' | ']' | '\\' => {
-                regex.push('\\');
-                regex.push(ch);
-            }
-            _ => regex.push(ch),
-        }
-    }
-
-    regex.push('$');
-    regex
 }
 
 // ── Blocklist types and runtime matcher ────────────────────────────────────
@@ -483,50 +349,6 @@ impl Blocklist {
     pub fn is_blocked(&self, context: &AllowlistContext<'_>) -> bool {
         self.match_reason(context).is_some()
     }
-}
-
-/// Produce advisory warnings for one structured blocklist rule.
-pub fn analyze_blocklist_rule(rule: &BlockRule) -> Vec<BlocklistWarning> {
-    let mut warnings = Vec::new();
-    let location = block_warning_location(rule);
-
-    if !has_scope(rule.cwd.as_deref()) && !has_scope(rule.user.as_deref()) {
-        warnings.push(BlocklistWarning {
-            code: "missing_scope",
-            message:
-                "blocklist rule blocks globally; consider adding cwd or user scope to narrow impact"
-                    .to_string(),
-            location: location.clone(),
-        });
-    }
-
-    if is_broad_pattern(rule.pattern.trim()) {
-        warnings.push(BlocklistWarning {
-            code: "broad_pattern",
-            message:
-                "blocklist rule uses wildcard matching that may be broader than intended and can span compound shell commands like `&&`, `;`, or `|`"
-                    .to_string(),
-            location,
-        });
-    }
-
-    warnings
-}
-
-fn compile_block_rule(rule: LayeredBlocklistRule) -> Result<CompiledRule> {
-    compile_fields(
-        "blocklist",
-        &rule.rule.pattern,
-        &rule.rule.reason,
-        rule.rule.cwd.as_deref(),
-        rule.rule.user.as_deref(),
-        rule.rule.expires_at,
-        rule.source_layer,
-    )
-}
-
-fn block_warning_location(rule: &BlockRule) -> String {
-    format!("blocklist:{}", rule.pattern.trim())
 }
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+//! Pure planning logic: build a planning outcome from a runtime context.
+
 use std::path::Path;
 
 use crate::decision::{
@@ -94,7 +96,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::config::{Config, Mode, SnapshotPolicy};
+    use crate::config::{AegisConfig, Mode, SnapshotPolicy};
     use crate::decision::ExecutionTransport;
     use crate::planning::types::{
         ApprovalRequirement, ExecutionDisposition, PlanningOutcome, SnapshotPlan,
@@ -116,12 +118,12 @@ mod tests {
     static CURRENT_DIR_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     fn context(mode: Mode, snapshot_policy: SnapshotPolicy) -> RuntimeContext {
-        let config = Config {
+        let config = AegisConfig {
             mode,
             snapshot_policy,
             auto_snapshot_git: false,
             auto_snapshot_docker: false,
-            ..Config::default()
+            ..AegisConfig::default()
         };
         RuntimeContext::new(config, test_handle()).unwrap()
     }
@@ -151,12 +153,12 @@ mod tests {
     fn safe_command_plan_does_not_materialize_snapshot_registry() {
         crate::snapshot::reset_snapshot_registry_build_count_for_tests();
 
-        let config = Config {
+        let config = AegisConfig {
             mode: Mode::Protect,
             snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
-            ..Config::default()
+            ..AegisConfig::default()
         };
         let context = RuntimeContext::new(config, test_handle()).unwrap();
 
@@ -210,11 +212,11 @@ mod tests {
     fn warn_command_plan_keeps_snapshot_registry_unmaterialized() {
         crate::snapshot::reset_snapshot_registry_build_count_for_tests();
 
-        let config = Config {
+        let config = AegisConfig {
             mode: Mode::Protect,
             snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
-            ..Config::default()
+            ..AegisConfig::default()
         };
         let context = RuntimeContext::new(config, test_handle()).unwrap();
 
@@ -270,12 +272,12 @@ mod tests {
             .unwrap();
         std::env::set_current_dir(workspace.path()).unwrap();
 
-        let config = Config {
+        let config = AegisConfig {
             mode: Mode::Protect,
             snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
-            ..Config::default()
+            ..AegisConfig::default()
         };
         let context = RuntimeContext::new(config, test_handle()).unwrap();
 
@@ -316,12 +318,12 @@ mod tests {
             .unwrap();
         std::env::set_current_dir(workspace.path()).unwrap();
 
-        let config = Config {
+        let config = AegisConfig {
             mode: Mode::Protect,
             snapshot_policy: SnapshotPolicy::Selective,
             auto_snapshot_git: true,
             auto_snapshot_docker: false,
-            ..Config::default()
+            ..AegisConfig::default()
         };
         let context = RuntimeContext::new(config, test_handle()).unwrap();
 

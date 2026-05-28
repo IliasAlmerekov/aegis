@@ -1,3 +1,6 @@
+//! User detection for scoped allowlist and audit attribution.
+
+#[cfg(not(windows))]
 use std::path::Path;
 #[cfg(not(windows))]
 use std::path::PathBuf;
@@ -44,6 +47,7 @@ fn run_id_command(id_path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(windows))]
     use super::*;
 
     #[cfg(not(windows))]

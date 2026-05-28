@@ -27,7 +27,7 @@ fn test_handle() -> Handle {
 
 #[test]
 fn custom_patterns_are_built_once_into_runtime_scanner() {
-    let config = Config {
+    let config = AegisConfig {
         custom_patterns: vec![UserPattern {
             id: "USR-CTX-001".to_string(),
             category: Category::Process,
@@ -37,7 +37,7 @@ fn custom_patterns_are_built_once_into_runtime_scanner() {
             safe_alt: None,
             justification: None,
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let context = RuntimeContext::new(config, test_handle()).unwrap();
@@ -50,7 +50,7 @@ fn custom_patterns_are_built_once_into_runtime_scanner() {
 
 #[test]
 fn invalid_custom_scanner_aborts_runtime_context_construction() {
-    let config = Config {
+    let config = AegisConfig {
         custom_patterns: vec![UserPattern {
             id: "FS-001".to_string(),
             category: Category::Filesystem,
@@ -60,7 +60,7 @@ fn invalid_custom_scanner_aborts_runtime_context_construction() {
             safe_alt: None,
             justification: None,
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let err = match RuntimeContext::new(config, test_handle()) {
@@ -75,7 +75,7 @@ fn invalid_custom_scanner_aborts_runtime_context_construction() {
 fn config_is_shared_across_runtime_dependencies() {
     use crate::config::AllowlistRule;
 
-    let config = Config {
+    let config = AegisConfig {
         allowlist_override_level: AllowlistOverrideLevel::Danger,
         allowlist: vec![AllowlistRule {
             pattern: "echo trusted".to_string(),
@@ -87,7 +87,7 @@ fn config_is_shared_across_runtime_dependencies() {
         auto_snapshot_git: false,
         auto_snapshot_docker: false,
         ci_policy: CiPolicy::Allow,
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let context = RuntimeContext::new(config.clone(), test_handle()).unwrap();
@@ -126,7 +126,7 @@ fn runtime_context_rejects_expired_allowlist_rules() {
     use crate::config::AllowlistRule;
     use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: None,
@@ -134,7 +134,7 @@ fn runtime_context_rejects_expired_allowlist_rules() {
             expires_at: Some(OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).unwrap()),
             reason: "expired teardown".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let err = match RuntimeContext::new(config, test_handle()) {
@@ -149,7 +149,7 @@ fn runtime_context_rejects_expired_allowlist_rules() {
 fn runtime_context_rejects_unscoped_allowlist_rules() {
     use crate::config::AllowlistRule;
 
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![AllowlistRule {
             pattern: "terraform destroy *".to_string(),
             cwd: None,
@@ -157,7 +157,7 @@ fn runtime_context_rejects_unscoped_allowlist_rules() {
             expires_at: None,
             reason: "too broad".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let err = match RuntimeContext::new(config, test_handle()) {
@@ -171,7 +171,7 @@ fn runtime_context_rejects_unscoped_allowlist_rules() {
 fn runtime_context_accepts_scoped_allowlist_rules() {
     use crate::config::AllowlistRule;
 
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: Some("/srv/infra".to_string()),
@@ -179,7 +179,7 @@ fn runtime_context_accepts_scoped_allowlist_rules() {
             expires_at: None,
             reason: "scoped teardown".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let context = RuntimeContext::new(config, test_handle()).unwrap();
@@ -200,7 +200,7 @@ fn runtime_context_accepts_user_scoped_allowlist_rules() {
     let Some(current_user) = detect_effective_user() else {
         return;
     };
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: None,
@@ -208,7 +208,7 @@ fn runtime_context_accepts_user_scoped_allowlist_rules() {
             expires_at: None,
             reason: "scoped teardown".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let context = RuntimeContext::new(config, test_handle()).unwrap();
@@ -229,7 +229,7 @@ fn runtime_context_accepts_user_scoped_allowlist_rules() {
 fn unknown_user_does_not_match_user_scoped_allowlist_rule() {
     use crate::config::AllowlistRule;
 
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: None,
@@ -237,7 +237,7 @@ fn unknown_user_does_not_match_user_scoped_allowlist_rule() {
             expires_at: None,
             reason: "user scoped teardown".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let mut context = RuntimeContext::new(config, test_handle()).unwrap();
@@ -257,7 +257,7 @@ fn unknown_user_does_not_match_user_scoped_allowlist_rule() {
 fn unknown_cwd_does_not_match_cwd_scoped_allowlist_rule() {
     use crate::config::AllowlistRule;
 
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![AllowlistRule {
             pattern: "terraform destroy -target=module.test.*".to_string(),
             cwd: Some("/srv/infra".to_string()),
@@ -265,7 +265,7 @@ fn unknown_cwd_does_not_match_cwd_scoped_allowlist_rule() {
             expires_at: None,
             reason: "scoped teardown".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let context = RuntimeContext::new(config, test_handle()).unwrap();
@@ -313,7 +313,7 @@ expires_at = "2030-01-01T00:00:00Z"
     )
     .unwrap();
 
-    let config = Config::load_for(workspace.path(), Some(home.path())).unwrap();
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
     let context = RuntimeContext::new(config, test_handle()).unwrap();
     let matched = context
         .allowlist_match_for_command(
@@ -342,10 +342,10 @@ fn runtime_context_uses_external_handle_for_snapshots() {
         .unwrap();
     let handle = rt.handle().clone();
 
-    let config = Config {
+    let config = AegisConfig {
         auto_snapshot_git: false,
         auto_snapshot_docker: false,
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let context = RuntimeContext::new(config, handle).unwrap();
@@ -360,11 +360,11 @@ fn runtime_context_uses_external_handle_for_snapshots() {
 fn runtime_context_new_does_not_build_snapshot_registry_eagerly() {
     crate::snapshot::reset_snapshot_registry_build_count_for_tests();
 
-    let config = Config {
+    let config = AegisConfig {
         snapshot_policy: SnapshotPolicy::Selective,
         auto_snapshot_git: true,
         auto_snapshot_docker: false,
-        ..Config::default()
+        ..AegisConfig::default()
     };
 
     let _context = RuntimeContext::new(config, test_handle()).unwrap();
@@ -385,7 +385,7 @@ fn runtime_context_new_requires_handle_parameter() {
         .build()
         .unwrap();
     let handle = rt.handle().clone();
-    let config = Config::default();
+    let config = AegisConfig::default();
 
     // Must compile with two arguments.
     let _context = RuntimeContext::new(config, handle).unwrap();
@@ -393,7 +393,7 @@ fn runtime_context_new_requires_handle_parameter() {
 
 #[test]
 fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
-    let context = RuntimeContext::new(Config::default(), test_handle()).unwrap();
+    let context = RuntimeContext::new(AegisConfig::default(), test_handle()).unwrap();
     let assessment = context.assess("rm -rf target");
     let snapshots = vec![SnapshotRecord {
         plugin: "git",
@@ -460,7 +460,7 @@ fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
 
 #[test]
 fn append_audit_entry_preserves_allowlist_context_fields() {
-    let config = Config {
+    let config = AegisConfig {
         allowlist: vec![crate::config::AllowlistRule {
             pattern: "rm -rf target".to_string(),
             cwd: Some(".".to_string()),
@@ -468,7 +468,7 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
             expires_at: None,
             reason: "approved cleanup".to_string(),
         }],
-        ..Config::default()
+        ..AegisConfig::default()
     };
     let context = RuntimeContext::new(config, test_handle()).unwrap();
     let assessment = context.assess("rm -rf target");

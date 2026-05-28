@@ -8,6 +8,7 @@ use super::*;
 use crate::error::AegisError;
 
 impl AuditLogger {
+    /// Read every audit entry from all segments, oldest first.
     #[must_use = "audit log entries must be used or explicitly discarded"]
     pub fn read_all(&self) -> Result<Vec<AuditEntry>> {
         let _lock = self.acquire_shared_lock()?;
@@ -18,6 +19,7 @@ impl AuditLogger {
         Ok(entries)
     }
 
+    /// Filter audit entries according to the given query.
     #[must_use = "audit query result must be used or explicitly discarded"]
     pub fn query(&self, query: AuditQuery) -> Result<Vec<AuditEntry>> {
         let mut entries = self.read_all()?;
@@ -35,6 +37,7 @@ impl AuditLogger {
         Ok(entries)
     }
 
+    /// Render a human-readable table of audit entries.
     pub fn format_entries(entries: &[AuditEntry]) -> String {
         if entries.is_empty() {
             return "No audit entries matched.\n".to_string();
@@ -98,6 +101,7 @@ impl AuditLogger {
         out
     }
 
+    /// Summarise a slice of audit entries into counts and top patterns.
     pub fn summarize_entries(entries: &[AuditEntry]) -> AuditSummary {
         let mut summary = AuditSummary {
             total_entries: entries.len(),
@@ -142,6 +146,7 @@ impl AuditLogger {
         summary
     }
 
+    /// Render a human-readable summary of audit statistics.
     pub fn format_summary(summary: &AuditSummary) -> String {
         if summary.total_entries == 0 {
             return "No audit entries matched.\n".to_string();
