@@ -258,7 +258,12 @@ impl From<AuditEntryFlat> for AuditEntry {
             allowlist_reason: flat.allowlist_reason,
         };
         if is_watch {
-            AuditEntry::Watch(WatchEntry { base, source: flat.source, cwd: flat.cwd, id: flat.id })
+            AuditEntry::Watch(WatchEntry {
+                base,
+                source: flat.source,
+                cwd: flat.cwd,
+                id: flat.id,
+            })
         } else {
             AuditEntry::Decision(base)
         }

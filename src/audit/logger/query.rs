@@ -297,7 +297,10 @@ fn entry_matches_query(entry: &AuditEntry, query: &AuditQuery) -> bool {
         return false;
     }
 
-    if query.decision.is_some_and(|decision| base.decision != decision) {
+    if query
+        .decision
+        .is_some_and(|decision| base.decision != decision)
+    {
         return false;
     }
 

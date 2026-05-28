@@ -63,9 +63,12 @@ impl AuditEntry {
         id: Option<String>,
     ) -> Self {
         match self {
-            AuditEntry::Decision(base) => {
-                AuditEntry::Watch(WatchEntry { base, source, cwd, id })
-            }
+            AuditEntry::Decision(base) => AuditEntry::Watch(WatchEntry {
+                base,
+                source,
+                cwd,
+                id,
+            }),
             AuditEntry::Watch(mut w) => {
                 w.source = source;
                 w.cwd = cwd;

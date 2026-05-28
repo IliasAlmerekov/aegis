@@ -176,7 +176,11 @@ fn query_filters_by_risk() {
         })
         .unwrap();
     assert_eq!(entries.len(), 2);
-    assert!(entries.iter().all(|entry| entry.as_base().risk == RiskLevel::Warn));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.as_base().risk == RiskLevel::Warn)
+    );
 }
 
 #[test]
@@ -740,7 +744,10 @@ fn read_all_accepts_legacy_unix_seconds_timestamp() {
 
     let entries = logger.read_all().unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].as_base().timestamp.to_string(), "2023-11-14T22:13:20Z");
+    assert_eq!(
+        entries[0].as_base().timestamp.to_string(),
+        "2023-11-14T22:13:20Z"
+    );
     assert_eq!(entries[0].as_base().sequence, 0);
 }
 

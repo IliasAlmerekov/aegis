@@ -38,7 +38,9 @@ impl AuditLogger {
                 index: 1,
             };
             let entries = self.read_entries_from_segment(&segment, None)?;
-            return Ok(entries.last().and_then(|entry| entry.as_base().entry_hash.clone()));
+            return Ok(entries
+                .last()
+                .and_then(|entry| entry.as_base().entry_hash.clone()));
         }
 
         Ok(None)
