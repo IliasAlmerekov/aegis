@@ -34,7 +34,7 @@ fn find_snapshot_target(logger: &AuditLogger, snapshot_id: &str) -> Result<Rollb
     entries
         .iter()
         .rev()
-        .flat_map(|entry| entry.snapshots.iter().rev())
+        .flat_map(|entry| entry.as_base().snapshots.iter().rev())
         .find(|snapshot| snapshot.snapshot_id == snapshot_id)
         .map(|snapshot| RollbackTarget {
             plugin: snapshot.plugin.clone(),

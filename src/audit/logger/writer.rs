@@ -18,21 +18,24 @@ impl AuditEntry {
         allowlist_pattern: Option<String>,
         allowlist_reason: Option<String>,
     ) -> Self {
-        Self {
+        let command = command.into();
+        let pattern_ids = matched_patterns.iter().map(|p| p.id.clone()).collect();
+        Self::Decision(DecisionEntry {
             timestamp: current_timestamp(),
             sequence: next_sequence(),
-            command: command.into(),
+            command,
             risk,
-            pattern_ids: matched_patterns
-                .iter()
-                .map(|pattern| pattern.id.clone())
-                .collect(),
+            pattern_ids,
             matched_patterns,
             decision,
             snapshots,
             explanation: None,
             mode: None,
             ci_detected: None,
+            // Fresh entries explicitly record `false` so that downstream code
+            // does not have to distinguish "not set" from "set to false".
+            // Legacy entries deserialized with `None` are back-filled in
+            // `normalize_legacy_fields` based on `allowlist_pattern` presence.
             allowlist_matched: Some(false),
             allowlist_effective: Some(false),
             chain_alg: None,
@@ -40,31 +43,39 @@ impl AuditEntry {
             entry_hash: None,
             allowlist_pattern,
             allowlist_reason,
-            source: None,
-            cwd: None,
-            id: None,
-            transport: None,
-        }
+        })
     }
 
     /// Attach the nested explanation view without altering legacy top-level fields.
     pub fn with_explanation(mut self, explanation: CommandExplanation) -> Self {
-        self.explanation = Some(explanation);
+        self.as_base_mut().explanation = Some(explanation);
         self
     }
 
-    /// Attach watch-mode context fields and set `transport = "watch"`.
+    /// Convert to a watch-mode entry, attaching frame correlation fields.
+    ///
+    /// If called on a `Decision` entry it is promoted to `Watch`. If already
+    /// `Watch`, only the correlation fields are updated.
     pub fn with_watch_context(
-        mut self,
+        self,
         source: Option<String>,
         cwd: Option<String>,
         id: Option<String>,
     ) -> Self {
-        self.source = source;
-        self.cwd = cwd;
-        self.id = id;
-        self.transport = Some("watch".to_string());
-        self
+        match self {
+            AuditEntry::Decision(base) => AuditEntry::Watch(WatchEntry {
+                base,
+                source,
+                cwd,
+                id,
+            }),
+            AuditEntry::Watch(mut w) => {
+                w.source = source;
+                w.cwd = cwd;
+                w.id = id;
+                AuditEntry::Watch(w)
+            }
+        }
     }
 
     /// Attach the evaluated policy context captured at runtime.
@@ -75,30 +86,29 @@ impl AuditEntry {
         allowlist_matched: bool,
         allowlist_effective: bool,
     ) -> Self {
-        self.mode = Some(mode);
-        self.ci_detected = Some(ci_detected);
-        self.allowlist_matched = Some(allowlist_matched);
-        self.allowlist_effective = Some(allowlist_effective);
+        let base = self.as_base_mut();
+        base.mode = Some(mode);
+        base.ci_detected = Some(ci_detected);
+        base.allowlist_matched = Some(allowlist_matched);
+        base.allowlist_effective = Some(allowlist_effective);
         self
     }
 
     pub(super) fn normalize_legacy_fields(mut self) -> Self {
-        if self.pattern_ids.is_empty() {
-            self.pattern_ids = self
-                .matched_patterns
-                .iter()
-                .map(|pattern| pattern.id.clone())
-                .collect();
+        let base = self.as_base_mut();
+        if base.pattern_ids.is_empty() {
+            base.pattern_ids = base.matched_patterns.iter().map(|p| p.id.clone()).collect();
         }
-
-        let allowlist_present = self.allowlist_pattern.is_some();
-        if self.allowlist_matched.is_none() {
-            self.allowlist_matched = Some(allowlist_present);
+        // Only legacy entries (deserialized from old logs) arrive here with
+        // `allowlist_matched == None`.  Fresh entries created via `new()` already
+        // set these fields to `Some(false)` above.
+        let allowlist_present = base.allowlist_pattern.is_some();
+        if base.allowlist_matched.is_none() {
+            base.allowlist_matched = Some(allowlist_present);
         }
-        if self.allowlist_effective.is_none() {
-            self.allowlist_effective = Some(allowlist_present);
+        if base.allowlist_effective.is_none() {
+            base.allowlist_effective = Some(allowlist_present);
         }
-
         self
     }
 
@@ -107,9 +117,10 @@ impl AuditEntry {
         prev_hash: Option<String>,
         entry_hash: String,
     ) -> Self {
-        self.chain_alg = Some(CHAIN_ALG_SHA256.to_string());
-        self.prev_hash = prev_hash;
-        self.entry_hash = Some(entry_hash);
+        let base = self.as_base_mut();
+        base.chain_alg = Some(CHAIN_ALG_SHA256.to_string());
+        base.prev_hash = prev_hash;
+        base.entry_hash = Some(entry_hash);
         self
     }
 }

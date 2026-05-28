@@ -14,7 +14,7 @@ use crate::explanation::{
 use tempfile::TempDir;
 
 fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
-    AuditEntry {
+    AuditEntry::Decision(DecisionEntry {
         timestamp: AuditTimestamp::from_unix_seconds(1_700_000_000 + index as i64).unwrap(),
         sequence: index as u64 + 1,
         command: format!("command-{index}"),
@@ -49,11 +49,7 @@ fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
         entry_hash: None,
         allowlist_pattern: None,
         allowlist_reason: None,
-        source: None,
-        cwd: None,
-        id: None,
-        transport: None,
-    }
+    })
 }
 
 fn explanation_with_match_text(matched_text: &str) -> CommandExplanation {
@@ -133,32 +129,25 @@ fn append_and_read_back_five_entries_field_by_field() {
     assert_eq!(read_back.len(), 5);
 
     for (expected, actual) in written.iter().zip(read_back.iter()) {
-        assert_eq!(actual.timestamp, expected.timestamp);
-        assert_eq!(actual.command, expected.command);
-        assert_eq!(actual.risk, expected.risk);
-        assert_eq!(actual.decision, expected.decision);
-        assert_eq!(
-            actual.matched_patterns.len(),
-            expected.matched_patterns.len()
-        );
-        assert_eq!(actual.snapshots.len(), expected.snapshots.len());
+        let exp = expected.as_base();
+        let act = actual.as_base();
+        assert_eq!(act.timestamp, exp.timestamp);
+        assert_eq!(act.command, exp.command);
+        assert_eq!(act.risk, exp.risk);
+        assert_eq!(act.decision, exp.decision);
+        assert_eq!(act.matched_patterns.len(), exp.matched_patterns.len());
+        assert_eq!(act.snapshots.len(), exp.snapshots.len());
 
-        for (expected_pattern, actual_pattern) in expected
-            .matched_patterns
-            .iter()
-            .zip(actual.matched_patterns.iter())
-        {
-            assert_eq!(actual_pattern.id, expected_pattern.id);
-            assert_eq!(actual_pattern.risk, expected_pattern.risk);
-            assert_eq!(actual_pattern.description, expected_pattern.description);
-            assert_eq!(actual_pattern.safe_alt, expected_pattern.safe_alt);
+        for (ep, ap) in exp.matched_patterns.iter().zip(act.matched_patterns.iter()) {
+            assert_eq!(ap.id, ep.id);
+            assert_eq!(ap.risk, ep.risk);
+            assert_eq!(ap.description, ep.description);
+            assert_eq!(ap.safe_alt, ep.safe_alt);
         }
 
-        for (expected_snapshot, actual_snapshot) in
-            expected.snapshots.iter().zip(actual.snapshots.iter())
-        {
-            assert_eq!(actual_snapshot.plugin, expected_snapshot.plugin);
-            assert_eq!(actual_snapshot.snapshot_id, expected_snapshot.snapshot_id);
+        for (es, as_) in exp.snapshots.iter().zip(act.snapshots.iter()) {
+            assert_eq!(as_.plugin, es.plugin);
+            assert_eq!(as_.snapshot_id, es.snapshot_id);
         }
     }
 }
@@ -187,7 +176,11 @@ fn query_filters_by_risk() {
         })
         .unwrap();
     assert_eq!(entries.len(), 2);
-    assert!(entries.iter().all(|entry| entry.risk == RiskLevel::Warn));
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.as_base().risk == RiskLevel::Warn)
+    );
 }
 
 #[test]
@@ -206,8 +199,8 @@ fn query_returns_last_n_entries() {
         })
         .unwrap();
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].command, "command-3");
-    assert_eq!(entries[1].command, "command-4");
+    assert_eq!(entries[0].as_base().command, "command-3");
+    assert_eq!(entries[1].as_base().command, "command-4");
 }
 
 #[test]
@@ -237,8 +230,8 @@ fn query_returns_last_n_entries_for_matching_risk_only() {
         })
         .unwrap();
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].command, "command-3");
-    assert_eq!(entries[1].command, "command-5");
+    assert_eq!(entries[0].as_base().command, "command-3");
+    assert_eq!(entries[1].as_base().command, "command-5");
 }
 
 #[test]
@@ -261,7 +254,7 @@ fn query_filters_by_decision() {
     assert!(
         entries
             .iter()
-            .all(|entry| entry.decision == Decision::Blocked)
+            .all(|entry| entry.as_base().decision == Decision::Blocked)
     );
 }
 
@@ -273,9 +266,10 @@ fn query_filters_by_command_substring_case_sensitively() {
     logger.append(entry(0, RiskLevel::Safe)).unwrap();
     logger.append(entry(1, RiskLevel::Warn)).unwrap();
     logger
-        .append(AuditEntry {
-            command: "git stash clear".to_string(),
-            ..entry(2, RiskLevel::Warn)
+        .append({
+            let mut e = entry(2, RiskLevel::Warn);
+            e.as_base_mut().command = "git stash clear".to_string();
+            e
         })
         .unwrap();
 
@@ -286,7 +280,7 @@ fn query_filters_by_command_substring_case_sensitively() {
         })
         .unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].command, "git stash clear");
+    assert_eq!(entries[0].as_base().command, "git stash clear");
 
     let no_match = logger
         .query(AuditQuery {
@@ -320,7 +314,7 @@ fn query_filters_by_inclusive_time_range() {
     assert_eq!(
         entries
             .iter()
-            .map(|entry| entry.command.as_str())
+            .map(|entry| entry.as_base().command.as_str())
             .collect::<Vec<_>>(),
         vec!["command-1", "command-2"]
     );
@@ -344,8 +338,9 @@ fn query_applies_last_after_other_filters() {
         .unwrap();
 
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].command, "command-5");
-    assert_eq!(entries[0].decision, Decision::Denied);
+    let base = entries[0].as_base();
+    assert_eq!(base.command, "command-5");
+    assert_eq!(base.decision, Decision::Denied);
 }
 
 #[test]
@@ -371,8 +366,8 @@ fn query_last_handles_missing_trailing_newline() {
         })
         .unwrap();
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0].command, "command-1");
-    assert_eq!(entries[1].command, "command-2");
+    assert_eq!(entries[0].as_base().command, "command-1");
+    assert_eq!(entries[1].as_base().command, "command-2");
 }
 
 #[test]
@@ -591,11 +586,13 @@ fn append_with_chain_sha256_populates_hash_fields() {
     logger.append(entry(1, RiskLevel::Warn)).unwrap();
 
     let entries = logger.read_all().unwrap();
-    assert_eq!(entries[0].chain_alg.as_deref(), Some("sha256"));
-    assert!(entries[0].entry_hash.is_some());
-    assert!(entries[0].prev_hash.is_none());
-    assert_eq!(entries[1].chain_alg.as_deref(), Some("sha256"));
-    assert_eq!(entries[1].prev_hash, entries[0].entry_hash);
+    let b0 = entries[0].as_base();
+    let b1 = entries[1].as_base();
+    assert_eq!(b0.chain_alg.as_deref(), Some("sha256"));
+    assert!(b0.entry_hash.is_some());
+    assert!(b0.prev_hash.is_none());
+    assert_eq!(b1.chain_alg.as_deref(), Some("sha256"));
+    assert_eq!(b1.prev_hash, b0.entry_hash);
 }
 
 #[test]
@@ -653,28 +650,29 @@ fn compute_entry_hash_changes_when_explanation_changes() {
 #[test]
 fn integrity_payload_omits_explanation_key_when_absent() {
     let entry = entry(0, RiskLevel::Warn);
+    let base = entry.as_base();
     let payload = AuditIntegrityPayload {
-        timestamp: entry.timestamp,
-        sequence: entry.sequence,
-        command: &entry.command,
-        risk: entry.risk,
-        matched_patterns: &entry.matched_patterns,
-        pattern_ids: &entry.pattern_ids,
-        decision: entry.decision,
-        snapshots: &entry.snapshots,
+        timestamp: base.timestamp,
+        sequence: base.sequence,
+        command: &base.command,
+        risk: base.risk,
+        matched_patterns: &base.matched_patterns,
+        pattern_ids: &base.pattern_ids,
+        decision: base.decision,
+        snapshots: &base.snapshots,
         explanation: None,
-        mode: entry.mode,
-        ci_detected: entry.ci_detected,
-        allowlist_matched: entry.allowlist_matched,
-        allowlist_effective: entry.allowlist_effective,
+        mode: base.mode,
+        ci_detected: base.ci_detected,
+        allowlist_matched: base.allowlist_matched,
+        allowlist_effective: base.allowlist_effective,
         chain_alg: CHAIN_ALG_SHA256,
         prev_hash: None,
-        allowlist_pattern: entry.allowlist_pattern.as_ref(),
-        allowlist_reason: entry.allowlist_reason.as_ref(),
-        source: entry.source.as_ref(),
-        cwd: entry.cwd.as_ref(),
-        id: entry.id.as_ref(),
-        transport: entry.transport.as_ref(),
+        allowlist_pattern: base.allowlist_pattern.as_deref(),
+        allowlist_reason: base.allowlist_reason.as_deref(),
+        source: None,
+        cwd: None,
+        id: None,
+        transport: None,
     };
 
     let json = serde_json::to_value(&payload).unwrap();
@@ -746,8 +744,11 @@ fn read_all_accepts_legacy_unix_seconds_timestamp() {
 
     let entries = logger.read_all().unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].timestamp.to_string(), "2023-11-14T22:13:20Z");
-    assert_eq!(entries[0].sequence, 0);
+    assert_eq!(
+        entries[0].as_base().timestamp.to_string(),
+        "2023-11-14T22:13:20Z"
+    );
+    assert_eq!(entries[0].as_base().sequence, 0);
 }
 
 #[test]
@@ -782,7 +783,7 @@ fn rotation_keeps_archives_and_queries_span_them() {
     let all = logger.read_all().unwrap();
     assert_eq!(
         all.iter()
-            .map(|entry| entry.command.as_str())
+            .map(|entry| entry.as_base().command.as_str())
             .collect::<Vec<_>>(),
         vec!["command-0", "command-1", "command-2",]
     );
@@ -795,7 +796,7 @@ fn rotation_keeps_archives_and_queries_span_them() {
         .unwrap();
     assert_eq!(
         last.iter()
-            .map(|entry| entry.command.as_str())
+            .map(|entry| entry.as_base().command.as_str())
             .collect::<Vec<_>>(),
         vec!["command-1", "command-2"]
     );
@@ -823,7 +824,7 @@ fn rotation_can_compress_archives_and_still_read_them() {
     let all = logger.read_all().unwrap();
     assert_eq!(
         all.iter()
-            .map(|entry| entry.command.as_str())
+            .map(|entry| entry.as_base().command.as_str())
             .collect::<Vec<_>>(),
         vec!["command-0", "command-1"]
     );
@@ -847,7 +848,7 @@ fn rotation_enforces_retention_limit() {
     let all = logger.read_all().unwrap();
     assert_eq!(
         all.iter()
-            .map(|entry| entry.command.as_str())
+            .map(|entry| entry.as_base().command.as_str())
             .collect::<Vec<_>>(),
         vec!["command-1", "command-2", "command-3"]
     );
@@ -873,10 +874,14 @@ fn watch_context_fields_round_trip_through_json() {
     let json = serde_json::to_string(&entry).unwrap();
     let back: AuditEntry = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(back.source.as_deref(), Some("claude"));
-    assert_eq!(back.cwd.as_deref(), Some("/home/user/project"));
-    assert_eq!(back.id.as_deref(), Some("frame-42"));
-    assert_eq!(back.transport.as_deref(), Some("watch"));
+    let watch = match &back {
+        AuditEntry::Watch(w) => w,
+        _ => panic!("expected Watch variant after round-trip"),
+    };
+    assert_eq!(watch.source.as_deref(), Some("claude"));
+    assert_eq!(watch.cwd.as_deref(), Some("/home/user/project"));
+    assert_eq!(watch.id.as_deref(), Some("frame-42"));
+    assert!(json.contains(r#""transport":"watch""#));
 }
 
 #[test]

@@ -67,7 +67,7 @@ of the interception path described in this document.
 │ 1. Entrypoint        src/main.rs + CLI/shell glue                       │
 │                      (cli_dispatch.rs, cli_commands.rs,                 │
 │                       shell_compat.rs, shell_wrapper.rs, rollback.rs,   │
-│                       policy_output.rs)                                 │
+│                       policy_output.rs, toggle.rs, runtime_gate.rs)     │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 2. Policy Engine     src/decision/  +  src/planning/                  │
 │                      (pure function: PolicyInput → PolicyDecision)      │
@@ -85,8 +85,7 @@ of the interception path described in this document.
 │ 7. Agent Protocols   watch (NDJSON stdin/stdout)                        │
 │                      hook  (Claude Code PreToolUse JSON)                │
 └─────────────────────────────────────────────────────────────────────────┘
-     Support:  src/config/   src/runtime/   src/explanation/
-               src/toggle.rs src/error.rs     src/runtime_gate.rs
+     Support:  src/config/   src/runtime/   src/explanation/   src/error.rs
 ```
 
 ### 2.1 Entrypoint — `src/main.rs` + CLI/shell glue
@@ -107,6 +106,10 @@ Rollback, Config, Hook, Install}` and `--command <cmd>` to their handlers.
   output rendering.
 - `rollback.rs` — rollback CLI path (`aegis rollback <snapshot-id>`).
 - `policy_output.rs` — evaluation-only JSON rendering for `--output json`.
+- `toggle.rs` — file-based on/off switch (`~/.aegis/disabled`); handles
+  `aegis on`, `aegis off`, `aegis status`.
+- `runtime_gate.rs` — `is_ci_environment()`; used by the entrypoint and
+  planning to gate CI policy without duplicating detection logic.
 
 Three invocation modes (`src/shell_compat.rs`):
 
@@ -317,14 +320,36 @@ but the Rust hook command itself remains the same PreToolUse JSON rewriter.
 
 **NDJSON watch mode** (`aegis watch`):
 
-- `InputFrame`: `{ cmd: string, cwd?: string, interactive?: bool,
-source?: string, id?: string }`.
-- `OutputFrame` (one of):
-  - `{ type: "stdout", id?, data_b64 }`
-  - `{ type: "stderr", id?, data_b64 }`
-  - `{ type: "result", id?, decision: approved|denied|blocked, exit_code }`
-  - `{ type: "error", id?, exit_code, message }`
-- `MAX_FRAME_BYTES = 1 MiB`. Oversized frames are rejected before allocation.
+One `InputFrame` per stdin line; one or more `OutputFrame`s per command on
+stdout. Both streams are newline-delimited JSON (NDJSON). This is a
+**first-class public protocol** — changing field names, removing fields, or
+changing the set of `type` values is a breaking change (see invariant I13).
+
+`InputFrame` fields:
+
+| Field         | Type   | Required | Description                                              |
+|---------------|--------|----------|----------------------------------------------------------|
+| `cmd`         | string | yes      | The shell command to intercept.                          |
+| `cwd`         | string | no       | Working directory for the command.                       |
+| `id`          | string | no       | Caller-assigned correlation token; echoed in all output frames for this command. |
+| `source`      | string | no       | Agent / tool name for audit attribution.                 |
+| `interactive` | bool   | no       | Reserved; ignored in v1.                                 |
+
+`OutputFrame` variants (discriminated by the `type` field):
+
+| `type`   | Fields                                        | Description                                                     |
+|----------|-----------------------------------------------|-----------------------------------------------------------------|
+| `stdout` | `id?`, `data_b64: string`                     | Child stdout chunk; `data_b64` is standard Base64-encoded bytes. |
+| `stderr` | `id?`, `data_b64: string`                     | Child stderr chunk; same encoding.                              |
+| `result` | `id?`, `decision`, `exit_code: i32`           | Terminal frame. `decision ∈ {approved, denied, blocked, error}`. |
+| `error`  | `id?`, `exit_code: i32`, `message: string`    | Protocol-level error (bad JSON, oversized frame, internal fault). |
+
+`decision: error` in a `result` frame signals that Aegis could not execute
+the command due to an internal error after the policy decision was made.
+`exit_code` in an `error` frame is always `4` (`EXIT_INTERNAL`).
+
+`MAX_FRAME_BYTES = 1 MiB`. Frames that exceed this limit are rejected
+**before allocation**; Aegis emits an `error` frame and reads the next line.
 
 Both protocols are public contracts. Changing them is a breaking change.
 
@@ -344,8 +369,6 @@ outcome }`. Deterministic, serializable; consumed by UI, audit, and
 - **`src/policy_output.rs`** — evaluation-only mode
   (`aegis --command "<cmd>" --output json`), emits policy decision without
   executing.
-- **`src/toggle.rs`** — file-based on/off switch (`~/.aegis/disabled`).
-- **`src/runtime_gate.rs`** — `is_ci_environment()`, shared across entrypoints.
 - **`src/error.rs`** — `AegisError` via `thiserror`. Library modules return
   `Result<T, AegisError>`; CLI glue may use `anyhow`.
 
@@ -406,7 +429,8 @@ Allowed dependency directions. Arrows point from caller → callee.
 
 ```
 entrypoint (main, cli_dispatch, shell_compat, cli_commands, shell_wrapper,
-            shell_flow, rollback, install, policy_output)
+            shell_flow, rollback, install, policy_output,
+            toggle, runtime_gate)
     │
     ├──▶ planning ──▶ decision           (pure; no I/O)
     │       │
@@ -416,8 +440,7 @@ entrypoint (main, cli_dispatch, shell_compat, cli_commands, shell_wrapper,
     │              ├──▶ snapshot         (I/O; lazy)
     │              └──▶ audit            (append-only I/O)
     │
-    ├──▶ ui                              (TUI only)
-    └──▶ toggle, runtime_gate, error     (utilities)
+    └──▶ ui                              (TUI only)
 ```
 
 ### Forbidden edges (enforced by tests in `tests/main_architecture_slices.rs`
@@ -652,5 +675,5 @@ require a corresponding ADR note. Prefer narrowing exports to broadening them.
 
 ---
 
-_Last reviewed: 2026-04-22. When editing this file, update the review date
+_Last reviewed: 2026-05-27. When editing this file, update the review date
 and note any invariants you added, removed, or changed._

@@ -27,7 +27,7 @@ impl AuditLogger {
 
     pub(super) fn latest_chained_hash(&self) -> Result<Option<String>> {
         if let Some(entry) = self.read_last_entry_from_plain_file(&self.path)? {
-            return Ok(entry.entry_hash);
+            return Ok(entry.as_base().entry_hash.clone());
         }
 
         if let Some(path) = self.existing_archive_path(1) {
@@ -38,7 +38,9 @@ impl AuditLogger {
                 index: 1,
             };
             let entries = self.read_entries_from_segment(&segment, None)?;
-            return Ok(entries.last().and_then(|entry| entry.entry_hash.clone()));
+            return Ok(entries
+                .last()
+                .and_then(|entry| entry.as_base().entry_hash.clone()));
         }
 
         Ok(None)
@@ -63,37 +65,48 @@ pub(super) struct AuditIntegrityPayload<'a> {
     pub(super) allowlist_effective: Option<bool>,
     pub(super) chain_alg: &'a str,
     pub(super) prev_hash: Option<&'a str>,
-    pub(super) allowlist_pattern: Option<&'a String>,
-    pub(super) allowlist_reason: Option<&'a String>,
-    pub(super) source: Option<&'a String>,
-    pub(super) cwd: Option<&'a String>,
-    pub(super) id: Option<&'a String>,
-    pub(super) transport: Option<&'a String>,
+    pub(super) allowlist_pattern: Option<&'a str>,
+    pub(super) allowlist_reason: Option<&'a str>,
+    pub(super) source: Option<&'a str>,
+    pub(super) cwd: Option<&'a str>,
+    pub(super) id: Option<&'a str>,
+    pub(super) transport: Option<&'a str>,
 }
 
 pub(super) fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) -> Result<String> {
+    let base = entry.as_base();
+    let (source, cwd, id, transport): (Option<&str>, Option<&str>, Option<&str>, Option<&str>) =
+        match entry {
+            AuditEntry::Watch(w) => (
+                w.source.as_deref(),
+                w.cwd.as_deref(),
+                w.id.as_deref(),
+                Some("watch"),
+            ),
+            AuditEntry::Decision(_) => (None, None, None, None),
+        };
     let payload = AuditIntegrityPayload {
-        timestamp: entry.timestamp,
-        sequence: entry.sequence,
-        command: &entry.command,
-        risk: entry.risk,
-        matched_patterns: &entry.matched_patterns,
-        pattern_ids: &entry.pattern_ids,
-        decision: entry.decision,
-        snapshots: &entry.snapshots,
-        explanation: entry.explanation.as_ref(),
-        mode: entry.mode,
-        ci_detected: entry.ci_detected,
-        allowlist_matched: entry.allowlist_matched,
-        allowlist_effective: entry.allowlist_effective,
+        timestamp: base.timestamp,
+        sequence: base.sequence,
+        command: &base.command,
+        risk: base.risk,
+        matched_patterns: &base.matched_patterns,
+        pattern_ids: &base.pattern_ids,
+        decision: base.decision,
+        snapshots: &base.snapshots,
+        explanation: base.explanation.as_ref(),
+        mode: base.mode,
+        ci_detected: base.ci_detected,
+        allowlist_matched: base.allowlist_matched,
+        allowlist_effective: base.allowlist_effective,
         chain_alg: CHAIN_ALG_SHA256,
         prev_hash,
-        allowlist_pattern: entry.allowlist_pattern.as_ref(),
-        allowlist_reason: entry.allowlist_reason.as_ref(),
-        source: entry.source.as_ref(),
-        cwd: entry.cwd.as_ref(),
-        id: entry.id.as_ref(),
-        transport: entry.transport.as_ref(),
+        allowlist_pattern: base.allowlist_pattern.as_deref(),
+        allowlist_reason: base.allowlist_reason.as_deref(),
+        source,
+        cwd,
+        id,
+        transport,
     };
 
     let canonical = serde_json::to_vec(&payload).map_err(|err| {
@@ -120,8 +133,9 @@ pub(super) fn verify_integrity_entries(entries: &[AuditEntry]) -> AuditIntegrity
     let mut seen_chain = false;
 
     for (index, entry) in entries.iter().enumerate() {
+        let base = entry.as_base();
         let is_chained =
-            entry.entry_hash.is_some() || entry.prev_hash.is_some() || entry.chain_alg.is_some();
+            base.entry_hash.is_some() || base.prev_hash.is_some() || base.chain_alg.is_some();
 
         if !is_chained {
             if seen_chain {
@@ -141,7 +155,7 @@ pub(super) fn verify_integrity_entries(entries: &[AuditEntry]) -> AuditIntegrity
         seen_chain = true;
         chained_entries += 1;
 
-        if entry.chain_alg.as_deref() != Some(CHAIN_ALG_SHA256) {
+        if base.chain_alg.as_deref() != Some(CHAIN_ALG_SHA256) {
             return AuditIntegrityReport {
                 status: AuditIntegrityStatus::Corrupt,
                 checked_entries: entries.len(),
@@ -153,7 +167,7 @@ pub(super) fn verify_integrity_entries(entries: &[AuditEntry]) -> AuditIntegrity
             };
         }
 
-        let Some(entry_hash) = entry.entry_hash.as_deref() else {
+        let Some(entry_hash) = base.entry_hash.as_deref() else {
             return AuditIntegrityReport {
                 status: AuditIntegrityStatus::Corrupt,
                 checked_entries: entries.len(),
@@ -165,7 +179,7 @@ pub(super) fn verify_integrity_entries(entries: &[AuditEntry]) -> AuditIntegrity
             };
         };
 
-        if entry.prev_hash.as_deref() != previous_hash.as_deref() {
+        if base.prev_hash.as_deref() != previous_hash.as_deref() {
             return AuditIntegrityReport {
                 status: AuditIntegrityStatus::Corrupt,
                 checked_entries: entries.len(),
@@ -177,7 +191,7 @@ pub(super) fn verify_integrity_entries(entries: &[AuditEntry]) -> AuditIntegrity
             };
         }
 
-        let expected_hash = match compute_entry_hash(entry, entry.prev_hash.as_deref()) {
+        let expected_hash = match compute_entry_hash(entry, base.prev_hash.as_deref()) {
             Ok(hash) => hash,
             Err(err) => {
                 return AuditIntegrityReport {

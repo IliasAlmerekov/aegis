@@ -102,80 +102,229 @@ impl<'de> Deserialize<'de> for AuditTimestamp {
     }
 }
 
-/// One append-only audit record stored as a single JSON line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AuditEntry {
+/// Core fields present in every audit entry.
+///
+/// Shell-wrapper and direct-invocation entries are stored as
+/// `AuditEntry::Decision(DecisionEntry)`. Watch-mode entries are
+/// `AuditEntry::Watch(WatchEntry)`, which embeds this struct via `base`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionEntry {
     pub timestamp: AuditTimestamp,
     /// Monotonic sequence number within the current Aegis process.
     ///
-    /// This disambiguates entries with very similar timestamps and preserves a
-    /// stable in-process ordering signal without relying only on wall-clock
-    /// time. Missing in older logs, so default to zero on deserialization.
-    #[serde(default)]
+    /// Disambiguates entries with very similar timestamps. Zero in older logs
+    /// that predate this field.
     pub sequence: u64,
     pub command: String,
     pub risk: RiskLevel,
     pub matched_patterns: Vec<MatchedPattern>,
-    /// Top-level projection of `matched_patterns[].id` for easier indexing in
-    /// log aggregation systems.
-    #[serde(default)]
+    /// Top-level projection of `matched_patterns[].id` for log aggregation.
     pub pattern_ids: Vec<String>,
     pub decision: Decision,
     pub snapshots: Vec<AuditSnapshot>,
-    /// Nested consumer-facing explanation view built from planning/runtime facts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<CommandExplanation>,
-    /// Effective Aegis operating mode for this policy decision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<Mode>,
-    /// Whether Aegis detected a CI environment while evaluating the command.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci_detected: Option<bool>,
-    /// Whether any allowlist rule matched the command/context.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_matched: Option<bool>,
-    /// Whether the matched allowlist rule affected the final decision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_effective: Option<bool>,
-    /// Hash chain algorithm used for this entry, when integrity mode is enabled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_alg: Option<String>,
-    /// Previous chained entry hash, or `None` for the first chained entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prev_hash: Option<String>,
-    /// Hash of the canonical payload for this entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_hash: Option<String>,
-    /// The allowlist glob pattern that caused this command to be auto-approved,
-    /// if any.  `None` when the command was not allowlisted.
-    ///
-    /// Skipped in JSON output when absent to keep old log entries valid.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_pattern: Option<String>,
-
-    /// The operator rationale attached to the allowlist rule, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowlist_reason: Option<String>,
+}
 
-    /// The agent/caller identity passed in the watch-mode input frame.
-    /// Absent for shell-wrapper entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+/// Watch-mode audit entry.
+///
+/// Contains all `DecisionEntry` fields via `base`, plus the watch-frame
+/// correlation fields.  `source`, `cwd` and `id` are `Option<String>` so that
+/// legacy audit log lines which omit them still deserialize correctly.
+/// `transport` is implicit — it is always `"watch"`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchEntry {
+    pub base: DecisionEntry,
+    /// Agent/caller identity from the watch-mode input frame.
     pub source: Option<String>,
-
-    /// The working directory from the watch-mode input frame.
-    /// Absent for shell-wrapper entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Working directory from the watch-mode input frame.
     pub cwd: Option<String>,
-
-    /// The correlation ID from the watch-mode input frame, echoed back.
-    /// Absent for shell-wrapper entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Correlation ID from the watch-mode input frame.
     pub id: Option<String>,
+}
 
-    /// Set to `"watch"` for entries created in watch mode.
-    /// Absent for shell-wrapper entries, making them distinguishable.
+/// One append-only audit record stored as a single JSON line.
+///
+/// Shell-wrapper entries are `Decision`; watch-mode entries are `Watch`.
+/// Both serialise to the same flat JSON format for backwards compatibility
+/// with existing `~/.aegis/audit.jsonl` files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditEntry {
+    Decision(DecisionEntry),
+    Watch(WatchEntry),
+}
+
+impl AuditEntry {
+    /// Shared reference to the common decision fields, regardless of variant.
+    pub fn as_base(&self) -> &DecisionEntry {
+        match self {
+            AuditEntry::Decision(e) => e,
+            AuditEntry::Watch(w) => &w.base,
+        }
+    }
+
+    pub(super) fn as_base_mut(&mut self) -> &mut DecisionEntry {
+        match self {
+            AuditEntry::Decision(e) => e,
+            AuditEntry::Watch(w) => &mut w.base,
+        }
+    }
+
+    /// Returns `Some` only for watch-mode entries.
+    pub fn watch_context(&self) -> Option<&WatchEntry> {
+        match self {
+            AuditEntry::Watch(w) => Some(w),
+            _ => None,
+        }
+    }
+}
+
+// Private flat struct used exclusively for JSON serde.
+// Preserves the on-disk format so existing audit logs remain readable.
+#[derive(Serialize, Deserialize)]
+struct AuditEntryFlat {
+    timestamp: AuditTimestamp,
+    #[serde(default)]
+    sequence: u64,
+    command: String,
+    risk: RiskLevel,
+    matched_patterns: Vec<MatchedPattern>,
+    #[serde(default)]
+    pattern_ids: Vec<String>,
+    decision: Decision,
+    snapshots: Vec<AuditSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport: Option<String>,
+    explanation: Option<CommandExplanation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<Mode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ci_detected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allowlist_matched: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allowlist_effective: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chain_alg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prev_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    entry_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allowlist_pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allowlist_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport: Option<String>,
+}
+
+impl From<AuditEntryFlat> for AuditEntry {
+    fn from(flat: AuditEntryFlat) -> Self {
+        let is_watch = flat.transport.as_deref() == Some("watch")
+            || flat.source.is_some()
+            || flat.cwd.is_some()
+            || flat.id.is_some();
+        let base = DecisionEntry {
+            timestamp: flat.timestamp,
+            sequence: flat.sequence,
+            command: flat.command,
+            risk: flat.risk,
+            matched_patterns: flat.matched_patterns,
+            pattern_ids: flat.pattern_ids,
+            decision: flat.decision,
+            snapshots: flat.snapshots,
+            explanation: flat.explanation,
+            mode: flat.mode,
+            ci_detected: flat.ci_detected,
+            allowlist_matched: flat.allowlist_matched,
+            allowlist_effective: flat.allowlist_effective,
+            chain_alg: flat.chain_alg,
+            prev_hash: flat.prev_hash,
+            entry_hash: flat.entry_hash,
+            allowlist_pattern: flat.allowlist_pattern,
+            allowlist_reason: flat.allowlist_reason,
+        };
+        if is_watch {
+            AuditEntry::Watch(WatchEntry {
+                base,
+                source: flat.source,
+                cwd: flat.cwd,
+                id: flat.id,
+            })
+        } else {
+            AuditEntry::Decision(base)
+        }
+    }
+}
+
+impl From<&AuditEntry> for AuditEntryFlat {
+    fn from(entry: &AuditEntry) -> Self {
+        let base = entry.as_base();
+        let (source, cwd, id, transport) = match entry {
+            AuditEntry::Watch(w) => (
+                w.source.clone(),
+                w.cwd.clone(),
+                w.id.clone(),
+                Some("watch".to_string()),
+            ),
+            AuditEntry::Decision(_) => (None, None, None, None),
+        };
+        Self {
+            timestamp: base.timestamp,
+            sequence: base.sequence,
+            command: base.command.clone(),
+            risk: base.risk,
+            matched_patterns: base.matched_patterns.clone(),
+            pattern_ids: base.pattern_ids.clone(),
+            decision: base.decision,
+            snapshots: base.snapshots.clone(),
+            explanation: base.explanation.clone(),
+            mode: base.mode,
+            ci_detected: base.ci_detected,
+            allowlist_matched: base.allowlist_matched,
+            allowlist_effective: base.allowlist_effective,
+            chain_alg: base.chain_alg.clone(),
+            prev_hash: base.prev_hash.clone(),
+            entry_hash: base.entry_hash.clone(),
+            allowlist_pattern: base.allowlist_pattern.clone(),
+            allowlist_reason: base.allowlist_reason.clone(),
+            source,
+            cwd,
+            id,
+            transport,
+        }
+    }
+}
+
+impl Serialize for AuditEntry {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        AuditEntryFlat::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for AuditEntry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        AuditEntryFlat::deserialize(deserializer).map(AuditEntry::from)
+    }
 }
 
 /// User-visible outcome of the interception flow.
