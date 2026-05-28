@@ -26,7 +26,7 @@ pub(super) fn print_dangerous_action<W: Write>(assessment: &Assessment, out: &mu
 }
 
 #[cfg(test)]
-pub(super) fn build_highlighted_command(cmd: &str, matches: &[MatchResult]) -> String {
+pub(crate) fn build_highlighted_command(cmd: &str, matches: &[MatchResult]) -> String {
     let ranges = sorted_highlight_ranges_for_tests(cmd, matches);
     build_highlighted_command_from_ranges(cmd, &ranges)
 }
@@ -58,7 +58,7 @@ fn build_highlighted_command_from_ranges(cmd: &str, ranges: &[HighlightRange]) -
 }
 
 #[cfg(test)]
-pub(super) fn sorted_highlight_ranges_for_tests(
+pub(crate) fn sorted_highlight_ranges_for_tests(
     cmd: &str,
     matches: &[MatchResult],
 ) -> Vec<HighlightRange> {

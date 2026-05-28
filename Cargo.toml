@@ -35,6 +35,7 @@ aho-corasick = "1.1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 flate2 = "1"
 sha2 = "0.10"
+schemars = "1"
 
 [profile.release]
 opt-level = 3

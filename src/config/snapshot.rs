@@ -1,3 +1,5 @@
+//! Snapshot provider configuration types.
+
 use serde::{Deserialize, Serialize};
 
 /// Which Docker containers to include in snapshots.
@@ -5,7 +7,9 @@ use serde::{Deserialize, Serialize};
 /// - `Labeled` (default) — only containers with a specific label.
 /// - `All`               — every running container (legacy blanket behaviour).
 /// - `Names`             — containers whose name matches one of the given patterns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema,
+)]
 #[serde(rename_all = "PascalCase")]
 pub enum DockerScopeMode {
     /// Only snapshot containers carrying the opt-in label (default).
@@ -20,7 +24,7 @@ pub enum DockerScopeMode {
 /// Scoping rules that decide *which* Docker containers are eligible for snapshot.
 ///
 /// Stored under `[docker_scope]` in `aegis.toml`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct DockerScope {
     /// Selection strategy.
@@ -47,7 +51,7 @@ impl Default for DockerScope {
 ///
 /// Credentials are provided externally via `PGPASSWORD` or `~/.pgpass`.
 /// The plugin is a no-op when [`database`](Self::database) is empty.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct PostgresSnapshotConfig {
     /// PostgreSQL database name to snapshot.
@@ -77,7 +81,7 @@ impl Default for PostgresSnapshotConfig {
 /// rollback target-match setting is part of the bundle definition for later
 /// rollback flows that compare the active config target with the manifest
 /// target. Phase 1 uses the direct PostgreSQL transport in [`db`](Self::db).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct SupabaseSnapshotConfig {
     /// Advisory-only Supabase project reference for audit/UI and future phases.
@@ -102,7 +106,7 @@ impl Default for SupabaseSnapshotConfig {
 ///
 /// Credentials are provided externally via `MYSQL_PWD` or `~/.my.cnf`.
 /// The plugin is a no-op when [`database`](Self::database) is empty.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct MysqlSnapshotConfig {
     /// MySQL database name to snapshot.

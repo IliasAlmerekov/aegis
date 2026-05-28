@@ -1,7 +1,7 @@
+//! Helpers for appending rules to config files interactively.
+
 use std::fs;
-use std::io::Write;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use time::OffsetDateTime;
 
@@ -10,6 +10,12 @@ use crate::config::allowlist::ConfigSourceLayer;
 use crate::error::AegisError;
 
 type Result<T> = std::result::Result<T, AegisError>;
+
+mod formatting;
+mod validation;
+
+use formatting::{allow_reason_for_date, append_config_table_entry, block_reason_for_date};
+use validation::{check_dedup_and_conflict, config_layer_from_path};
 
 /// Which table an append targets.
 #[derive(Clone, Copy)]
@@ -49,144 +55,6 @@ pub fn active_config_path_for_append() -> Option<std::path::PathBuf> {
         return Some(project);
     }
     Some(home.join(".config/aegis").join("config.toml"))
-}
-
-/// Derive the config source layer from the path used for appending.
-fn config_layer_from_path(config_path: &Path) -> ConfigSourceLayer {
-    if config_path.file_name().is_some_and(|n| n == ".aegis.toml") {
-        ConfigSourceLayer::Project
-    } else {
-        ConfigSourceLayer::Global
-    }
-}
-
-/// Check whether appending a rule to `target_table` would create a duplicate
-/// or conflict against the parsed `config`.
-///
-/// Returns `Some(AppendOutcome)` when the caller should return early
-/// (`SkippedDuplicate` or `Conflict`), or `None` when the append may proceed.
-///
-/// Duplicate detection requires `user.is_none()` because only auto-written
-/// rules (no explicit user scope) are subject to deduplication.
-/// Conflict detection ignores `user` entirely: a rule with the same pattern
-/// and cwd in the opposite table is always reported as a conflict regardless
-/// of user scope.
-fn check_dedup_and_conflict(
-    config: &AegisConfig,
-    pattern: &str,
-    cwd: &str,
-    target_table: TableKind,
-    location: ConfigSourceLayer,
-) -> Option<AppendOutcome> {
-    match target_table {
-        TableKind::Allow => {
-            if config
-                .allowlist
-                .iter()
-                .any(|r| r.pattern == pattern && r.cwd.as_deref() == Some(cwd) && r.user.is_none())
-            {
-                return Some(AppendOutcome::SkippedDuplicate);
-            }
-            if config
-                .blocklist
-                .iter()
-                .any(|r| r.pattern == pattern && r.cwd.as_deref() == Some(cwd))
-            {
-                return Some(AppendOutcome::Conflict {
-                    pattern: pattern.to_string(),
-                    existing_location: location,
-                });
-            }
-        }
-        TableKind::Blocklist => {
-            if config
-                .blocklist
-                .iter()
-                .any(|r| r.pattern == pattern && r.cwd.as_deref() == Some(cwd) && r.user.is_none())
-            {
-                return Some(AppendOutcome::SkippedDuplicate);
-            }
-            if config
-                .allowlist
-                .iter()
-                .any(|r| r.pattern == pattern && r.cwd.as_deref() == Some(cwd))
-            {
-                return Some(AppendOutcome::Conflict {
-                    pattern: pattern.to_string(),
-                    existing_location: location,
-                });
-            }
-        }
-    }
-    None
-}
-
-/// Escape a string for safe inclusion in a TOML double-quoted value.
-fn toml_escape(s: &str) -> String {
-    let mut escaped = String::with_capacity(s.len() + 2);
-    escaped.push('"');
-    for c in s.chars() {
-        match c {
-            '\\' => escaped.push_str("\\\\"),
-            '"' => escaped.push_str("\\\""),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            c => escaped.push(c),
-        }
-    }
-    escaped.push('"');
-    escaped
-}
-
-/// Append a TOML array-of-tables entry to the config file at `config_path`.
-///
-/// The write is atomic (temp file + `rename`) so concurrent callers in watch
-/// mode cannot corrupt the config.
-///
-/// If `existing_content` is `Some`, it is used directly (avoids a second read
-/// when the caller has already parsed the file for deduplication).
-/// If the file does not exist, it is created (including parent directories).
-fn append_config_table_entry(
-    config_path: &Path,
-    existing_content: Option<&str>,
-    header: &str,
-    fields: &[(String, String)],
-) -> Result<()> {
-    let mut content = if let Some(c) = existing_content {
-        c.to_string()
-    } else if config_path.exists() {
-        fs::read_to_string(config_path)?
-    } else {
-        String::new()
-    };
-
-    let mut fragment = format!("\n{header}\n");
-    for (key, value) in fields {
-        fragment.push_str(&format!("{key} = {}\n", toml_escape(value)));
-    }
-    content.push_str(&fragment);
-
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let tmp_path = config_path.with_extension(format!("tmp.{pid}.{nanos}"));
-    {
-        let mut tmp = fs::File::create(&tmp_path)?;
-        tmp.write_all(content.as_bytes())?;
-        tmp.sync_all()?;
-    }
-    fs::rename(&tmp_path, config_path).inspect_err(|_| {
-        let _ = fs::remove_file(&tmp_path);
-    })?;
-
-    Ok(())
 }
 
 fn append_rule(
@@ -260,32 +128,12 @@ pub fn append_block_rule(
     append_rule(config_path, prefix, cwd, TableKind::Blocklist)
 }
 
-/// Build the human-readable reason string for an auto-appended allow rule.
-pub(crate) fn allow_reason_for_date(date: OffsetDateTime) -> String {
-    let date = date.date();
-    format!(
-        "Approved by user on {:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
-}
-
-/// Build the human-readable reason string for an auto-appended block rule.
-pub(crate) fn block_reason_for_date(date: OffsetDateTime) -> String {
-    let date = date.date();
-    format!(
-        "Blocked by user on {:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    type TomlTables<'a> = Vec<(&'a str, Vec<(&'a str, &'a str, &'a str)>)>;
 
     #[test]
     fn append_allow_rule_adds_allow_header() {
@@ -580,7 +428,7 @@ reason = "Approved by user on 2025-01-01"
         );
     }
 
-    fn make_toml_config(tables: Vec<(&str, Vec<(&str, &str, &str)>)>) -> String {
+    fn make_toml_config(tables: TomlTables<'_>) -> String {
         let mut doc = toml::value::Table::new();
         for (table_name, entries) in tables {
             let array: Vec<toml::Value> = entries

@@ -1,3 +1,5 @@
+//! Watch-mode runner: NDJSON stdin/stdout loop.
+
 use std::path::PathBuf;
 
 use tokio::io::{AsyncReadExt, BufReader as TokioBufReader};
@@ -439,29 +441,6 @@ fn watch_execution_cwd(cwd_state: &CwdState) -> PathBuf {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::watch_execution_cwd;
-    use crate::planning::CwdState;
-
-    #[test]
-    fn watch_execution_cwd_returns_resolved_path() {
-        let path = PathBuf::from("/srv/project");
-        let cwd_state = CwdState::Resolved(path.clone());
-
-        assert_eq!(watch_execution_cwd(&cwd_state), path);
-    }
-
-    #[test]
-    fn watch_execution_cwd_returns_dot_when_unavailable() {
-        let cwd_state = CwdState::Unavailable;
-
-        assert_eq!(watch_execution_cwd(&cwd_state), PathBuf::from("."));
-    }
-}
-
 async fn create_watch_snapshots(
     context: &RuntimeContext,
     plan: &InterceptionPlan,
@@ -610,5 +589,28 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
     .is_err()
     {
         std::process::exit(4);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::watch_execution_cwd;
+    use crate::planning::CwdState;
+
+    #[test]
+    fn watch_execution_cwd_returns_resolved_path() {
+        let path = PathBuf::from("/srv/project");
+        let cwd_state = CwdState::Resolved(path.clone());
+
+        assert_eq!(watch_execution_cwd(&cwd_state), path);
+    }
+
+    #[test]
+    fn watch_execution_cwd_returns_dot_when_unavailable() {
+        let cwd_state = CwdState::Unavailable;
+
+        assert_eq!(watch_execution_cwd(&cwd_state), PathBuf::from("."));
     }
 }

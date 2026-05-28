@@ -33,9 +33,11 @@ command, classifies its risk, optionally prompts for human confirmation,
 optionally creates a rollback snapshot, and finally executes the command — or
 refuses to.
 
-The repository also contains an auxiliary developer binary
-(`src/bin/aegis_benchcheck.rs`) for benchmark-policy checking. It is not part
-of the interception path described in this document.
+The repository also contains two auxiliary binaries:
+- `src/bin/aegis_benchcheck.rs` — benchmark-policy checking.
+- `src/bin/aegis_schema.rs` — generates `aegis-schema.json` from `AegisConfig`.
+
+Neither is part of the interception path described in this document.
 
 ### What Aegis is
 
@@ -202,7 +204,8 @@ src/interceptor/
 │   ├── keywords.rs              literal-keyword extraction from regex
 │   ├── pipeline_semantics.rs    | && ; handling
 │   ├── recursive.rs             nested-script wrapper
-│   └── highlighting.rs          HighlightRange (for UI)
+│   ├── highlighting.rs          HighlightRange (for UI)
+│   └── prefix_rule.rs           PrefixRule token matching + example validation
 └── parser/
     ├── mod.rs                   ParsedCommand, PipelineSegment, public API
     ├── tokenizer.rs             split_tokens
@@ -245,13 +248,27 @@ collect input and emit output:
   - `install::run_install(--local?)` patches Claude Code settings and also
     installs Codex hook scripts when `~/.codex/` is present.
 
-**TUI — `src/ui/confirm.rs`:**
+  ```
+  src/install/
+  ├── mod.rs    public API: run_install, run_hook
+  ├── hook.rs   JSON rewriter for PreToolUse payloads
+  ├── claude.rs settings.json patching for Claude Code
+  └── codex.rs  hook registration for ~/.codex/
+  ```
 
-- `show_confirmation(assessment, explanation, &snapshots) -> bool` — the
-  approve/deny dialog with highlighted pattern matches.
-- `show_policy_block(assessment, explanation)` — non-interactive block screen
-  for `ProtectCiPolicy` / `StrictPolicy`.
-- `show_*_via_tty` variants open `/dev/tty` directly for the watch transport.
+**TUI — `src/ui/confirm/`:**
+
+- `confirm_screen.rs` — `show_confirmation(assessment, explanation, &snapshots)`
+  and `show_confirmation_with_input` (approve/deny dialog with highlighted
+  pattern matches).
+- `block_screen.rs` — non-interactive block screen for `ProtectCiPolicy` /
+  `StrictPolicy`.
+- `stdout_renderer.rs` — renders confirmations and blocks to stdout (used by the
+  shell-wrapper path).
+- `tty_renderer.rs` — `show_*_via_tty` variants that open `/dev/tty` directly
+  (used by the watch transport so stdout remains the NDJSON frame channel).
+- `shared.rs` — common rendering helpers and prompt-decision types shared by
+  both renderers.
 
 ### 2.5 Snapshot Layer — `src/snapshot/`
 
@@ -262,7 +279,7 @@ backends can be added without changing the policy engine.
 #[async_trait]
 pub trait SnapshotPlugin: Send + Sync {
     fn name(&self) -> &'static str;
-    fn is_applicable(&self, cwd: &Path) -> bool;
+    async fn is_applicable(&self, cwd: &Path) -> bool;
     async fn snapshot(&self, cwd: &Path, cmd: &str) -> Result<String>;
     async fn rollback(&self, snapshot_id: &str) -> Result<()>;
 }
@@ -360,12 +377,45 @@ Both protocols are public contracts. Changing them is a breaking change.
   `AegisConfig` +
   `Allowlist` + `validate_config_layers`. All new fields must be optional with
   `#[serde(default)]`.
+  ```
+  src/config/
+  ├── mod.rs            public API: load, effective_config, config_path helpers
+  ├── model.rs          AegisConfig + layered loading + merge logic
+  ├── model/
+  │   ├── enums.rs      Mode, CiPolicy, AuditIntegrityMode, SnapshotPolicy,
+  │   │                 AllowlistOverrideLevel — all with schemars::JsonSchema
+  │   ├── rules.rs      UserPattern, AllowlistRule, BlockRule, AuditConfig
+  │   │                 — all with schemars::JsonSchema and field docs
+  │   └── tests.rs      config model unit tests
+  ├── snapshot.rs       snapshot-provider config structs (Postgres, MySQL, …)
+  ├── allowlist.rs      allowlist / blocklist public API and rule compilation
+  ├── allowlist/
+  │   ├── analysis.rs   allowlist match analysis and overlap detection
+  │   └── compile.rs    compiled trie / prefix-map building
+  ├── amend.rs          append-only config editing (allow / block rule insertion)
+  │   └── amend/
+  │       ├── formatting.rs  TOML serialisation helpers
+  │       └── validation.rs  amend pre-condition checks
+  └── validate.rs       cross-layer validation (e.g. blocklist vs allowlist overlap)
+  ```
 - **`src/runtime/`** — `RuntimeContext`: scanner, allowlist, snapshot
   registry (lazy), audit logger, async handle, effective `RuntimeConfig`.
   Built exactly **once per CLI invocation**.
+  ```
+  src/runtime/
+  ├── mod.rs       re-exports
+  ├── context.rs   RuntimeContext, RuntimeConfig, WatchAuditContext
+  └── user.rs      effective-user detection for scoped allowlist / audit
+  ```
 - **`src/explanation/`** — `CommandExplanation { scan, policy, context,
-outcome }`. Deterministic, serializable; consumed by UI, audit, and
+  outcome }`. Deterministic, serializable; consumed by UI, audit, and
   `--output json`.
+  ```
+  src/explanation/
+  ├── mod.rs       public API: explain(), CommandExplanation
+  ├── formatter.rs plain-text / JSON formatting
+  └── templates.rs message templates for each PolicyRationale variant
+  ```
 - **`src/policy_output.rs`** — evaluation-only mode
   (`aegis --command "<cmd>" --output json`), emits policy decision without
   executing.
@@ -604,16 +654,18 @@ conversation to happen.
 | Any `mod.rs`             | 400        | 800        | Move impls into sibling files; keep `mod.rs` as façade. |
 | Any single `.rs`         | 1 500      | 2 000      | Require explicit allowlist entry with rationale.        |
 
-### Current breaches (2026-04-22) — known debt, not blockers
+### Current breaches (2026-05-28) — known debt, not blockers
 
-| File                             | Lines | Plan                                                                |
-| -------------------------------- | ----- | ------------------------------------------------------------------- |
-| `src/audit/logger.rs`            | 2 199 | Split into `writer.rs`, `query.rs`, `integrity.rs`, `rotation.rs`.  |
-| `src/config/model.rs`            | 1 891 | Split nested snapshot configs into `config/snapshot.rs`.            |
-| `src/ui/confirm.rs`              | 1 739 | Split confirmation vs block screens; split TTY vs stdout renderers. |
-| `src/interceptor/scanner/mod.rs` | 1 326 | Phase 1.2 adds by-program index + tests; split when tests migrate.  |
-| `src/snapshot/supabase.rs`       | 1 596 | Acceptable — isolates one CLI integration.                          |
-| `src/main.rs`                    | 893   | Move `#[cfg(test)]` imports out; already uses `cli_*` modules.      |
+| File                                     | Lines | Plan                                                                 |
+| ---------------------------------------- | ----- | -------------------------------------------------------------------- |
+| `src/snapshot/supabase.rs`               | 1 638 | Acceptable — isolates one CLI integration, no mixed responsibilities.|
+| `src/config/model/tests.rs`              | 1 464 | Test file; split by concern if it grows beyond 1 500.               |
+| `src/interceptor/scanner/tests.rs`       | 1 338 | Test file; split by concern if it grows beyond 1 500.               |
+| `src/snapshot/docker.rs`                 | 1 302 | Acceptable — complete plugin impl with snapshot + rollback logic.    |
+| `src/interceptor/patterns.rs`            | 1 270 | Acceptable — all pattern definitions in one file aids pattern audits.|
+| `src/snapshot/mysql.rs`                  | 1 206 | Acceptable — mirrors postgres.rs structure.                         |
+| `src/interceptor/parser/mod.rs`          | 1 041 | Split embedded-scripts parsing out if complexity grows.              |
+| `src/snapshot/postgres.rs`               | 1 025 | Acceptable — complete plugin impl.                                   |
 
 Budgets are enforced by `tests/main_thin_entrypoint.rs` for `main.rs`. Extend
 to other files as they are brought into compliance.
@@ -675,5 +727,5 @@ require a corresponding ADR note. Prefer narrowing exports to broadening them.
 
 ---
 
-_Last reviewed: 2026-05-27. When editing this file, update the review date
+_Last reviewed: 2026-05-28. When editing this file, update the review date
 and note any invariants you added, removed, or changed._

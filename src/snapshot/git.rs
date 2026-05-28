@@ -17,6 +17,7 @@ const CLEAN_SENTINEL: &str = "clean";
 /// as an unambiguous delimiter.
 const SEP: char = '\t';
 
+/// Built-in Git snapshot provider (creates stashes before dangerous commands).
 pub struct GitPlugin;
 
 #[async_trait]

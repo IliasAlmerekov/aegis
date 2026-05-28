@@ -103,7 +103,7 @@ pub(super) fn render_noninteractive_denial<W: Write>(
     let _ = out.flush();
 }
 
-pub(super) fn render_policy_block<W: Write>(
+pub(crate) fn render_policy_block<W: Write>(
     assessment: &Assessment,
     explanation: &CommandExplanation,
     out: &mut W,

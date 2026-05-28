@@ -1,5 +1,8 @@
+//! Configuration loading, validation, and layered merge.
+
 pub mod allowlist;
 pub mod amend;
+/// Config data model — [`AegisConfig`] and related types.
 pub mod model;
 pub mod snapshot;
 pub mod validate;
@@ -24,5 +27,3 @@ pub use validate::{
     ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validate_config_layers,
     validation_load_error,
 };
-
-pub type Config = AegisConfig;
