@@ -1,3 +1,5 @@
+//! Explanation templates: structured data for decision explanations.
+
 use serde::{Deserialize, Serialize};
 
 use crate::config::{ConfigSourceLayer, Mode};

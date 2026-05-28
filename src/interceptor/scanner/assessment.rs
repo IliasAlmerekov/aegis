@@ -12,6 +12,7 @@ use super::{HighlightRange, Scanner, highlighting, pipeline_semantics, recursive
 /// A single pattern match with the actual text fragment that triggered it.
 #[derive(Debug, Clone)]
 pub struct MatchResult {
+    /// The pattern that matched.
     pub pattern: Arc<Pattern>,
     /// The substring of the scanned text that the pattern's regex matched.
     pub matched_text: String,

@@ -1,3 +1,5 @@
+//! Planner preparation: resolve context, run scanner, build plan.
+
 use tokio::runtime::Handle;
 
 use crate::decision::ExecutionTransport;

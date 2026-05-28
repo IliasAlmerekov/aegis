@@ -1,3 +1,5 @@
+//! Pure policy evaluation engine.
+
 pub mod engine;
 pub mod types;
 

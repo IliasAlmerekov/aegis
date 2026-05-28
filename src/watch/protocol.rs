@@ -1,3 +1,5 @@
+//! NDJSON wire protocol for watch-mode stdin/stdout transport.
+
 use std::io::Write;
 
 use serde::{Deserialize, Serialize};
@@ -13,11 +15,15 @@ pub const MAX_FRAME_BYTES: usize = 1 << 20;
 /// One NDJSON command frame read from process stdin.
 #[derive(Debug, Deserialize)]
 pub struct InputFrame {
+    /// Raw command string to assess.
     pub cmd: String,
+    /// Working directory where the command would run.
     pub cwd: Option<String>,
     /// Reserved — ignored in v1.
     pub interactive: Option<bool>,
+    /// Origin label (e.g. "claude", "manual").
     pub source: Option<String>,
+    /// Correlation ID echoed back in output frames.
     pub id: Option<String>,
 }
 
@@ -27,9 +33,13 @@ pub struct InputFrame {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputDecision {
+    /// Allowed to execute.
     Approved,
+    /// Rejected by user or policy.
     Denied,
+    /// Matched a hard-block pattern.
     Blocked,
+    /// Protocol or internal failure.
     Error,
 }
 
@@ -37,26 +47,40 @@ pub enum OutputDecision {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum OutputFrame {
+    /// Base64-encoded stdout chunk from the child process.
     Stdout {
+        /// Correlation ID from the input frame.
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// Base64-encoded bytes.
         data_b64: String,
     },
+    /// Base64-encoded stderr chunk from the child process.
     Stderr {
+        /// Correlation ID from the input frame.
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// Base64-encoded bytes.
         data_b64: String,
     },
+    /// Final decision and exit code for a command.
     Result {
+        /// Correlation ID from the input frame.
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// Aegis decision for this command.
         decision: OutputDecision,
+        /// Shell exit code (0 if allowed, non-zero otherwise).
         exit_code: i32,
     },
+    /// Protocol or unrecoverable error.
     Error {
+        /// Correlation ID from the input frame, if known.
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
+        /// Error-specific exit code.
         exit_code: i32,
+        /// Human-readable error description.
         message: String,
     },
 }

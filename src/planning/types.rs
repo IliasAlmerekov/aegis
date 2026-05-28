@@ -1,3 +1,5 @@
+//! Planning types: requests, outcomes, dispositions, and contexts.
+
 use std::path::PathBuf;
 
 use crate::audit::MatchedPattern;
@@ -232,6 +234,7 @@ pub enum SnapshotPlan {
     NotRequired,
     /// Snapshots are required, with the applicable plugin set already resolved.
     Required {
+        /// Names of snapshot plugins applicable to this command.
         applicable_plugins: Vec<&'static str>,
     },
 }

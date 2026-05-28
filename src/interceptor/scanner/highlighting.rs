@@ -55,6 +55,7 @@ pub(super) fn sorted_highlight_ranges(cmd: &str, matches: &[MatchResult]) -> Vec
 }
 
 #[cfg(test)]
+/// Test-only wrapper around [`sorted_highlight_ranges`].
 pub fn sorted_highlight_ranges_for_tests(
     cmd: &str,
     matches: &[MatchResult],

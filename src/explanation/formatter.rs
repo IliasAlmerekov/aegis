@@ -1,3 +1,5 @@
+//! Explanation formatter: render human-readable decision explanations.
+
 use super::templates::{
     AllowlistExplanation, CommandExplanation, ExecutionContextExplanation,
     ExecutionDecisionExplanation, ExecutionOutcomeExplanation, ExplainedPatternMatch,
