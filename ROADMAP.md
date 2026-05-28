@@ -254,7 +254,7 @@ The following files exceed the 800-line limit and must be split:
 Rule: when extracting a file, move its tests and type docs into the new file.
 Never leave tests behind in the old file for code that moved.
 
-### 3.2 Update `ARCHITECTURE.md` to match reality
+### 3.2 Update `ARCHITECTURE.md` to match reality(Done)
 
 `ARCHITECTURE.md` describes seven layers. The actual code has grown to include
 `planning/`, `toggle.rs`, `runtime_gate.rs`, `shell_flow.rs`, and five additional
@@ -266,7 +266,7 @@ snapshot backends. Update the document to be authoritative again:
 - Document the `watch` mode NDJSON protocol as a first-class protocol (currently
   only mentioned in passing).
 
-### 3.3 `AuditEntry` — typed variant instead of flat struct
+### 3.3 `AuditEntry` — typed variant instead of flat struct(Done)
 
 Replace the 18-field flat struct with a typed enum:
 
@@ -285,8 +285,9 @@ pub struct DecisionEntry {
 }
 ```
 
-This makes it impossible to construct a watch entry without a `cwd`, and
-impossible to construct a decision entry without a `risk` level.
+This makes it impossible to construct a decision entry without a `risk`
+level.  Watch fields (`source`, `cwd`, `id`) remain `Option<String>` so that
+legacy audit log lines which omit them still deserialize correctly.
 
 ### 3.4 `AegisConfig` — remove type alias ambiguity
 

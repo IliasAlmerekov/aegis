@@ -44,15 +44,16 @@ impl AuditLogger {
         out.push_str("timestamp                 decision       risk    command\n");
 
         for entry in entries {
+            let base = entry.as_base();
             out.push_str(&format!(
                 "{:<25} {:<14} {:<7} {}\n",
-                entry.timestamp, entry.decision, entry.risk, entry.command
+                base.timestamp, base.decision, base.risk, base.command
             ));
 
-            if entry.matched_patterns.is_empty() {
+            if base.matched_patterns.is_empty() {
                 out.push_str("  matched: none\n");
             } else {
-                let matched = entry
+                let matched = base
                     .matched_patterns
                     .iter()
                     .map(|pattern| {
@@ -70,10 +71,10 @@ impl AuditLogger {
                 out.push_str(&format!("  matched: {matched}\n"));
             }
 
-            if entry.snapshots.is_empty() {
+            if base.snapshots.is_empty() {
                 out.push_str("  snapshots: none\n");
             } else {
-                let snapshots = entry
+                let snapshots = base
                     .snapshots
                     .iter()
                     .map(|snapshot| format!("{}={}", snapshot.plugin, snapshot.snapshot_id))
@@ -82,8 +83,8 @@ impl AuditLogger {
                 out.push_str(&format!("  snapshots: {snapshots}\n"));
             }
 
-            if let Some(pattern) = &entry.allowlist_pattern {
-                match &entry.allowlist_reason {
+            if let Some(pattern) = &base.allowlist_pattern {
+                match &base.allowlist_reason {
                     Some(reason) => {
                         out.push_str(&format!("  allowlisted by: {pattern} ({reason})\n"));
                     }
@@ -107,21 +108,22 @@ impl AuditLogger {
         let mut pattern_counts = std::collections::BTreeMap::<String, usize>::new();
 
         for entry in entries {
-            match entry.decision {
+            let base = entry.as_base();
+            match base.decision {
                 Decision::Approved => summary.decision_counts.approved += 1,
                 Decision::Denied => summary.decision_counts.denied += 1,
                 Decision::AutoApproved => summary.decision_counts.auto_approved += 1,
                 Decision::Blocked => summary.decision_counts.blocked += 1,
             }
 
-            match entry.risk {
+            match base.risk {
                 RiskLevel::Safe => summary.risk_counts.safe += 1,
                 RiskLevel::Warn => summary.risk_counts.warn += 1,
                 RiskLevel::Danger => summary.risk_counts.danger += 1,
                 RiskLevel::Block => summary.risk_counts.block += 1,
             }
 
-            for pattern in &entry.matched_patterns {
+            for pattern in &base.matched_patterns {
                 *pattern_counts.entry(pattern.id.clone()).or_default() += 1;
             }
         }
@@ -270,7 +272,7 @@ impl AuditLogger {
                 continue;
             };
 
-            if risk.is_none_or(|expected| entry.risk == expected) {
+            if risk.is_none_or(|expected| entry.as_base().risk == expected) {
                 entries.push(entry);
             }
         }
@@ -289,29 +291,28 @@ impl AuditLogger {
 }
 
 fn entry_matches_query(entry: &AuditEntry, query: &AuditQuery) -> bool {
-    if query.risk.is_some_and(|risk| entry.risk != risk) {
+    let base = entry.as_base();
+
+    if query.risk.is_some_and(|risk| base.risk != risk) {
         return false;
     }
 
-    if query
-        .decision
-        .is_some_and(|decision| entry.decision != decision)
-    {
+    if query.decision.is_some_and(|decision| base.decision != decision) {
         return false;
     }
 
-    if query.since.is_some_and(|since| entry.timestamp < since) {
+    if query.since.is_some_and(|since| base.timestamp < since) {
         return false;
     }
 
-    if query.until.is_some_and(|until| entry.timestamp > until) {
+    if query.until.is_some_and(|until| base.timestamp > until) {
         return false;
     }
 
     if query
         .command_contains
         .as_ref()
-        .is_some_and(|needle| !entry.command.contains(needle))
+        .is_some_and(|needle| !base.command.contains(needle))
     {
         return false;
     }

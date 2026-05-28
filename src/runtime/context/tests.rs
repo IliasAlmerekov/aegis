@@ -442,6 +442,7 @@ fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
     );
 
     let outcome = entry
+        .as_base()
         .explanation
         .as_ref()
         .and_then(|value| value.outcome.as_ref());
@@ -517,10 +518,11 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
         },
     );
 
-    assert_eq!(entry.allowlist_pattern.as_deref(), Some("rm -rf target"));
-    assert_eq!(entry.allowlist_reason.as_deref(), Some("approved cleanup"));
-    assert_eq!(entry.allowlist_matched, Some(true));
-    assert_eq!(entry.allowlist_effective, Some(true));
+    let base = entry.as_base();
+    assert_eq!(base.allowlist_pattern.as_deref(), Some("rm -rf target"));
+    assert_eq!(base.allowlist_reason.as_deref(), Some("approved cleanup"));
+    assert_eq!(base.allowlist_matched, Some(true));
+    assert_eq!(base.allowlist_effective, Some(true));
 }
 
 fn now_utc() -> OffsetDateTime {
