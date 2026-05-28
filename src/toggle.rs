@@ -8,7 +8,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::audit::{AuditEntry, AuditLogger, Decision};
 use crate::config::allowlist::ConfigSourceLayer;
-use crate::config::{Config, model::ConfigLayerPath};
+use crate::config::{AegisConfig, model::ConfigLayerPath};
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
 
@@ -136,7 +136,7 @@ fn is_disabled_at(path: &Path) -> Result<bool> {
 /// it falls back to a defaults-only message.
 pub fn config_status() -> Result<String> {
     let current_dir = env::current_dir()?;
-    let layer_paths = Config::layer_paths_for(&current_dir, home_dir_optional().as_deref());
+    let layer_paths = AegisConfig::layer_paths_for(&current_dir, home_dir_optional().as_deref());
 
     Ok(config_status_for_layers(&layer_paths))
 }
@@ -193,7 +193,7 @@ fn disabled_flag_contents() -> Result<String> {
 }
 
 fn audit_logger() -> Result<AuditLogger> {
-    let config = Config::load_inspection()?;
+    let config = AegisConfig::load_inspection()?;
     Ok(AuditLogger::from_audit_config(&config.audit))
 }
 
