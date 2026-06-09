@@ -4,9 +4,9 @@ use regex::Regex;
 use time::OffsetDateTime;
 
 use super::{CompiledRule, ConfigSourceLayer, LayeredAllowlistRule, LayeredBlocklistRule};
-use crate::error::AegisError;
+use crate::config::error::ConfigError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, ConfigError>;
 
 pub(crate) fn validate_scope_fields(
     rule_type: &str,
@@ -16,7 +16,7 @@ pub(crate) fn validate_scope_fields(
     if has_scope(cwd) || has_scope(user) {
         Ok(())
     } else {
-        Err(AegisError::Config(format!(
+        Err(ConfigError::Config(format!(
             "{rule_type} rule must declare cwd or user scope"
         )))
     }
@@ -67,7 +67,7 @@ fn compile_fields(
     validate_scope_fields(rule_type, cwd.as_deref(), user.as_deref())?;
 
     let regex = Regex::new(&glob_to_regex(pattern)).map_err(|error| {
-        AegisError::Config(format!(
+        ConfigError::Config(format!(
             "invalid {rule_type} rule pattern {:?}: {error}",
             pattern
         ))
@@ -87,7 +87,7 @@ fn compile_fields(
 fn required_field<'a>(rule_type: &str, field: &str, value: &'a str) -> Result<&'a str> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(AegisError::Config(format!(
+        return Err(ConfigError::Config(format!(
             "{rule_type} rule {field} must not be empty"
         )));
     }

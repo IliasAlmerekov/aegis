@@ -11,8 +11,22 @@ use super::allowlist::{
 use super::snapshot::{
     DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SupabaseSnapshotConfig,
 };
-use crate::error::AegisError;
-use crate::interceptor;
+use crate::config::error::ConfigError;
+
+/// Validate that `patterns` compile into a working scanner.
+///
+/// Converts config-layer [`UserPattern`]s into the neutral `Pattern` shape and
+/// builds an [`aegis_scanner::Scanner`] to surface regex/ID errors. This is the
+/// config/scanner boundary — the scanner never sees config types.
+pub(crate) fn validate_custom_patterns(patterns: &[UserPattern]) -> Result<()> {
+    let converted: Vec<aegis_scanner::Pattern> = patterns.iter().cloned().map(Into::into).collect();
+    aegis_scanner::PatternSet::from_sources(&converted)
+        .and_then(aegis_scanner::Scanner::try_new)
+        .map(|_| ())
+        // Fold into `Config` (not a distinct variant) so the per-file path
+        // wrapping in `validate_runtime_requirements_for_path` still applies.
+        .map_err(|err| ConfigError::Config(err.to_string()))
+}
 
 mod enums;
 mod rules;
@@ -111,7 +125,7 @@ compress_rotated = true
 integrity_mode = "ChainSha256" # Off = no chain hashes, ChainSha256 = tamper-evident chained SHA-256.
 "#;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, ConfigError>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ConfigLayerPath {
@@ -255,7 +269,7 @@ impl AegisConfig {
     /// Serialize the config to a pretty-printed TOML string.
     pub fn to_toml_string(&self) -> Result<String> {
         toml::to_string_pretty(self)
-            .map_err(|error| AegisError::Config(format!("failed to serialize config: {error}")))
+            .map_err(|error| ConfigError::Config(format!("failed to serialize config: {error}")))
     }
 
     /// Return the starter `aegis.toml` template text.
@@ -268,7 +282,7 @@ impl AegisConfig {
     pub fn init_in(current_dir: &Path) -> Result<PathBuf> {
         let path = current_dir.join(PROJECT_CONFIG_FILE);
         if path.exists() {
-            return Err(AegisError::Config(format!(
+            return Err(ConfigError::Config(format!(
                 "config file already exists at {}",
                 path.display()
             )));
@@ -285,7 +299,7 @@ impl AegisConfig {
     /// fail-closed guarantees as file-loaded configs.
     pub(crate) fn validate_runtime_requirements(&self) -> Result<()> {
         self.validate()?;
-        interceptor::scanner_for(&self.custom_patterns).map(|_| ())?;
+        validate_custom_patterns(&self.custom_patterns)?;
         Allowlist::from_layered_rules(&self.layered_allowlist_rules()).map(|_| ())?;
         Blocklist::from_layered_rules(&self.layered_blocklist_rules()).map(|_| ())?;
         Ok(())
@@ -458,14 +472,14 @@ impl AegisConfig {
 
     fn validate(&self) -> Result<()> {
         if self.audit.rotation_enabled && self.audit.max_file_size_bytes == 0 {
-            return Err(AegisError::Config(
+            return Err(ConfigError::Config(
                 "audit.max_file_size_bytes must be greater than 0 when audit rotation is enabled"
                     .to_string(),
             ));
         }
 
         if self.audit.rotation_enabled && self.audit.retention_files == 0 {
-            return Err(AegisError::Config(
+            return Err(ConfigError::Config(
                 "audit.retention_files must be greater than 0 when audit rotation is enabled"
                     .to_string(),
             ));
@@ -477,7 +491,7 @@ impl AegisConfig {
             .iter()
             .find(|rule| rule.expires_at.is_some_and(|expires_at| expires_at <= now))
         {
-            return Err(AegisError::Config(format!(
+            return Err(ConfigError::Config(format!(
                 "allowlist rule '{}' is expired and cannot be used at runtime",
                 rule.pattern
             )));
@@ -488,7 +502,7 @@ impl AegisConfig {
             .iter()
             .find(|rule| rule.expires_at.is_some_and(|expires_at| expires_at <= now))
         {
-            return Err(AegisError::Config(format!(
+            return Err(ConfigError::Config(format!(
                 "blocklist rule '{}' is expired and cannot be used at runtime",
                 rule.pattern
             )));
@@ -500,8 +514,8 @@ impl AegisConfig {
     fn validate_runtime_requirements_for_path(&self, path: &Path) -> Result<()> {
         self.validate_runtime_requirements()
             .map_err(|err| match err {
-                AegisError::Config(message) => {
-                    AegisError::Config(format!("invalid config {}: {message}", path.display()))
+                ConfigError::Config(message) => {
+                    ConfigError::Config(format!("invalid config {}: {message}", path.display()))
                 }
                 other => other,
             })
@@ -670,7 +684,7 @@ fn migrate_deprecated_allowlist_in_file(
         let mut replacement = String::new();
         for rule in migrated_rules {
             let body = toml::to_string_pretty(rule).map_err(|error| {
-                AegisError::Config(format!("failed to serialize migrated rule: {error}"))
+                ConfigError::Config(format!("failed to serialize migrated rule: {error}"))
             })?;
             replacement.push_str(&format!("[[allow]]\n{body}"));
         }
@@ -706,7 +720,7 @@ impl PartialConfig {
     fn from_path(path: &Path) -> Result<Self> {
         let contents = fs::read_to_string(path)?;
         let config: Self = toml::from_str(&contents).map_err(|error| {
-            AegisError::Config(format!("failed to parse {}: {error}", path.display()))
+            ConfigError::Config(format!("failed to parse {}: {error}", path.display()))
         })?;
 
         let deprecated = contents.contains("[[allowlist]]") || contents.contains("allowlist = [");

@@ -7,9 +7,9 @@ use time::OffsetDateTime;
 
 use crate::config::AegisConfig;
 use crate::config::allowlist::ConfigSourceLayer;
-use crate::error::AegisError;
+use crate::config::error::ConfigError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, ConfigError>;
 
 mod formatting;
 mod validation;
@@ -70,7 +70,7 @@ fn append_rule(
     if config_path.exists() {
         let contents = fs::read_to_string(config_path)?;
         let config: AegisConfig = toml::from_str(&contents)
-            .map_err(|e| AegisError::Config(format!("failed to parse config: {e}")))?;
+            .map_err(|e| ConfigError::Config(format!("failed to parse config: {e}")))?;
 
         if let Some(outcome) = check_dedup_and_conflict(
             &config,

@@ -69,6 +69,19 @@ impl From<aegis_scanner::ScannerError> for AegisError {
     }
 }
 
+/// Map config-layer errors onto the orchestration error type.
+///
+/// `ConfigError` carries its own I/O variant, but at this boundary we fold
+/// everything into `Config`; the binary surfaces config failures uniformly.
+impl From<crate::config::error::ConfigError> for AegisError {
+    fn from(error: crate::config::error::ConfigError) -> Self {
+        match error {
+            crate::config::error::ConfigError::Io(io) => Self::Io(io),
+            other => Self::Config(other.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

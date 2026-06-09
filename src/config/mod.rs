@@ -2,10 +2,14 @@
 
 pub mod allowlist;
 pub mod amend;
+/// Typed configuration errors.
+pub mod error;
 /// Config data model — [`AegisConfig`] and related types.
 pub mod model;
 pub mod snapshot;
 pub mod validate;
+
+pub use error::ConfigError;
 
 pub use allowlist::{
     Allowlist, AllowlistContext, AllowlistMatch, AllowlistWarning, Blocklist, BlocklistMatch,

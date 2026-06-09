@@ -6,10 +6,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::config::error::ConfigError;
 use crate::config::{AllowlistRule, BlockRule};
-use crate::error::AegisError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, ConfigError>;
 
 mod analysis;
 mod compile;

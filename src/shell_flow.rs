@@ -37,7 +37,7 @@ fn persist_rule(
         &std::path::Path,
         &[String],
         &std::path::Path,
-    ) -> Result<AppendOutcome, aegis::error::AegisError>,
+    ) -> Result<AppendOutcome, aegis::config::ConfigError>,
     label: &str,
 ) -> Result<(), String> {
     match active_config_path_for_append() {
