@@ -19,6 +19,9 @@ exclude = [
 
 [workspace]
 members = ["crates/aegis-types", "crates/aegis-parser"]
+# The cargo-fuzz crate is built standalone by `cargo fuzz` with its own
+# sanitizer flags; it must not be pulled into the main workspace.
+exclude = ["fuzz"]
 
 [dependencies]
 aegis-types = { version = "0.5.3", path = "crates/aegis-types" }
