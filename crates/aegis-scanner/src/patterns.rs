@@ -108,8 +108,10 @@ impl PatternSet {
     /// Custom patterns arrive already normalized into the neutral [`Pattern`]
     /// representation — conversion from any config-specific shape happens at the
     /// orchestration boundary, so the scanner never sees config types. The
-    /// returned set is the effective runtime input consumed by `Scanner::new`,
-    /// after validation.
+    /// returned set is the effective runtime input consumed by
+    /// `Scanner::try_new`, after validation. Note: regex *syntactic* validity is
+    /// not checked here (only field presence); it is enforced when the scanner
+    /// compiles the patterns.
     pub fn from_sources(custom_patterns: &[Pattern]) -> Result<PatternSet, ScannerError> {
         let file: PatternsFile = toml::from_str(BUILTIN_PATTERNS_TOML)
             .map_err(|e| ScannerError::Build(format!("failed to parse patterns.toml: {e}")))?;

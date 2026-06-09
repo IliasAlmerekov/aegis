@@ -4,4 +4,7 @@
 //! its public types so existing `crate::interceptor::scanner::*` call sites
 //! remain stable while the workspace split (Phase 4) is in progress.
 
-pub use aegis_scanner::{Assessment, DecisionSource, HighlightRange, MatchResult, Scanner};
+pub use aegis_scanner::{
+    Assessment, DecisionSource, HighlightRange, MatchResult, PatternToken, PrefixPattern,
+    PrefixRule, Scanner,
+};

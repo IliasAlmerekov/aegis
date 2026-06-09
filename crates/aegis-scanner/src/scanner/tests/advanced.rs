@@ -15,7 +15,7 @@ fn custom_pattern_changes_assessment_and_marks_custom_source() {
 
     let patterns =
         PatternSet::from_sources(&[custom]).expect("merged builtin+custom set should load");
-    let scanner = Scanner::new(patterns);
+    let scanner = Scanner::try_new(patterns).expect("custom pattern compiles");
 
     let assessment = scanner.assess("echo ok && deploy-prod-now");
     assert_eq!(assessment.risk, RiskLevel::Danger);
@@ -27,6 +27,31 @@ fn custom_pattern_changes_assessment_and_marks_custom_source() {
             .any(|m| m.pattern.id.as_ref() == "USR-ASS-001"
                 && m.pattern.source == PatternSource::Custom),
         "expected USR-ASS-001 custom match in assessment"
+    );
+}
+
+#[test]
+fn custom_pattern_with_invalid_regex_returns_typed_error_not_panic() {
+    let bad = Pattern {
+        id: "USR-BAD-REGEX".into(),
+        category: Category::Process,
+        risk: RiskLevel::Danger,
+        pattern: "[".into(), // unterminated character class — invalid regex
+        description: "Pattern with a malformed regex".into(),
+        safe_alt: None,
+        justification: None,
+        source: PatternSource::Custom,
+    };
+
+    let patterns = PatternSet::from_sources(&[bad])
+        .expect("field validation passes; regex is not checked here");
+    let result = Scanner::try_new(patterns);
+    assert!(
+        matches!(
+            result,
+            Err(crate::ScannerError::InvalidPattern { ref id, .. }) if id == "USR-BAD-REGEX"
+        ),
+        "expected InvalidPattern for USR-BAD-REGEX (got a different result)"
     );
 }
 

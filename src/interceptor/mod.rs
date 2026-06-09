@@ -15,7 +15,7 @@ use crate::error::AegisError;
 
 static BUILTIN_SCANNER: LazyLock<Result<Arc<scanner::Scanner>, String>> = LazyLock::new(|| {
     patterns::PatternSet::load()
-        .map(scanner::Scanner::new)
+        .and_then(scanner::Scanner::try_new)
         .map(Arc::new)
         .map_err(|e| e.to_string())
 });
@@ -54,8 +54,9 @@ pub fn scanner_for(custom_patterns: &[UserPattern]) -> Result<Arc<scanner::Scann
     // orchestration boundary so the scanner never sees config types.
     let converted: Vec<patterns::Pattern> =
         custom_patterns.iter().cloned().map(Into::into).collect();
-    let scanner =
-        Arc::new(patterns::PatternSet::from_sources(&converted).map(scanner::Scanner::new)?);
+    let scanner = Arc::new(
+        patterns::PatternSet::from_sources(&converted).and_then(scanner::Scanner::try_new)?,
+    );
     cache_custom_scanner(key.0, Arc::clone(&scanner))?;
     Ok(scanner)
 }

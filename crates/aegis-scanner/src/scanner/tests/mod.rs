@@ -8,7 +8,7 @@ pub use aegis_types::RiskLevel;
 #[cfg(test)]
 fn scanner() -> Scanner {
     let patterns = PatternSet::load().expect("patterns.toml must load");
-    Scanner::new(patterns)
+    Scanner::try_new(patterns).expect("built-in patterns compile")
 }
 
 fn test_match_result(matched_text: &str, start: usize, end: usize) -> MatchResult {

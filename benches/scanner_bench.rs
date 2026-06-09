@@ -4,7 +4,7 @@ use std::time::Duration;
 
 fn make_scanner() -> Scanner {
     let patterns = PatternSet::load().expect("patterns.toml must load");
-    Scanner::new(patterns)
+    Scanner::try_new(patterns).expect("built-in patterns compile")
 }
 
 // ── Benchmark 1: 1,000 safe commands (target: > 500k ops/sec) ────────────────
