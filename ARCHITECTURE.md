@@ -621,7 +621,7 @@ Three things will likely be added often. Each has a fixed shape.
    `src/snapshot/mod.rs`.
 3. Extend `materialize_builtin_plugin` with the new arm.
 4. Add a config field `auto_snapshot_<name>: bool` and (if needed) a typed
-   sub-config in `src/config/model.rs`, both with `#[serde(default)]`.
+   sub-config in `crates/aegis-config/src/model.rs`, both with `#[serde(default)]`.
 5. Add an integration test in `tests/` that exercises snapshot + rollback.
 6. Update `docs/config-schema.md`.
 
@@ -659,7 +659,6 @@ conversation to happen.
 | File                                     | Lines | Plan                                                                 |
 | ---------------------------------------- | ----- | -------------------------------------------------------------------- |
 | `src/snapshot/supabase.rs`               | 1 638 | Acceptable — isolates one CLI integration, no mixed responsibilities.|
-| `src/config/model/tests.rs`              | 1 464 | Test file; split by concern if it grows beyond 1 500.               |
 | `src/snapshot/docker.rs`                 | 1 302 | Acceptable — complete plugin impl with snapshot + rollback logic.    |
 | `src/snapshot/mysql.rs`                  | 1 206 | Acceptable — mirrors postgres.rs structure.                         |
 | `src/snapshot/postgres.rs`               | 1 025 | Acceptable — complete plugin impl.                                   |
@@ -672,6 +671,11 @@ The former `src/interceptor/patterns.rs` (≈1 270) and `scanner/tests.rs`
 (≈1 338) breaches are likewise resolved: both moved to the `aegis-scanner`
 crate and split (largest resulting file ≈501 lines), with `patterns.rs` /
 `scanner.rs` left as thin re-export shims.
+
+The former `src/config/model/tests.rs` (≈1 464) breach is resolved: config
+moved to the `aegis-config` crate and its tests are split under
+`crates/aegis-config/src/model/tests/` (largest ≈512 lines); `src/config/` is a
+thin re-export shim.
 
 Budgets are enforced by `tests/main_thin_entrypoint.rs` for `main.rs`. Extend
 to other files as they are brought into compliance.

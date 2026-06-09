@@ -223,11 +223,9 @@ async fn rollback_errors_for_unknown_plugin() {
 
 #[test]
 fn from_config_disables_all_plugins_when_snapshots_are_off() {
-    let config = AegisConfig {
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
@@ -236,11 +234,9 @@ fn from_config_disables_all_plugins_when_snapshots_are_off() {
 
 #[test]
 fn from_config_enables_only_requested_plugins() {
-    let config = AegisConfig {
-        auto_snapshot_git: false,
-        auto_snapshot_docker: true,
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = true;
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
     let plugin_names: Vec<_> = registry
@@ -262,11 +258,9 @@ fn available_provider_names_include_db_plugins() {
 
 #[test]
 fn configured_provider_names_report_only_materialized_runtime_plugins() {
-    let config = AegisConfig {
-        auto_snapshot_git: false,
-        auto_snapshot_docker: true,
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = true;
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 
@@ -298,12 +292,10 @@ fn materialize_builtin_plugins_fails_closed_for_unknown_builtin_name() {
 fn policy_none_disables_all_plugins() {
     use crate::config::SnapshotPolicy;
 
-    let config = AegisConfig {
-        snapshot_policy: SnapshotPolicy::None,
-        auto_snapshot_git: true,
-        auto_snapshot_docker: true,
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.snapshot_policy = SnapshotPolicy::None;
+    config.auto_snapshot_git = true;
+    config.auto_snapshot_docker = true;
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
     assert!(
@@ -316,12 +308,10 @@ fn policy_none_disables_all_plugins() {
 fn policy_selective_honours_per_plugin_flags() {
     use crate::config::SnapshotPolicy;
 
-    let config = AegisConfig {
-        snapshot_policy: SnapshotPolicy::Selective,
-        auto_snapshot_git: true,
-        auto_snapshot_docker: false,
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.snapshot_policy = SnapshotPolicy::Selective;
+    config.auto_snapshot_git = true;
+    config.auto_snapshot_docker = false;
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
     let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
@@ -332,18 +322,16 @@ fn policy_selective_honours_per_plugin_flags() {
 fn selective_policy_enables_postgres_when_configured() {
     use crate::config::SnapshotPolicy;
 
-    let config = AegisConfig {
-        snapshot_policy: SnapshotPolicy::Selective,
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        auto_snapshot_postgres: true,
-        auto_snapshot_mysql: false,
-        auto_snapshot_sqlite: false,
-        postgres_snapshot: crate::config::PostgresSnapshotConfig {
-            database: "app".to_string(),
-            ..crate::config::PostgresSnapshotConfig::default()
-        },
-        ..AegisConfig::default()
+    let mut config = AegisConfig::default();
+    config.snapshot_policy = SnapshotPolicy::Selective;
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
+    config.auto_snapshot_postgres = true;
+    config.auto_snapshot_mysql = false;
+    config.auto_snapshot_sqlite = false;
+    config.postgres_snapshot = crate::config::PostgresSnapshotConfig {
+        database: "app".to_string(),
+        ..crate::config::PostgresSnapshotConfig::default()
     };
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
@@ -356,18 +344,16 @@ fn selective_policy_enables_postgres_when_configured() {
 fn selective_policy_disables_postgres_when_flag_off() {
     use crate::config::SnapshotPolicy;
 
-    let config = AegisConfig {
-        snapshot_policy: SnapshotPolicy::Selective,
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        auto_snapshot_postgres: false,
-        auto_snapshot_mysql: false,
-        auto_snapshot_sqlite: false,
-        postgres_snapshot: crate::config::PostgresSnapshotConfig {
-            database: "app".to_string(),
-            ..crate::config::PostgresSnapshotConfig::default()
-        },
-        ..AegisConfig::default()
+    let mut config = AegisConfig::default();
+    config.snapshot_policy = SnapshotPolicy::Selective;
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
+    config.auto_snapshot_postgres = false;
+    config.auto_snapshot_mysql = false;
+    config.auto_snapshot_sqlite = false;
+    config.postgres_snapshot = crate::config::PostgresSnapshotConfig {
+        database: "app".to_string(),
+        ..crate::config::PostgresSnapshotConfig::default()
     };
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
@@ -380,16 +366,14 @@ fn selective_policy_disables_postgres_when_flag_off() {
 fn policy_full_enables_supabase_plugin() {
     use crate::config::SnapshotPolicy;
 
-    let config = AegisConfig {
-        snapshot_policy: SnapshotPolicy::Full,
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        auto_snapshot_postgres: false,
-        auto_snapshot_mysql: false,
-        auto_snapshot_sqlite: false,
-        auto_snapshot_supabase: false,
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.snapshot_policy = SnapshotPolicy::Full;
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
+    config.auto_snapshot_postgres = false;
+    config.auto_snapshot_mysql = false;
+    config.auto_snapshot_sqlite = false;
+    config.auto_snapshot_supabase = false;
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
     let names: Vec<_> = registry.plugins.iter().map(|p| p.name()).collect();
@@ -411,38 +395,36 @@ fn for_rollback_includes_supabase_plugin() {
 
 #[test]
 fn rollback_runtime_config_preserves_supabase_settings_and_forces_provider() {
-    let config = AegisConfig {
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        auto_snapshot_postgres: false,
-        auto_snapshot_mysql: false,
-        auto_snapshot_supabase: false,
-        auto_snapshot_sqlite: false,
-        postgres_snapshot: crate::config::PostgresSnapshotConfig {
-            database: "pg-app".to_string(),
-            host: "pg.internal".to_string(),
-            port: 5544,
-            user: "pguser".to_string(),
-        },
-        mysql_snapshot: crate::config::MysqlSnapshotConfig {
-            database: "mysql-app".to_string(),
-            host: "mysql.internal".to_string(),
-            port: 4407,
-            user: "mysqluser".to_string(),
-        },
-        supabase_snapshot: crate::config::SupabaseSnapshotConfig {
-            project_ref: "proj_123".to_string(),
-            db: crate::config::PostgresSnapshotConfig {
-                database: "postgres".to_string(),
-                host: "db.supabase.co".to_string(),
-                port: 6543,
-                user: "postgres".to_string(),
-            },
-            ..crate::config::SupabaseSnapshotConfig::default()
-        },
-        sqlite_snapshot_path: "db/app.sqlite".to_string(),
-        ..AegisConfig::default()
+    let mut config = AegisConfig::default();
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
+    config.auto_snapshot_postgres = false;
+    config.auto_snapshot_mysql = false;
+    config.auto_snapshot_supabase = false;
+    config.auto_snapshot_sqlite = false;
+    config.postgres_snapshot = crate::config::PostgresSnapshotConfig {
+        database: "pg-app".to_string(),
+        host: "pg.internal".to_string(),
+        port: 5544,
+        user: "pguser".to_string(),
     };
+    config.mysql_snapshot = crate::config::MysqlSnapshotConfig {
+        database: "mysql-app".to_string(),
+        host: "mysql.internal".to_string(),
+        port: 4407,
+        user: "mysqluser".to_string(),
+    };
+    config.supabase_snapshot = crate::config::SupabaseSnapshotConfig {
+        project_ref: "proj_123".to_string(),
+        db: crate::config::PostgresSnapshotConfig {
+            database: "postgres".to_string(),
+            host: "db.supabase.co".to_string(),
+            port: 6543,
+            user: "postgres".to_string(),
+        },
+        ..crate::config::SupabaseSnapshotConfig::default()
+    };
+    config.sqlite_snapshot_path = "db/app.sqlite".to_string();
 
     let runtime_config = SnapshotRegistryConfig::for_rollback_from_config(&config).unwrap();
 
@@ -469,22 +451,20 @@ fn rollback_runtime_config_preserves_supabase_settings_and_forces_provider() {
 fn selective_policy_enables_supabase_when_configured() {
     use crate::config::SnapshotPolicy;
 
-    let config = AegisConfig {
-        snapshot_policy: SnapshotPolicy::Selective,
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        auto_snapshot_postgres: false,
-        auto_snapshot_mysql: false,
-        auto_snapshot_sqlite: false,
-        auto_snapshot_supabase: true,
-        supabase_snapshot: crate::config::SupabaseSnapshotConfig {
-            db: crate::config::PostgresSnapshotConfig {
-                database: "postgres".to_string(),
-                ..crate::config::PostgresSnapshotConfig::default()
-            },
-            ..crate::config::SupabaseSnapshotConfig::default()
+    let mut config = AegisConfig::default();
+    config.snapshot_policy = SnapshotPolicy::Selective;
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
+    config.auto_snapshot_postgres = false;
+    config.auto_snapshot_mysql = false;
+    config.auto_snapshot_sqlite = false;
+    config.auto_snapshot_supabase = true;
+    config.supabase_snapshot = crate::config::SupabaseSnapshotConfig {
+        db: crate::config::PostgresSnapshotConfig {
+            database: "postgres".to_string(),
+            ..crate::config::PostgresSnapshotConfig::default()
         },
-        ..AegisConfig::default()
+        ..crate::config::SupabaseSnapshotConfig::default()
     };
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
@@ -532,15 +512,13 @@ async fn sqlite_relative_snapshot_path_is_applicable_from_command_cwd() {
     std::fs::create_dir_all(&db_dir).unwrap();
     std::fs::write(db_dir.join("app.db"), b"sqlite-data").unwrap();
 
-    let config = AegisConfig {
-        auto_snapshot_git: false,
-        auto_snapshot_docker: false,
-        auto_snapshot_postgres: false,
-        auto_snapshot_mysql: false,
-        auto_snapshot_sqlite: true,
-        sqlite_snapshot_path: "db/app.db".to_string(),
-        ..AegisConfig::default()
-    };
+    let mut config = AegisConfig::default();
+    config.auto_snapshot_git = false;
+    config.auto_snapshot_docker = false;
+    config.auto_snapshot_postgres = false;
+    config.auto_snapshot_mysql = false;
+    config.auto_snapshot_sqlite = true;
+    config.sqlite_snapshot_path = "db/app.db".to_string();
 
     let registry = SnapshotRegistry::try_from_config(&config).unwrap();
 

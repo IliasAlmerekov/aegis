@@ -156,7 +156,7 @@ pub struct AegisConfig {
     pub custom_patterns: Vec<UserPattern>,
     /// Per-pattern provenance (which layer each `custom_patterns` entry came from). Internal; not serialized.
     #[serde(skip)]
-    pub custom_pattern_layers: Vec<ConfigSourceLayer>,
+    pub(crate) custom_pattern_layers: Vec<ConfigSourceLayer>,
     /// Structured allow-list rules (TOML: `[[allow]]`).
     #[serde(
         default,
@@ -167,19 +167,19 @@ pub struct AegisConfig {
     pub allowlist: Vec<AllowlistRule>,
     /// Per-rule provenance for `allowlist`. Internal; not serialized.
     #[serde(skip)]
-    pub allowlist_layers: Vec<ConfigSourceLayer>,
+    pub(crate) allowlist_layers: Vec<ConfigSourceLayer>,
     /// Structured block-list rules (TOML: `[[block]]`).
     #[serde(default, rename = "block", alias = "blocklist")]
     pub blocklist: Vec<BlockRule>,
     /// Per-rule provenance for `blocklist`. Internal; not serialized.
     #[serde(skip)]
-    pub blocklist_layers: Vec<ConfigSourceLayer>,
+    pub(crate) blocklist_layers: Vec<ConfigSourceLayer>,
     /// Which layer set `audit.max_file_size_bytes`. Internal; not serialized.
     #[serde(skip)]
-    pub audit_max_file_size_bytes_source: Option<ConfigSourceLayer>,
+    pub(crate) audit_max_file_size_bytes_source: Option<ConfigSourceLayer>,
     /// Which layer set `audit.retention_files`. Internal; not serialized.
     #[serde(skip)]
-    pub audit_retention_files_source: Option<ConfigSourceLayer>,
+    pub(crate) audit_retention_files_source: Option<ConfigSourceLayer>,
     /// Maximum risk level the allow-list may auto-approve in Protect/Strict mode.
     pub allowlist_override_level: AllowlistOverrideLevel,
     /// Controls which snapshot plugins run before dangerous commands.
