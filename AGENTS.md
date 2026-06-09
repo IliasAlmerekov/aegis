@@ -116,7 +116,8 @@ actions while preserving performance and correctness.
 Any changes in these files require extra care and explicit validation:
 
 - `src/main.rs`
-- `src/interceptor/parser.rs`
+- `crates/aegis-parser/` (shell tokenizer + PrefixPattern matching)
+- `src/interceptor/parser/` (re-export shim over `aegis-parser`)
 - `src/interceptor/scanner.rs`
 - `src/interceptor/patterns.rs`
 - `src/ui/confirm.rs`

@@ -128,7 +128,8 @@ Every change to these files requires extra care — fail-closed behavior must be
 
 ```
 src/main.rs
-src/interceptor/parser.rs
+crates/aegis-parser/
+src/interceptor/parser/
 src/interceptor/scanner.rs
 src/interceptor/patterns.rs
 src/ui/confirm.rs

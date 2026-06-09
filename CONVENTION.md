@@ -74,7 +74,6 @@ Current module responsibilities:
 - `crates/aegis-parser/`: shell tokenizer, segmentation, and `PrefixPattern` matching
 - `src/interceptor/parser/`: thin re-export shim over the `aegis-parser` crate
 - `src/interceptor/scanner.rs`: command classification
-- `src/interceptor/scanner.rs`: command classification
 - `src/interceptor/patterns.rs`: pattern loading and pattern types
 - `src/config/`: layered config model and allowlist logic
 - `src/snapshot/`: snapshot plugin trait and Git/Docker implementations
@@ -315,6 +314,7 @@ Before production claims:
 Treat a change as high-risk if it touches any of:
 
 - `src/main.rs`
+- `crates/aegis-parser/`
 - `src/interceptor/`
 - `src/config/allowlist.rs`
 - `src/config/model.rs`
