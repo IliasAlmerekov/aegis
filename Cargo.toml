@@ -1,6 +1,6 @@
 [package]
 name = "aegis"
-version = "0.5.3"
+version = "0.5.6"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -18,15 +18,21 @@ exclude = [
 ]
 
 [workspace]
-members = ["crates/aegis-types", "crates/aegis-parser", "crates/aegis-scanner"]
+members = [
+    "crates/aegis-types",
+    "crates/aegis-parser",
+    "crates/aegis-scanner",
+    "crates/aegis-policy",
+]
 # The cargo-fuzz crate is built standalone by `cargo fuzz` with its own
 # sanitizer flags; it must not be pulled into the main workspace.
 exclude = ["fuzz"]
 
 [dependencies]
-aegis-types = { version = "0.5.3", path = "crates/aegis-types" }
-aegis-parser = { version = "0.5.3", path = "crates/aegis-parser" }
-aegis-scanner = { version = "0.5.3", path = "crates/aegis-scanner" }
+aegis-types = { version = "0.5.6", path = "crates/aegis-types" }
+aegis-parser = { version = "0.5.6", path = "crates/aegis-parser" }
+aegis-scanner = { version = "0.5.6", path = "crates/aegis-scanner" }
+aegis-policy = { version = "0.5.6", path = "crates/aegis-policy" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "1"

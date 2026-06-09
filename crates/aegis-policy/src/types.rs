@@ -1,7 +1,7 @@
 //! Policy types: inputs, actions, rationales, and execution transport.
 
-use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
-use crate::interceptor::scanner::Assessment;
+use aegis_scanner::Assessment;
+use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 use serde::{Deserialize, Serialize};
 
 /// Identifies the caller path that is asking policy for a decision.

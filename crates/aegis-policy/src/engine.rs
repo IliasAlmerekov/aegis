@@ -1,7 +1,7 @@
 //! Pure policy engine: evaluate a prepared policy input and return a decision.
 
-use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
-use crate::interceptor::RiskLevel;
+use aegis_types::RiskLevel;
+use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 
 use super::types::{PolicyAction, PolicyDecision, PolicyInput, PolicyRationale};
 
@@ -165,10 +165,10 @@ mod tests {
         PolicyExecutionContext, PolicyInput, PolicyRationale,
     };
     use super::evaluate_policy;
-    use crate::config::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
-    use crate::interceptor::RiskLevel;
-    use crate::interceptor::parser::Parser as CommandParser;
-    use crate::interceptor::scanner::Assessment;
+    use aegis_parser::Parser as CommandParser;
+    use aegis_scanner::Assessment;
+    use aegis_types::RiskLevel;
+    use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 
     fn assessment(risk: RiskLevel) -> Assessment {
         Assessment {

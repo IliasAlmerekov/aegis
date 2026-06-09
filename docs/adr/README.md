@@ -22,7 +22,8 @@ Aegis is a Cargo workspace: the `aegis` binary crate at the repository root
 acts as a shell-proxy guardrail and depends on focused library crates under
 `crates/` (Phase 4 of `ROADMAP.md`). Extracted so far: `aegis-types` (shared
 data vocabulary), `aegis-parser` (shell tokenizer + `PrefixPattern` matcher),
-and `aegis-scanner` (`Scanner`, `PatternSet`, built-in `patterns.toml`).
+`aegis-scanner` (`Scanner`, `PatternSet`, built-in `patterns.toml`), and
+`aegis-policy` (the pure `PolicyEngine`).
 
 The current runtime architecture is split across a small set of focused
 modules and crates:
@@ -32,6 +33,8 @@ modules and crates:
 - `src/interceptor/parser/` — thin re-export shim over the `aegis-parser` crate
 - `crates/aegis-scanner/` — synchronous risk classification, `PatternSet`, built-in patterns
 - `src/interceptor/scanner.rs`, `src/interceptor/patterns.rs` — thin re-export shims over `aegis-scanner`
+- `crates/aegis-policy/` — pure policy evaluation (`Assessment` + context → decision)
+- `src/decision/` — thin re-export shim over the `aegis-policy` crate
 - `src/runtime_gate.rs` — Rust-side CI detection contract
 - `src/toggle.rs` — global on/off toggle state rooted at `~/.aegis/disabled`
 - `src/watch/` — NDJSON watch-mode control loop
