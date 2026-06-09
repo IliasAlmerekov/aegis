@@ -18,10 +18,11 @@ exclude = [
 ]
 
 [workspace]
-members = ["crates/aegis-types"]
+members = ["crates/aegis-types", "crates/aegis-parser"]
 
 [dependencies]
 aegis-types = { version = "0.5.3", path = "crates/aegis-types" }
+aegis-parser = { version = "0.5.3", path = "crates/aegis-parser" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "1"

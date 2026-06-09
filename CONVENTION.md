@@ -63,14 +63,17 @@ root and depends on focused library crates under `crates/` (Phase 4 of
 `ROADMAP.md`). Extraction is in progress; `crates/aegis-types` (the zero
 Aegis-crate-dependency foundation: `RiskLevel`, `Decision`, `Pattern`,
 `Assessment`, and the shared pattern/command vocabulary) has been carved out so
-far. Dependency arrows flow inward toward `aegis-types`; no library crate may
-depend on the root binary crate.
+far, followed by `crates/aegis-parser` (the shell tokenizer and `PrefixPattern`
+matcher; depends only on `aegis-types`). Dependency arrows flow inward toward
+`aegis-types`; no library crate may depend on the root binary crate.
 
 Current module responsibilities:
 
 - `src/main.rs`: CLI parsing and orchestration only
 - `src/error.rs`: shared typed errors
-- `src/interceptor/parser.rs`: shell parsing and command segmentation
+- `crates/aegis-parser/`: shell tokenizer, segmentation, and `PrefixPattern` matching
+- `src/interceptor/parser/`: thin re-export shim over the `aegis-parser` crate
+- `src/interceptor/scanner.rs`: command classification
 - `src/interceptor/scanner.rs`: command classification
 - `src/interceptor/patterns.rs`: pattern loading and pattern types
 - `src/config/`: layered config model and allowlist logic

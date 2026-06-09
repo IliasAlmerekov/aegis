@@ -334,9 +334,15 @@ application crate. Dependency arrows flow inward toward `aegis-types`.
 `PrefixPattern`, and `Assessment` together with its embedded data types
 (`MatchResult`, `DecisionSource`, `HighlightRange`, `ParsedCommand`,
 `InlineScript`) plus their pure `Display`/`FromStr`/`decision_source` impls. The
-scanning/parsing *logic* (`Scanner`, `Parser`, highlighting, helpers) stays in
-the root crate and consumes these types. Definitions are re-exported from their
-original module paths so call sites are unchanged. Remaining crates pending.
+scanning *logic* (`Scanner`, highlighting, helpers) stays in the root crate and
+consumes these types. Definitions are re-exported from their original module
+paths so call sites are unchanged.
+
+`aegis-parser` extracted next — the shell tokenizer (`Parser`, `split_tokens`,
+`extract_prefix`, segmentation, heredoc/inline-script/nested-shell extraction)
+and the token-level `matches_prefix` matcher. `PrefixRule::matches_tokens` (still
+in the root crate, bound for `aegis-policy`) delegates to `aegis_parser::matches_prefix`.
+`src/interceptor/parser/` is now a re-export shim. Remaining crates pending.
 
 ### 4.2 Dependency rule enforcement via `cargo deny`
 

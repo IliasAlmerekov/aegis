@@ -4,71 +4,14 @@ use std::sync::Arc;
 use crate::interceptor::patterns::PrefixRule;
 use crate::interceptor::scanner::MatchResult;
 
-/// Compare two tokens for prefix-rule equality.
-///
-/// Shell flags (tokens beginning with `-`) are compared case-sensitively;
-/// everything else is compared case-insensitively so that SQL keywords and
-/// command names match regardless of casing.
-fn str_eq_maybe_case(a: &str, b: &str) -> bool {
-    if a.starts_with('-') || b.starts_with('-') {
-        a == b
-    } else {
-        a.eq_ignore_ascii_case(b)
-    }
-}
-
 impl PrefixRule {
     /// Check whether `tokens` matches this rule's prefix pattern.
     ///
-    /// Supports [`crate::interceptor::patterns::PatternToken::Single`],
-    /// [`crate::interceptor::patterns::PatternToken::Alts`],
-    /// [`crate::interceptor::patterns::PatternToken::Any`] and
-    /// [`crate::interceptor::patterns::PatternToken::AnyStar`].
-    /// The pattern must be a prefix of `tokens` — extra trailing tokens are allowed.
-    /// Empty patterns never match.
+    /// Delegates to [`aegis_parser::matches_prefix`], which supports
+    /// `Single`/`Alts`/`Any`/`AnyStar` tokens. The pattern must be a prefix of
+    /// `tokens` — extra trailing tokens are allowed. Empty patterns never match.
     pub fn matches_tokens(&self, tokens: &[&str]) -> bool {
-        if self.pattern.is_empty() {
-            return false;
-        }
-        self.matches_from(tokens, 0)
-    }
-
-    fn matches_from(&self, tokens: &[&str], pat_idx: usize) -> bool {
-        if pat_idx == self.pattern.len() {
-            return true;
-        }
-        match &self.pattern[pat_idx] {
-            crate::interceptor::patterns::PatternToken::Single(s) => {
-                if tokens.is_empty() || !str_eq_maybe_case(tokens[0], s.as_ref()) {
-                    return false;
-                }
-                self.matches_from(&tokens[1..], pat_idx + 1)
-            }
-            crate::interceptor::patterns::PatternToken::Alts(alts) => {
-                if tokens.is_empty()
-                    || !alts
-                        .iter()
-                        .any(|a| str_eq_maybe_case(tokens[0], a.as_ref()))
-                {
-                    return false;
-                }
-                self.matches_from(&tokens[1..], pat_idx + 1)
-            }
-            crate::interceptor::patterns::PatternToken::Any => {
-                if tokens.is_empty() {
-                    return false;
-                }
-                self.matches_from(&tokens[1..], pat_idx + 1)
-            }
-            crate::interceptor::patterns::PatternToken::AnyStar => {
-                for skip in 0..=tokens.len() {
-                    if self.matches_from(&tokens[skip..], pat_idx + 1) {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
+        aegis_parser::matches_prefix(&self.pattern, tokens)
     }
 
     /// Produce a [`MatchResult`] for this rule when it matched `tokens`.
