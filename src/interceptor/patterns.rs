@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 pub use aegis_types::{Category, Pattern, PatternSource, PatternToken, PrefixPattern};
 
-use crate::config::UserPattern;
 use crate::error::AegisError;
 use crate::interceptor::RiskLevel;
 
@@ -69,21 +68,6 @@ impl From<RawPattern> for Pattern {
     }
 }
 
-impl From<UserPattern> for Pattern {
-    fn from(user: UserPattern) -> Self {
-        Pattern {
-            id: Cow::Owned(user.id),
-            category: user.category,
-            risk: user.risk,
-            pattern: Cow::Owned(user.pattern),
-            description: Cow::Owned(user.description),
-            safe_alt: user.safe_alt.map(Cow::Owned),
-            justification: user.justification.map(Cow::Owned),
-            source: PatternSource::Custom,
-        }
-    }
-}
-
 /// Wrapper for TOML top-level table: `[[patterns]]`.
 #[derive(Debug, Deserialize)]
 struct PatternsFile {
@@ -118,24 +102,21 @@ impl PatternSet {
     ///
     /// Merge order is fixed and explicit:
     /// 1) built-in patterns embedded in the binary
-    /// 2) user-defined patterns loaded from config
+    /// 2) custom patterns supplied by the caller
     ///
-    /// The returned set is the effective runtime input consumed by
-    /// `Scanner::new`, after validation and normalization into one `Pattern`
-    /// representation.
-    pub fn from_sources(custom_patterns: &[UserPattern]) -> Result<PatternSet, AegisError> {
+    /// Custom patterns arrive already normalized into the neutral [`Pattern`]
+    /// representation — conversion from any config-specific shape happens at the
+    /// orchestration boundary, so the scanner never sees config types. The
+    /// returned set is the effective runtime input consumed by `Scanner::new`,
+    /// after validation.
+    pub fn from_sources(custom_patterns: &[Pattern]) -> Result<PatternSet, AegisError> {
         let file: PatternsFile = toml::from_str(BUILTIN_PATTERNS_TOML)
             .map_err(|e| AegisError::Config(format!("failed to parse patterns.toml: {e}")))?;
 
         // 1) built-in
         let builtin_patterns: Vec<Pattern> = file.patterns.into_iter().map(Pattern::from).collect();
 
-        // 2) custom (already merged global+project in config layer)
-        let custom_patterns: Vec<Pattern> =
-            custom_patterns.iter().cloned().map(Pattern::from).collect();
-
-        // 3) normalize to one structure (`Pattern`) happened via `From` conversions above.
-        // 4) validate unified set (required fields + duplicate IDs forbidden for regex patterns).
+        // 2) validate unified set (required fields + duplicate IDs forbidden for regex patterns).
         let mut pattern_ids: HashSet<String> =
             HashSet::with_capacity(builtin_patterns.len() + custom_patterns.len());
         let mut patterns: Vec<Arc<Pattern>> =
@@ -143,7 +124,7 @@ impl PatternSet {
 
         for pattern in builtin_patterns
             .into_iter()
-            .chain(custom_patterns.into_iter())
+            .chain(custom_patterns.iter().cloned())
         {
             Self::validate_pattern(&pattern, &mut pattern_ids)?;
             patterns.push(Arc::new(pattern));

@@ -52,8 +52,12 @@ pub fn scanner_for(custom_patterns: &[UserPattern]) -> Result<Arc<scanner::Scann
         return Ok(scanner);
     }
 
+    // Convert config-layer patterns into the neutral `Pattern` shape at this
+    // orchestration boundary so the scanner never sees config types.
+    let converted: Vec<patterns::Pattern> =
+        custom_patterns.iter().cloned().map(Into::into).collect();
     let scanner =
-        Arc::new(patterns::PatternSet::from_sources(custom_patterns).map(scanner::Scanner::new)?);
+        Arc::new(patterns::PatternSet::from_sources(&converted).map(scanner::Scanner::new)?);
     cache_custom_scanner(key.0, Arc::clone(&scanner))?;
     Ok(scanner)
 }

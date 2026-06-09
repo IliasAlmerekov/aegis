@@ -2,14 +2,15 @@ use super::*;
 
 #[test]
 fn custom_pattern_changes_assessment_and_marks_custom_source() {
-    let custom = UserPattern {
-        id: "USR-ASS-001".to_string(),
+    let custom = Pattern {
+        id: "USR-ASS-001".into(),
         category: Category::Process,
         risk: RiskLevel::Danger,
-        pattern: r"deploy-prod-now".to_string(),
-        description: "Project-specific destructive deploy shortcut".to_string(),
-        safe_alt: Some("deploy-prod-now --dry-run".to_string()),
+        pattern: "deploy-prod-now".into(),
+        description: "Project-specific destructive deploy shortcut".into(),
+        safe_alt: Some("deploy-prod-now --dry-run".into()),
         justification: None,
+        source: PatternSource::Custom,
     };
 
     let patterns =

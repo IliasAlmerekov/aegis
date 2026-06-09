@@ -1,5 +1,9 @@
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+
+use aegis_types::{Pattern, PatternSource};
 
 use super::AuditIntegrityMode;
 use crate::interceptor::RiskLevel;
@@ -23,6 +27,24 @@ pub struct UserPattern {
     pub safe_alt: Option<String>,
     /// Optional rationale for adding this pattern.
     pub justification: Option<String>,
+}
+
+/// Convert a config-layer [`UserPattern`] into the neutral [`Pattern`] consumed
+/// by the scanner. This conversion lives at the config/orchestration boundary so
+/// the scanner crate never depends on config-specific types.
+impl From<UserPattern> for Pattern {
+    fn from(user: UserPattern) -> Self {
+        Pattern {
+            id: Cow::Owned(user.id),
+            category: user.category,
+            risk: user.risk,
+            pattern: Cow::Owned(user.pattern),
+            description: Cow::Owned(user.description),
+            safe_alt: user.safe_alt.map(Cow::Owned),
+            justification: user.justification.map(Cow::Owned),
+            source: PatternSource::Custom,
+        }
+    }
 }
 
 mod offset_datetime_option {

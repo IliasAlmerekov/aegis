@@ -1,6 +1,5 @@
 pub use std::sync::Arc;
 
-pub use crate::config::UserPattern;
 pub use crate::interceptor::RiskLevel;
 pub use crate::interceptor::parser::{Parser, top_level_pipelines};
 pub use crate::interceptor::patterns::{Category, Pattern, PatternSet, PatternSource};
