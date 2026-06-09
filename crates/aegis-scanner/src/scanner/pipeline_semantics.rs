@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::interceptor::RiskLevel;
-use crate::interceptor::parser::PipelineChain;
-use crate::interceptor::patterns::{Category, Pattern, PatternSource};
+use crate::patterns::{Category, Pattern, PatternSource};
+use aegis_parser::PipelineChain;
+use aegis_types::RiskLevel;
 
 use super::MatchResult;
 
@@ -91,7 +91,7 @@ fn is_shell_sink(segment: &str) -> bool {
 }
 
 fn is_xargs_rm_sink(segment: &str) -> bool {
-    let tokens = crate::interceptor::parser::split_tokens(segment);
+    let tokens = aegis_parser::split_tokens(segment);
     if tokens.first().map(String::as_str) != Some("xargs") {
         return false;
     }
@@ -142,7 +142,7 @@ fn is_network_sink(segment: &str) -> bool {
 }
 
 fn is_obvious_secret_source(segment: &str) -> bool {
-    let tokens = crate::interceptor::parser::split_tokens(segment);
+    let tokens = aegis_parser::split_tokens(segment);
     let Some(first) = tokens.first().map(String::as_str) else {
         return false;
     };
@@ -188,7 +188,5 @@ fn is_secret_like_env_name(name: &str) -> bool {
 }
 
 fn first_token(segment: &str) -> Option<String> {
-    crate::interceptor::parser::split_tokens(segment)
-        .into_iter()
-        .next()
+    aegis_parser::split_tokens(segment).into_iter().next()
 }

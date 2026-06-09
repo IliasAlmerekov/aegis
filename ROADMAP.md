@@ -340,9 +340,17 @@ paths so call sites are unchanged.
 
 `aegis-parser` extracted next — the shell tokenizer (`Parser`, `split_tokens`,
 `extract_prefix`, segmentation, heredoc/inline-script/nested-shell extraction)
-and the token-level `matches_prefix` matcher. `PrefixRule::matches_tokens` (still
-in the root crate, bound for `aegis-policy`) delegates to `aegis_parser::matches_prefix`.
-`src/interceptor/parser/` is now a re-export shim. Remaining crates pending.
+and the token-level `matches_prefix` matcher. `PrefixRule::matches_tokens` (now
+in `aegis-scanner`) delegates to `aegis_parser::matches_prefix`.
+`src/interceptor/parser/` is now a re-export shim.
+
+`aegis-scanner` extracted next — `Scanner`, `PatternSet`, `PrefixRule`, the
+recursive/nested-scan helpers, and the embedded `patterns.toml`. It exposes a
+typed `ScannerError` (thiserror) instead of leaking the binary's `AegisError`;
+the root maps `ScannerError → AegisError` at the orchestration boundary. The
+`UserPattern → Pattern` conversion lives at the config/root boundary so the
+scanner never sees config types. `src/interceptor/{scanner,patterns}.rs` are now
+re-export shims. Remaining crates pending (policy, audit, snapshot, tui, config).
 
 ### 4.2 Dependency rule enforcement via `cargo deny`
 

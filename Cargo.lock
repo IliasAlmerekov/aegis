@@ -13,6 +13,7 @@ name = "aegis"
 version = "0.5.3"
 dependencies = [
  "aegis-parser",
+ "aegis-scanner",
  "aegis-types",
  "aho-corasick",
  "anyhow",
@@ -41,6 +42,19 @@ name = "aegis-parser"
 version = "0.5.3"
 dependencies = [
  "aegis-types",
+]
+
+[[package]]
+name = "aegis-scanner"
+version = "0.5.3"
+dependencies = [
+ "aegis-parser",
+ "aegis-types",
+ "aho-corasick",
+ "regex",
+ "serde",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]

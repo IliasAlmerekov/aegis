@@ -13,15 +13,14 @@ use std::sync::Arc;
 use aho_corasick::AhoCorasick;
 use regex::Regex;
 
+use crate::error::ScannerError;
 #[cfg(test)]
-use crate::interceptor::nested::MAX_NESTED_SCAN_DEPTH;
-use crate::interceptor::patterns::{Pattern, PatternSet};
+use crate::nested::MAX_NESTED_SCAN_DEPTH;
+use crate::patterns::{Pattern, PatternSet};
 
-pub use crate::interceptor::patterns::{PatternToken, PrefixPattern, PrefixRule};
+pub use crate::patterns::{PatternToken, PrefixRule};
 pub use assessment::{Assessment, DecisionSource, MatchResult};
 pub use highlighting::HighlightRange;
-#[cfg(test)]
-pub use highlighting::sorted_highlight_ranges_for_tests;
 
 /// First-pass scanner backed by an Aho-Corasick automaton.
 ///
@@ -73,7 +72,12 @@ impl Scanner {
     ///
     /// The Aho-Corasick automaton is constructed once here; subsequent calls to
     /// [`Scanner::quick_scan`] are allocation-free.
-    pub fn new(patterns: PatternSet) -> Self {
+    ///
+    /// Returns [`ScannerError::InvalidPattern`] if any pattern's regex fails to
+    /// compile. Regex validity cannot be checked by [`PatternSet`] (which only
+    /// inspects field presence), so it is enforced here — a user-supplied custom
+    /// pattern with a malformed regex is a typed error, never a panic.
+    pub fn try_new(patterns: PatternSet) -> Result<Self, ScannerError> {
         let effective_patterns = patterns.patterns();
 
         let mut keywords: Vec<String> = Vec::new();
@@ -82,9 +86,12 @@ impl Scanner {
         let mut universal: Vec<CompiledPattern> = Vec::new();
 
         for p in effective_patterns {
-            // Compile each regex once — panic on invalid pattern (programming error).
-            let rx = Regex::new(&p.pattern)
-                .unwrap_or_else(|e| panic!("invalid regex in pattern {}: {e}", p.id));
+            // Compile each regex once. Invalid regex (e.g. from a user pattern) is
+            // a typed error, not a panic.
+            let rx = Regex::new(&p.pattern).map_err(|e| ScannerError::InvalidPattern {
+                id: p.id.to_string(),
+                reason: format!("invalid regex: {e}"),
+            })?;
             let entry = (Arc::clone(p), rx);
 
             // Build AC keyword set.
@@ -154,13 +161,13 @@ impl Scanner {
             }
         }
 
-        Scanner {
+        Ok(Scanner {
             ac,
             has_uncovered,
             by_program,
             universal,
             prefix_by_program,
-        }
+        })
     }
 
     /// Fast first pass: returns `false` only when no pattern could possibly match.

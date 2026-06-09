@@ -103,13 +103,13 @@ justification = "/etc contains critical system configuration. Moving files out o
 
 # ─── Git ─────────────────────────────────────────────────────────────────────
 # NOTE: GIT-001..GIT-008 are now defined as token-prefix rules in
-# builtin_prefix_rules() in src/interceptor/patterns.rs.
+# builtin_prefix_rules() in crates/aegis-scanner/src/patterns.rs.
 # They are removed from this regex file to demonstrate the regex→token migration.
 
 # ─── Database ────────────────────────────────────────────────────────────────
 #
 # DB-001, DB-002, DB-006, DB-007, DB-008 are now token-prefix rules
-# defined in builtin_prefix_rules() in src/interceptor/patterns.rs.
+# defined in builtin_prefix_rules() in crates/aegis-scanner/src/patterns.rs.
 # DB-004 (TRUNCATE TABLE) remains here as a regex pattern.
 # Only regex patterns that require arbitrary gaps or negative lookahead remain here.
 

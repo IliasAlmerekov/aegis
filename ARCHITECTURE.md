@@ -214,8 +214,8 @@ src/interceptor/
     └── nested_shells.rs         extract_nested_commands
 ```
 
-Built-in patterns live in `config/patterns.toml` (loaded via
-`PatternSet::load`). User patterns come from `aegis.toml` and are merged per
+Built-in patterns live in `crates/aegis-scanner/patterns.toml` (embedded at
+compile time and loaded via `PatternSet::load`). User patterns come from `aegis.toml` and are merged per
 effective config; the merged scanner is cached by content hash in
 `CUSTOM_SCANNER_CACHE` (`src/interceptor/mod.rs`).
 
@@ -598,15 +598,15 @@ Three things will likely be added often. Each has a fixed shape.
 
 ### 6.1 Add a built-in pattern
 
-1. Edit `config/patterns.toml`. Add an entry with a unique `id` of the form
-   `CAT-NNN` (e.g. `FS-042`, `GIT-008`).
+1. Edit `crates/aegis-scanner/patterns.toml`. Add an entry with a unique `id`
+   of the form `CAT-NNN` (e.g. `FS-042`, `GIT-008`).
 2. Choose `RiskLevel` from `{Safe, Warn, Danger, Block}`. For `Block`-level
    patterns, include a comment explaining why bypass is not acceptable.
 3. Prefer a literal keyword in the regex — it lets Aho-Corasick short-circuit
    the quick scan. If no literal keyword exists, `PatternSet` will route
    through the "uncovered" path (slower, but correct).
-4. Add a unit test in `src/interceptor/patterns.rs` asserting one positive
-   match and one negative match.
+4. Add a unit test in `crates/aegis-scanner/src/scanner/tests/` asserting one
+   positive match and one negative match.
 5. Run `rtk cargo bench --bench scanner_bench` if you touched a hot pattern.
 
 ### 6.2 Add a snapshot provider
@@ -660,15 +660,18 @@ conversation to happen.
 | ---------------------------------------- | ----- | -------------------------------------------------------------------- |
 | `src/snapshot/supabase.rs`               | 1 638 | Acceptable — isolates one CLI integration, no mixed responsibilities.|
 | `src/config/model/tests.rs`              | 1 464 | Test file; split by concern if it grows beyond 1 500.               |
-| `src/interceptor/scanner/tests.rs`       | 1 338 | Test file; split by concern if it grows beyond 1 500.               |
 | `src/snapshot/docker.rs`                 | 1 302 | Acceptable — complete plugin impl with snapshot + rollback logic.    |
-| `src/interceptor/patterns.rs`            | 1 270 | Acceptable — all pattern definitions in one file aids pattern audits.|
 | `src/snapshot/mysql.rs`                  | 1 206 | Acceptable — mirrors postgres.rs structure.                         |
 | `src/snapshot/postgres.rs`               | 1 025 | Acceptable — complete plugin impl.                                   |
 
 The former `src/interceptor/parser/mod.rs` breach (≈1 041 lines) is resolved:
 the parser moved to the `aegis-parser` crate (largest file ≈625 lines, within
 budget), and `src/interceptor/parser/mod.rs` is now a thin re-export shim.
+
+The former `src/interceptor/patterns.rs` (≈1 270) and `scanner/tests.rs`
+(≈1 338) breaches are likewise resolved: both moved to the `aegis-scanner`
+crate and split (largest resulting file ≈501 lines), with `patterns.rs` /
+`scanner.rs` left as thin re-export shims.
 
 Budgets are enforced by `tests/main_thin_entrypoint.rs` for `main.rs`. Extend
 to other files as they are brought into compliance.

@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use crate::interceptor::patterns::PrefixRule;
-use crate::interceptor::scanner::MatchResult;
+use crate::patterns::PrefixRule;
+use crate::scanner::MatchResult;
 
 impl PrefixRule {
     /// Check whether `tokens` matches this rule's prefix pattern.
@@ -21,7 +21,7 @@ impl PrefixRule {
     pub fn to_match_result(&self, tokens: &[&str]) -> MatchResult {
         let consumed = tokens.join(" ");
         MatchResult {
-            pattern: Arc::new(crate::interceptor::patterns::Pattern {
+            pattern: Arc::new(crate::patterns::Pattern {
                 id: self.id.clone(),
                 category: self.category,
                 risk: self.risk,
@@ -48,7 +48,7 @@ impl PrefixRule {
     /// examples is treated as a bug and must be fixed before the binary ships.
     pub(crate) fn validate_examples(&self) -> Result<(), String> {
         for example in self.match_examples {
-            let tokens = crate::interceptor::parser::split_tokens(example);
+            let tokens = aegis_parser::split_tokens(example);
             let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
             if !self.matches_tokens(&token_refs) {
                 return Err(format!(
@@ -58,7 +58,7 @@ impl PrefixRule {
             }
         }
         for example in self.not_match_examples {
-            let tokens = crate::interceptor::parser::split_tokens(example);
+            let tokens = aegis_parser::split_tokens(example);
             let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
             if self.matches_tokens(&token_refs) {
                 return Err(format!(
@@ -74,8 +74,8 @@ impl PrefixRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interceptor::RiskLevel;
-    use crate::interceptor::patterns::{Category, PatternSource, PatternToken, PrefixRule};
+    use crate::patterns::{Category, PatternSource, PatternToken, PrefixRule};
+    use aegis_types::RiskLevel;
 
     fn single(s: &'static str) -> PatternToken {
         PatternToken::Single(Cow::Borrowed(s))
