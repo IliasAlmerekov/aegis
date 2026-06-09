@@ -133,6 +133,8 @@ src/interceptor/parser/
 crates/aegis-scanner/
 src/interceptor/scanner.rs
 src/interceptor/patterns.rs
+crates/aegis-policy/
+src/decision/
 src/ui/confirm.rs
 src/config/model.rs
 src/config/allowlist.rs

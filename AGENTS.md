@@ -121,6 +121,8 @@ Any changes in these files require extra care and explicit validation:
 - `crates/aegis-scanner/` (Scanner, PatternSet, built-in patterns.toml)
 - `src/interceptor/scanner.rs` (re-export shim over `aegis-scanner`)
 - `src/interceptor/patterns.rs` (re-export shim over `aegis-scanner`)
+- `crates/aegis-policy/` (PolicyEngine — allow/block decision)
+- `src/decision/` (re-export shim over `aegis-policy`)
 - `src/ui/confirm.rs`
 - `src/config/model.rs`
 - `src/config/allowlist.rs`

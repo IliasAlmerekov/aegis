@@ -350,7 +350,16 @@ typed `ScannerError` (thiserror) instead of leaking the binary's `AegisError`;
 the root maps `ScannerError → AegisError` at the orchestration boundary. The
 `UserPattern → Pattern` conversion lives at the config/root boundary so the
 scanner never sees config types. `src/interceptor/{scanner,patterns}.rs` are now
-re-export shims. Remaining crates pending (policy, audit, snapshot, tui, config).
+re-export shims.
+
+`aegis-policy` extracted next — the pure `PolicyEngine` (`src/decision/`), which
+maps an `Assessment` plus mode/CI/allowlist context to a `PolicyDecision`
+(infallible, no error type). Prep moved the policy-config enums (`Mode`,
+`CiPolicy`, `SnapshotPolicy`, `AllowlistOverrideLevel`) into `aegis-types` so
+policy needn't depend on config. `PrefixRule` stays in `aegis-scanner` (DAG
+direction) and `amend` (config-coupled decision persistence) is deferred to
+`aegis-config`. `src/decision/` is now a re-export shim. Remaining crates
+pending (audit, snapshot, tui, config — the last absorbs `amend`).
 
 ### 4.2 Dependency rule enforcement via `cargo deny`
 
