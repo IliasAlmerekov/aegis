@@ -17,7 +17,11 @@ exclude = [
     "*.txt",
 ]
 
+[workspace]
+members = ["crates/aegis-types"]
+
 [dependencies]
+aegis-types = { version = "0.5.3", path = "crates/aegis-types" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "1"

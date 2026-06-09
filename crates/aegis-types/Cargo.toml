@@ -1,0 +1,11 @@
+[package]
+name = "aegis-types"
+version = "0.5.3"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Core data types for Aegis: RiskLevel, Decision, Pattern, and the shared pattern vocabulary. Zero dependencies beyond serde/schemars."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+schemars = "1"

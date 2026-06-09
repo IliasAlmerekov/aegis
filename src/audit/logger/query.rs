@@ -125,6 +125,8 @@ impl AuditLogger {
                 RiskLevel::Warn => summary.risk_counts.warn += 1,
                 RiskLevel::Danger => summary.risk_counts.danger += 1,
                 RiskLevel::Block => summary.risk_counts.block += 1,
+                // Unknown future risk levels are not tallied in the v1 summary buckets.
+                _ => {}
             }
 
             for pattern in &base.matched_patterns {

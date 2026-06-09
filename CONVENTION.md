@@ -58,7 +58,13 @@ These rules are non-negotiable.
 
 ## 3. Architecture Rules
 
-The repository is a single Rust crate named `aegis`. It is not a Cargo workspace.
+The repository is a Cargo workspace. The `aegis` binary crate lives at the
+root and depends on focused library crates under `crates/` (Phase 4 of
+`ROADMAP.md`). Extraction is in progress; `crates/aegis-types` (the zero
+Aegis-crate-dependency foundation: `RiskLevel`, `Decision`, `Pattern`,
+`Assessment`, and the shared pattern/command vocabulary) has been carved out so
+far. Dependency arrows flow inward toward `aegis-types`; no library crate may
+depend on the root binary crate.
 
 Current module responsibilities:
 

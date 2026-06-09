@@ -175,6 +175,12 @@ pub fn default_explanation_for_assessment(assessment: &Assessment) -> CommandExp
             Some(BlockReason::IntrinsicRiskBlock),
             None,
         ),
+        _ => make_explanation(
+            assessment,
+            PolicyRationale::IntrinsicRiskBlock,
+            Some(BlockReason::IntrinsicRiskBlock),
+            None,
+        ),
     }
 }
 

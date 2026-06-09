@@ -61,6 +61,8 @@ fn evaluate_protect(input: PolicyInput<'_>) -> PolicyDecision {
             }
         }
         RiskLevel::Block => block(input, PolicyRationale::IntrinsicRiskBlock),
+        // Fail safe: an unknown future risk level is treated as Block.
+        _ => block(input, PolicyRationale::IntrinsicRiskBlock),
     }
 }
 
@@ -80,6 +82,8 @@ fn evaluate_strict(input: PolicyInput<'_>) -> PolicyDecision {
             }
         }
         RiskLevel::Block => block(input, PolicyRationale::IntrinsicRiskBlock),
+        // Fail safe: an unknown future risk level is treated as Block.
+        _ => block(input, PolicyRationale::IntrinsicRiskBlock),
     }
 }
 
@@ -98,6 +102,8 @@ fn allowlist_override_applies(input: PolicyInput<'_>) -> bool {
             AllowlistOverrideLevel::Danger
         ),
         RiskLevel::Safe | RiskLevel::Block => false,
+        // Fail safe: an unknown future risk level never qualifies for an override.
+        _ => false,
     }
 }
 

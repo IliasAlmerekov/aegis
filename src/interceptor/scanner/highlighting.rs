@@ -1,13 +1,6 @@
 use super::MatchResult;
 
-/// A concrete byte range inside the original command for confirmation UI highlighting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HighlightRange {
-    /// Inclusive start byte offset.
-    pub start: usize,
-    /// Exclusive end byte offset.
-    pub end: usize,
-}
+pub use aegis_types::HighlightRange;
 
 pub(super) fn sorted_highlight_ranges(cmd: &str, matches: &[MatchResult]) -> Vec<HighlightRange> {
     let mut ranges = Vec::with_capacity(matches.len());

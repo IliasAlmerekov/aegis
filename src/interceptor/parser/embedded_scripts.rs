@@ -1,5 +1,7 @@
 use super::{segmentation::split_top_level_segments, split_tokens};
 
+use aegis_types::InlineScript;
+
 /// A heredoc (or nowdoc) body extracted from a multi-line command string.
 #[derive(Debug, PartialEq)]
 pub struct HeredocBody {
@@ -10,15 +12,6 @@ pub struct HeredocBody {
     /// `true` when the delimiter was quoted (`<<'EOF'`), indicating nowdoc semantics
     /// (no variable substitution in the original shell).
     pub is_nowdoc: bool,
-}
-
-/// An inline script body extracted from an interpreter invocation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct InlineScript {
-    /// The interpreter name (e.g., `python3`, `node`, `ruby`).
-    pub interpreter: String,
-    /// The script body passed via `-c` or `-e`.
-    pub body: String,
 }
 
 /// Extract process-substitution bodies from shell input forms like `<(...)`.
