@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::interceptor::RiskLevel;
+use aegis_types::RiskLevel;
 
 use super::{Category, PatternSource, PatternToken, PrefixRule, a, any_star, s};
 pub(super) fn rules() -> Vec<PrefixRule> {

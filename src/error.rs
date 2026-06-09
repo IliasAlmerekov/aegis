@@ -58,6 +58,17 @@ pub enum AegisError {
     Io(#[from] std::io::Error),
 }
 
+/// Map scanner-construction errors onto the orchestration error type.
+///
+/// The scanner crate raises a domain-specific [`aegis_scanner::ScannerError`]
+/// that is unaware of configuration; at this boundary we fold it into the
+/// binary's `Config` variant since invalid patterns reach us via config.
+impl From<aegis_scanner::ScannerError> for AegisError {
+    fn from(error: aegis_scanner::ScannerError) -> Self {
+        Self::Config(error.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

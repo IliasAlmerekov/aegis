@@ -1,5 +1,3 @@
-/// Nested command extraction (heredocs, inline scripts, process substitution).
-pub(crate) mod nested;
 /// Tokenizer and parser for shell commands.
 pub mod parser;
 /// Pattern definitions, categories, and built-in pattern loading.

@@ -214,8 +214,8 @@ src/interceptor/
     └── nested_shells.rs         extract_nested_commands
 ```
 
-Built-in patterns live in `config/patterns.toml` (loaded via
-`PatternSet::load`). User patterns come from `aegis.toml` and are merged per
+Built-in patterns live in `crates/aegis-scanner/patterns.toml` (embedded at
+compile time and loaded via `PatternSet::load`). User patterns come from `aegis.toml` and are merged per
 effective config; the merged scanner is cached by content hash in
 `CUSTOM_SCANNER_CACHE` (`src/interceptor/mod.rs`).
 
@@ -598,8 +598,8 @@ Three things will likely be added often. Each has a fixed shape.
 
 ### 6.1 Add a built-in pattern
 
-1. Edit `config/patterns.toml`. Add an entry with a unique `id` of the form
-   `CAT-NNN` (e.g. `FS-042`, `GIT-008`).
+1. Edit `crates/aegis-scanner/patterns.toml`. Add an entry with a unique `id`
+   of the form `CAT-NNN` (e.g. `FS-042`, `GIT-008`).
 2. Choose `RiskLevel` from `{Safe, Warn, Danger, Block}`. For `Block`-level
    patterns, include a comment explaining why bypass is not acceptable.
 3. Prefer a literal keyword in the regex — it lets Aho-Corasick short-circuit

@@ -118,8 +118,9 @@ Any changes in these files require extra care and explicit validation:
 - `src/main.rs`
 - `crates/aegis-parser/` (shell tokenizer + PrefixPattern matching)
 - `src/interceptor/parser/` (re-export shim over `aegis-parser`)
-- `src/interceptor/scanner.rs`
-- `src/interceptor/patterns.rs`
+- `crates/aegis-scanner/` (Scanner, PatternSet, built-in patterns.toml)
+- `src/interceptor/scanner.rs` (re-export shim over `aegis-scanner`)
+- `src/interceptor/patterns.rs` (re-export shim over `aegis-scanner`)
 - `src/ui/confirm.rs`
 - `src/config/model.rs`
 - `src/config/allowlist.rs`

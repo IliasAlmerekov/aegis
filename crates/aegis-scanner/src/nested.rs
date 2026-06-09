@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::interceptor::parser::{
+use aegis_parser::{
     Parser, extract_eval_payloads, extract_heredoc_bodies, extract_process_substitution_bodies,
     logical_segments,
 };

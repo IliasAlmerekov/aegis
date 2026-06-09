@@ -64,17 +64,20 @@ root and depends on focused library crates under `crates/` (Phase 4 of
 Aegis-crate-dependency foundation: `RiskLevel`, `Decision`, `Pattern`,
 `Assessment`, and the shared pattern/command vocabulary) has been carved out so
 far, followed by `crates/aegis-parser` (the shell tokenizer and `PrefixPattern`
-matcher; depends only on `aegis-types`). Dependency arrows flow inward toward
-`aegis-types`; no library crate may depend on the root binary crate.
+matcher) and `crates/aegis-scanner` (the `Scanner`, `PatternSet`, and built-in
+`patterns.toml`; depends on `aegis-types` + `aegis-parser`). Dependency arrows
+flow inward toward `aegis-types`; no library crate may depend on the root binary
+crate.
 
 Current module responsibilities:
 
 - `src/main.rs`: CLI parsing and orchestration only
-- `src/error.rs`: shared typed errors
+- `src/error.rs`: shared typed errors (maps `aegis_scanner::ScannerError` inward)
 - `crates/aegis-parser/`: shell tokenizer, segmentation, and `PrefixPattern` matching
 - `src/interceptor/parser/`: thin re-export shim over the `aegis-parser` crate
-- `src/interceptor/scanner.rs`: command classification
-- `src/interceptor/patterns.rs`: pattern loading and pattern types
+- `crates/aegis-scanner/`: command classification, `PatternSet`, built-in patterns
+- `src/interceptor/scanner.rs`: thin re-export shim over the `aegis-scanner` crate
+- `src/interceptor/patterns.rs`: thin re-export shim over the `aegis-scanner` crate
 - `src/config/`: layered config model and allowlist logic
 - `src/snapshot/`: snapshot plugin trait and Git/Docker implementations
 - `src/ui/confirm.rs`: interactive confirmation flow
@@ -315,6 +318,7 @@ Treat a change as high-risk if it touches any of:
 
 - `src/main.rs`
 - `crates/aegis-parser/`
+- `crates/aegis-scanner/`
 - `src/interceptor/`
 - `src/config/allowlist.rs`
 - `src/config/model.rs`

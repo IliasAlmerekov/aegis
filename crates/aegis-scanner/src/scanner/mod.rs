@@ -14,14 +14,12 @@ use aho_corasick::AhoCorasick;
 use regex::Regex;
 
 #[cfg(test)]
-use crate::interceptor::nested::MAX_NESTED_SCAN_DEPTH;
-use crate::interceptor::patterns::{Pattern, PatternSet};
+use crate::nested::MAX_NESTED_SCAN_DEPTH;
+use crate::patterns::{Pattern, PatternSet};
 
-pub use crate::interceptor::patterns::{PatternToken, PrefixPattern, PrefixRule};
+pub use crate::patterns::{PatternToken, PrefixRule};
 pub use assessment::{Assessment, DecisionSource, MatchResult};
 pub use highlighting::HighlightRange;
-#[cfg(test)]
-pub use highlighting::sorted_highlight_ranges_for_tests;
 
 /// First-pass scanner backed by an Aho-Corasick automaton.
 ///

@@ -1,0 +1,16 @@
+[package]
+name = "aegis-scanner"
+version = "0.5.3"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Command risk scanner for Aegis: PatternSet loading, Aho-Corasick quick scan, regex full scan, and prefix-rule matching. Depends on aegis-types and aegis-parser."
+
+[dependencies]
+aegis-types = { version = "0.5.3", path = "../aegis-types" }
+aegis-parser = { version = "0.5.3", path = "../aegis-parser" }
+regex = "1.11"
+aho-corasick = "1.1"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"

@@ -130,6 +130,7 @@ Every change to these files requires extra care — fail-closed behavior must be
 src/main.rs
 crates/aegis-parser/
 src/interceptor/parser/
+crates/aegis-scanner/
 src/interceptor/scanner.rs
 src/interceptor/patterns.rs
 src/ui/confirm.rs

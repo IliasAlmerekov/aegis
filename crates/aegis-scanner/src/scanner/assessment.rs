@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::interceptor::RiskLevel;
-use crate::interceptor::nested::RecursiveScanLimit;
-use crate::interceptor::parser::ParsedCommand;
-use crate::interceptor::patterns::{Category, Pattern, PatternSource};
+use crate::nested::RecursiveScanLimit;
+use crate::patterns::{Category, Pattern, PatternSource};
+use aegis_parser::ParsedCommand;
+use aegis_types::RiskLevel;
 
 pub use aegis_types::{Assessment, DecisionSource, MatchResult};
 
@@ -13,7 +13,7 @@ impl Scanner {
     /// Assess a raw shell command and return a complete [`Assessment`].
     ///
     /// Pipeline:
-    /// 1. Parse the command via [`crate::interceptor::parser::Parser::parse`] to preserve the original command contract.
+    /// 1. Parse the command via [`aegis_parser::Parser::parse`] to preserve the original command contract.
     /// 2. Run [`Scanner::quick_scan`] on the raw command — if no keyword hits, return `Safe` immediately.
     /// 3. Build the recursive scan path via nested parsing helpers.
     /// 4. Run [`Scanner::full_scan`] on each discovered target and merge unique pattern matches.
@@ -33,7 +33,7 @@ impl Scanner {
             );
         }
 
-        let command = crate::interceptor::parser::Parser::parse(cmd);
+        let command = aegis_parser::Parser::parse(cmd);
 
         if let Some(script) = command
             .inline_scripts
@@ -58,7 +58,7 @@ impl Scanner {
         // Pipeline detection needs the raw string (quoting-aware).
         let maybe_pipelines = cmd
             .contains('|')
-            .then(|| crate::interceptor::parser::top_level_pipelines(cmd));
+            .then(|| aegis_parser::top_level_pipelines(cmd));
         let has_pipeline_chain = maybe_pipelines
             .as_ref()
             .map(|pipelines| pipelines.iter().any(|chain| chain.segments.len() > 1))
@@ -102,7 +102,7 @@ impl Scanner {
             }
 
             // Token-prefix scan: parsed tokens, not raw string.
-            let tokens = crate::interceptor::parser::split_tokens(target);
+            let tokens = aegis_parser::split_tokens(target);
             let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
             for result in self.prefix_scan(&token_refs) {
                 if !matched

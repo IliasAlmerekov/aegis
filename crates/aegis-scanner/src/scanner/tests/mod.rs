@@ -1,9 +1,9 @@
 pub use std::sync::Arc;
 
-pub use crate::interceptor::RiskLevel;
-pub use crate::interceptor::parser::{Parser, top_level_pipelines};
-pub use crate::interceptor::patterns::{Category, Pattern, PatternSet, PatternSource};
-pub use crate::interceptor::scanner::*;
+pub use crate::patterns::{Category, Pattern, PatternSet, PatternSource};
+pub use crate::scanner::*;
+pub use aegis_parser::{Parser, top_level_pipelines};
+pub use aegis_types::RiskLevel;
 
 #[cfg(test)]
 fn scanner() -> Scanner {
