@@ -315,7 +315,7 @@ next extraction begins:
 ```
 aegis/                          (workspace root)
   crates/
-    aegis-types/                RiskLevel, Decision, Pattern, Assessment — zero deps
+    aegis-types/                RiskLevel, Decision, Pattern, Assessment — no Aegis-crate deps (serde + schemars only)
     aegis-parser/               command tokenizer, PrefixPattern matching
     aegis-scanner/              Scanner, PatternSet — depends on aegis-types, aegis-parser
     aegis-policy/               PolicyEngine, PrefixRule, amend — depends on aegis-scanner
@@ -328,6 +328,21 @@ aegis/                          (workspace root)
 
 Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
 application crate. Dependency arrows flow inward toward `aegis-types`.
+
+**Progress:** `aegis-types` extracted — the full data vocabulary: `RiskLevel`,
+`Decision`, `Pattern`, `Category`, `PatternSource`, `PatternToken`,
+`PrefixPattern`, and `Assessment` together with its embedded data types
+(`MatchResult`, `DecisionSource`, `HighlightRange`, `ParsedCommand`,
+`InlineScript`) plus their pure `Display`/`FromStr`/`decision_source` impls. The
+scanning *logic* (`Scanner`, highlighting, helpers) stays in the root crate and
+consumes these types. Definitions are re-exported from their original module
+paths so call sites are unchanged.
+
+`aegis-parser` extracted next — the shell tokenizer (`Parser`, `split_tokens`,
+`extract_prefix`, segmentation, heredoc/inline-script/nested-shell extraction)
+and the token-level `matches_prefix` matcher. `PrefixRule::matches_tokens` (still
+in the root crate, bound for `aegis-policy`) delegates to `aegis_parser::matches_prefix`.
+`src/interceptor/parser/` is now a re-export shim. Remaining crates pending.
 
 ### 4.2 Dependency rule enforcement via `cargo deny`
 

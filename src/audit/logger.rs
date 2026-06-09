@@ -350,18 +350,7 @@ impl<'de> Deserialize<'de> for AuditEntry {
     }
 }
 
-/// User-visible outcome of the interception flow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Decision {
-    /// User explicitly approved the command.
-    Approved,
-    /// User explicitly denied the command.
-    Denied,
-    /// Approved automatically by allowlist or safe path.
-    AutoApproved,
-    /// Blocked by policy or because the command is too dangerous.
-    Blocked,
-}
+pub use aegis_types::Decision;
 
 /// Parameters for filtering the audit log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -507,35 +496,6 @@ pub struct AuditLogger {
     path: PathBuf,
     rotation: Option<AuditRotationPolicy>,
     integrity_mode: AuditIntegrityMode,
-}
-
-impl std::fmt::Display for Decision {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = match self {
-            Decision::Approved => "approved",
-            Decision::Denied => "denied",
-            Decision::AutoApproved => "auto-approved",
-            Decision::Blocked => "blocked",
-        };
-
-        f.write_str(value)
-    }
-}
-
-impl std::str::FromStr for Decision {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "approved" => Ok(Self::Approved),
-            "denied" => Ok(Self::Denied),
-            "auto-approved" => Ok(Self::AutoApproved),
-            "blocked" => Ok(Self::Blocked),
-            other => Err(format!(
-                "invalid decision '{other}', expected one of: approved, denied, auto-approved, blocked"
-            )),
-        }
-    }
 }
 
 impl From<&MatchResult> for MatchedPattern {

@@ -664,8 +664,11 @@ conversation to happen.
 | `src/snapshot/docker.rs`                 | 1 302 | Acceptable — complete plugin impl with snapshot + rollback logic.    |
 | `src/interceptor/patterns.rs`            | 1 270 | Acceptable — all pattern definitions in one file aids pattern audits.|
 | `src/snapshot/mysql.rs`                  | 1 206 | Acceptable — mirrors postgres.rs structure.                         |
-| `src/interceptor/parser/mod.rs`          | 1 041 | Split embedded-scripts parsing out if complexity grows.              |
 | `src/snapshot/postgres.rs`               | 1 025 | Acceptable — complete plugin impl.                                   |
+
+The former `src/interceptor/parser/mod.rs` breach (≈1 041 lines) is resolved:
+the parser moved to the `aegis-parser` crate (largest file ≈625 lines, within
+budget), and `src/interceptor/parser/mod.rs` is now a thin re-export shim.
 
 Budgets are enforced by `tests/main_thin_entrypoint.rs` for `main.rs`. Extend
 to other files as they are brought into compliance.

@@ -18,14 +18,17 @@ These records are companions to:
 
 ## Current architecture snapshot
 
-Aegis is a single-crate Rust CLI centered on the `aegis` binary that acts as a
-shell-proxy guardrail.
+Aegis is a Cargo workspace: the `aegis` binary crate at the repository root
+acts as a shell-proxy guardrail and depends on focused library crates under
+`crates/` (Phase 4 of `ROADMAP.md`). Extracted so far: `aegis-types` (shared
+data vocabulary) and `aegis-parser` (shell tokenizer + `PrefixPattern` matcher).
 
 The current runtime architecture is split across a small set of focused
-modules:
+modules and crates:
 
 - `src/main.rs` — CLI argument parsing and top-level orchestration only
-- `src/interceptor/parser.rs` — shell parsing and segmentation
+- `crates/aegis-parser/` — shell tokenizer, segmentation, and `PrefixPattern` matching
+- `src/interceptor/parser/` — thin re-export shim over the `aegis-parser` crate
 - `src/interceptor/scanner.rs` — synchronous risk classification
 - `src/interceptor/patterns.rs` — built-in and user pattern loading
 - `src/runtime_gate.rs` — Rust-side CI detection contract
