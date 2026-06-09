@@ -7,7 +7,7 @@ use libfuzzer_sys::fuzz_target;
 
 static SCANNER: LazyLock<Scanner> = LazyLock::new(|| {
     PatternSet::load()
-        .map(Scanner::new)
+        .and_then(Scanner::try_new)
         .expect("patterns.toml must load in scanner fuzzing target")
 });
 
