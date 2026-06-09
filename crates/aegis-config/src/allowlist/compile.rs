@@ -4,7 +4,7 @@ use regex::Regex;
 use time::OffsetDateTime;
 
 use super::{CompiledRule, ConfigSourceLayer, LayeredAllowlistRule, LayeredBlocklistRule};
-use crate::config::error::ConfigError;
+use crate::error::ConfigError;
 
 type Result<T> = std::result::Result<T, ConfigError>;
 

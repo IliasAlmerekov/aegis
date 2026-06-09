@@ -1,0 +1,21 @@
+[package]
+name = "aegis-config"
+version = "0.5.6"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+description = "Configuration model, layered loader, validation, JSON schema, and decision-persistence (amend) for Aegis. Depends on aegis-types and aegis-scanner."
+
+[dependencies]
+aegis-types = { version = "0.5.6", path = "../aegis-types" }
+aegis-scanner = { version = "0.5.6", path = "../aegis-scanner" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+schemars = "1"
+thiserror = "1"
+tracing = "0.1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+regex = "1.11"
+
+[dev-dependencies]
+tempfile = "3"

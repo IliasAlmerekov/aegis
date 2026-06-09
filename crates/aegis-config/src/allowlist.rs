@@ -6,8 +6,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::config::error::ConfigError;
-use crate::config::{AllowlistRule, BlockRule};
+use crate::error::ConfigError;
+use crate::{AllowlistRule, BlockRule};
 
 type Result<T> = std::result::Result<T, ConfigError>;
 
@@ -361,7 +361,7 @@ mod tests {
         Allowlist, AllowlistContext, AllowlistMatch, ConfigSourceLayer, LayeredAllowlistRule,
         analyze_allowlist_rule,
     };
-    use crate::config::AllowlistRule;
+    use crate::AllowlistRule;
 
     #[test]
     fn exact_pattern_matches_only_the_same_command() {
@@ -623,7 +623,7 @@ mod tests {
     // ── Blocklist tests ───────────────────────────────────────────────────────
 
     use super::{Blocklist, BlocklistMatch, LayeredBlocklistRule, analyze_blocklist_rule};
-    use crate::config::BlockRule;
+    use crate::BlockRule;
 
     fn block_rule(pattern: &str, reason: &str) -> BlockRule {
         BlockRule {

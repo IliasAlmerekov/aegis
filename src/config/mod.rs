@@ -1,33 +1,9 @@
 //! Configuration loading, validation, and layered merge.
+//!
+//! The implementation lives in the `aegis-config` crate. This module re-exports
+//! its full public API (including submodules `allowlist`, `amend`, `model`,
+//! `snapshot`, `validate`, `error`) so existing `crate::config::*` and
+//! `crate::config::<submodule>::*` call sites remain stable while the workspace
+//! split (Phase 4) is in progress.
 
-pub mod allowlist;
-pub mod amend;
-/// Typed configuration errors.
-pub mod error;
-/// Config data model — [`AegisConfig`] and related types.
-pub mod model;
-pub mod snapshot;
-pub mod validate;
-
-pub use error::ConfigError;
-
-pub use allowlist::{
-    Allowlist, AllowlistContext, AllowlistMatch, AllowlistWarning, Blocklist, BlocklistMatch,
-    BlocklistWarning, ConfigSourceLayer, LayeredAllowlistRule, LayeredBlocklistRule,
-    analyze_allowlist_rule, analyze_blocklist_rule,
-};
-pub use amend::{
-    AppendOutcome, active_config_path_for_append, append_allow_rule, append_block_rule,
-};
-pub use model::{
-    AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, AuditIntegrityMode, BlockRule,
-    CiPolicy, Mode, SnapshotPolicy, UserPattern,
-};
-pub use snapshot::{
-    DockerScope, DockerScopeMode, MysqlSnapshotConfig, PostgresSnapshotConfig,
-    SupabaseSnapshotConfig,
-};
-pub use validate::{
-    ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validate_config_layers,
-    validation_load_error,
-};
+pub use aegis_config::*;

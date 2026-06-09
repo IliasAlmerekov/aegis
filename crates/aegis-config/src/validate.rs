@@ -5,11 +5,11 @@ use std::path::Path;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use crate::config::AegisConfig;
-use crate::config::allowlist::{
+use crate::AegisConfig;
+use crate::allowlist::{
     Allowlist, ConfigSourceLayer, analyze_allowlist_rule, validate_single_rule,
 };
-use crate::config::error::ConfigError;
+use crate::error::ConfigError;
 
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
@@ -425,8 +425,8 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ConfigSourceMap, validate_config, validate_config_layers};
-    use crate::config::error::ConfigError;
-    use crate::config::{AegisConfig, AllowlistRule};
+    use crate::error::ConfigError;
+    use crate::{AegisConfig, AllowlistRule};
     use tempfile::TempDir;
     use time::{Duration, OffsetDateTime};
 

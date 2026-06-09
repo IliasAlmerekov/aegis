@@ -1,6 +1,6 @@
 pub use super::*;
-pub use crate::interceptor::RiskLevel;
-pub use crate::interceptor::patterns::Category;
+pub use aegis_types::Category;
+pub use aegis_types::RiskLevel;
 pub use tempfile::TempDir;
 pub use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 

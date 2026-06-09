@@ -1,8 +1,8 @@
 //! Validation helpers for deduplication and conflict detection.
 
 use super::AppendOutcome;
-use crate::config::AegisConfig;
-use crate::config::allowlist::ConfigSourceLayer;
+use crate::AegisConfig;
+use crate::allowlist::ConfigSourceLayer;
 
 /// Derive the config source layer from the path used for appending.
 pub(super) fn config_layer_from_path(config_path: &std::path::Path) -> ConfigSourceLayer {

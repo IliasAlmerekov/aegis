@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use time::OffsetDateTime;
 
-use crate::config::error::ConfigError;
+use crate::error::ConfigError;
 
 type Result<T> = std::result::Result<T, ConfigError>;
 

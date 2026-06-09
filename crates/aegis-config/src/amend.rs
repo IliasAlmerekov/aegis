@@ -5,9 +5,9 @@ use std::path::Path;
 
 use time::OffsetDateTime;
 
-use crate::config::AegisConfig;
-use crate::config::allowlist::ConfigSourceLayer;
-use crate::config::error::ConfigError;
+use crate::AegisConfig;
+use crate::allowlist::ConfigSourceLayer;
+use crate::error::ConfigError;
 
 type Result<T> = std::result::Result<T, ConfigError>;
 
