@@ -6,6 +6,7 @@ use crate::audit::MatchedPattern;
 use crate::config::{AllowlistMatch, Mode};
 use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyDecision};
 use crate::explanation::CommandExplanation;
+use crate::explanation::formatter::build_explanation_from_plan;
 use crate::interceptor::RiskLevel;
 use crate::interceptor::scanner::Assessment;
 
@@ -52,7 +53,7 @@ impl InterceptionPlan {
             PolicyAction::Block => ExecutionDisposition::Block,
         };
         let explanation =
-            CommandExplanation::from_plan_inputs(&assessment, &decision_context, policy_decision);
+            build_explanation_from_plan(&assessment, &decision_context, policy_decision);
 
         Self {
             assessment: Box::new(assessment),
@@ -365,7 +366,8 @@ mod tests {
     use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
     use crate::explanation::CommandExplanation;
     use crate::explanation::formatter::{
-        from_plan_inputs_call_count_for_tests, reset_from_plan_inputs_call_count_for_tests,
+        build_explanation_from_plan, from_plan_inputs_call_count_for_tests,
+        reset_from_plan_inputs_call_count_for_tests,
     };
     use crate::interceptor;
 
@@ -450,7 +452,7 @@ mod tests {
             allowlist_effective: false,
         };
         let expected_explanation =
-            CommandExplanation::from_plan_inputs(&assessment, &decision_context, policy_decision);
+            build_explanation_from_plan(&assessment, &decision_context, policy_decision);
         reset_from_plan_inputs_call_count_for_tests();
 
         let plan = InterceptionPlan::from_policy(assessment, decision_context, policy_decision);

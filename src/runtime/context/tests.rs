@@ -4,6 +4,7 @@ use std::path::Path;
 use super::*;
 use crate::config::{CiPolicy, UserPattern};
 use crate::decision::{ExecutionTransport, PolicyAction, PolicyRationale};
+use crate::explanation::formatter::allowlist_explanation_from;
 use crate::explanation::{
     CommandExplanation, ExecutionContextExplanation, ExplainedPatternMatch, PolicyExplanation,
     ScanExplanation,
@@ -474,9 +475,7 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
             mode: context.config().mode,
             transport: ExecutionTransport::Shell,
             ci_detected: false,
-            allowlist_match: allowlist_match
-                .as_ref()
-                .map(crate::explanation::AllowlistExplanation::from),
+            allowlist_match: allowlist_match.as_ref().map(allowlist_explanation_from),
             applicable_snapshot_plugins: Vec::new(),
         },
         outcome: None,

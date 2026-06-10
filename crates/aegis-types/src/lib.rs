@@ -15,6 +15,7 @@ mod decision;
 mod pattern;
 mod policy;
 mod risk;
+mod snapshot;
 
 pub use assessment::{Assessment, DecisionSource, HighlightRange, MatchResult};
 pub use command::{InlineScript, ParsedCommand};
@@ -22,3 +23,21 @@ pub use decision::Decision;
 pub use pattern::{Category, Pattern, PatternSource, PatternToken, PrefixPattern};
 pub use policy::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 pub use risk::RiskLevel;
+pub use snapshot::SnapshotRecord;
+
+#[cfg(test)]
+mod tests {
+    /// SnapshotRecord must be re-exported from aegis_types so that aegis-tui
+    /// can import it without depending on the root aegis crate.
+    /// This test fails until SnapshotRecord is added to this crate and
+    /// re-exported from lib.rs.
+    #[test]
+    fn test_snapshot_record_exported_from_aegis_types() {
+        use crate::SnapshotRecord;
+        let record = SnapshotRecord {
+            plugin: "git",
+            snapshot_id: "stash-ref-abc123".to_string(),
+        };
+        assert_eq!(record.plugin, "git");
+    }
+}

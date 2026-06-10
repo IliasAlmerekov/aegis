@@ -315,16 +315,20 @@ next extraction begins:
 ```
 aegis/                          (workspace root)
   crates/
-    aegis-types/                RiskLevel, Decision, Pattern, Assessment — no Aegis-crate deps (serde + schemars only)
-    aegis-parser/               command tokenizer, PrefixPattern matching
-    aegis-scanner/              Scanner, PatternSet — depends on aegis-types, aegis-parser
-    aegis-policy/               PolicyEngine, PrefixRule, amend — depends on aegis-scanner
-    aegis-audit/                AuditLogger, AuditEntry — depends on aegis-types
-    aegis-snapshot/             SnapshotPlugin trait + 6 backends — depends on aegis-types
-    aegis-tui/                  crossterm confirmation dialog — depends on aegis-types
-    aegis-config/               AegisConfig, loader, schema — depends on aegis-types
+    aegis-types/   [DONE]       RiskLevel, Decision, Pattern, Assessment + policy enums — no Aegis-crate deps (serde + schemars only)
+    aegis-parser/  [DONE]       command tokenizer, PrefixPattern matching — depends on aegis-types
+    aegis-scanner/ [DONE]       Scanner, PatternSet, PrefixRule — depends on aegis-types, aegis-parser
+    aegis-policy/  [DONE]       PolicyEngine — depends on aegis-types, aegis-scanner (PrefixRule lives in aegis-scanner; amend in aegis-config)
+    aegis-config/  [DONE]       AegisConfig, loader, validation, schema, amend — depends on aegis-types, aegis-scanner
+    aegis-explanation/[DONE]     CommandExplanation and related types — depends on aegis-types, aegis-policy, aegis-config
+    aegis-tui/     [DONE]       crossterm confirmation dialog — depends on aegis-types, aegis-explanation
+    aegis-audit/   [TODO]       AuditLogger, AuditEntry — depends on aegis-types (blocked: cyclic with explanation::CommandExplanation; unblocked once aegis-explanation is used)
+    aegis-snapshot/[TODO]       SnapshotPlugin trait + 6 backends — depends on aegis-types, aegis-config
   src/                          binary — thin wiring, depends on all crates above
 ```
+
+Status: 7 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
+aegis-policy, aegis-config, aegis-explanation, aegis-tui). Remaining: aegis-audit, aegis-snapshot.
 
 Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
 application crate. Dependency arrows flow inward toward `aegis-types`.

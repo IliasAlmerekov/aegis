@@ -40,13 +40,13 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
-        run: cargo fmt --check
+        run: cargo fmt --check --all
 
       - name: cargo clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
-      - name: cargo test (includes architecture_boundaries)
-        run: cargo test
+      - name: cargo test --workspace (includes architecture_boundaries)
+        run: cargo test --workspace
 
   security:
     name: Security (audit, deny)

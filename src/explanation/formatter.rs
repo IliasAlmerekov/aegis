@@ -16,121 +16,115 @@ thread_local! {
 
 use crate::audit::Decision;
 use crate::config::AllowlistMatch;
-use crate::decision::{PolicyDecision, PolicyRationale};
-use crate::interceptor::scanner::Assessment;
+use crate::decision::PolicyDecision;
+use crate::interceptor::scanner::{Assessment, MatchResult};
 use crate::planning::DecisionContext;
 use crate::snapshot::SnapshotRecord;
 
-impl PolicyExplanation {
-    /// Return the canonical concise reason label for consumer projections.
-    #[must_use]
-    pub fn concise_reason_label(&self) -> &'static str {
-        match self.rationale {
-            PolicyRationale::AuditMode => "audit mode auto-approved this command",
-            PolicyRationale::SafeCommand => "safe command",
-            PolicyRationale::AllowlistOverride => "allowlist override applied",
-            PolicyRationale::RequiresConfirmation => "requires confirmation",
-            PolicyRationale::IntrinsicRiskBlock => "blocked by intrinsic risk",
-            PolicyRationale::ProtectCiPolicy => "blocked by protect-mode CI policy",
-            PolicyRationale::StrictPolicy => "blocked by strict mode",
-            PolicyRationale::BlocklistOverride => "blocked by user-defined blocklist rule",
-        }
+/// Build a [`CommandExplanation`] from planning-time inputs.
+#[must_use]
+pub fn build_explanation_from_plan(
+    assessment: &Assessment,
+    context: &DecisionContext,
+    decision: PolicyDecision,
+) -> CommandExplanation {
+    #[cfg(test)]
+    FROM_PLAN_INPUTS_CALL_COUNT.with(|count| count.set(count.get() + 1));
+
+    CommandExplanation {
+        scan: ScanExplanation {
+            highest_risk: assessment.risk,
+            decision_source: assessment.decision_source(),
+            matched_patterns: assessment
+                .matched
+                .iter()
+                .map(explained_pattern_match_from)
+                .collect(),
+        },
+        policy: PolicyExplanation {
+            action: decision.decision,
+            rationale: decision.rationale,
+            requires_confirmation: decision.requires_confirmation,
+            snapshots_required: decision.snapshots_required,
+            allowlist_effective: decision.allowlist_effective,
+            block_reason: decision.block_reason(),
+        },
+        context: ExecutionContextExplanation {
+            mode: context.mode(),
+            transport: context.transport(),
+            ci_detected: context.ci_detected(),
+            allowlist_match: context.allowlist_match().map(allowlist_explanation_from),
+            applicable_snapshot_plugins: context
+                .applicable_snapshot_plugins()
+                .iter()
+                .map(|plugin| (*plugin).to_string())
+                .collect(),
+        },
+        outcome: None,
     }
 }
 
-impl CommandExplanation {
-    /// Build an explanation from planning-time inputs.
-    #[must_use]
-    pub fn from_plan_inputs(
-        assessment: &Assessment,
-        context: &DecisionContext,
-        decision: PolicyDecision,
-    ) -> Self {
-        #[cfg(test)]
-        FROM_PLAN_INPUTS_CALL_COUNT.with(|count| count.set(count.get() + 1));
-
-        Self {
-            scan: ScanExplanation {
-                highest_risk: assessment.risk,
-                decision_source: assessment.decision_source(),
-                matched_patterns: assessment
-                    .matched
-                    .iter()
-                    .map(ExplainedPatternMatch::from)
-                    .collect(),
-            },
-            policy: PolicyExplanation {
-                action: decision.decision,
-                rationale: decision.rationale,
-                requires_confirmation: decision.requires_confirmation,
-                snapshots_required: decision.snapshots_required,
-                allowlist_effective: decision.allowlist_effective,
-                block_reason: decision.block_reason(),
-            },
-            context: ExecutionContextExplanation {
-                mode: context.mode(),
-                transport: context.transport(),
-                ci_detected: context.ci_detected(),
-                allowlist_match: context.allowlist_match().map(AllowlistExplanation::from),
-                applicable_snapshot_plugins: context
-                    .applicable_snapshot_plugins()
-                    .iter()
-                    .map(|plugin| (*plugin).to_string())
-                    .collect(),
-            },
-            outcome: None,
-        }
-    }
-
+/// Extension trait for [`CommandExplanation`] that adds builder-style methods
+/// needed in the binary crate.
+///
+/// Using an extension trait is required because `CommandExplanation` is defined
+/// in the `aegis-explanation` crate and inherent `impl` blocks for external
+/// types are forbidden by the orphan rule.
+pub trait CommandExplanationExt {
     /// Return this explanation with runtime outcome facts appended.
     #[must_use]
-    pub fn with_runtime_outcome(mut self, outcome: ExecutionOutcomeExplanation) -> Self {
+    fn with_runtime_outcome(self, outcome: ExecutionOutcomeExplanation) -> Self;
+}
+
+impl CommandExplanationExt for CommandExplanation {
+    fn with_runtime_outcome(mut self, outcome: ExecutionOutcomeExplanation) -> Self {
         self.outcome = Some(outcome);
         self
     }
 }
 
-impl ExecutionOutcomeExplanation {
-    /// Build the runtime outcome explanation from execution results.
-    #[must_use]
-    pub fn from_runtime(decision: Decision, snapshots: &[SnapshotRecord]) -> Self {
-        Self {
-            decision: match decision {
-                Decision::Approved => ExecutionDecisionExplanation::Approved,
-                Decision::Denied => ExecutionDecisionExplanation::Denied,
-                Decision::AutoApproved => ExecutionDecisionExplanation::AutoApproved,
-                Decision::Blocked => ExecutionDecisionExplanation::Blocked,
-            },
-            snapshots: snapshots
-                .iter()
-                .map(|snapshot| SnapshotOutcomeExplanation {
-                    plugin: snapshot.plugin.to_string(),
-                    snapshot_id: snapshot.snapshot_id.clone(),
-                })
-                .collect(),
-        }
+/// Build the runtime outcome explanation from execution results.
+#[must_use]
+pub fn build_outcome_explanation(
+    decision: Decision,
+    snapshots: &[SnapshotRecord],
+) -> ExecutionOutcomeExplanation {
+    ExecutionOutcomeExplanation {
+        decision: match decision {
+            Decision::Approved => ExecutionDecisionExplanation::Approved,
+            Decision::Denied => ExecutionDecisionExplanation::Denied,
+            Decision::AutoApproved => ExecutionDecisionExplanation::AutoApproved,
+            Decision::Blocked => ExecutionDecisionExplanation::Blocked,
+        },
+        snapshots: snapshots
+            .iter()
+            .map(|snapshot| SnapshotOutcomeExplanation {
+                plugin: snapshot.plugin.to_string(),
+                snapshot_id: snapshot.snapshot_id.clone(),
+            })
+            .collect(),
     }
 }
 
-impl From<&crate::interceptor::scanner::MatchResult> for ExplainedPatternMatch {
-    fn from(value: &crate::interceptor::scanner::MatchResult) -> Self {
-        Self {
-            id: value.pattern.id.to_string(),
-            risk: value.pattern.risk,
-            description: value.pattern.description.to_string(),
-            matched_text: value.matched_text.clone(),
-            justification: value.pattern.justification.as_deref().map(str::to_owned),
-        }
+/// Build an [`ExplainedPatternMatch`] from a scanner [`MatchResult`].
+#[must_use]
+pub fn explained_pattern_match_from(value: &MatchResult) -> ExplainedPatternMatch {
+    ExplainedPatternMatch {
+        id: value.pattern.id.to_string(),
+        risk: value.pattern.risk,
+        description: value.pattern.description.to_string(),
+        matched_text: value.matched_text.clone(),
+        justification: value.pattern.justification.as_deref().map(str::to_owned),
     }
 }
 
-impl From<&AllowlistMatch> for AllowlistExplanation {
-    fn from(value: &AllowlistMatch) -> Self {
-        Self {
-            pattern: value.pattern.clone(),
-            reason: value.reason.clone(),
-            source_layer: value.source_layer,
-        }
+/// Build an [`AllowlistExplanation`] from a config [`AllowlistMatch`].
+#[must_use]
+pub fn allowlist_explanation_from(value: &AllowlistMatch) -> AllowlistExplanation {
+    AllowlistExplanation {
+        pattern: value.pattern.clone(),
+        reason: value.reason.clone(),
+        source_layer: value.source_layer,
     }
 }
 
@@ -257,7 +251,7 @@ mod tests {
             allowlist_effective: false,
         };
 
-        let explanation = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
+        let explanation = build_explanation_from_plan(&assessment, &context, decision);
 
         assert_eq!(explanation.scan.highest_risk, RiskLevel::Danger);
         assert_eq!(
@@ -316,9 +310,9 @@ mod tests {
         };
 
         reset_from_plan_inputs_call_count_for_tests();
-        let _ = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
+        let _ = build_explanation_from_plan(&assessment, &context, decision);
         thread::spawn(move || {
-            let _ = CommandExplanation::from_plan_inputs(&assessment, &context, decision);
+            let _ = build_explanation_from_plan(&assessment, &context, decision);
         })
         .join()
         .unwrap();
@@ -361,7 +355,7 @@ mod tests {
         let expected_policy = base.policy.clone();
         let expected_context = base.context.clone();
 
-        let explained = base.with_runtime_outcome(ExecutionOutcomeExplanation::from_runtime(
+        let explained = base.with_runtime_outcome(build_outcome_explanation(
             Decision::Blocked,
             &[SnapshotRecord {
                 plugin: "git",

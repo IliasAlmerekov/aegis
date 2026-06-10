@@ -253,7 +253,7 @@ fn danger_deny_always_returns_deny_always() {
     );
     let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
-    let decision = super::stdout_renderer::show_confirmation_with_decision(
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
         &assessment,
         &default_explanation_for_assessment(&assessment),
         &[],
@@ -279,7 +279,7 @@ fn danger_deny_always_alias_returns_deny_always() {
     );
     let assessment = make_assessment("rm -rf /home/user", RiskLevel::Danger, vec![p]);
 
-    let decision = super::stdout_renderer::show_confirmation_with_decision(
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
         &assessment,
         &default_explanation_for_assessment(&assessment),
         &[],
@@ -299,7 +299,7 @@ fn warn_deny_always_returns_deny_always() {
     let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
     let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);
 
-    let decision = super::stdout_renderer::show_confirmation_with_decision(
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
         &assessment,
         &default_explanation_for_assessment(&assessment),
         &[],

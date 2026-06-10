@@ -328,7 +328,9 @@ Treat a change as high-risk if it touches any of:
 - `crates/aegis-policy/`
 - `src/interceptor/`
 - `crates/aegis-config/`
-- `src/ui/confirm.rs`
+- `crates/aegis-tui/`
+- `crates/aegis-explanation/`
+- `src/ui/confirm.rs` (re-export shim — real implementation in `crates/aegis-tui/`)
 - `src/audit/logger.rs`
 - `src/snapshot/`
 - `Cargo.toml`

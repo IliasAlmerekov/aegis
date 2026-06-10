@@ -13,9 +13,11 @@ name = "aegis"
 version = "0.5.6"
 dependencies = [
  "aegis-config",
+ "aegis-explanation",
  "aegis-parser",
  "aegis-policy",
  "aegis-scanner",
+ "aegis-tui",
  "aegis-types",
  "aho-corasick",
  "anyhow",
@@ -23,7 +25,6 @@ dependencies = [
  "base64",
  "clap",
  "criterion",
- "crossterm",
  "flate2",
  "regex",
  "schemars",
@@ -56,6 +57,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aegis-explanation"
+version = "0.5.6"
+dependencies = [
+ "aegis-config",
+ "aegis-policy",
+ "aegis-types",
+ "serde",
+]
+
+[[package]]
 name = "aegis-parser"
 version = "0.5.6"
 dependencies = [
@@ -83,6 +94,18 @@ dependencies = [
  "serde",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "aegis-tui"
+version = "0.5.6"
+dependencies = [
+ "aegis-config",
+ "aegis-explanation",
+ "aegis-parser",
+ "aegis-types",
+ "crossterm",
+ "regex",
 ]
 
 [[package]]

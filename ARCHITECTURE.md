@@ -677,6 +677,12 @@ moved to the `aegis-config` crate and its tests are split under
 `crates/aegis-config/src/model/tests/` (largest ≈512 lines); `src/config/` is a
 thin re-export shim.
 
+The former `src/ui/confirm/` module (decision + render tests, ≈1 500 lines) is
+resolved: the crossterm dialog and all tests moved to the `aegis-tui` crate;
+`CommandExplanation` and related explanation types moved to the new
+`aegis-explanation` crate; `src/ui/confirm.rs` and `src/explanation/templates.rs`
+are thin re-export shims.
+
 Budgets are enforced by `tests/main_thin_entrypoint.rs` for `main.rs`. Extend
 to other files as they are brought into compliance.
 

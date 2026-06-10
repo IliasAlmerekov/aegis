@@ -2,11 +2,11 @@ use std::io::Write;
 
 use crossterm::{queue, style::Print};
 
-use crate::explanation::CommandExplanation;
-use crate::interceptor::patterns::PatternSource;
+use aegis_explanation::CommandExplanation;
+use aegis_explanation::{BlockReason, PolicyRationale};
 #[cfg(test)]
-use crate::interceptor::scanner::MatchResult;
-use crate::interceptor::scanner::{Assessment, DecisionSource, HighlightRange};
+use aegis_types::MatchResult;
+use aegis_types::{Assessment, DecisionSource, HighlightRange, PatternSource};
 
 pub(super) fn print_command_line<W: Write>(assessment: &Assessment, out: &mut W) {
     let _ = queue!(out, Print("  Command:\n    "));
@@ -134,27 +134,26 @@ pub(super) fn confirmation_reason_text(explanation: &CommandExplanation) -> Stri
         explanation.policy.rationale,
         explanation.context.allowlist_match.as_ref(),
     ) {
-        (crate::decision::PolicyRationale::RequiresConfirmation, Some(rule)) => format!(
+        (PolicyRationale::RequiresConfirmation, Some(rule)) => format!(
             "requires confirmation despite matching allowlist rule: {}",
             rule.reason
         ),
-        (crate::decision::PolicyRationale::RequiresConfirmation, None) => {
+        (PolicyRationale::RequiresConfirmation, None) => {
             explanation.policy.concise_reason_label().to_string()
         }
-        (crate::decision::PolicyRationale::AllowlistOverride, Some(rule)) => {
+        (PolicyRationale::AllowlistOverride, Some(rule)) => {
             format!("allowlist override approved: {}", rule.reason)
         }
-        (crate::decision::PolicyRationale::AllowlistOverride, None) => {
+        (PolicyRationale::AllowlistOverride, None) => {
             explanation.policy.concise_reason_label().to_string()
         }
-        (crate::decision::PolicyRationale::SafeCommand, _)
-        | (crate::decision::PolicyRationale::AuditMode, _) => {
+        (PolicyRationale::SafeCommand, _) | (PolicyRationale::AuditMode, _) => {
             explanation.policy.concise_reason_label().to_string()
         }
-        (crate::decision::PolicyRationale::IntrinsicRiskBlock, _)
-        | (crate::decision::PolicyRationale::ProtectCiPolicy, _)
-        | (crate::decision::PolicyRationale::StrictPolicy, _)
-        | (crate::decision::PolicyRationale::BlocklistOverride, _) => {
+        (PolicyRationale::IntrinsicRiskBlock, _)
+        | (PolicyRationale::ProtectCiPolicy, _)
+        | (PolicyRationale::StrictPolicy, _)
+        | (PolicyRationale::BlocklistOverride, _) => {
             explanation.policy.concise_reason_label().to_string()
         }
     }
@@ -166,18 +165,14 @@ pub(super) fn block_reason_text(explanation: &CommandExplanation) -> &'static st
         .block_reason
         .or_else(|| explanation.policy.rationale.block_reason())
     {
-        Some(crate::decision::BlockReason::IntrinsicRiskBlock) => {
-            "blocked by an explicit block-level pattern"
-        }
-        Some(crate::decision::BlockReason::StrictPolicy) => {
+        Some(BlockReason::IntrinsicRiskBlock) => "blocked by an explicit block-level pattern",
+        Some(BlockReason::StrictPolicy) => {
             "blocked by strict mode (non-safe commands require an allowlist override)"
         }
-        Some(crate::decision::BlockReason::ProtectCiPolicy) => {
+        Some(BlockReason::ProtectCiPolicy) => {
             "blocked by CI policy (Protect mode + ci_policy=Block)"
         }
-        Some(crate::decision::BlockReason::BlocklistOverride) => {
-            "blocked by a user-defined blocklist rule"
-        }
+        Some(BlockReason::BlocklistOverride) => "blocked by a user-defined blocklist rule",
         None => "blocked by policy",
     }
 }
