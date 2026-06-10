@@ -109,7 +109,7 @@ pub(crate) fn handle_config_command(args: ConfigArgs) -> i32 {
                     EXIT_INTERNAL
                 }
             },
-            Err(err) => report_config_load_error(&err),
+            Err(err) => report_config_load_error(&AegisError::from(err)),
         },
         ConfigCommand::Validate(args) => handle_config_validate_command(args),
     }

@@ -358,8 +358,18 @@ maps an `Assessment` plus mode/CI/allowlist context to a `PolicyDecision`
 `CiPolicy`, `SnapshotPolicy`, `AllowlistOverrideLevel`) into `aegis-types` so
 policy needn't depend on config. `PrefixRule` stays in `aegis-scanner` (DAG
 direction) and `amend` (config-coupled decision persistence) is deferred to
-`aegis-config`. `src/decision/` is now a re-export shim. Remaining crates
-pending (audit, snapshot, tui, config — the last absorbs `amend`).
+`aegis-config`. `src/decision/` is now a re-export shim.
+
+`aegis-config` extracted next — the config model, layered loader, validation,
+JSON schema, and `amend` (decision persistence). Depends on `aegis-types` +
+`aegis-scanner` (it validates that custom patterns compile via
+`PatternSet`/`Scanner`). Prep introduced a typed `ConfigError` (replacing the
+binary's `AegisError`) and replaced the binary's `interceptor::scanner_for`
+validation with a config-local helper. The policy-config enums (`Mode`,
+`CiPolicy`, `SnapshotPolicy`, `AllowlistOverrideLevel`) live in `aegis-types`;
+`AuditConfig`/`AuditIntegrityMode` stay in `aegis-config` (the future
+`aegis-audit` will depend on it for them). `src/config/` is now a re-export
+shim. Remaining crates pending (audit, snapshot, tui).
 
 ### 4.2 Dependency rule enforcement via `cargo deny`
 

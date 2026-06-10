@@ -7,9 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use time::OffsetDateTime;
 
-use crate::error::AegisError;
+use crate::error::ConfigError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, ConfigError>;
 
 /// Escape a string for safe inclusion in a TOML double-quoted value.
 pub(super) fn toml_escape(s: &str) -> String {

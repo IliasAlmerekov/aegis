@@ -136,8 +136,8 @@ src/interceptor/patterns.rs
 crates/aegis-policy/
 src/decision/
 src/ui/confirm.rs
-src/config/model.rs
-src/config/allowlist.rs
+crates/aegis-config/
+src/config/
 src/snapshot/mod.rs
 src/snapshot/git.rs
 src/snapshot/docker.rs

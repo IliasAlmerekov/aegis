@@ -1,18 +1,24 @@
 [package]
-name = "aegis-policy"
+name = "aegis-config"
 version = "0.5.6"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/IliasAlmerekov/aegis"
 homepage = "https://github.com/IliasAlmerekov/aegis"
-documentation = "https://docs.rs/aegis-policy"
-description = "Pure policy evaluation for Aegis: maps a scanner Assessment plus mode/CI/allowlist context to a decision. Depends on aegis-types and aegis-scanner."
+documentation = "https://docs.rs/aegis-config"
+description = "Configuration model, layered loader, validation, JSON schema, and decision-persistence (amend) for Aegis. Depends on aegis-types and aegis-scanner."
 
 [dependencies]
 aegis-types = { version = "0.5.6", path = "../aegis-types" }
 aegis-scanner = { version = "0.5.6", path = "../aegis-scanner" }
 serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+schemars = "1"
+thiserror = "1"
+tracing = "0.1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+regex = "1.11"
 
 [dev-dependencies]
-aegis-parser = { version = "0.5.6", path = "../aegis-parser" }
+tempfile = "3"

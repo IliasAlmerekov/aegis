@@ -22,8 +22,9 @@ Aegis is a Cargo workspace: the `aegis` binary crate at the repository root
 acts as a shell-proxy guardrail and depends on focused library crates under
 `crates/` (Phase 4 of `ROADMAP.md`). Extracted so far: `aegis-types` (shared
 data vocabulary), `aegis-parser` (shell tokenizer + `PrefixPattern` matcher),
-`aegis-scanner` (`Scanner`, `PatternSet`, built-in `patterns.toml`), and
-`aegis-policy` (the pure `PolicyEngine`).
+`aegis-scanner` (`Scanner`, `PatternSet`, built-in `patterns.toml`),
+`aegis-policy` (the pure `PolicyEngine`), and `aegis-config` (config model,
+loader, validation, schema, and `amend`).
 
 The current runtime architecture is split across a small set of focused
 modules and crates:

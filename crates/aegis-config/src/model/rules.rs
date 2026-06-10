@@ -6,8 +6,8 @@ use time::OffsetDateTime;
 use aegis_types::{Pattern, PatternSource};
 
 use super::AuditIntegrityMode;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::patterns::Category;
+use aegis_types::Category;
+use aegis_types::RiskLevel;
 
 /// A user-defined pattern loaded from `aegis.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

@@ -5,12 +5,11 @@ use std::path::Path;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use crate::config::AegisConfig;
-use crate::config::allowlist::{
+use crate::AegisConfig;
+use crate::allowlist::{
     Allowlist, ConfigSourceLayer, analyze_allowlist_rule, validate_single_rule,
 };
-use crate::error::AegisError;
-use crate::interceptor;
+use crate::error::ConfigError;
 
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
@@ -253,7 +252,7 @@ pub fn validate_config(config: &AegisConfig, source_map: &ConfigSourceMap) -> Va
 }
 
 /// Convert a non-file validation failure into a structured report.
-pub fn validation_load_error(err: &AegisError) -> ValidationReport {
+pub fn validation_load_error(err: &ConfigError) -> ValidationReport {
     ValidationReport {
         valid: false,
         errors: vec![ValidationIssue {
@@ -269,7 +268,7 @@ fn custom_pattern_validation_issue(
     config: &AegisConfig,
     source_map: &ConfigSourceMap,
 ) -> Option<ValidationIssue> {
-    if let Err(err) = interceptor::scanner_for(&config.custom_patterns) {
+    if let Err(err) = super::model::validate_custom_patterns(&config.custom_patterns) {
         if config.custom_patterns.is_empty() {
             return Some(ValidationIssue {
                 code: "scanner_init_error",
@@ -282,7 +281,8 @@ fn custom_pattern_validation_issue(
     }
 
     for index in 0..config.custom_patterns.len() {
-        if let Err(err) = interceptor::scanner_for(&config.custom_patterns[..=index]) {
+        if let Err(err) = super::model::validate_custom_patterns(&config.custom_patterns[..=index])
+        {
             return Some(ValidationIssue {
                 code: "invalid_custom_pattern",
                 message: err.to_string(),
@@ -341,12 +341,12 @@ fn push_unique_issue(issues: &mut Vec<ValidationIssue>, issue: ValidationIssue) 
     issues.push(issue);
 }
 
-fn config_load_error_code(err: &AegisError) -> &'static str {
+fn config_load_error_code(err: &ConfigError) -> &'static str {
     match err {
-        AegisError::Config(message) if message.starts_with("failed to parse ") => {
+        ConfigError::Config(message) if message.starts_with("failed to parse ") => {
             "config_parse_error"
         }
-        AegisError::Config(_) => "config_load_error",
+        ConfigError::Config(_) => "config_load_error",
         _ => "config_load_error",
     }
 }
@@ -425,8 +425,8 @@ fn path_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ConfigSourceMap, validate_config, validate_config_layers};
-    use crate::config::{AegisConfig, AllowlistRule};
-    use crate::error::AegisError;
+    use crate::error::ConfigError;
+    use crate::{AegisConfig, AllowlistRule};
     use tempfile::TempDir;
     use time::{Duration, OffsetDateTime};
 
@@ -550,7 +550,7 @@ reason = "wide"
 
     #[test]
     fn validation_load_error_returns_structured_generic_code() {
-        let err = AegisError::Config("invalid config".to_string());
+        let err = ConfigError::Config("invalid config".to_string());
         let report = super::validation_load_error(&err);
         assert_eq!(report.errors[0].location, "config");
         assert_eq!(report.errors[0].code, "config_load_error");

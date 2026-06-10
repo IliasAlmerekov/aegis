@@ -23,6 +23,7 @@ members = [
     "crates/aegis-parser",
     "crates/aegis-scanner",
     "crates/aegis-policy",
+    "crates/aegis-config",
 ]
 # The cargo-fuzz crate is built standalone by `cargo fuzz` with its own
 # sanitizer flags; it must not be pulled into the main workspace.
@@ -33,6 +34,7 @@ aegis-types = { version = "0.5.6", path = "crates/aegis-types" }
 aegis-parser = { version = "0.5.6", path = "crates/aegis-parser" }
 aegis-scanner = { version = "0.5.6", path = "crates/aegis-scanner" }
 aegis-policy = { version = "0.5.6", path = "crates/aegis-policy" }
+aegis-config = { version = "0.5.6", path = "crates/aegis-config" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "1"

@@ -90,7 +90,8 @@ pub struct WatchAuditContext<'a> {
 impl RuntimeContext {
     /// Load config, build runtime dependencies once, and keep them consistent.
     pub fn load(_verbose: bool, handle: Handle) -> Result<Self, AegisError> {
-        AegisConfig::load().and_then(|config| Self::new(config, handle))
+        let config = AegisConfig::load()?;
+        Self::new(config, handle)
     }
 
     /// Build a runtime context from an already resolved config.

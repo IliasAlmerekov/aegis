@@ -124,8 +124,8 @@ Any changes in these files require extra care and explicit validation:
 - `crates/aegis-policy/` (PolicyEngine — allow/block decision)
 - `src/decision/` (re-export shim over `aegis-policy`)
 - `src/ui/confirm.rs`
-- `src/config/model.rs`
-- `src/config/allowlist.rs`
+- `crates/aegis-config/` (config model, loader, validation, amend)
+- `src/config/` (re-export shim over `aegis-config`)
 - `src/snapshot/mod.rs`
 - `src/snapshot/git.rs`
 - `src/snapshot/docker.rs`

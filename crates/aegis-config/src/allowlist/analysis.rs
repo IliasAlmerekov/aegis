@@ -1,13 +1,13 @@
 //! Advisory analysis helpers for allowlist and blocklist rules.
 
 use super::{AllowlistWarning, BlocklistWarning};
-use crate::config::{AllowlistRule, BlockRule};
+use crate::{AllowlistRule, BlockRule};
 
 /// Produce advisory warnings for one structured allowlist rule.
 ///
 /// This analysis is informational only. It does not participate in
 /// authoritative runtime allow/deny matching, which is performed exclusively
-/// by the compiled [`crate::config::Allowlist`].
+/// by the compiled [`crate::Allowlist`].
 pub fn analyze_allowlist_rule(rule: &AllowlistRule) -> Vec<AllowlistWarning> {
     let mut warnings = Vec::new();
     let location = warning_location(rule);
