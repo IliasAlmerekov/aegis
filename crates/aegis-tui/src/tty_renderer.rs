@@ -1,14 +1,11 @@
 use std::fs::OpenOptions;
 use std::io;
 
-use crate::explanation::CommandExplanation;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::scanner::Assessment;
-use crate::snapshot::SnapshotRecord;
+use aegis_explanation::CommandExplanation;
+use aegis_types::{Assessment, RiskLevel, SnapshotRecord};
 
-use super::PromptDecision;
 use super::block_screen::{render_block, render_policy_block};
-use super::stdout_renderer::show_confirmation_with_decision;
+use super::stdout_renderer::{PromptDecision, show_confirmation_with_decision};
 
 /// Return the default decision when a TTY is not available.
 pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {

@@ -5,16 +5,14 @@ use crossterm::{
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
 };
 
-use crate::explanation::CommandExplanation;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::scanner::Assessment;
-use crate::snapshot::SnapshotRecord;
-use crate::ui::confirm::PromptDecision;
+use aegis_explanation::CommandExplanation;
+use aegis_types::{Assessment, RiskLevel, SnapshotRecord};
 
 use super::shared::{
     confirmation_reason_text, decision_source_label, pattern_source_label, print_command_line,
     print_dangerous_action,
 };
+use super::stdout_renderer::PromptDecision;
 
 pub(super) fn render_dialog<W: Write>(
     assessment: &Assessment,
@@ -198,5 +196,3 @@ pub(super) fn prompt_warn_with_always<R: BufRead, W: Write>(
         }
     }
 }
-
-// ── Command highlighting ───────────────────────────────────────────────────────

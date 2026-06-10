@@ -1,22 +1,20 @@
-pub(crate) use super::block_screen::render_policy_block;
-pub(crate) use super::shared::{build_highlighted_command, sorted_highlight_ranges_for_tests};
-pub use super::stdout_renderer::PromptDecision;
-pub use super::*;
+pub(crate) use crate::block_screen::render_policy_block;
+pub(crate) use crate::shared::{build_highlighted_command, sorted_highlight_ranges_for_tests};
+pub use crate::stdout_renderer::PromptDecision;
+pub use crate::stdout_renderer::{show_confirmation_with_decision, show_confirmation_with_input};
+pub use crate::tty_renderer::tty_unavailable_decision;
 
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use crate::config::{ConfigSourceLayer, Mode};
-use crate::decision::{BlockReason, ExecutionTransport, PolicyAction, PolicyRationale};
-use crate::explanation::{
-    AllowlistExplanation, CommandExplanation, ExecutionContextExplanation, PolicyExplanation,
-    ScanExplanation,
+use aegis_config::{ConfigSourceLayer, Mode};
+use aegis_explanation::{
+    AllowlistExplanation, BlockReason, CommandExplanation, ExecutionContextExplanation,
+    ExecutionTransport, PolicyAction, PolicyExplanation, PolicyRationale, ScanExplanation,
 };
-use crate::interceptor::RiskLevel;
-use crate::interceptor::parser::Parser;
-use crate::interceptor::patterns::{Category, Pattern, PatternSource};
-use crate::interceptor::scanner::{Assessment, HighlightRange, MatchResult};
-use crate::snapshot::SnapshotRecord;
+use aegis_parser::Parser;
+use aegis_types::{Assessment, Category, HighlightRange, MatchResult, Pattern, PatternSource};
+use aegis_types::{DecisionSource, RiskLevel, SnapshotRecord};
 
 // ── helpers ───────────────────────────────────────────────────────────────
 

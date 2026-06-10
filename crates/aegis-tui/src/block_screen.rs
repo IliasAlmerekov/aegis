@@ -5,9 +5,8 @@ use crossterm::{
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
 };
 
-use crate::explanation::CommandExplanation;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::scanner::Assessment;
+use aegis_explanation::CommandExplanation;
+use aegis_types::{Assessment, RiskLevel};
 
 use super::shared::{
     block_reason_text, confirmation_reason_text, pattern_source_label, print_command_line,

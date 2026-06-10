@@ -1,9 +1,7 @@
 use std::io::{self, BufRead, Write};
 
-use crate::explanation::CommandExplanation;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::scanner::Assessment;
-use crate::snapshot::SnapshotRecord;
+use aegis_explanation::CommandExplanation;
+use aegis_types::{Assessment, RiskLevel, SnapshotRecord};
 
 use super::block_screen::{render_block, render_noninteractive_denial, render_policy_block};
 use super::confirm_screen::render_dialog;

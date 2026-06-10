@@ -320,14 +320,15 @@ aegis/                          (workspace root)
     aegis-scanner/ [DONE]       Scanner, PatternSet, PrefixRule — depends on aegis-types, aegis-parser
     aegis-policy/  [DONE]       PolicyEngine — depends on aegis-types, aegis-scanner (PrefixRule lives in aegis-scanner; amend in aegis-config)
     aegis-config/  [DONE]       AegisConfig, loader, validation, schema, amend — depends on aegis-types, aegis-scanner
-    aegis-audit/   [TODO]       AuditLogger, AuditEntry — depends on aegis-types (blocked: cyclic with explanation::CommandExplanation)
+    aegis-explanation/[DONE]     CommandExplanation and related types — depends on aegis-types, aegis-policy, aegis-config
+    aegis-tui/     [DONE]       crossterm confirmation dialog — depends on aegis-types, aegis-explanation
+    aegis-audit/   [TODO]       AuditLogger, AuditEntry — depends on aegis-types (blocked: cyclic with explanation::CommandExplanation; unblocked once aegis-explanation is used)
     aegis-snapshot/[TODO]       SnapshotPlugin trait + 6 backends — depends on aegis-types, aegis-config
-    aegis-tui/     [TODO]       crossterm confirmation dialog — depends on aegis-types
   src/                          binary — thin wiring, depends on all crates above
 ```
 
-Status: 5 of 8 crates extracted (aegis-types, aegis-parser, aegis-scanner,
-aegis-policy, aegis-config). Remaining: aegis-audit, aegis-snapshot, aegis-tui.
+Status: 7 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
+aegis-policy, aegis-config, aegis-explanation, aegis-tui). Remaining: aegis-audit, aegis-snapshot.
 
 Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
 application crate. Dependency arrows flow inward toward `aegis-types`.

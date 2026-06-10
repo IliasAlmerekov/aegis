@@ -12,7 +12,8 @@ use crate::config::{
     SnapshotPolicy,
 };
 use crate::error::AegisError;
-use crate::explanation::{CommandExplanation, ExecutionOutcomeExplanation};
+use crate::explanation::CommandExplanation;
+use crate::explanation::formatter::{CommandExplanationExt, build_outcome_explanation};
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
@@ -260,9 +261,11 @@ impl RuntimeContext {
             allowlist_pattern,
             allowlist_reason,
         )
-        .with_explanation(explanation.clone().with_runtime_outcome(
-            ExecutionOutcomeExplanation::from_runtime(decision, snapshots),
-        ))
+        .with_explanation(
+            explanation
+                .clone()
+                .with_runtime_outcome(build_outcome_explanation(decision, snapshots)),
+        )
         .with_policy_context(
             self.runtime_config.mode,
             options.ci_detected,

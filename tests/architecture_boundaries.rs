@@ -236,7 +236,13 @@ fn interceptor_has_no_downstream_dependencies() {
 /// `SnapshotRegistry::*`, `.snapshot_all(`, or `.rollback(` is forbidden.
 #[test]
 fn ui_does_not_call_audit_or_snapshot_business_logic() {
-    for path in rs_files_under("src/ui") {
+    // Check both the shim layer (src/ui) and the real implementation (crates/aegis-tui/src).
+    let paths: Vec<_> = rs_files_under("src/ui")
+        .into_iter()
+        .chain(rs_files_under("crates/aegis-tui/src"))
+        .collect();
+
+    for path in paths {
         let src = strip_test_code(&fs::read_to_string(&path).unwrap());
         let rel = path
             .strip_prefix(repo_root())
@@ -244,10 +250,16 @@ fn ui_does_not_call_audit_or_snapshot_business_logic() {
             .display()
             .to_string();
 
-        // No audit coupling at all.
+        // No audit coupling at all (binary-crate or workspace-crate form).
         assert_absent(
             &src,
             "use crate::audit",
+            &rel,
+            "§4: UI must not depend on audit",
+        );
+        assert_absent(
+            &src,
+            "use aegis_audit",
             &rel,
             "§4: UI must not depend on audit",
         );
