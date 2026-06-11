@@ -50,7 +50,7 @@ fn find_snapshot_target(logger: &AuditLogger, snapshot_id: &str) -> Result<Rollb
 }
 
 fn append_rollback_audit_entry(logger: &AuditLogger, target: &RollbackTarget) -> Result<()> {
-    logger.append(AuditEntry::new(
+    Ok(logger.append(AuditEntry::new(
         format!("aegis rollback {}", target.snapshot_id),
         RiskLevel::Safe,
         Vec::new(),
@@ -61,7 +61,7 @@ fn append_rollback_audit_entry(logger: &AuditLogger, target: &RollbackTarget) ->
         }],
         None,
         None,
-    ))
+    ))?)
 }
 
 #[cfg(test)]
@@ -75,7 +75,7 @@ mod tests {
         plugin: &str,
         snapshot_id: &str,
     ) -> Result<()> {
-        logger.append(AuditEntry::new(
+        Ok(logger.append(AuditEntry::new(
             command,
             RiskLevel::Danger,
             Vec::new(),
@@ -86,7 +86,7 @@ mod tests {
             }],
             None,
             None,
-        ))
+        ))?)
     }
 
     #[test]

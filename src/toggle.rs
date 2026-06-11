@@ -86,7 +86,7 @@ pub fn status_view(ci_override_active: bool) -> Result<ToggleStatusView> {
 
 /// Append an audit entry for a toggle command using the effective audit config.
 pub fn append_toggle_audit_entry(command: &str) -> Result<()> {
-    audit_logger()?.append(AuditEntry::new(
+    Ok(audit_logger()?.append(AuditEntry::new(
         command.to_string(),
         RiskLevel::Safe,
         Vec::new(),
@@ -94,7 +94,7 @@ pub fn append_toggle_audit_entry(command: &str) -> Result<()> {
         Vec::new(),
         None,
         None,
-    ))
+    ))?)
 }
 
 fn resolve_disabled_flag_path(home_dir: PathBuf) -> PathBuf {

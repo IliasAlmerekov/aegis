@@ -1,0 +1,27 @@
+[package]
+name = "aegis-audit"
+version = "0.5.6"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/IliasAlmerekov/aegis"
+homepage = "https://github.com/IliasAlmerekov/aegis"
+documentation = "https://docs.rs/aegis-audit"
+description = "Append-only JSONL audit log with optional hash-chain integrity for Aegis."
+
+[dependencies]
+aegis-types = { version = "0.5.6", path = "../aegis-types" }
+aegis-scanner = { version = "0.5.6", path = "../aegis-scanner" }
+aegis-config = { version = "0.5.6", path = "../aegis-config" }
+aegis-explanation = { version = "0.5.6", path = "../aegis-explanation" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+sha2 = "0.10"
+flate2 = "1"
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+aegis-policy = { version = "0.5.6", path = "../aegis-policy" }
+aegis-scanner = { version = "0.5.6", path = "../aegis-scanner" }
