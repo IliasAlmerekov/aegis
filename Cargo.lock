@@ -12,6 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "aegis"
 version = "0.5.6"
 dependencies = [
+ "aegis-audit",
  "aegis-config",
  "aegis-explanation",
  "aegis-parser",
@@ -38,6 +39,24 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "aegis-audit"
+version = "0.5.6"
+dependencies = [
+ "aegis-config",
+ "aegis-explanation",
+ "aegis-policy",
+ "aegis-scanner",
+ "aegis-types",
+ "flate2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "time",
 ]
 
 [[package]]

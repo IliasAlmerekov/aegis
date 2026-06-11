@@ -8,6 +8,8 @@ fuzz/artifacts/
 fuzz/coverage/
 fuzz/target/
 fuzz/Cargo.lock
+crates/*/Cargo.lock
+crates/*/target/
 fuzz/corpus/parser/*
 !fuzz/corpus/parser/empty.txt
 !fuzz/corpus/parser/whitespace.txt

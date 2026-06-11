@@ -5,12 +5,12 @@ use flate2::read::GzDecoder;
 
 use super::integrity::{AuditIntegrityPayload, compute_entry_hash, verify_integrity_entries};
 use super::*;
-use crate::decision::{ExecutionTransport, PolicyAction, PolicyRationale};
-use crate::explanation::{
+use aegis_explanation::{
     CommandExplanation, ExecutionContextExplanation, ExecutionDecisionExplanation,
     ExecutionOutcomeExplanation, ExplainedPatternMatch, PolicyExplanation, ScanExplanation,
     SnapshotOutcomeExplanation,
 };
+use aegis_policy::{ExecutionTransport, PolicyAction, PolicyRationale};
 use tempfile::TempDir;
 
 pub fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
@@ -56,7 +56,7 @@ pub fn explanation_with_match_text(matched_text: &str) -> CommandExplanation {
     CommandExplanation {
         scan: ScanExplanation {
             highest_risk: RiskLevel::Danger,
-            decision_source: crate::interceptor::scanner::DecisionSource::BuiltinPattern,
+            decision_source: aegis_scanner::DecisionSource::BuiltinPattern,
             matched_patterns: vec![ExplainedPatternMatch {
                 id: "FS-001".to_string(),
                 risk: RiskLevel::Danger,

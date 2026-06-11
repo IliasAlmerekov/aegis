@@ -5,7 +5,7 @@ use std::path::Path;
 use flate2::read::GzDecoder;
 
 use super::*;
-use crate::error::AegisError;
+use crate::error::AuditError;
 
 impl AuditLogger {
     /// Read every audit entry from all segments, oldest first.
@@ -240,12 +240,12 @@ impl AuditLogger {
             .map(AuditEntry::normalize_legacy_fields)
             .map(Some)
             .map_err(|err| match line_number {
-                Some(index) => AegisError::Config(format!(
+                Some(index) => AuditError::Parse(format!(
                     "failed to parse audit log line {} in {}: {err}",
                     index,
                     source.display()
                 )),
-                None => AegisError::Config(format!(
+                None => AuditError::Parse(format!(
                     "failed to parse audit log while scanning tail of {}: {err}",
                     source.display()
                 )),

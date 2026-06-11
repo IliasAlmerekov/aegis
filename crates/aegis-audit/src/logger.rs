@@ -8,20 +8,19 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::config::{AuditIntegrityMode, Mode};
-use crate::error::AegisError;
-use crate::explanation::CommandExplanation;
-use crate::interceptor::RiskLevel;
-use crate::interceptor::patterns::{Category, PatternSource};
-use crate::interceptor::scanner::MatchResult;
-use crate::snapshot::SnapshotRecord;
+use aegis_config::{AuditIntegrityMode, Mode};
+use aegis_explanation::CommandExplanation;
+use aegis_scanner::MatchResult;
+use aegis_types::{Category, PatternSource, RiskLevel, SnapshotRecord};
+
+use crate::error::AuditError;
 
 mod integrity;
 mod query;
 mod rotation;
 mod writer;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, AuditError>;
 static AUDIT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const CHAIN_ALG_SHA256: &str = "sha256";
 
@@ -458,7 +457,7 @@ pub struct AuditRotationPolicy {
 
 #[derive(Debug, Clone)]
 struct ArchiveSegment {
-    path: PathBuf,
+    path: std::path::PathBuf,
     compressed: bool,
     index: usize,
 }
@@ -493,7 +492,7 @@ pub enum AuditIntegrityStatus {
 
 /// Append-only JSONL audit log stored under `~/.aegis/audit.jsonl`.
 pub struct AuditLogger {
-    path: PathBuf,
+    pub(super) path: PathBuf,
     rotation: Option<AuditRotationPolicy>,
     integrity_mode: AuditIntegrityMode,
 }

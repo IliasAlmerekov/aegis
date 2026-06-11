@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use super::*;
-use crate::config::AuditConfig;
-use crate::error::AegisError;
+use crate::error::AuditError;
+use aegis_config::AuditConfig;
 
 impl AuditEntry {
     /// Build a decision audit entry with all fields computed at the decision point.
@@ -162,6 +162,14 @@ impl AuditLogger {
         }
     }
 
+    /// Override the path on an existing logger (builder pattern).
+    pub fn with_path(self, path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            ..self
+        }
+    }
+
     /// Enable log rotation with the given policy.
     pub fn with_rotation(mut self, policy: AuditRotationPolicy) -> Self {
         self.rotation = Some(policy);
@@ -210,7 +218,7 @@ impl AuditLogger {
         let prev_hash = self.latest_chained_hash()?;
         let entry = self.apply_integrity(entry.normalize_legacy_fields(), prev_hash)?;
         let mut serialized =
-            serde_json::to_vec(&entry).map_err(|e| AegisError::Io(std::io::Error::other(e)))?;
+            serde_json::to_vec(&entry).map_err(|e| AuditError::Io(std::io::Error::other(e)))?;
         serialized.push(b'\n');
 
         if let Some(policy) = &self.rotation {

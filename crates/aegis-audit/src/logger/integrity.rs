@@ -2,7 +2,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::*;
-use crate::error::AegisError;
+use crate::error::AuditError;
 
 impl AuditLogger {
     /// Verify the integrity of the entire audit log.
@@ -111,7 +111,7 @@ pub(super) fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) ->
     };
 
     let canonical = serde_json::to_vec(&payload).map_err(|err| {
-        AegisError::Config(format!(
+        AuditError::Parse(format!(
             "failed to serialize audit integrity payload: {err}"
         ))
     })?;

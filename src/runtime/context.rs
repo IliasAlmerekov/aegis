@@ -205,7 +205,7 @@ impl RuntimeContext {
         options: AuditWriteOptions<'_>,
     ) -> Result<(), AegisError> {
         let entry = self.build_audit_entry(assessment, decision, snapshots, explanation, options);
-        self.audit_logger.append(entry)
+        Ok(self.audit_logger.append(entry)?)
     }
 
     /// Append a watch-mode audit entry with frame correlation fields.
@@ -234,7 +234,7 @@ impl RuntimeContext {
             )
             .with_watch_context(watch.source, watch.cwd, watch.id);
 
-        self.audit_logger.append(entry)
+        Ok(self.audit_logger.append(entry)?)
     }
 
     fn build_audit_entry(

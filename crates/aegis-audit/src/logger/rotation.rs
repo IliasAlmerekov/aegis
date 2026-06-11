@@ -5,7 +5,7 @@ use flate2::Compression;
 use flate2::write::GzEncoder;
 
 use super::*;
-use crate::config::AuditConfig;
+use aegis_config::AuditConfig;
 
 impl AuditRotationPolicy {
     /// Build a rotation policy from the effective audit config, if enabled.
