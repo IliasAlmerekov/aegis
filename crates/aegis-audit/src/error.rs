@@ -1,4 +1,6 @@
-/// Typed error for audit operations.
+//! Typed error for all audit I/O and serialization operations.
+
+/// Error returned by [`crate::AuditLogger`] operations.
 #[derive(thiserror::Error, Debug)]
 pub enum AuditError {
     /// Wrapped I/O error.

@@ -1,8 +1,4 @@
 //! Public-API contract tests for `aegis-audit`.
-//!
-//! All tests in this file are RED: they reference types and functions that do
-//! not exist yet in the stub `src/lib.rs`. They will fail to compile (and
-//! therefore fail as tests) until the green phase implements the crate.
 
 use aegis_audit::{
     AuditEntry, AuditError, AuditLogger, AuditQuery, AuditRotationPolicy, AuditTimestamp, Decision,
