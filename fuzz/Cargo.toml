@@ -13,6 +13,9 @@ libfuzzer-sys = "0.4"
 [dependencies.aegis-parser]
 path = "../crates/aegis-parser"
 
+[dependencies.aegis-scanner]
+path = "../crates/aegis-scanner"
+
 [[bin]]
 name = "parser"
 path = "fuzz_targets/parser.rs"

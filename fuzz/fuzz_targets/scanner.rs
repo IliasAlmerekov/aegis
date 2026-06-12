@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-use aegis::interceptor::{patterns::PatternSet, scanner::Scanner};
+use aegis_scanner::{PatternSet, Scanner};
 use libfuzzer_sys::fuzz_target;
 
 static SCANNER: LazyLock<Scanner> = LazyLock::new(|| {
