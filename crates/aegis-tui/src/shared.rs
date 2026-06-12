@@ -153,7 +153,8 @@ pub(super) fn confirmation_reason_text(explanation: &CommandExplanation) -> Stri
         (PolicyRationale::IntrinsicRiskBlock, _)
         | (PolicyRationale::ProtectCiPolicy, _)
         | (PolicyRationale::StrictPolicy, _)
-        | (PolicyRationale::BlocklistOverride, _) => {
+        | (PolicyRationale::BlocklistOverride, _)
+        | (PolicyRationale::PolicyRulesOverride, _) => {
             explanation.policy.concise_reason_label().to_string()
         }
     }
@@ -173,6 +174,7 @@ pub(super) fn block_reason_text(explanation: &CommandExplanation) -> &'static st
             "blocked by CI policy (Protect mode + ci_policy=Block)"
         }
         Some(BlockReason::BlocklistOverride) => "blocked by a user-defined blocklist rule",
+        Some(BlockReason::PolicyRulesOverride) => "blocked by a typed policy rule",
         None => "blocked by policy",
     }
 }

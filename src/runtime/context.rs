@@ -59,6 +59,8 @@ pub struct RuntimeContext {
     snapshot_registry: OnceLock<SnapshotRegistry>,
     async_handle: Handle,
     audit_logger: AuditLogger,
+    /// Typed `[[rules]]` entries from the effective config.
+    policy_rules: Vec<crate::config::PolicyRule>,
 }
 
 /// Options controlling how an audit entry is written.
@@ -110,6 +112,7 @@ impl RuntimeContext {
             audit_logger: build_audit_logger(&config),
             current_user,
             runtime_config: RuntimeConfig::from(&config),
+            policy_rules: config.rules,
             scanner,
         })
     }
@@ -117,6 +120,11 @@ impl RuntimeContext {
     /// Return the effective config used by all runtime subsystems.
     pub fn config(&self) -> &RuntimeConfig {
         &self.runtime_config
+    }
+
+    /// Return the typed `[[rules]]` entries from the effective config.
+    pub fn policy_rules(&self) -> &[crate::config::PolicyRule] {
+        &self.policy_rules
     }
 
     /// Assess a command with the context-bound scanner.

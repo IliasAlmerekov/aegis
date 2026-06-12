@@ -1,7 +1,7 @@
 //! Policy types: inputs, actions, rationales, and execution transport.
 
 use aegis_scanner::Assessment;
-use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
+use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, PolicyRuleDecision, SnapshotPolicy};
 use serde::{Deserialize, Serialize};
 
 /// Identifies the caller path that is asking policy for a decision.
@@ -36,6 +36,17 @@ pub struct PolicyBlocklistResult {
     pub matched: bool,
 }
 
+/// Result of evaluating typed `[[rules]]` policy entries.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PolicyRulesResult {
+    /// Whether any rule matched the current command.
+    pub matched: bool,
+    /// The decision to enforce when `matched` is `true`.
+    pub decision: Option<PolicyRuleDecision>,
+    /// Optional human-readable justification from the matched rule.
+    pub justification: Option<std::borrow::Cow<'static, str>>,
+}
+
 /// Policy-relevant config flags already resolved by config loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PolicyConfigFlags {
@@ -57,7 +68,7 @@ pub struct PolicyExecutionContext<'a> {
 }
 
 /// Full input required to evaluate policy.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PolicyInput<'a> {
     /// Scanner assessment for the command under evaluation.
     pub assessment: &'a Assessment,
@@ -73,6 +84,8 @@ pub struct PolicyInput<'a> {
     pub config_flags: PolicyConfigFlags,
     /// Execution-specific context such as transport and snapshot applicability.
     pub execution_context: PolicyExecutionContext<'a>,
+    /// Typed `[[rules]]` evaluation result.
+    pub rules: PolicyRulesResult,
 }
 
 /// The action Aegis should take after evaluating policy.
@@ -97,6 +110,8 @@ pub enum BlockReason {
     ProtectCiPolicy,
     /// The command matched an explicit user-defined blocklist rule.
     BlocklistOverride,
+    /// A typed `[[rules]]` entry forced a hard block.
+    PolicyRulesOverride,
 }
 
 /// Human-readable policy rationale classified for runtime/UI handling.
@@ -118,6 +133,8 @@ pub enum PolicyRationale {
     StrictPolicy,
     /// An explicit user-defined blocklist rule matched.
     BlocklistOverride,
+    /// A typed `[[rules]]` entry overrode the normal policy decision.
+    PolicyRulesOverride,
 }
 
 impl PolicyRationale {
@@ -129,6 +146,7 @@ impl PolicyRationale {
             Self::ProtectCiPolicy => Some(BlockReason::ProtectCiPolicy),
             Self::StrictPolicy => Some(BlockReason::StrictPolicy),
             Self::BlocklistOverride => Some(BlockReason::BlocklistOverride),
+            Self::PolicyRulesOverride => Some(BlockReason::PolicyRulesOverride),
             Self::AuditMode
             | Self::SafeCommand
             | Self::AllowlistOverride

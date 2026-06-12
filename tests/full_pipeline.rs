@@ -2679,10 +2679,10 @@ allowlist = ["terraform destroy *"]
     assert!(!stdout.contains("allowlist = ["));
 }
 
-/// Audit mode must never block or prompt — even Block-level commands in CI
-/// with ci_policy = Block must be auto-approved and executed.
+/// Audit mode must block intrinsic Block-level commands — RiskLevel::Block is
+/// never bypassable, not even in Audit mode with ci_policy = Block.
 #[test]
-fn audit_mode_stays_non_blocking_for_block_classification() {
+fn audit_mode_blocks_intrinsic_block_classification() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
     let bin_dir = workspace.path().join("bin");
@@ -2706,7 +2706,7 @@ auto_snapshot_docker = false
 [[allow]]
 pattern = "rm -rf /"
 cwd = "/aegis-test-scope"
-reason = "audit mode should not attribute allowlist authorization"
+reason = "allowlist should not bypass intrinsic block"
 "#,
     )
     .unwrap();
@@ -2726,16 +2726,14 @@ reason = "audit mode should not attribute allowlist authorization"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
-    assert_eq!(fs::read_to_string(&log_path).unwrap(), "-rf /\n");
+    // Command must be blocked — the process exits non-zero and rm is not invoked.
+    assert!(!output.status.success());
+    assert!(!log_path.exists());
 
     let entries = read_audit_entries(home.path());
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["decision"], "Blocked");
     assert_eq!(entries[0]["risk"], "Block");
-    assert_eq!(entries[0]["snapshots"], serde_json::json!([]));
-    assert!(entries[0].get("allowlist_pattern").is_none());
-    assert!(entries[0].get("allowlist_reason").is_none());
 }
 
 /// Strict mode must block Warn commands even when ci_policy = Allow.

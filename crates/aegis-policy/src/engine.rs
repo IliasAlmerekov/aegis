@@ -1,5 +1,6 @@
 //! Pure policy engine: evaluate a prepared policy input and return a decision.
 
+use aegis_types::PolicyRuleDecision;
 use aegis_types::RiskLevel;
 use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 
@@ -17,8 +18,28 @@ pub struct DefaultPolicyEngine;
 
 impl PolicyEngine for DefaultPolicyEngine {
     fn evaluate(&self, input: PolicyInput<'_>) -> PolicyDecision {
+        // Intrinsic-block commands are never bypassable — not by rules, not by allowlist.
+        if input.assessment.risk == RiskLevel::Block {
+            return block(input, PolicyRationale::IntrinsicRiskBlock);
+        }
         if input.blocklist.matched {
             return block(input, PolicyRationale::BlocklistOverride);
+        }
+        if input.rules.matched
+            && let Some(decision) = input.rules.decision
+        {
+            return match decision {
+                PolicyRuleDecision::Allow => {
+                    // Preserve snapshot requirements for Danger commands even when a rule
+                    // auto-approves — consistent with allowlist-override behaviour.
+                    let snaps = snapshots_required(&input);
+                    auto_approve(input, PolicyRationale::PolicyRulesOverride, false, snaps)
+                }
+                PolicyRuleDecision::Block => block(input, PolicyRationale::PolicyRulesOverride),
+                PolicyRuleDecision::Prompt => {
+                    prompt_with_rationale(input, PolicyRationale::PolicyRulesOverride)
+                }
+            };
         }
         match input.mode {
             Mode::Audit => auto_approve(input, PolicyRationale::AuditMode, false, false),
@@ -38,7 +59,7 @@ fn evaluate_protect(input: PolicyInput<'_>) -> PolicyDecision {
     match input.assessment.risk {
         RiskLevel::Safe => auto_approve(input, PolicyRationale::SafeCommand, false, false),
         RiskLevel::Warn => {
-            if allowlist_override_applies(input) {
+            if allowlist_override_applies(&input) {
                 auto_approve(input, PolicyRationale::AllowlistOverride, true, false)
             } else if input.ci_state.detected && input.config_flags.ci_policy == CiPolicy::Block {
                 block(input, PolicyRationale::ProtectCiPolicy)
@@ -47,13 +68,9 @@ fn evaluate_protect(input: PolicyInput<'_>) -> PolicyDecision {
             }
         }
         RiskLevel::Danger => {
-            if allowlist_override_applies(input) {
-                auto_approve(
-                    input,
-                    PolicyRationale::AllowlistOverride,
-                    true,
-                    snapshots_required(input),
-                )
+            let snaps = snapshots_required(&input);
+            if allowlist_override_applies(&input) {
+                auto_approve(input, PolicyRationale::AllowlistOverride, true, snaps)
             } else if input.ci_state.detected && input.config_flags.ci_policy == CiPolicy::Block {
                 block(input, PolicyRationale::ProtectCiPolicy)
             } else {
@@ -70,13 +87,9 @@ fn evaluate_strict(input: PolicyInput<'_>) -> PolicyDecision {
     match input.assessment.risk {
         RiskLevel::Safe => auto_approve(input, PolicyRationale::SafeCommand, false, false),
         RiskLevel::Warn | RiskLevel::Danger => {
-            if allowlist_override_applies(input) {
-                auto_approve(
-                    input,
-                    PolicyRationale::AllowlistOverride,
-                    true,
-                    snapshots_required(input),
-                )
+            let snaps = snapshots_required(&input);
+            if allowlist_override_applies(&input) {
+                auto_approve(input, PolicyRationale::AllowlistOverride, true, snaps)
             } else {
                 block(input, PolicyRationale::StrictPolicy)
             }
@@ -87,7 +100,7 @@ fn evaluate_strict(input: PolicyInput<'_>) -> PolicyDecision {
     }
 }
 
-fn allowlist_override_applies(input: PolicyInput<'_>) -> bool {
+fn allowlist_override_applies(input: &PolicyInput<'_>) -> bool {
     if !input.allowlist.matched {
         return false;
     }
@@ -123,11 +136,23 @@ fn auto_approve(
 }
 
 fn prompt(input: PolicyInput<'_>) -> PolicyDecision {
+    let snaps = snapshots_required(&input);
     PolicyDecision {
         decision: PolicyAction::Prompt,
         rationale: PolicyRationale::RequiresConfirmation,
         requires_confirmation: true,
-        snapshots_required: snapshots_required(input),
+        snapshots_required: snaps,
+        allowlist_effective: false,
+    }
+}
+
+fn prompt_with_rationale(input: PolicyInput<'_>, rationale: PolicyRationale) -> PolicyDecision {
+    let snaps = snapshots_required(&input);
+    PolicyDecision {
+        decision: PolicyAction::Prompt,
+        rationale,
+        requires_confirmation: true,
+        snapshots_required: snaps,
         allowlist_effective: false,
     }
 }
@@ -142,7 +167,7 @@ fn block(_input: PolicyInput<'_>, rationale: PolicyRationale) -> PolicyDecision 
     }
 }
 
-fn snapshots_required(input: PolicyInput<'_>) -> bool {
+fn snapshots_required(input: &PolicyInput<'_>) -> bool {
     if input.assessment.risk != RiskLevel::Danger {
         return false;
     }
@@ -192,6 +217,7 @@ mod tests {
     }
 
     fn evaluate(input: EvalInput<'_>) -> PolicyDecision {
+        use super::super::types::PolicyRulesResult;
         let assessment = assessment(input.risk);
         evaluate_policy(PolicyInput {
             assessment: &assessment,
@@ -214,6 +240,7 @@ mod tests {
                 transport: ExecutionTransport::Shell,
                 applicable_snapshot_plugins: input.applicable_snapshot_plugins,
             },
+            rules: PolicyRulesResult::default(),
         })
     }
 
@@ -581,6 +608,114 @@ mod tests {
             false,
             false,
             Some(BlockReason::BlocklistOverride),
+        );
+    }
+
+    // ── Phase 5.2: [[rules]] policy engine tests ─────────────────────────────
+
+    fn evaluate_with_rules(
+        risk: RiskLevel,
+        mode: Mode,
+        rules_matched: bool,
+        rules_decision: Option<aegis_types::PolicyRuleDecision>,
+    ) -> PolicyDecision {
+        use super::super::types::PolicyRulesResult;
+        let assessment = assessment(risk);
+        evaluate_policy(PolicyInput {
+            assessment: &assessment,
+            mode,
+            ci_state: PolicyCiState { detected: false },
+            allowlist: PolicyAllowlistResult { matched: false },
+            blocklist: PolicyBlocklistResult { matched: false },
+            config_flags: PolicyConfigFlags {
+                ci_policy: CiPolicy::Allow,
+                allowlist_override_level: AllowlistOverrideLevel::Never,
+                snapshot_policy: SnapshotPolicy::None,
+            },
+            execution_context: PolicyExecutionContext {
+                transport: ExecutionTransport::Shell,
+                applicable_snapshot_plugins: &[],
+            },
+            rules: PolicyRulesResult {
+                matched: rules_matched,
+                decision: rules_decision,
+                justification: None,
+            },
+        })
+    }
+
+    /// A matched rule with `Allow` decision must auto-approve even a Warn
+    /// command in Protect mode (bypasses normal mode evaluation).
+    #[test]
+    fn test_rules_allow_overrides_protect_mode_warn() {
+        let decision = evaluate_with_rules(
+            RiskLevel::Warn,
+            Mode::Protect,
+            true,
+            Some(aegis_types::PolicyRuleDecision::Allow),
+        );
+
+        assert_eq!(decision.decision, PolicyAction::AutoApprove);
+        assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
+    }
+
+    /// A matched rule with `Block` decision must hard-block even a Safe command.
+    #[test]
+    fn test_rules_block_overrides_safe_command() {
+        let decision = evaluate_with_rules(
+            RiskLevel::Safe,
+            Mode::Protect,
+            true,
+            Some(aegis_types::PolicyRuleDecision::Block),
+        );
+
+        assert_eq!(decision.decision, PolicyAction::Block);
+        assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
+        assert_eq!(
+            decision.block_reason(),
+            Some(BlockReason::PolicyRulesOverride)
+        );
+    }
+
+    /// A matched rule with `Prompt` decision must prompt even a Safe command.
+    #[test]
+    fn test_rules_prompt_overrides_safe_command() {
+        let decision = evaluate_with_rules(
+            RiskLevel::Safe,
+            Mode::Protect,
+            true,
+            Some(aegis_types::PolicyRuleDecision::Prompt),
+        );
+
+        assert_eq!(decision.decision, PolicyAction::Prompt);
+        assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
+    }
+
+    /// When `matched = false`, normal policy must apply (Safe → AutoApprove in Protect).
+    #[test]
+    fn test_rules_not_matched_falls_through_to_normal_policy() {
+        let decision = evaluate_with_rules(RiskLevel::Safe, Mode::Protect, false, None);
+
+        assert_eq!(decision.decision, PolicyAction::AutoApprove);
+        assert_eq!(decision.rationale, PolicyRationale::SafeCommand);
+    }
+
+    /// A `[[rules]]` entry with `decision = "allow"` must NOT bypass a
+    /// `RiskLevel::Block` command — intrinsic block takes precedence over rules.
+    #[test]
+    fn rules_allow_cannot_bypass_block_risk_level() {
+        let decision = evaluate_with_rules(
+            RiskLevel::Block,
+            Mode::Protect,
+            true,
+            Some(aegis_types::PolicyRuleDecision::Allow),
+        );
+
+        assert_eq!(decision.decision, PolicyAction::Block);
+        assert_eq!(decision.rationale, PolicyRationale::IntrinsicRiskBlock);
+        assert_eq!(
+            decision.block_reason(),
+            Some(BlockReason::IntrinsicRiskBlock)
         );
     }
 }

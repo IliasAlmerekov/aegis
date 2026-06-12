@@ -342,6 +342,9 @@ async fn run_watch_plan(
                 Some(BlockReason::BlocklistOverride) => {
                     show_policy_block_via_tty(plan.assessment(), plan.explanation())
                 }
+                Some(BlockReason::PolicyRulesOverride) => {
+                    show_policy_block_via_tty(plan.assessment(), plan.explanation())
+                }
                 None => {}
             });
             Decision::Blocked

@@ -6,6 +6,7 @@ use crate::decision::{
     ExecutionTransport, PolicyAllowlistResult, PolicyBlocklistResult, PolicyCiState,
     PolicyConfigFlags, PolicyExecutionContext, PolicyInput, evaluate_policy,
 };
+use crate::planning::policy_rules::evaluate_policy_rules;
 use crate::planning::types::{CwdState, DecisionContext, InterceptionPlan, PlanningOutcome};
 use crate::runtime::RuntimeContext;
 
@@ -81,6 +82,7 @@ pub fn plan_with_context(
             transport: decision_context.transport(),
             applicable_snapshot_plugins: decision_context.applicable_snapshot_plugins(),
         },
+        rules: evaluate_policy_rules(context.policy_rules(), request.command),
     });
 
     PlanningOutcome::Planned(InterceptionPlan::from_policy(

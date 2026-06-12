@@ -650,7 +650,8 @@ fn not_in_ci_does_not_trigger_ci_policy() {
 }
 
 #[test]
-fn audit_mode_auto_approves_block_even_in_ci() {
+fn audit_mode_blocks_intrinsic_block_risk_level() {
+    // RiskLevel::Block is never bypassable — not even in Audit mode.
     let assessment = make_assessment(RiskLevel::Block);
     let (decision, snapshots, _) = decide_command(
         &context_with_mode(Mode::Audit),
@@ -661,7 +662,7 @@ fn audit_mode_auto_approves_block_even_in_ci() {
         true,
     );
 
-    assert_eq!(decision, Decision::AutoApproved);
+    assert_eq!(decision, Decision::Blocked);
     assert!(snapshots.is_empty());
 }
 

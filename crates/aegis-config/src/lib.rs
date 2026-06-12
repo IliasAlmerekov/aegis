@@ -13,6 +13,7 @@ pub mod amend;
 pub mod error;
 /// Config data model — [`AegisConfig`] and related types.
 pub mod model;
+pub mod pattern_match;
 pub mod snapshot;
 pub mod validate;
 
@@ -28,13 +29,15 @@ pub use amend::{
 };
 pub use model::{
     AegisConfig, AllowlistOverrideLevel, AllowlistRule, AuditConfig, AuditIntegrityMode, BlockRule,
-    CiPolicy, Mode, SnapshotPolicy, UserPattern,
+    CiPolicy, Mode, PolicyPatternToken, PolicyRule, PolicyRuleDecision, SnapshotPolicy,
+    UserPattern, WhenClause,
 };
+pub use pattern_match::policy_pattern_matches;
 pub use snapshot::{
     DockerScope, DockerScopeMode, MysqlSnapshotConfig, PostgresSnapshotConfig,
     SupabaseSnapshotConfig,
 };
 pub use validate::{
     ConfigSourceMap, ValidationIssue, ValidationReport, validate_config, validate_config_layers,
-    validation_load_error,
+    validate_policy_rules, validation_load_error,
 };

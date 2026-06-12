@@ -18,6 +18,8 @@ use aegis::explanation::{
     ScanExplanation,
 };
 use aegis::interceptor::parser::{extract_prefix, split_tokens};
+#[cfg(test)]
+use aegis::planning::evaluate_policy_rules;
 use aegis::planning::{CwdState, ExecutionDisposition, InterceptionPlan, PreparedPlanner};
 use aegis::runtime::AuditWriteOptions;
 #[cfg(test)]
@@ -194,6 +196,9 @@ fn show_block_for_plan(plan: &InterceptionPlan) {
         Some(BlockReason::BlocklistOverride) => {
             show_policy_block(plan.assessment(), plan.explanation());
         }
+        Some(BlockReason::PolicyRulesOverride) => {
+            show_policy_block(plan.assessment(), plan.explanation());
+        }
         None => {}
     }
 }
@@ -279,6 +284,9 @@ fn execute_policy_decision(
                     show_policy_block(assessment, explanation);
                 }
                 Some(BlockReason::BlocklistOverride) => {
+                    show_policy_block(assessment, explanation);
+                }
+                Some(BlockReason::PolicyRulesOverride) => {
                     show_policy_block(assessment, explanation);
                 }
                 None => unreachable!("PolicyAction::Block always carries a BlockReason"),
@@ -380,6 +388,7 @@ fn evaluate_policy_decision(
             transport,
             applicable_snapshot_plugins: applicable_snapshot_plugins.as_slice(),
         },
+        rules: evaluate_policy_rules(context.policy_rules(), &assessment.command.raw),
     });
 
     (decision, applicable_snapshot_plugins)
