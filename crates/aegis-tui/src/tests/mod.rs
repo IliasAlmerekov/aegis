@@ -1,7 +1,7 @@
 pub(crate) use crate::block_screen::render_policy_block;
 pub(crate) use crate::shared::{build_highlighted_command, sorted_highlight_ranges_for_tests};
 pub use crate::stdout_renderer::PromptDecision;
-pub use crate::stdout_renderer::{show_confirmation_with_decision, show_confirmation_with_input};
+pub use crate::stdout_renderer::show_confirmation_with_input;
 pub use crate::tty_renderer::tty_unavailable_decision;
 
 use std::borrow::Cow;
@@ -14,7 +14,7 @@ use aegis_explanation::{
 };
 use aegis_parser::Parser;
 use aegis_types::{Assessment, Category, HighlightRange, MatchResult, Pattern, PatternSource};
-use aegis_types::{DecisionSource, RiskLevel, SnapshotRecord};
+use aegis_types::{RiskLevel, SnapshotRecord};
 
 // ── helpers ───────────────────────────────────────────────────────────────
 

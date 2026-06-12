@@ -196,7 +196,7 @@ async fn rollback_errors_on_malformed_dump_path_encoding() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump path encoding")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("invalid dump path encoding")),
         other => panic!("expected malformed snapshot error, got {other:?}"),
     }
 }
@@ -211,7 +211,7 @@ async fn rollback_errors_when_dump_file_missing() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::RollbackDumpNotFound { path } => {
+        SnapshotError::RollbackDumpNotFound { path } => {
             assert_eq!(path, missing_dump.to_string_lossy())
         }
         other => panic!("expected RollbackDumpNotFound, got {other:?}"),
@@ -229,7 +229,7 @@ async fn rollback_errors_on_malformed_id() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
         other => panic!("expected malformed snapshot error, got {other:?}"),
     }
 }
@@ -245,7 +245,7 @@ async fn rollback_errors_on_malformed_database_encoding() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("invalid database encoding")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("invalid database encoding")),
         other => panic!("expected malformed snapshot error, got {other:?}"),
     }
 }
@@ -328,7 +328,7 @@ async fn snapshot_returns_stderr_when_mysqldump_fails() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => {
+        SnapshotError::Snapshot(msg) => {
             assert!(msg.contains("mysqldump failed"));
             assert!(msg.contains("mysqldump exploded"));
         }
@@ -353,7 +353,7 @@ async fn snapshot_removes_reserved_dump_when_mysqldump_spawn_fails() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("failed to run mysqldump")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("failed to run mysqldump")),
         other => panic!("expected snapshot error, got {other:?}"),
     }
     assert!(snapshots_dir.exists());
@@ -450,7 +450,7 @@ async fn rollback_rejects_legacy_snapshot_ids() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => {
+        SnapshotError::Snapshot(msg) => {
             assert!(msg.contains("legacy"));
             assert!(msg.contains("cannot be safely restored"));
             assert!(msg.contains("original target server/account was not recorded"));
@@ -546,7 +546,7 @@ async fn rollback_returns_stderr_when_mysql_fails() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => {
+        SnapshotError::Snapshot(msg) => {
             assert!(msg.contains("mysql failed"));
             assert!(msg.contains("mysql exploded"));
         }
@@ -569,7 +569,7 @@ async fn rollback_errors_when_mysql_stdin_streaming_fails() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("failed to write mysql stdin")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("failed to write mysql stdin")),
         other => panic!("expected snapshot error, got {other:?}"),
     }
 }

@@ -1,16 +1,20 @@
+//! MySQL snapshot provider.
+
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use tokio::process::Command;
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{ChildStderr, Command};
+use tokio::task::JoinHandle;
 
 #[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
-use crate::error::AegisError;
-use crate::snapshot::SnapshotPlugin;
+use crate::SnapshotPlugin;
+use crate::error::SnapshotError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, SnapshotError>;
 
 const SEP: char = '\t';
 const SNAPSHOT_ID_VERSION: &str = "v2";
@@ -18,26 +22,26 @@ const EXECUTABLE_BUSY_ERRNO: i32 = 26;
 const BUSY_RETRY_ATTEMPTS: usize = 12;
 const BUSY_RETRY_DELAY_MS: u64 = 25;
 
-struct PostgresRollbackTarget {
+struct MysqlRollbackTarget {
     host: String,
     port: u16,
     user: String,
     dump_path: PathBuf,
 }
 
-/// Snapshot plugin for PostgreSQL databases.
-pub struct PostgresPlugin {
+/// Snapshot plugin for MySQL databases.
+pub struct MysqlPlugin {
     database: String,
     host: String,
     port: u16,
     user: String,
     snapshots_dir: PathBuf,
-    pg_dump_bin: String,
-    pg_restore_bin: String,
+    mysqldump_bin: String,
+    mysql_bin: String,
 }
 
-impl PostgresPlugin {
-    /// Create a new PostgreSQL snapshot plugin.
+impl MysqlPlugin {
+    /// Create a new MySQL snapshot plugin.
     pub fn new(
         database: String,
         host: String,
@@ -51,8 +55,8 @@ impl PostgresPlugin {
             port,
             user,
             snapshots_dir,
-            pg_dump_bin: "pg_dump".to_string(),
-            pg_restore_bin: "pg_restore".to_string(),
+            mysqldump_bin: "mysqldump".to_string(),
+            mysql_bin: "mysql".to_string(),
         }
     }
 
@@ -61,26 +65,20 @@ impl PostgresPlugin {
     }
 
     fn build_common_args_for_target(host: &str, port: u16, user: &str) -> Vec<String> {
-        let mut args = vec![
-            "-h".to_string(),
-            host.to_string(),
-            "-p".to_string(),
-            port.to_string(),
-        ];
+        let mut args = vec![format!("--host={host}"), format!("--port={port}")];
 
         if !user.is_empty() {
-            args.push("-U".to_string());
-            args.push(user.to_string());
+            args.push(format!("--user={user}"));
         }
 
         args
     }
 
     fn dump_path_candidate(&self, timestamp: u64, suffix: Option<usize>) -> PathBuf {
-        let base_name = format!("pg-{}-{timestamp}", self.sanitized_database_label());
+        let base_name = format!("mysql-{}-{timestamp}", self.sanitized_database_label());
         let file_name = match suffix {
-            Some(suffix) => format!("{base_name}-{suffix}.dump"),
-            None => format!("{base_name}.dump"),
+            Some(suffix) => format!("{base_name}-{suffix}.sql"),
+            None => format!("{base_name}.sql"),
         };
 
         self.snapshots_dir.join(file_name)
@@ -108,25 +106,25 @@ impl PostgresPlugin {
         }
     }
 
-    async fn output_with_busy_retry(
+    async fn spawn_with_busy_retry(
         command: &mut Command,
         context: &str,
-    ) -> Result<std::process::Output> {
+    ) -> Result<tokio::process::Child> {
         let mut attempt = 0usize;
         loop {
-            match command.output().await {
-                Ok(output) => return Ok(output),
+            match command.spawn() {
+                Ok(child) => return Ok(child),
                 Err(error) if Self::is_executable_busy(&error) && attempt < BUSY_RETRY_ATTEMPTS => {
                     attempt += 1;
                     tracing::warn!(
                         context,
                         attempt,
-                        "postgres binary busy during command launch, retrying"
+                        "mysql binary busy during command launch, retrying"
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(BUSY_RETRY_DELAY_MS)).await;
                 }
                 Err(error) => {
-                    return Err(AegisError::Snapshot(format!("{context}: {error}")));
+                    return Err(SnapshotError::Snapshot(format!("{context}: {error}")));
                 }
             }
         }
@@ -152,21 +150,20 @@ impl PostgresPlugin {
 
     fn decode_component(encoded: &str, label: &str) -> Result<String> {
         if !encoded.len().is_multiple_of(2) {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             )));
         }
 
         let mut bytes = Vec::with_capacity(encoded.len() / 2);
-        let chars: Vec<_> = encoded.as_bytes().chunks_exact(2).collect();
-        for pair in chars {
+        for pair in encoded.as_bytes().chunks_exact(2) {
             let hex = std::str::from_utf8(pair).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             let byte = u8::from_str_radix(hex, 16).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
@@ -174,7 +171,7 @@ impl PostgresPlugin {
         }
 
         String::from_utf8(bytes).map_err(|_| {
-            AegisError::Snapshot(format!(
+            SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             ))
         })
@@ -186,6 +183,23 @@ impl PostgresPlugin {
 
     fn decode_database(encoded: &str) -> Result<String> {
         Self::decode_component(encoded, "database")
+    }
+
+    fn validate_dump_file_name(dump_file_name: &str) -> Result<()> {
+        let path = Path::new(dump_file_name);
+        let mut components = path.components();
+        let is_plain_file_name = matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(name)), None)
+                if name.to_str() == Some(dump_file_name)
+        );
+        if !is_plain_file_name {
+            return Err(SnapshotError::Snapshot(format!(
+                "malformed snapshot_id: invalid dump reference {dump_file_name:?}"
+            )));
+        }
+
+        Ok(())
     }
 
     fn encode_path(path: &Path) -> String {
@@ -206,7 +220,7 @@ impl PostgresPlugin {
 
     fn decode_path(encoded: &str, label: &str) -> Result<PathBuf> {
         if !encoded.len().is_multiple_of(2) {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             )));
         }
@@ -214,12 +228,12 @@ impl PostgresPlugin {
         let mut bytes = Vec::with_capacity(encoded.len() / 2);
         for pair in encoded.as_bytes().chunks_exact(2) {
             let hex = std::str::from_utf8(pair).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             let byte = u8::from_str_radix(hex, 16).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
@@ -231,7 +245,7 @@ impl PostgresPlugin {
 
         #[cfg(not(unix))]
         let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| {
-            AegisError::Snapshot(format!(
+            SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             ))
         })?);
@@ -254,7 +268,7 @@ impl PostgresPlugin {
                 )
             })
         {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} {path:?}"
             )));
         }
@@ -273,7 +287,7 @@ impl PostgresPlugin {
         )
     }
 
-    fn parse_snapshot_id(&self, snapshot_id: &str) -> Result<PostgresRollbackTarget> {
+    fn parse_snapshot_id(&self, snapshot_id: &str) -> Result<MysqlRollbackTarget> {
         if snapshot_id.starts_with(&format!("{SNAPSHOT_ID_VERSION}{SEP}")) {
             return Self::parse_v2_snapshot_id(snapshot_id);
         }
@@ -281,10 +295,10 @@ impl PostgresPlugin {
         self.parse_legacy_snapshot_id(snapshot_id)
     }
 
-    fn parse_v2_snapshot_id(snapshot_id: &str) -> Result<PostgresRollbackTarget> {
+    fn parse_v2_snapshot_id(snapshot_id: &str) -> Result<MysqlRollbackTarget> {
         let parts: Vec<_> = snapshot_id.split(SEP).collect();
         if parts.len() != 6 || parts[0] != SNAPSHOT_ID_VERSION {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: {snapshot_id:?}"
             )));
         }
@@ -292,7 +306,7 @@ impl PostgresPlugin {
         let _database = Self::decode_database(parts[1])?;
         let host = Self::decode_component(parts[2], "host")?;
         let port = parts[3].parse::<u16>().map_err(|_| {
-            AegisError::Snapshot(format!(
+            SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid port {:?}",
                 parts[3]
             ))
@@ -300,7 +314,7 @@ impl PostgresPlugin {
         let user = Self::decode_component(parts[4], "user")?;
         let dump_path = Self::decode_path(parts[5], "dump path")?;
 
-        Ok(PostgresRollbackTarget {
+        Ok(MysqlRollbackTarget {
             host,
             port,
             user,
@@ -308,24 +322,53 @@ impl PostgresPlugin {
         })
     }
 
-    fn parse_legacy_snapshot_id(&self, snapshot_id: &str) -> Result<PostgresRollbackTarget> {
-        let (database_encoded, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
-        })?;
+    fn parse_legacy_snapshot_id(&self, snapshot_id: &str) -> Result<MysqlRollbackTarget> {
+        let (database_encoded, dump_ref_encoded) =
+            snapshot_id.split_once(SEP).ok_or_else(|| {
+                SnapshotError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+            })?;
         let _database = Self::decode_database(database_encoded)?;
-        let dump_path = PathBuf::from(dump_str);
-        Self::validate_snapshot_path(&dump_path, "dump path")?;
+        let dump_file_name = Self::decode_component(dump_ref_encoded, "dump reference")?;
+        Self::validate_dump_file_name(&dump_file_name)?;
 
-        Err(AegisError::Snapshot(
-            "legacy postgres snapshot IDs cannot be safely restored after v2 hardening because the original target server/account was not recorded".to_string(),
+        Err(SnapshotError::Snapshot(
+            "legacy mysql snapshot IDs cannot be safely restored after v2 hardening because the original target server/account was not recorded".to_string(),
         ))
+    }
+
+    async fn kill_and_reap_child(child: &mut tokio::process::Child) {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
+
+    fn spawn_stderr_drain(stderr: ChildStderr) -> JoinHandle<std::io::Result<Vec<u8>>> {
+        tokio::spawn(async move {
+            let mut stderr = stderr;
+            let mut bytes = Vec::new();
+            stderr.read_to_end(&mut bytes).await?;
+            Ok(bytes)
+        })
+    }
+
+    async fn collect_stderr(
+        stderr_task: JoinHandle<std::io::Result<Vec<u8>>>,
+        command_name: &str,
+    ) -> Result<Vec<u8>> {
+        stderr_task
+            .await
+            .map_err(|err| {
+                SnapshotError::Snapshot(format!("failed to join {command_name} stderr task: {err}"))
+            })?
+            .map_err(|err| {
+                SnapshotError::Snapshot(format!("failed to read {command_name} stderr: {err}"))
+            })
     }
 }
 
 #[async_trait]
-impl SnapshotPlugin for PostgresPlugin {
+impl SnapshotPlugin for MysqlPlugin {
     fn name(&self) -> &'static str {
-        "postgres"
+        "mysql"
     }
 
     async fn is_applicable(&self, _cwd: &Path) -> bool {
@@ -334,7 +377,7 @@ impl SnapshotPlugin for PostgresPlugin {
         }
 
         tokio::process::Command::new("which")
-            .arg(&self.pg_dump_bin)
+            .arg(&self.mysqldump_bin)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -354,55 +397,120 @@ impl SnapshotPlugin for PostgresPlugin {
 
         let mut args = self.build_common_args();
         args.extend([
-            "-Fc".to_string(),
-            "-f".to_string(),
-            dump_path.display().to_string(),
+            "--databases".to_string(),
             self.database.clone(),
+            "--add-drop-database".to_string(),
         ]);
 
-        let mut command = Command::new(&self.pg_dump_bin);
-        command.args(&args);
-        let output = Self::output_with_busy_retry(&mut command, "failed to run pg_dump").await?;
+        let mut command = Command::new(&self.mysqldump_bin);
+        command
+            .args(&args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child =
+            match Self::spawn_with_busy_retry(&mut command, "failed to run mysqldump").await {
+                Ok(child) => child,
+                Err(err) => {
+                    let _ = std::fs::remove_file(&dump_path);
+                    return Err(err);
+                }
+            };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(AegisError::Snapshot(format!("pg_dump failed: {stderr}")));
+        let mut stdout = child.stdout.take().ok_or_else(|| {
+            let _ = std::fs::remove_file(&dump_path);
+            SnapshotError::Snapshot("failed to capture mysqldump stdout".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            let _ = std::fs::remove_file(&dump_path);
+            SnapshotError::Snapshot("failed to capture mysqldump stderr".to_string())
+        })?;
+        let stderr_task = Self::spawn_stderr_drain(stderr);
+        let mut dump_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&dump_path)
+            .await?;
+        if let Err(err) = io::copy(&mut stdout, &mut dump_file).await {
+            Self::kill_and_reap_child(&mut child).await;
+            let _ = Self::collect_stderr(stderr_task, "mysqldump").await;
+            let _ = std::fs::remove_file(&dump_path);
+            return Err(SnapshotError::Snapshot(format!(
+                "failed to stream mysqldump output: {err}"
+            )));
+        }
+        drop(stdout);
+        dump_file.flush().await?;
+        drop(dump_file);
+
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| SnapshotError::Snapshot(format!("failed to wait for mysqldump: {e}")))?;
+        let stderr = Self::collect_stderr(stderr_task, "mysqldump").await?;
+
+        if !status.success() {
+            let _ = std::fs::remove_file(&dump_path);
+            let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+            return Err(SnapshotError::Snapshot(format!(
+                "mysqldump failed: {stderr}"
+            )));
         }
 
         let dump_path = dump_path.canonicalize()?;
         let snapshot_id = self.build_snapshot_id(&dump_path);
-        tracing::info!(%snapshot_id, "postgres snapshot created");
+        tracing::info!(%snapshot_id, "mysql snapshot created");
         Ok(snapshot_id)
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
         let target = self.parse_snapshot_id(snapshot_id)?;
         if !target.dump_path.exists() {
-            return Err(AegisError::RollbackDumpNotFound {
+            return Err(SnapshotError::RollbackDumpNotFound {
                 path: target.dump_path.to_string_lossy().to_string(),
             });
         }
 
-        let mut args = Self::build_common_args_for_target(&target.host, target.port, &target.user);
-        args.extend([
-            "--clean".to_string(),
-            "--if-exists".to_string(),
-            "--create".to_string(),
-            "-d".to_string(),
-            "postgres".to_string(),
-            target.dump_path.to_string_lossy().to_string(),
-        ]);
+        let args = Self::build_common_args_for_target(&target.host, target.port, &target.user);
+        let mut command = Command::new(&self.mysql_bin);
+        command
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        let mut child = Self::spawn_with_busy_retry(&mut command, "failed to run mysql").await?;
 
-        let mut command = Command::new(&self.pg_restore_bin);
-        command.args(&args);
-        let output = Self::output_with_busy_retry(&mut command, "failed to run pg_restore").await?;
+        let mut dump_file = tokio::fs::File::open(&target.dump_path).await?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| SnapshotError::Snapshot("failed to capture mysql stderr".to_string()))?;
+        let stderr_task = Self::spawn_stderr_drain(stderr);
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| SnapshotError::Snapshot("failed to open mysql stdin".to_string()))?;
+        if let Err(err) = io::copy(&mut dump_file, &mut stdin).await {
+            drop(stdin);
+            Self::kill_and_reap_child(&mut child).await;
+            let _ = Self::collect_stderr(stderr_task, "mysql").await;
+            return Err(SnapshotError::Snapshot(format!(
+                "failed to write mysql stdin: {err}"
+            )));
+        }
+        drop(stdin);
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(AegisError::Snapshot(format!("pg_restore failed: {stderr}")));
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| SnapshotError::Snapshot(format!("failed to wait for mysql: {e}")))?;
+        let stderr = Self::collect_stderr(stderr_task, "mysql").await?;
+
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+            return Err(SnapshotError::Snapshot(format!("mysql failed: {stderr}")));
         }
 
-        tracing::info!(snapshot_id = snapshot_id, "postgres snapshot rolled back");
+        tracing::info!(snapshot_id = snapshot_id, "mysql snapshot rolled back");
         Ok(())
     }
 }

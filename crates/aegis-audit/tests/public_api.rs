@@ -4,7 +4,7 @@ use aegis_audit::{
     AuditEntry, AuditError, AuditLogger, AuditQuery, AuditRotationPolicy, AuditTimestamp, Decision,
     MatchedPattern,
 };
-use aegis_config::{AuditConfig, AuditIntegrityMode};
+use aegis_config::AuditConfig;
 use aegis_types::RiskLevel;
 
 // ---------------------------------------------------------------------------
@@ -60,15 +60,17 @@ fn test_audit_logger_from_audit_config_default() {
     let logger = AuditLogger::from_audit_config(&config);
     // path() must return something non-empty (the default audit path)
     assert!(
-        logger.path().as_os_str().len() > 0,
+        !logger.path().as_os_str().is_empty(),
         "AuditLogger::from_audit_config must set a non-empty default path"
     );
 }
 
 #[test]
 fn test_audit_logger_from_audit_config_rotation_disabled_has_no_rotation() {
-    let mut config = AuditConfig::default();
-    config.rotation_enabled = false;
+    let config = AuditConfig {
+        rotation_enabled: false,
+        ..AuditConfig::default()
+    };
     let logger = AuditLogger::from_audit_config(&config);
     // When rotation is disabled the logger must expose that state.
     // We verify indirectly: rotating a fresh (non-existent) log with no policy
@@ -225,8 +227,10 @@ fn test_audit_query_default_all_none() {
 
 #[test]
 fn test_audit_rotation_policy_from_config_disabled_returns_none() {
-    let mut config = AuditConfig::default();
-    config.rotation_enabled = false;
+    let config = AuditConfig {
+        rotation_enabled: false,
+        ..AuditConfig::default()
+    };
     let policy = AuditRotationPolicy::from_config(&config);
     assert!(
         policy.is_none(),
@@ -236,10 +240,12 @@ fn test_audit_rotation_policy_from_config_disabled_returns_none() {
 
 #[test]
 fn test_audit_rotation_policy_from_config_enabled_returns_some() {
-    let mut config = AuditConfig::default();
-    config.rotation_enabled = true;
-    config.max_file_size_bytes = 1_000_000;
-    config.retention_files = 3;
+    let config = AuditConfig {
+        rotation_enabled: true,
+        max_file_size_bytes: 1_000_000,
+        retention_files: 3,
+        ..AuditConfig::default()
+    };
     let policy = AuditRotationPolicy::from_config(&config);
     assert!(
         policy.is_some(),

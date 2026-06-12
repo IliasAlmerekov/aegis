@@ -364,7 +364,6 @@ mod tests {
     use crate::config::allowlist::ConfigSourceLayer;
     use crate::decision::BlockReason;
     use crate::decision::{PolicyAction, PolicyDecision, PolicyRationale};
-    use crate::explanation::CommandExplanation;
     use crate::explanation::formatter::{
         build_explanation_from_plan, from_plan_inputs_call_count_for_tests,
         reset_from_plan_inputs_call_count_for_tests,

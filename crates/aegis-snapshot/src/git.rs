@@ -1,12 +1,14 @@
+//! Git snapshot provider — creates stashes before dangerous commands.
+
 use std::path::Path;
 
 use async_trait::async_trait;
 use tokio::process::Command;
 
-use crate::error::AegisError;
-use crate::snapshot::SnapshotPlugin;
+use crate::SnapshotPlugin;
+use crate::error::SnapshotError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, SnapshotError>;
 
 /// Sentinel value stored when the working tree had no changes to stash.
 /// A real stash hash is always a 40-char hex string, so this cannot collide.
@@ -27,10 +29,6 @@ impl SnapshotPlugin for GitPlugin {
     }
 
     async fn is_applicable(&self, cwd: &Path) -> bool {
-        // `git rev-parse --git-dir` is the authoritative way to detect a repo.
-        // It handles: regular repos, worktrees, submodules, .git file pointers,
-        // and any subdirectory within a repo — all cases where `cwd/.git` alone
-        // would give a false negative.
         Command::new("git")
             .args(["rev-parse", "--git-dir"])
             .current_dir(cwd)
@@ -49,17 +47,15 @@ impl SnapshotPlugin for GitPlugin {
             .unwrap_or(0);
         let message = format!("aegis-snap-{timestamp}");
 
-        // Check for a clean tree before stashing — `--porcelain` output is
-        // empty when there are no changes, regardless of the system locale.
         let status_out = Command::new("git")
             .args(["status", "--porcelain"])
             .current_dir(cwd)
             .output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to run git status: {e}")))?;
+            .map_err(|e| SnapshotError::Snapshot(format!("failed to run git status: {e}")))?;
 
         if !status_out.status.success() {
-            return Err(AegisError::Snapshot(
+            return Err(SnapshotError::Snapshot(
                 "git status --porcelain failed".to_string(),
             ));
         }
@@ -74,33 +70,30 @@ impl SnapshotPlugin for GitPlugin {
             .current_dir(cwd)
             .output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("failed to run git stash: {e}")))?;
+            .map_err(|e| SnapshotError::Snapshot(format!("failed to run git stash: {e}")))?;
 
         if !stash_out.status.success() {
             let stderr = String::from_utf8_lossy(&stash_out.stderr);
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "git stash push failed: {stderr}"
             )));
         }
 
-        // Resolve the stash to a stable hash. The positional ref `stash@{0}`
-        // would shift if another stash is pushed later, but the hash is permanent.
         let rev_out = Command::new("git")
             .args(["rev-parse", "stash@{0}"])
             .current_dir(cwd)
             .output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("git rev-parse failed: {e}")))?;
+            .map_err(|e| SnapshotError::Snapshot(format!("git rev-parse failed: {e}")))?;
 
         if !rev_out.status.success() {
-            return Err(AegisError::Snapshot(
+            return Err(SnapshotError::Snapshot(
                 "could not resolve stash ref after push".to_string(),
             ));
         }
 
         let hash = String::from_utf8_lossy(&rev_out.stdout).trim().to_string();
 
-        // Encode both cwd and hash so rollback can re-enter the correct repo.
         let snapshot_id = format!("{}{SEP}{hash}", cwd.display());
         tracing::info!(%snapshot_id, "git snapshot created");
         Ok(snapshot_id)
@@ -112,22 +105,19 @@ impl SnapshotPlugin for GitPlugin {
             return Ok(());
         }
 
-        // Parse the encoded snapshot_id: "<cwd>\t<hash>"
         let (cwd_str, hash) = snapshot_id.split_once(SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+            SnapshotError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
         })?;
 
-        // Find the stash entry that matches the saved hash.
-        // `git stash list --format="%H %gd"` prints "<hash> stash@{N}" per line.
         let list_out = Command::new("git")
             .args(["stash", "list", "--format=%H %gd"])
             .current_dir(cwd_str)
             .output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("git stash list failed: {e}")))?;
+            .map_err(|e| SnapshotError::Snapshot(format!("git stash list failed: {e}")))?;
 
         if !list_out.status.success() {
-            return Err(AegisError::Snapshot("git stash list failed".to_string()));
+            return Err(SnapshotError::Snapshot("git stash list failed".to_string()));
         }
 
         let list_stdout = String::from_utf8_lossy(&list_out.stdout);
@@ -138,23 +128,19 @@ impl SnapshotPlugin for GitPlugin {
                 (h == hash).then(|| r.to_string())
             })
             .ok_or_else(|| {
-                AegisError::Snapshot(format!("stash entry not found for hash {hash}"))
+                SnapshotError::Snapshot(format!("stash entry not found for hash {hash}"))
             })?;
 
-        // Apply by hash (not positional ref) so the operation is stable even if
-        // another stash is pushed into this repo between `stash list` and now.
         let apply_out = Command::new("git")
             .args(["stash", "apply", "--index", hash])
             .current_dir(cwd_str)
             .output()
             .await
-            .map_err(|e| AegisError::Snapshot(format!("git stash apply failed: {e}")))?;
+            .map_err(|e| SnapshotError::Snapshot(format!("git stash apply failed: {e}")))?;
 
         if !apply_out.status.success() {
             let stderr = String::from_utf8_lossy(&apply_out.stderr);
             let stdout = String::from_utf8_lossy(&apply_out.stdout);
-            // Combine both streams — git writes conflict details to stdout and
-            // error diagnostics to stderr, so we need both for a useful message.
             let details = format!("{stdout}{stderr}").trim().to_string();
 
             tracing::error!(
@@ -164,16 +150,13 @@ impl SnapshotPlugin for GitPlugin {
                 "git stash apply conflicted — stash entry is preserved for manual recovery"
             );
 
-            return Err(AegisError::RollbackConflict {
+            return Err(SnapshotError::RollbackConflict {
                 stash_ref,
                 cwd: cwd_str.to_string(),
                 details,
             });
         }
 
-        // Drop the stash entry after a successful apply. If drop fails (e.g.
-        // because the entry was already removed), log a warning but do not
-        // propagate — the working tree is already restored correctly.
         let drop_out = Command::new("git")
             .args(["stash", "drop", &stash_ref])
             .current_dir(cwd_str)
@@ -534,7 +517,7 @@ mod tests {
             .expect_err("expected a conflict error");
 
         match err {
-            AegisError::RollbackConflict {
+            SnapshotError::RollbackConflict {
                 ref stash_ref,
                 ref cwd,
                 ..
@@ -569,7 +552,7 @@ mod tests {
             .expect_err("malformed snapshot id should fail");
 
         match err {
-            AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+            SnapshotError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
             other => panic!("expected snapshot error, got {other:?}"),
         }
     }
@@ -589,7 +572,7 @@ mod tests {
             .expect_err("missing stash hash should fail");
 
         match err {
-            AegisError::Snapshot(msg) => assert!(msg.contains("stash entry not found")),
+            SnapshotError::Snapshot(msg) => assert!(msg.contains("stash entry not found")),
             other => panic!("expected snapshot error, got {other:?}"),
         }
     }

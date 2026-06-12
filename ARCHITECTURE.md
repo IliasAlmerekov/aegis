@@ -80,7 +80,7 @@ Neither is part of the interception path described in this document.
 │ 4. Approval Flow     src/shell_flow.rs, src/watch/, src/install/    │
 │                      + src/ui/confirm.rs (TUI)                          │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ 5. Snapshot Layer    src/snapshot/ (plugin trait + 6 built-ins)         │
+│ 5. Snapshot Layer    crates/aegis-snapshot/ (plugin trait + 6 built-ins) │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ 6. Audit Layer       src/audit/ (append-only JSONL + optional hash chain)│
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -270,7 +270,7 @@ collect input and emit output:
 - `shared.rs` — common rendering helpers and prompt-decision types shared by
   both renderers.
 
-### 2.5 Snapshot Layer — `src/snapshot/`
+### 2.5 Snapshot Layer — `crates/aegis-snapshot/` (re-exported via `src/snapshot/`)
 
 **Responsibility:** create and roll back state snapshots. Plugin-based so new
 backends can be added without changing the policy engine.

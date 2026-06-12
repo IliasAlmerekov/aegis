@@ -79,6 +79,42 @@ impl From<aegis_audit::error::AuditError> for AegisError {
     }
 }
 
+/// Map snapshot-layer errors onto the orchestration error type.
+///
+/// [`aegis_snapshot::SnapshotError`] carries structured variants; we preserve
+/// the rich `RollbackConflict` variant so the user gets full recovery
+/// instructions, and fold everything else into the binary's own variants.
+impl From<aegis_snapshot::SnapshotError> for AegisError {
+    fn from(error: aegis_snapshot::SnapshotError) -> Self {
+        match error {
+            aegis_snapshot::SnapshotError::RollbackConflict {
+                stash_ref,
+                cwd,
+                details,
+            } => Self::RollbackConflict {
+                stash_ref,
+                cwd,
+                details,
+            },
+            aegis_snapshot::SnapshotError::RollbackDumpNotFound { path } => {
+                Self::RollbackDumpNotFound { path }
+            }
+            aegis_snapshot::SnapshotError::RollbackIntegrityCheckFailed {
+                path,
+                expected_sha256,
+                actual_sha256,
+            } => Self::RollbackIntegrityCheckFailed {
+                path,
+                expected_sha256,
+                actual_sha256,
+            },
+            aegis_snapshot::SnapshotError::Config(msg) => Self::Config(msg),
+            aegis_snapshot::SnapshotError::Io(io) => Self::Io(io),
+            aegis_snapshot::SnapshotError::Snapshot(msg) => Self::Snapshot(msg),
+        }
+    }
+}
+
 /// Map config-layer errors onto the orchestration error type.
 ///
 /// `ConfigError` carries its own I/O variant, but at this boundary we fold

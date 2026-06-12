@@ -1,3 +1,5 @@
+//! Supabase snapshot provider.
+
 use std::env;
 use std::fs;
 use std::io::{BufReader, Read};
@@ -11,11 +13,12 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use tokio::process::Command;
 
-use crate::config::SupabaseSnapshotConfig;
-use crate::error::AegisError;
-use crate::snapshot::SnapshotPlugin;
+use aegis_config::SupabaseSnapshotConfig;
 
-type Result<T> = std::result::Result<T, AegisError>;
+use crate::SnapshotPlugin;
+use crate::error::SnapshotError;
+
+type Result<T> = std::result::Result<T, SnapshotError>;
 
 const SNAPSHOT_ID_VERSION: &str = "supabase-v1";
 const SNAPSHOT_ID_SEP: char = '\t';
@@ -217,7 +220,7 @@ impl SupabasePlugin {
 
     fn decode_path(encoded: &str, label: &str) -> Result<PathBuf> {
         if !encoded.len().is_multiple_of(2) {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             )));
         }
@@ -225,12 +228,12 @@ impl SupabasePlugin {
         let mut bytes = Vec::with_capacity(encoded.len() / 2);
         for pair in encoded.as_bytes().chunks_exact(2) {
             let hex = std::str::from_utf8(pair).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             let byte = u8::from_str_radix(hex, 16).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
@@ -242,7 +245,7 @@ impl SupabasePlugin {
 
         #[cfg(not(unix))]
         let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| {
-            AegisError::Snapshot(format!(
+            SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             ))
         })?);
@@ -261,7 +264,7 @@ impl SupabasePlugin {
                 )
             })
         {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} {path:?}"
             )));
         }
@@ -278,11 +281,11 @@ impl SupabasePlugin {
 
     fn parse_snapshot_id(snapshot_id: &str) -> Result<PathBuf> {
         let (version, encoded_path) = snapshot_id.split_once(SNAPSHOT_ID_SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+            SnapshotError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
         })?;
 
         if version != SNAPSHOT_ID_VERSION {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "unsupported snapshot_id version {version:?}"
             )));
         }
@@ -292,17 +295,17 @@ impl SupabasePlugin {
 
     async fn validate_preflight(&self) -> Result<()> {
         if self.config.db.database.trim().is_empty() {
-            return Err(AegisError::Snapshot(
+            return Err(SnapshotError::Snapshot(
                 "supabase_snapshot.db.database is required".to_string(),
             ));
         }
         if !Self::binary_available(&self.pg_dump_bin).await {
-            return Err(AegisError::Snapshot(
+            return Err(SnapshotError::Snapshot(
                 "pg_dump is required for supabase snapshots".to_string(),
             ));
         }
         if !Self::binary_available(&self.pg_restore_bin).await {
-            return Err(AegisError::Snapshot(
+            return Err(SnapshotError::Snapshot(
                 "pg_restore is required for strict supabase rollback".to_string(),
             ));
         }
@@ -361,21 +364,21 @@ impl SupabasePlugin {
         if failures.is_empty() {
             Ok(())
         } else {
-            Err(AegisError::Snapshot(failures.join("; ")))
+            Err(SnapshotError::Snapshot(failures.join("; ")))
         }
     }
 
     fn fail_closed_after_cleanup(
         &self,
-        original_error: AegisError,
+        original_error: SnapshotError,
         bundle_dir: &Path,
         dump_path: Option<&Path>,
-    ) -> AegisError {
+    ) -> SnapshotError {
         match self.cleanup_failed_bundle(bundle_dir, dump_path) {
             Ok(()) => original_error,
-            Err(cleanup_error) => {
-                AegisError::Snapshot(format!("{original_error}; cleanup failed: {cleanup_error}"))
-            }
+            Err(cleanup_error) => SnapshotError::Snapshot(format!(
+                "{original_error}; cleanup failed: {cleanup_error}"
+            )),
         }
     }
 
@@ -393,11 +396,11 @@ impl SupabasePlugin {
             .arg(&self.config.db.database)
             .output()
             .await
-            .map_err(|error| AegisError::Snapshot(format!("failed to run pg_dump: {error}")))?;
+            .map_err(|error| SnapshotError::Snapshot(format!("failed to run pg_dump: {error}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(AegisError::Snapshot(format!("pg_dump failed: {stderr}")));
+            return Err(SnapshotError::Snapshot(format!("pg_dump failed: {stderr}")));
         }
 
         Ok(())
@@ -419,11 +422,15 @@ impl SupabasePlugin {
             .arg(dump_path)
             .output()
             .await
-            .map_err(|error| AegisError::Snapshot(format!("failed to run pg_restore: {error}")))?;
+            .map_err(|error| {
+                SnapshotError::Snapshot(format!("failed to run pg_restore: {error}"))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(AegisError::Snapshot(format!("pg_restore failed: {stderr}")));
+            return Err(SnapshotError::Snapshot(format!(
+                "pg_restore failed: {stderr}"
+            )));
         }
 
         Ok(())
