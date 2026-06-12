@@ -217,7 +217,7 @@ jobs:
         run: cargo install cargo-fuzz --force
 
       - name: Run parser fuzz
-        run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run parser fuzz/corpus/parser -- -runs=2000 -max_len=65536
+        run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run parser fuzz/corpus/parser -- -runs=100000 -max_len=65536
 
       - name: Run scanner fuzz
-        run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run scanner fuzz/corpus/scanner -- -runs=2000 -max_len=65536
+        run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run scanner fuzz/corpus/scanner -- -runs=100000 -max_len=65536

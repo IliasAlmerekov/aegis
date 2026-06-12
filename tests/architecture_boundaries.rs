@@ -464,6 +464,233 @@ fn public_api_surface_is_stable() {
     );
 }
 
+// ── Workspace crate dependency DAG ───────────────────────────────────────────
+
+/// Reads a workspace member's `Cargo.toml` and returns its `[dependencies]`
+/// section as a single string (lowercased) for substring checks.
+fn crate_deps_section(crate_name: &str) -> String {
+    let path = repo_root()
+        .join("crates")
+        .join(crate_name)
+        .join("Cargo.toml");
+    let content = fs::read_to_string(&path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    // Extract from [dependencies] onward so we don't accidentally match the
+    // [package] description field.
+    let lower = content.to_lowercase();
+    if let Some(start) = lower.find("[dependencies]") {
+        lower[start..].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Asserts that a workspace crate does NOT list a forbidden dependency.
+fn assert_no_dep(crate_name: &str, forbidden: &str) {
+    let deps = crate_deps_section(crate_name);
+    assert!(
+        !deps.contains(&forbidden.to_lowercase()),
+        "architecture boundary violated: `{crate_name}` must not depend on `{forbidden}` \
+         (dependency DAG enforced by tests/architecture_boundaries.rs)"
+    );
+}
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-parser", "aegis-audit");
+}
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_config() {
+    assert_no_dep("aegis-parser", "aegis-config");
+}
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_explanation() {
+    assert_no_dep("aegis-parser", "aegis-explanation");
+}
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-parser", "aegis-tui");
+}
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_snapshot() {
+    assert_no_dep("aegis-parser", "aegis-snapshot");
+}
+
+#[test]
+fn aegis_scanner_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-scanner", "aegis-audit");
+}
+
+#[test]
+fn aegis_scanner_must_not_depend_on_aegis_config() {
+    assert_no_dep("aegis-scanner", "aegis-config");
+}
+
+#[test]
+fn aegis_scanner_must_not_depend_on_aegis_explanation() {
+    assert_no_dep("aegis-scanner", "aegis-explanation");
+}
+
+#[test]
+fn aegis_scanner_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-scanner", "aegis-tui");
+}
+
+#[test]
+fn aegis_scanner_must_not_depend_on_aegis_snapshot() {
+    assert_no_dep("aegis-scanner", "aegis-snapshot");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-types", "aegis-audit");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_config() {
+    assert_no_dep("aegis-types", "aegis-config");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_explanation() {
+    assert_no_dep("aegis-types", "aegis-explanation");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-types", "aegis-tui");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_snapshot() {
+    assert_no_dep("aegis-types", "aegis-snapshot");
+}
+
+// ── Missing edges for parser (scanner and policy are downstream) ──────────────
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_scanner() {
+    assert_no_dep("aegis-parser", "aegis-scanner");
+}
+
+#[test]
+fn aegis_parser_must_not_depend_on_aegis_policy() {
+    assert_no_dep("aegis-parser", "aegis-policy");
+}
+
+// ── Missing edges for scanner (policy is downstream) ─────────────────────────
+
+#[test]
+fn aegis_scanner_must_not_depend_on_aegis_policy() {
+    assert_no_dep("aegis-scanner", "aegis-policy");
+}
+
+// ── Missing edges for types (all other crates are downstream) ────────────────
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_parser() {
+    assert_no_dep("aegis-types", "aegis-parser");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_scanner() {
+    assert_no_dep("aegis-types", "aegis-scanner");
+}
+
+#[test]
+fn aegis_types_must_not_depend_on_aegis_policy() {
+    assert_no_dep("aegis-types", "aegis-policy");
+}
+
+// ── DAG boundaries for policy (config/explanation/tui/audit/snapshot are downstream) ──
+
+#[test]
+fn aegis_policy_must_not_depend_on_aegis_config() {
+    assert_no_dep("aegis-policy", "aegis-config");
+}
+
+#[test]
+fn aegis_policy_must_not_depend_on_aegis_explanation() {
+    assert_no_dep("aegis-policy", "aegis-explanation");
+}
+
+#[test]
+fn aegis_policy_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-policy", "aegis-tui");
+}
+
+#[test]
+fn aegis_policy_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-policy", "aegis-audit");
+}
+
+#[test]
+fn aegis_policy_must_not_depend_on_aegis_snapshot() {
+    assert_no_dep("aegis-policy", "aegis-snapshot");
+}
+
+// ── DAG boundaries for config (explanation/tui/audit are downstream) ─────────
+
+#[test]
+fn aegis_config_must_not_depend_on_aegis_explanation() {
+    assert_no_dep("aegis-config", "aegis-explanation");
+}
+
+#[test]
+fn aegis_config_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-config", "aegis-tui");
+}
+
+#[test]
+fn aegis_config_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-config", "aegis-audit");
+}
+
+// ── DAG boundaries for explanation (tui/audit are downstream) ────────────────
+
+#[test]
+fn aegis_explanation_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-explanation", "aegis-tui");
+}
+
+#[test]
+fn aegis_explanation_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-explanation", "aegis-audit");
+}
+
+// ── DAG boundaries for snapshot (explanation/tui/audit/policy are downstream) ─
+
+#[test]
+fn aegis_snapshot_must_not_depend_on_aegis_explanation() {
+    assert_no_dep("aegis-snapshot", "aegis-explanation");
+}
+
+#[test]
+fn aegis_snapshot_must_not_depend_on_aegis_tui() {
+    assert_no_dep("aegis-snapshot", "aegis-tui");
+}
+
+#[test]
+fn aegis_snapshot_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-snapshot", "aegis-audit");
+}
+
+#[test]
+fn aegis_snapshot_must_not_depend_on_aegis_policy() {
+    assert_no_dep("aegis-snapshot", "aegis-policy");
+}
+
+// ── DAG boundaries for tui (audit is downstream) ─────────────────────────────
+
+#[test]
+fn aegis_tui_must_not_depend_on_aegis_audit() {
+    assert_no_dep("aegis-tui", "aegis-audit");
+}
+
 // ── Self-tests for the stripper ───────────────────────────────────────────────
 
 #[cfg(test)]

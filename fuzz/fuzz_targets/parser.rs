@@ -1,6 +1,6 @@
 #![no_main]
 
-use aegis::interceptor::parser::Parser;
+use aegis_parser::Parser;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
