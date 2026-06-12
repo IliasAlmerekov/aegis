@@ -304,3 +304,99 @@ esac"#,
         .await
         .unwrap();
 }
+
+// ── async-safety regression tests ─────────────────────────────────────────
+
+/// Checks counter before awaiting bg task to prove concurrent progress.
+///
+/// With blocking `is_applicable` on a `current_thread` runtime:
+///   - The single Tokio thread is held for ~50ms by the blocking `std::process::Command`
+///   - The bg task cannot be scheduled during that time
+///   - `counter_after` == 0  → assertion fails (as desired for a red test)
+///
+/// After the fix (async `is_applicable` with `tokio::process::Command`):
+///   - The Tokio thread is yielded at each `.await` point
+///   - The bg task wakes after 10ms and increments the counter
+///   - `counter_after` == 1  → assertion passes
+#[tokio::test(flavor = "current_thread")]
+async fn is_applicable_does_not_block_tokio_runtime_v2() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = TempDir::new().unwrap();
+    write_mock_docker(
+        dir.path(),
+        r#"case "$1" in
+  ps) sleep 0.05; printf "abc123\n"; exit 0 ;;
+  *) exit 1 ;;
+esac"#,
+    );
+
+    let p = plugin(&dir.path().join("docker"));
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_bg = Arc::clone(&counter);
+
+    let bg = tokio::task::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        counter_bg.fetch_add(1, Ordering::SeqCst);
+    });
+
+    // Async call — yields the Tokio thread while waiting for docker ps.
+    let _ = p.is_applicable(Path::new("/")).await;
+
+    // Read counter *before* awaiting bg. With blocking is_applicable the bg task
+    // was never polled while is_applicable ran, so counter is still 0 here.
+    let counter_after = counter.load(Ordering::SeqCst);
+
+    bg.await.unwrap();
+
+    // This assertion FAILS with the current blocking implementation:
+    // counter_after == 0, not 1.
+    assert_eq!(
+        counter_after, 1,
+        "is_applicable blocked the Tokio thread — background task could not progress \
+         (counter={counter_after}, expected 1). Fix: make is_applicable async and use \
+         tokio::process::Command."
+    );
+}
+
+/// Verifies that `sleep_docker_busy_retry_delay` yields the current-thread runtime
+/// so that other tasks can make progress during the delay.
+///
+/// The retry delay must use `tokio::time::sleep`, which is cheaper than
+/// dispatching a blocking sleep to a helper thread and still yields the
+/// runtime while the delay is pending.
+///
+/// This is a behavioral contract test: it asserts the function MUST yield the runtime
+/// and will catch any regression that changes it to a blocking call (e.g., replacing
+/// the body with a bare `thread::sleep` call).
+#[tokio::test(flavor = "current_thread")]
+async fn sleep_docker_busy_retry_delay_yields_to_runtime() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let flag = Arc::new(AtomicBool::new(false));
+    let flag_bg = Arc::clone(&flag);
+
+    // Background task sets the flag after 5ms.
+    let bg = tokio::task::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        flag_bg.store(true, Ordering::SeqCst);
+    });
+
+    // sleep_docker_busy_retry_delay sleeps for DOCKER_BUSY_RETRY_DELAY_MS (25ms).
+    // A properly yielding implementation allows the bg task (5ms) to
+    // complete before this returns.
+    sleep_docker_busy_retry_delay().await;
+
+    let flag_value = flag.load(Ordering::SeqCst);
+
+    bg.await.unwrap();
+
+    assert!(
+        flag_value,
+        "sleep_docker_busy_retry_delay did not yield to the runtime — \
+         background task flag was not set (expected true, got false). \
+         This would be a regression; the function must not block the Tokio thread."
+    );
+}

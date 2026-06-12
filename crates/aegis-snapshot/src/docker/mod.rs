@@ -1,3 +1,5 @@
+//! Docker snapshot provider.
+
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
@@ -8,11 +10,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use crate::config::{DockerScope, DockerScopeMode};
-use crate::error::AegisError;
-use crate::snapshot::SnapshotPlugin;
+use aegis_config::{DockerScope, DockerScopeMode};
 
-type Result<T> = std::result::Result<T, AegisError>;
+use crate::SnapshotPlugin;
+use crate::error::SnapshotError;
+
+type Result<T> = std::result::Result<T, SnapshotError>;
 
 /// Sentinel returned when there were no running containers at snapshot time.
 const NO_CONTAINERS: &str = "none";
@@ -49,11 +52,6 @@ impl DockerPlugin {
         self
     }
 
-    /// Build the argument list for `docker ps -q` honouring the configured scope.
-    ///
-    /// - `Labeled` → `["ps", "-q", "--filter", "label=<key>=true"]`
-    /// - `All`     → `["ps", "-q"]`
-    /// - `Names`   → `["ps", "-q", "--filter", "name=<pat>", ...]`
     fn build_ps_args(&self) -> Vec<String> {
         let mut args = vec!["ps".to_string(), "-q".to_string()];
         match self.scope.mode {
@@ -99,7 +97,7 @@ impl DockerPlugin {
                     sleep_docker_busy_retry_delay().await;
                 }
                 Err(error) => {
-                    return Err(AegisError::Snapshot(format!("{context}: {error}")));
+                    return Err(SnapshotError::Snapshot(format!("{context}: {error}")));
                 }
             }
         }
@@ -115,40 +113,25 @@ pub(crate) async fn sleep_docker_busy_retry_delay() {
 }
 
 /// Host-level configuration captured from a running container before snapshot.
-///
-/// These fields are **not** preserved by `docker commit` (which saves only filesystem
-/// layers) but are required to recreate a container with the same runtime behaviour.
 #[derive(Debug, Serialize, Deserialize)]
 struct ContainerConfig {
-    /// Container name without the leading `/`.
     name: String,
-    /// Bind mounts, e.g. `["/host/path:/container/path:ro"]`.
-    /// Named volumes are recorded by mount spec but their data is not captured.
     binds: Vec<String>,
-    /// Port mappings as `"[host_ip:]host_port:container_port/proto"` strings.
     port_bindings: Vec<String>,
-    /// User-defined labels.
     labels: HashMap<String, String>,
-    /// Network mode, e.g. `"bridge"`, `"host"`, or a custom named network.
     network_mode: String,
-    /// Restart policy name, e.g. `"no"`, `"always"`, `"on-failure"`.
     restart_policy: String,
 }
 
 /// One record in the snapshot_id string — one entry per snapshotted container.
-/// The snapshot_id is a newline-separated sequence of these JSON objects.
 #[derive(Debug, Serialize, Deserialize)]
 struct ContainerRecord {
-    /// Short container ID as returned by `docker ps -q`.
     container_id: String,
-    /// Name of the committed snapshot image (`aegis-snap-<id>-<ts>`).
     image: String,
-    /// Host-level config captured before the commit via `docker inspect`.
     config: ContainerConfig,
 }
 
 impl DockerPlugin {
-    /// Run `docker inspect <container_id>` and extract the fields needed for rollback.
     async fn inspect_container(&self, container_id: &str) -> Result<ContainerConfig> {
         let out = self
             .run_docker_output(["inspect", container_id], "docker inspect failed")
@@ -156,15 +139,14 @@ impl DockerPlugin {
 
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "docker inspect {container_id} failed: {stderr}"
             )));
         }
 
         let json: serde_json::Value = serde_json::from_slice(&out.stdout)
-            .map_err(|e| AegisError::Snapshot(format!("failed to parse docker inspect: {e}")))?;
+            .map_err(|e| SnapshotError::Snapshot(format!("failed to parse docker inspect: {e}")))?;
 
-        // `docker inspect` always returns an array, even for a single container.
         let c = &json[0];
 
         let name = c["Name"]
@@ -173,7 +155,6 @@ impl DockerPlugin {
             .trim_start_matches('/')
             .to_string();
 
-        // Binds can be null when there are no bind mounts.
         let binds: Vec<String> = c["HostConfig"]["Binds"]
             .as_array()
             .map(|arr| {
@@ -183,7 +164,6 @@ impl DockerPlugin {
             })
             .unwrap_or_default();
 
-        // PortBindings: { "80/tcp": [{ "HostIp": "", "HostPort": "8080" }], ... }
         let mut port_bindings = Vec::new();
         if let Some(obj) = c["HostConfig"]["PortBindings"].as_object() {
             for (container_port, bindings) in obj {
@@ -234,11 +214,6 @@ impl DockerPlugin {
         })
     }
 
-    /// Build the `docker run` argument list to recreate a container from a snapshot image.
-    ///
-    /// Env vars, CMD, and ENTRYPOINT are already baked into the committed image by
-    /// `docker commit` — only host-level config (name, ports, volumes, network, restart,
-    /// labels) needs to be replayed here.
     fn build_run_args(image: &str, cfg: &ContainerConfig) -> Vec<String> {
         let mut args = vec!["run".to_string(), "-d".to_string()];
 
@@ -277,11 +252,6 @@ impl SnapshotPlugin for DockerPlugin {
         "docker"
     }
 
-    /// Returns `true` when Docker CLI is reachable and at least one container is running.
-    ///
-    /// Uses `docker ps -q`: exits 0 with output when containers are running,
-    /// exits 0 with no output when docker is up but idle,
-    /// exits non-zero or errors when docker is unavailable.
     async fn is_applicable(&self, _cwd: &Path) -> bool {
         let ps_args = self.build_ps_args();
         match self.run_docker_output(&ps_args, "docker ps").await {
@@ -299,28 +269,6 @@ impl SnapshotPlugin for DockerPlugin {
         }
     }
 
-    /// Capture each running container's filesystem state and host-level configuration.
-    ///
-    /// For each container:
-    /// 1. `docker inspect` — records name, bind mounts, port bindings, network, restart
-    ///    policy, and labels.
-    /// 2. `docker commit` — saves the filesystem diff as `aegis-snap-<id>-<ts>`.
-    ///
-    /// # Snapshot format
-    ///
-    /// Returns a newline-separated list of JSON objects, one per container:
-    /// ```json
-    /// {"container_id":"abc123","image":"aegis-snap-abc123-1700000000","config":{...}}
-    /// ```
-    ///
-    /// # Limitations
-    ///
-    /// - **Named volume data**: the volume *association* is recorded so the mount spec is
-    ///   replayed on rollback, but the volume data itself is not captured.
-    /// - **Removed networks**: if a custom network referenced in the config no longer exists
-    ///   when rollback runs, `docker run` will fail with a descriptive error from Docker.
-    /// - **Env / CMD / ENTRYPOINT**: these are baked into the committed image by
-    ///   `docker commit` and do not need to be replayed separately.
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
         let ps_args = self.build_ps_args();
         let ps_out = self
@@ -329,7 +277,9 @@ impl SnapshotPlugin for DockerPlugin {
 
         if !ps_out.status.success() {
             let stderr = String::from_utf8_lossy(&ps_out.stderr);
-            return Err(AegisError::Snapshot(format!("docker ps failed: {stderr}")));
+            return Err(SnapshotError::Snapshot(format!(
+                "docker ps failed: {stderr}"
+            )));
         }
 
         let stdout = String::from_utf8_lossy(&ps_out.stdout);
@@ -360,7 +310,7 @@ impl SnapshotPlugin for DockerPlugin {
 
             if !commit_out.status.success() {
                 let stderr = String::from_utf8_lossy(&commit_out.stderr);
-                return Err(AegisError::Snapshot(format!(
+                return Err(SnapshotError::Snapshot(format!(
                     "docker commit {container_id} failed: {stderr}"
                 )));
             }
@@ -372,20 +322,13 @@ impl SnapshotPlugin for DockerPlugin {
                 config,
             };
             records.push(serde_json::to_string(&record).map_err(|e| {
-                AegisError::Snapshot(format!("failed to serialize snapshot record: {e}"))
+                SnapshotError::Snapshot(format!("failed to serialize snapshot record: {e}"))
             })?);
         }
 
         Ok(records.join("\n"))
     }
 
-    /// Restore each container from its snapshot image and captured configuration.
-    ///
-    /// For each record:
-    /// 1. `docker stop <id>` — best-effort; the container may already be gone.
-    /// 2. `docker rm <id>` — best-effort; frees the original name so it can be reused.
-    /// 3. `docker run -d [original flags] <snapshot-image>` — recreates the container
-    ///    with its original name, port bindings, volumes, network, restart policy, and labels.
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
         if snapshot_id == NO_CONTAINERS {
             tracing::info!("docker snapshot had no containers, nothing to roll back");
@@ -394,10 +337,9 @@ impl SnapshotPlugin for DockerPlugin {
 
         for line in snapshot_id.lines() {
             let record: ContainerRecord = serde_json::from_str(line).map_err(|e| {
-                AegisError::Snapshot(format!("malformed docker snapshot record: {e}"))
+                SnapshotError::Snapshot(format!("malformed docker snapshot record: {e}"))
             })?;
 
-            // Step 1: stop — best-effort.
             let stop_out = self
                 .run_docker_output(["stop", &record.container_id], "docker stop failed")
                 .await?;
@@ -410,7 +352,6 @@ impl SnapshotPlugin for DockerPlugin {
                 );
             }
 
-            // Step 2: remove — best-effort; releases the container name for recreation.
             let rm_out = self
                 .run_docker_output(["rm", &record.container_id], "docker rm failed")
                 .await?;
@@ -423,7 +364,6 @@ impl SnapshotPlugin for DockerPlugin {
                 );
             }
 
-            // Step 3: recreate with original host-level config.
             let run_args = Self::build_run_args(&record.image, &record.config);
             let run_out = self
                 .run_docker_output(&run_args, "docker run failed")
@@ -431,7 +371,7 @@ impl SnapshotPlugin for DockerPlugin {
 
             if !run_out.status.success() {
                 let stderr = String::from_utf8_lossy(&run_out.stderr);
-                return Err(AegisError::Snapshot(format!(
+                return Err(SnapshotError::Snapshot(format!(
                     "docker run {} failed: {stderr}",
                     record.image
                 )));
@@ -448,5 +388,5 @@ impl SnapshotPlugin for DockerPlugin {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

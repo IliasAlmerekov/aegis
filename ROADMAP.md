@@ -289,7 +289,7 @@ This makes it impossible to construct a decision entry without a `risk`
 level.  Watch fields (`source`, `cwd`, `id`) remain `Option<String>` so that
 legacy audit log lines which omit them still deserialize correctly.
 
-### 3.4 `AegisConfig` — remove type alias ambiguity
+### 3.4 `AegisConfig` — remove type alias ambiguity(Done)
 
 Remove `pub type Config = AegisConfig`. All code uses `AegisConfig` directly.
 Generate a JSON schema from the type (`just write-config-schema`) so editors can
@@ -323,12 +323,12 @@ aegis/                          (workspace root)
     aegis-explanation/[DONE]     CommandExplanation and related types — depends on aegis-types, aegis-policy, aegis-config
     aegis-tui/     [DONE]       crossterm confirmation dialog — depends on aegis-types, aegis-explanation
     aegis-audit/   [TODO]       AuditLogger, AuditEntry — depends on aegis-types (blocked: cyclic with explanation::CommandExplanation; unblocked once aegis-explanation is used)
-    aegis-snapshot/[TODO]       SnapshotPlugin trait + 6 backends — depends on aegis-types, aegis-config
+    aegis-snapshot/[DONE]       SnapshotPlugin trait + 6 backends — depends on aegis-types, aegis-config
   src/                          binary — thin wiring, depends on all crates above
 ```
 
-Status: 7 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
-aegis-policy, aegis-config, aegis-explanation, aegis-tui). Remaining: aegis-audit, aegis-snapshot.
+Status: 8 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
+aegis-policy, aegis-config, aegis-explanation, aegis-tui, aegis-snapshot). Remaining: aegis-audit.
 
 Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
 application crate. Dependency arrows flow inward toward `aegis-types`.

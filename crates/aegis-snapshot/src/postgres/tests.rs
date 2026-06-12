@@ -192,7 +192,7 @@ async fn rollback_errors_when_dump_file_missing() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::RollbackDumpNotFound { path } => {
+        SnapshotError::RollbackDumpNotFound { path } => {
             assert_eq!(path, missing_dump.to_string_lossy())
         }
         other => panic!("expected RollbackDumpNotFound, got {other:?}"),
@@ -210,7 +210,7 @@ async fn rollback_errors_on_malformed_snapshot_id() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
         other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
     }
 }
@@ -226,7 +226,7 @@ async fn rollback_errors_on_malformed_database_encoding() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("invalid database encoding")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("invalid database encoding")),
         other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
     }
 }
@@ -320,7 +320,7 @@ async fn snapshot_returns_stderr_when_pg_dump_fails() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => {
+        SnapshotError::Snapshot(msg) => {
             assert!(msg.contains("pg_dump failed"));
             assert!(msg.contains("pg_dump exploded"));
         }
@@ -400,7 +400,7 @@ async fn rollback_rejects_legacy_snapshot_ids() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => {
+        SnapshotError::Snapshot(msg) => {
             assert!(msg.contains("legacy"));
             assert!(msg.contains("cannot be safely restored"));
             assert!(msg.contains("original target server/account was not recorded"));
@@ -479,7 +479,7 @@ async fn rollback_rejects_malformed_dump_path_encoding() {
         .unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => assert!(msg.contains("invalid dump path encoding")),
+        SnapshotError::Snapshot(msg) => assert!(msg.contains("invalid dump path encoding")),
         other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
     }
 }
@@ -503,7 +503,7 @@ async fn rollback_returns_stderr_when_pg_restore_fails() {
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
     match err {
-        AegisError::Snapshot(msg) => {
+        SnapshotError::Snapshot(msg) => {
             assert!(msg.contains("pg_restore failed"));
             assert!(msg.contains("pg_restore exploded"));
         }

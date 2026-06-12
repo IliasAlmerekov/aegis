@@ -1,3 +1,5 @@
+//! SQLite snapshot provider.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,10 +9,10 @@ use async_trait::async_trait;
 #[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
-use crate::error::AegisError;
-use crate::snapshot::SnapshotPlugin;
+use crate::SnapshotPlugin;
+use crate::error::SnapshotError;
 
-type Result<T> = std::result::Result<T, AegisError>;
+type Result<T> = std::result::Result<T, SnapshotError>;
 
 const SEP: char = '\t';
 const SNAPSHOT_ID_VERSION: &str = "v2";
@@ -60,7 +62,7 @@ impl SqlitePlugin {
 
     fn decode_path(encoded: &str, label: &str) -> Result<PathBuf> {
         if !encoded.len().is_multiple_of(2) {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             )));
         }
@@ -68,12 +70,12 @@ impl SqlitePlugin {
         let mut bytes = Vec::with_capacity(encoded.len() / 2);
         for pair in encoded.as_bytes().chunks_exact(2) {
             let hex = std::str::from_utf8(pair).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
             let byte = u8::from_str_radix(hex, 16).map_err(|_| {
-                AegisError::Snapshot(format!(
+                SnapshotError::Snapshot(format!(
                     "malformed snapshot_id: invalid {label} encoding {encoded:?}"
                 ))
             })?;
@@ -85,7 +87,7 @@ impl SqlitePlugin {
 
         #[cfg(not(unix))]
         let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| {
-            AegisError::Snapshot(format!(
+            SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} encoding {encoded:?}"
             ))
         })?);
@@ -104,7 +106,7 @@ impl SqlitePlugin {
                 )
             })
         {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: invalid {label} {path:?}"
             )));
         }
@@ -131,7 +133,7 @@ impl SqlitePlugin {
     fn parse_v2_snapshot_id(snapshot_id: &str) -> Result<(PathBuf, PathBuf)> {
         let parts: Vec<_> = snapshot_id.split(SEP).collect();
         if parts.len() != 3 || parts[0] != SNAPSHOT_ID_VERSION {
-            return Err(AegisError::Snapshot(format!(
+            return Err(SnapshotError::Snapshot(format!(
                 "malformed snapshot_id: {snapshot_id:?}"
             )));
         }
@@ -144,7 +146,7 @@ impl SqlitePlugin {
 
     fn parse_legacy_snapshot_id(snapshot_id: &str) -> Result<(PathBuf, PathBuf)> {
         let (original_str, dump_str) = snapshot_id.split_once(SEP).ok_or_else(|| {
-            AegisError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+            SnapshotError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
         })?;
         let original_path = PathBuf::from(original_str);
         let dump_path = PathBuf::from(dump_str);
@@ -208,7 +210,7 @@ impl SnapshotPlugin for SqlitePlugin {
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
         let (original_path, dump_path) = Self::parse_snapshot_id(snapshot_id)?;
         if !dump_path.exists() {
-            return Err(AegisError::RollbackDumpNotFound {
+            return Err(SnapshotError::RollbackDumpNotFound {
                 path: dump_path.to_string_lossy().to_string(),
             });
         }
@@ -332,7 +334,7 @@ mod tests {
         let err = plugin.rollback(&snapshot_id).await.unwrap_err();
 
         match err {
-            AegisError::RollbackDumpNotFound { path } => {
+            SnapshotError::RollbackDumpNotFound { path } => {
                 assert_eq!(path, dump_path.to_string_lossy())
             }
             other => panic!("expected RollbackDumpNotFound, got {other:?}"),
@@ -390,7 +392,7 @@ mod tests {
             .unwrap_err();
 
         match err {
-            AegisError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
+            SnapshotError::Snapshot(msg) => assert!(msg.contains("malformed snapshot_id")),
             other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
         }
     }
@@ -409,7 +411,7 @@ mod tests {
             .unwrap_err();
 
         match err {
-            AegisError::Snapshot(msg) => assert!(msg.contains("invalid original path encoding")),
+            SnapshotError::Snapshot(msg) => assert!(msg.contains("invalid original path encoding")),
             other => panic!("expected malformed snapshot snapshot error, got {other:?}"),
         }
     }

@@ -1,0 +1,26 @@
+[package]
+name = "aegis-snapshot"
+version = "0.5.6"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/IliasAlmerekov/aegis"
+homepage = "https://github.com/IliasAlmerekov/aegis"
+documentation = "https://docs.rs/aegis-snapshot"
+description = "Snapshot and rollback plugins for Aegis."
+
+[dependencies]
+aegis-types = { version = "0.5.6", path = "../aegis-types" }
+aegis-config = { version = "0.5.6", path = "../aegis-config" }
+async-trait = "0.1"
+thiserror = "1"
+tokio = { version = "1", features = ["process", "fs", "rt", "rt-multi-thread", "io-util", "sync", "time"] }
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
