@@ -47,7 +47,11 @@ fn effective_decision(rule: &PolicyRule, is_compound: bool) -> PolicyRuleDecisio
         let env_matches = std::env::var(&when.env)
             .map(|val| val == when.value)
             .unwrap_or(false);
-        if env_matches { when.then } else { rule.decision }
+        if env_matches {
+            when.then
+        } else {
+            rule.decision
+        }
     } else {
         rule.decision
     };

@@ -526,9 +526,7 @@ impl AegisConfig {
         }
 
         crate::validate::validate_policy_rules(&self.rules)
-            .map_err(|(index, err)| {
-                ConfigError::Config(format!("rules[{index}]: {err}"))
-            })?;
+            .map_err(|(index, err)| ConfigError::Config(format!("rules[{index}]: {err}")))?;
 
         Ok(())
     }
