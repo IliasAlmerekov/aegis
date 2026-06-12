@@ -60,17 +60,16 @@ These rules are non-negotiable.
 
 The repository is a Cargo workspace. The `aegis` binary crate lives at the
 root and depends on focused library crates under `crates/` (Phase 4 of
-`ROADMAP.md`). Extraction is in progress; `crates/aegis-types` (the zero
-Aegis-crate-dependency foundation: `RiskLevel`, `Decision`, `Pattern`,
-`Assessment`, and the shared pattern/command vocabulary) has been carved out so
-far, followed by `crates/aegis-parser` (the shell tokenizer and `PrefixPattern`
-matcher), `crates/aegis-scanner` (the `Scanner`, `PatternSet`, and built-in
-`patterns.toml`; depends on `aegis-types` + `aegis-parser`), and
-`crates/aegis-policy` (the pure `PolicyEngine`; depends on `aegis-types` +
-`aegis-scanner`), and `crates/aegis-config` (the config model, layered loader,
-validation, JSON schema, and `amend`; depends on `aegis-types` +
-`aegis-scanner`). Dependency arrows flow inward toward `aegis-types`; no library
-crate may depend on the root binary crate.
+`ROADMAP.md`). Extraction is complete — all 9 crates are live:
+`aegis-types` (zero-dep foundation), `aegis-parser` (shell tokenizer +
+`PrefixPattern` matcher), `aegis-scanner` (`Scanner`, `PatternSet`, built-in
+patterns), `aegis-policy` (pure `PolicyEngine`), `aegis-config` (config model,
+loader, validation, schema, `amend`), `aegis-explanation` (`CommandExplanation`
+and related types), `aegis-tui` (crossterm confirmation dialog), `aegis-snapshot`
+(six snapshot backends), and `aegis-audit` (`AuditLogger`, append-only JSONL with
+optional hash-chain integrity). Dependency arrows flow inward toward `aegis-types`;
+no library crate may depend on the root binary crate. DAG boundaries are enforced
+by `tests/architecture_boundaries.rs`.
 
 Current module responsibilities:
 

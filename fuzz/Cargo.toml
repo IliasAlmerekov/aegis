@@ -10,8 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.aegis]
-path = ".."
+[dependencies.aegis-parser]
+path = "../crates/aegis-parser"
 
 [[bin]]
 name = "parser"

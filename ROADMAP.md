@@ -322,13 +322,13 @@ aegis/                          (workspace root)
     aegis-config/  [DONE]       AegisConfig, loader, validation, schema, amend — depends on aegis-types, aegis-scanner
     aegis-explanation/[DONE]     CommandExplanation and related types — depends on aegis-types, aegis-policy, aegis-config
     aegis-tui/     [DONE]       crossterm confirmation dialog — depends on aegis-types, aegis-explanation
-    aegis-audit/   [TODO]       AuditLogger, AuditEntry — depends on aegis-types (blocked: cyclic with explanation::CommandExplanation; unblocked once aegis-explanation is used)
+    aegis-audit/   [DONE]       AuditLogger, AuditEntry — depends on aegis-types, aegis-scanner, aegis-config, aegis-explanation, aegis-policy
     aegis-snapshot/[DONE]       SnapshotPlugin trait + 6 backends — depends on aegis-types, aegis-config
   src/                          binary — thin wiring, depends on all crates above
 ```
 
-Status: 8 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
-aegis-policy, aegis-config, aegis-explanation, aegis-tui, aegis-snapshot). Remaining: aegis-audit.
+Status: 9 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
+aegis-policy, aegis-config, aegis-explanation, aegis-tui, aegis-snapshot, aegis-audit).
 
 Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
 application crate. Dependency arrows flow inward toward `aegis-types`.
@@ -371,20 +371,21 @@ JSON schema, and `amend` (decision persistence). Depends on `aegis-types` +
 binary's `AegisError`) and replaced the binary's `interceptor::scanner_for`
 validation with a config-local helper. The policy-config enums (`Mode`,
 `CiPolicy`, `SnapshotPolicy`, `AllowlistOverrideLevel`) live in `aegis-types`;
-`AuditConfig`/`AuditIntegrityMode` stay in `aegis-config` (the future
-`aegis-audit` will depend on it for them). `src/config/` is now a re-export
-shim. Remaining crates pending (audit, snapshot, tui).
+`AuditConfig`/`AuditIntegrityMode` stay in `aegis-config`; `aegis-audit`
+depends on it for them. `src/config/` is now a re-export shim.
 
-### 4.2 Dependency rule enforcement via `cargo deny`
+### 4.2 Dependency rule enforcement via workspace architecture test
 
-Extend `deny.toml` to ban cycles and enforce the dependency DAG:
+The dependency DAG is enforced by a Rust workspace architecture test
+(`tests/architecture_boundaries.rs`). Each test reads the relevant workspace
+member's `Cargo.toml` directly and asserts that `aegis-parser`, `aegis-scanner`,
+and `aegis-types` do not list `aegis-audit`, `aegis-config`, `aegis-explanation`,
+`aegis-tui`, or `aegis-snapshot` in their `[dependencies]` section.
 
-```toml
-[[bans.deny]]
-# aegis-parser must not depend on aegis-audit
-name = "aegis-audit"
-wrappers = ["aegis-parser"]
-```
+Note: `cargo-deny` `[[bans.deny]]` with `wrappers` cannot express per-directed-edge
+restrictions (the `wrappers` field means "banned except when pulled in transitively
+by these crates", not "only these crates may depend on it"). The workspace
+architecture test is the correct mechanism for enforcing DAG boundary rules.
 
 CI fails if any crate violates the dependency boundary.
 
@@ -396,7 +397,7 @@ fuzz iterations from 2000 to 100 000. Add the corpus from production runs
 
 **Done when:** `cargo build --workspace` succeeds; `cargo test --workspace` passes;
 a PR that adds a dependency from `aegis-parser` to `aegis-audit` fails CI via
-`cargo deny`.
+the workspace architecture test in `tests/architecture_boundaries.rs`.
 
 ---
 
@@ -549,7 +550,7 @@ a 1.0 release.
 | 1     | Scanner Modernization | Token-prefix matching; `justification` in TUI      |
 | 2     | Decision Persistence  | "Always allow/block" writes rules to config        |
 | 3     | Module Architecture   | No file > 800 lines; typed `AuditEntry`; live docs |
-| 4     | Multi-Crate Workspace | 8 focused crates; enforced dependency DAG          |
+| 4     | Multi-Crate Workspace | 9 focused crates; enforced dependency DAG          |
 | 5     | Policy DSL            | Typed TOML rules + optional Starlark               |
 | 6     | Sandboxing Layer      | bwrap/Landlock/Seatbelt on approved commands       |
 | 7     | Release Readiness     | 1.0 ships                                          |

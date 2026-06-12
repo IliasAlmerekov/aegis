@@ -20,11 +20,15 @@ These records are companions to:
 
 Aegis is a Cargo workspace: the `aegis` binary crate at the repository root
 acts as a shell-proxy guardrail and depends on focused library crates under
-`crates/` (Phase 4 of `ROADMAP.md`). Extracted so far: `aegis-types` (shared
-data vocabulary), `aegis-parser` (shell tokenizer + `PrefixPattern` matcher),
-`aegis-scanner` (`Scanner`, `PatternSet`, built-in `patterns.toml`),
-`aegis-policy` (the pure `PolicyEngine`), and `aegis-config` (config model,
-loader, validation, schema, and `amend`).
+`crates/` (Phase 4 of `ROADMAP.md` — complete). All 9 crates are extracted:
+`aegis-types` (shared data vocabulary), `aegis-parser` (shell tokenizer +
+`PrefixPattern` matcher), `aegis-scanner` (`Scanner`, `PatternSet`, built-in
+`patterns.toml`), `aegis-policy` (the pure `PolicyEngine`), `aegis-config`
+(config model, loader, validation, schema, and `amend`), `aegis-explanation`
+(`CommandExplanation` and related types), `aegis-tui` (crossterm confirmation
+dialog), `aegis-snapshot` (six snapshot backends), and `aegis-audit`
+(`AuditLogger`, append-only JSONL with optional hash-chain integrity). DAG
+boundaries are enforced by `tests/architecture_boundaries.rs`.
 
 The current runtime architecture is split across a small set of focused
 modules and crates:
@@ -39,8 +43,8 @@ modules and crates:
 - `src/runtime_gate.rs` — Rust-side CI detection contract
 - `src/toggle.rs` — global on/off toggle state rooted at `~/.aegis/disabled`
 - `src/watch/` — NDJSON watch-mode control loop
-- `src/snapshot/` — best-effort Git / Docker / database snapshot providers
-- `src/audit/logger.rs` — append-only JSONL audit writer and integrity handling
+- `crates/aegis-snapshot/` — six snapshot backends (Git, Docker, Postgres, MySQL, SQLite, Supabase); `src/snapshot/` is a re-export shim
+- `crates/aegis-audit/` — append-only JSONL audit writer and hash-chain integrity; `src/audit/` is a re-export shim
 - `scripts/hooks/` — Claude / Codex hook payloads and the shared shell-side
   toggle helper template
 - `scripts/install.sh` / `scripts/uninstall.sh` — convenience installer and
