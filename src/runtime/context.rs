@@ -17,6 +17,7 @@ use crate::explanation::formatter::{CommandExplanationExt, build_outcome_explana
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
+use aegis_starlark::load_starlark_policy;
 
 use super::user::detect_effective_user;
 
@@ -103,6 +104,14 @@ impl RuntimeContext {
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
         let current_user = detect_effective_user();
 
+        // Merge TOML [[rules]] with rules from ~/.aegis/policy.star when present.
+        let mut policy_rules = config.rules.clone();
+        if let Some(star_path) = starlark_policy_path().filter(|p| p.exists()) {
+            let star_rules = load_starlark_policy(&star_path)
+                .map_err(|e| AegisError::Config(format!("policy.star: {e}")))?;
+            policy_rules.extend(star_rules);
+        }
+
         Ok(Self {
             allowlist: Allowlist::from_layered_rules(&config.layered_allowlist_rules())?,
             blocklist: Blocklist::from_layered_rules(&config.layered_blocklist_rules())?,
@@ -112,7 +121,7 @@ impl RuntimeContext {
             audit_logger: build_audit_logger(&config),
             current_user,
             runtime_config: RuntimeConfig::from(&config),
-            policy_rules: config.rules,
+            policy_rules,
             scanner,
         })
     }
@@ -285,6 +294,15 @@ impl RuntimeContext {
 
 fn build_audit_logger(config: &AegisConfig) -> AuditLogger {
     AuditLogger::from_audit_config(&config.audit)
+}
+
+/// Resolve `~/.aegis/policy.star`, returning `None` when `HOME` is unset.
+fn starlark_policy_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| {
+        std::path::PathBuf::from(h)
+            .join(".aegis")
+            .join("policy.star")
+    })
 }
 
 #[cfg(test)]

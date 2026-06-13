@@ -60,14 +60,15 @@ These rules are non-negotiable.
 
 The repository is a Cargo workspace. The `aegis` binary crate lives at the
 root and depends on focused library crates under `crates/` (Phase 4 of
-`ROADMAP.md`). Extraction is complete — all 9 crates are live:
+`ROADMAP.md`). Extraction is complete — all 10 crates are live:
 `aegis-types` (zero-dep foundation), `aegis-parser` (shell tokenizer +
 `PrefixPattern` matcher), `aegis-scanner` (`Scanner`, `PatternSet`, built-in
 patterns), `aegis-policy` (pure `PolicyEngine`), `aegis-config` (config model,
 loader, validation, schema, `amend`), `aegis-explanation` (`CommandExplanation`
 and related types), `aegis-tui` (crossterm confirmation dialog), `aegis-snapshot`
-(six snapshot backends), and `aegis-audit` (`AuditLogger`, append-only JSONL with
-optional hash-chain integrity). Dependency arrows flow inward toward `aegis-types`;
+(six snapshot backends), `aegis-audit` (`AuditLogger`, append-only JSONL with
+optional hash-chain integrity), and `aegis-starlark` (Starlark policy DSL loader
+for `~/.aegis/policy.star`). Dependency arrows flow inward toward `aegis-types`;
 no library crate may depend on the root binary crate. DAG boundaries are enforced
 by `tests/architecture_boundaries.rs`.
 
