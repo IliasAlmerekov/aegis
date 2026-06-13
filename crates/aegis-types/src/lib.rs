@@ -21,7 +21,7 @@ pub use assessment::{Assessment, DecisionSource, HighlightRange, MatchResult};
 pub use command::{InlineScript, ParsedCommand};
 pub use decision::Decision;
 pub use pattern::{Category, Pattern, PatternSource, PatternToken, PrefixPattern};
-pub use policy::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
+pub use policy::{AllowlistOverrideLevel, CiPolicy, Mode, PolicyRuleDecision, SnapshotPolicy};
 pub use risk::RiskLevel;
 pub use snapshot::SnapshotRecord;
 

@@ -10,6 +10,8 @@ use crate::allowlist::{
     Allowlist, ConfigSourceLayer, analyze_allowlist_rule, validate_single_rule,
 };
 use crate::error::ConfigError;
+use crate::model::PolicyRule;
+use crate::pattern_match::policy_pattern_matches;
 
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
@@ -244,6 +246,14 @@ pub fn validate_config(config: &AegisConfig, source_map: &ConfigSourceMap) -> Va
         errors.push(issue);
     }
 
+    if let Err((index, err)) = validate_policy_rules(&config.rules) {
+        errors.push(ValidationIssue {
+            code: "invalid_policy_rule",
+            message: format!("rules[{index}]: {err}"),
+            location: format!("rules[{index}]"),
+        });
+    }
+
     ValidationReport {
         valid: errors.is_empty(),
         errors,
@@ -422,6 +432,51 @@ fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+/// Validate typed `[[rules]]` entries: non-empty pattern, match_examples all
+/// match, not_match_examples all fail to match.
+///
+/// Returns the first error as `(rule_index, error)` so callers can build
+/// precise diagnostic locations such as `"rules[2]"`.
+///
+/// Note: examples are tokenised with `split_whitespace` because examples are
+/// expected to be simple strings (no shell quoting). The runtime path uses
+/// the quote-aware `aegis_parser::split_tokens` instead.
+pub fn validate_policy_rules(rules: &[PolicyRule]) -> Result<(), (usize, ConfigError)> {
+    for (index, rule) in rules.iter().enumerate() {
+        if rule.pattern.is_empty() {
+            return Err((
+                index,
+                ConfigError::Config("pattern must not be empty".to_string()),
+            ));
+        }
+
+        for example in &rule.match_examples {
+            let tokens: Vec<&str> = example.split_whitespace().collect();
+            if !policy_pattern_matches(&rule.pattern, &tokens) {
+                return Err((
+                    index,
+                    ConfigError::Config(format!(
+                        "match_example `{example}` does not match the rule pattern"
+                    )),
+                ));
+            }
+        }
+
+        for example in &rule.not_match_examples {
+            let tokens: Vec<&str> = example.split_whitespace().collect();
+            if policy_pattern_matches(&rule.pattern, &tokens) {
+                return Err((
+                    index,
+                    ConfigError::Config(format!(
+                        "not_match_example `{example}` unexpectedly matches the rule pattern"
+                    )),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ConfigSourceMap, validate_config, validate_config_layers};
@@ -567,5 +622,158 @@ reason = "wide"
                 .any(|e| e.code == "invalid_custom_pattern")
         );
         assert!(!report.errors.iter().any(|e| e.code == "scanner_init_error"));
+    }
+
+    // ── Phase 5.2: [[rules]] validation tests ────────────────────────────────
+    // NOTE: PolicyPatternToken, PolicyRule, PolicyRuleDecision are referenced via
+    // `crate::PolicyRule` etc., which requires the implementation to add
+    // `pub use model::{..., PolicyPatternToken, PolicyRule, PolicyRuleDecision, WhenClause};`
+    // to both model.rs and lib.rs.  Until then these tests fail with E0432.
+
+    /// match_examples that genuinely match the pattern must pass validation.
+    #[test]
+    fn test_validate_match_examples_pass() {
+        use super::validate_policy_rules;
+        use crate::{PolicyPatternToken, PolicyRule, PolicyRuleDecision};
+
+        let rule = PolicyRule {
+            pattern: vec![
+                PolicyPatternToken::Single("git".to_string()),
+                PolicyPatternToken::Single("push".to_string()),
+            ],
+            decision: PolicyRuleDecision::Prompt,
+            justification: None,
+            match_examples: vec!["git push origin main".to_string()],
+            not_match_examples: vec![],
+            when: None,
+        };
+
+        let result = validate_policy_rules(&[rule]);
+        assert!(
+            result.is_ok(),
+            "matching match_example should pass validation, got: {result:?}"
+        );
+    }
+
+    /// not_match_examples that do NOT match the pattern must pass validation.
+    #[test]
+    fn test_validate_not_match_examples_pass() {
+        use super::validate_policy_rules;
+        use crate::{PolicyPatternToken, PolicyRule, PolicyRuleDecision};
+
+        let rule = PolicyRule {
+            pattern: vec![
+                PolicyPatternToken::Single("git".to_string()),
+                PolicyPatternToken::Single("push".to_string()),
+            ],
+            decision: PolicyRuleDecision::Prompt,
+            justification: None,
+            match_examples: vec![],
+            not_match_examples: vec!["git status".to_string()],
+            when: None,
+        };
+
+        let result = validate_policy_rules(&[rule]);
+        assert!(
+            result.is_ok(),
+            "non-matching not_match_example should pass validation, got: {result:?}"
+        );
+    }
+
+    /// A match_example that does NOT match the rule's pattern must produce a ConfigError.
+    #[test]
+    fn test_validate_match_example_fails_when_no_match() {
+        use super::validate_policy_rules;
+        use crate::{PolicyPatternToken, PolicyRule, PolicyRuleDecision};
+
+        let rule = PolicyRule {
+            pattern: vec![
+                PolicyPatternToken::Single("git".to_string()),
+                PolicyPatternToken::Single("push".to_string()),
+            ],
+            decision: PolicyRuleDecision::Prompt,
+            justification: None,
+            match_examples: vec!["rm -rf /".to_string()],
+            not_match_examples: vec![],
+            when: None,
+        };
+
+        let result = validate_policy_rules(&[rule]);
+        assert!(
+            result.is_err(),
+            "match_example that doesn't match should produce ConfigError"
+        );
+        let (_, err) = result.unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("rm -rf /"),
+            "error should mention the failing example, got: {err_str}"
+        );
+    }
+
+    /// A not_match_example that DOES match the rule's pattern must produce a ConfigError.
+    #[test]
+    fn test_validate_not_match_example_fails_when_matches() {
+        use super::validate_policy_rules;
+        use crate::{PolicyPatternToken, PolicyRule, PolicyRuleDecision};
+
+        let rule = PolicyRule {
+            pattern: vec![
+                PolicyPatternToken::Single("git".to_string()),
+                PolicyPatternToken::Single("push".to_string()),
+            ],
+            decision: PolicyRuleDecision::Prompt,
+            justification: None,
+            match_examples: vec![],
+            not_match_examples: vec!["git push origin main".to_string()],
+            when: None,
+        };
+
+        let result = validate_policy_rules(&[rule]);
+        assert!(
+            result.is_err(),
+            "not_match_example that does match should produce ConfigError"
+        );
+        let (_, err) = result.unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("git push origin main"),
+            "error should mention the failing example, got: {err_str}"
+        );
+    }
+
+    /// A full TOML document with `[[rules]]` tables must deserialize into
+    /// `AegisConfig.rules` correctly.
+    #[test]
+    fn test_aegisconfig_rules_field_parses_from_toml() {
+        use crate::PolicyRuleDecision;
+
+        let toml = r#"
+config_version = 1
+
+[[rules]]
+pattern       = ["git", "push", ["--force", "-f"]]
+decision      = "prompt"
+justification = "Force-push rewrites remote history."
+match_examples     = ["git push --force origin main"]
+not_match_examples = ["git push origin main"]
+
+[[rules]]
+pattern  = ["rm", "-rf", "/"]
+decision = "block"
+"#;
+
+        let config: crate::AegisConfig =
+            toml::from_str(toml).expect("AegisConfig should parse [[rules]] tables from TOML");
+
+        assert_eq!(config.rules.len(), 2, "expected 2 policy rules");
+
+        let first = &config.rules[0];
+        assert_eq!(first.decision, PolicyRuleDecision::Prompt);
+        assert_eq!(first.match_examples, vec!["git push --force origin main"]);
+        assert_eq!(first.not_match_examples, vec!["git push origin main"]);
+
+        let second = &config.rules[1];
+        assert_eq!(second.decision, PolicyRuleDecision::Block);
     }
 }

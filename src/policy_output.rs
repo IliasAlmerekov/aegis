@@ -172,6 +172,7 @@ fn block_reason_string(reason: BlockReason) -> &'static str {
         BlockReason::StrictPolicy => "strict_policy",
         BlockReason::ProtectCiPolicy => "protect_ci_policy",
         BlockReason::BlocklistOverride => "blocklist_override",
+        BlockReason::PolicyRulesOverride => "policy_rules_override",
     }
 }
 

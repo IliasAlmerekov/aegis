@@ -76,6 +76,7 @@ impl PolicyExplanation {
             PolicyRationale::ProtectCiPolicy => "blocked by protect-mode CI policy",
             PolicyRationale::StrictPolicy => "blocked by strict mode",
             PolicyRationale::BlocklistOverride => "blocked by user-defined blocklist rule",
+            PolicyRationale::PolicyRulesOverride => "overridden by typed policy rule",
         }
     }
 }

@@ -32,7 +32,10 @@ mod enums;
 mod rules;
 
 pub use enums::{AllowlistOverrideLevel, AuditIntegrityMode, CiPolicy, Mode, SnapshotPolicy};
-pub use rules::{AllowlistRule, AuditConfig, BlockRule, UserPattern};
+pub use rules::{
+    AllowlistRule, AuditConfig, BlockRule, PolicyPatternToken, PolicyRule, PolicyRuleDecision,
+    UserPattern, WhenClause,
+};
 
 const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
@@ -212,6 +215,9 @@ pub struct AegisConfig {
     pub ci_policy: CiPolicy,
     /// Audit log rotation and integrity settings.
     pub audit: AuditConfig,
+    /// Typed policy rules (TOML: `[[rules]]`).
+    #[serde(default, rename = "rules")]
+    pub rules: Vec<PolicyRule>,
 }
 
 impl Default for AegisConfig {
@@ -271,6 +277,7 @@ impl AegisConfig {
             docker_scope: DockerScope::default(),
             ci_policy: CiPolicy::Block,
             audit: AuditConfig::default(),
+            rules: Vec::new(),
         }
     }
 
@@ -450,6 +457,11 @@ impl AegisConfig {
                 .unwrap_or(base.sqlite_snapshot_path),
             docker_scope: overlay.docker_scope.unwrap_or(base.docker_scope),
             ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
+            rules: {
+                let mut r = base.rules;
+                r.extend(overlay.rules);
+                r
+            },
             audit: AuditConfig {
                 rotation_enabled: overlay
                     .audit
@@ -512,6 +524,9 @@ impl AegisConfig {
                 rule.pattern
             )));
         }
+
+        crate::validate::validate_policy_rules(&self.rules)
+            .map_err(|(index, err)| ConfigError::Config(format!("rules[{index}]: {err}")))?;
 
         Ok(())
     }
@@ -602,6 +617,8 @@ struct PartialConfig {
     docker_scope: Option<DockerScope>,
     ci_policy: Option<CiPolicy>,
     audit: PartialAuditConfig,
+    #[serde(default, rename = "rules")]
+    rules: Vec<PolicyRule>,
 }
 
 #[derive(Debug, Default, Deserialize)]
