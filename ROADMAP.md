@@ -448,7 +448,7 @@ when     = { env = "CI", value = "true", then = "allow" }
 The `when` clause adds environment-conditional decisions. The rule is validated
 at load time (not at match time) — invalid rules are a startup error.
 
-### 5.3 Starlark policy DSL (power-user tier)
+### 5.3 Starlark policy DSL (power-user tier) (Done)
 
 For users who need programmatic rules, offer an opt-in Starlark policy file
 (`~/.aegis/policy.star`):
