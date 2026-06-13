@@ -177,12 +177,11 @@ fn parse_string_list(value: Value<'_>, field: &str) -> anyhow::Result<Vec<String
 
 /// Parse the `justification` argument — must be a string if provided.
 fn parse_justification(value: Value<'_>) -> anyhow::Result<String> {
-    value
-        .unpack_str()
-        .map(str::to_string)
-        .ok_or_else(|| anyhow::Error::new(TypedPolicyError::InvalidFieldType(
+    value.unpack_str().map(str::to_string).ok_or_else(|| {
+        anyhow::Error::new(TypedPolicyError::InvalidFieldType(
             "justification must be a string".to_string(),
-        )))
+        ))
+    })
 }
 
 /// Parse a `when` dict `Value` into a [`WhenClause`].
@@ -197,9 +196,11 @@ fn parse_when(value: Value<'_>) -> anyhow::Result<WhenClause> {
         .get_str("env")
         .ok_or_else(|| anyhow::Error::new(TypedPolicyError::MissingField("when.env".to_string())))?
         .unpack_str()
-        .ok_or_else(|| anyhow::Error::new(TypedPolicyError::InvalidFieldType(
-            "when.env must be a string".to_string(),
-        )))?
+        .ok_or_else(|| {
+            anyhow::Error::new(TypedPolicyError::InvalidFieldType(
+                "when.env must be a string".to_string(),
+            ))
+        })?
         .to_string();
 
     let value_str = dict
@@ -208,18 +209,22 @@ fn parse_when(value: Value<'_>) -> anyhow::Result<WhenClause> {
             anyhow::Error::new(TypedPolicyError::MissingField("when.value".to_string()))
         })?
         .unpack_str()
-        .ok_or_else(|| anyhow::Error::new(TypedPolicyError::InvalidFieldType(
-            "when.value must be a string".to_string(),
-        )))?
+        .ok_or_else(|| {
+            anyhow::Error::new(TypedPolicyError::InvalidFieldType(
+                "when.value must be a string".to_string(),
+            ))
+        })?
         .to_string();
 
     let then_str = dict
         .get_str("then")
         .ok_or_else(|| anyhow::Error::new(TypedPolicyError::MissingField("when.then".to_string())))?
         .unpack_str()
-        .ok_or_else(|| anyhow::Error::new(TypedPolicyError::InvalidFieldType(
-            "when.then must be a string".to_string(),
-        )))?
+        .ok_or_else(|| {
+            anyhow::Error::new(TypedPolicyError::InvalidFieldType(
+                "when.then must be a string".to_string(),
+            ))
+        })?
         .to_string();
 
     let then = parse_decision(&then_str)?;
@@ -321,10 +326,7 @@ fn convert_starlark_error(err: starlark::Error) -> StarlarkPolicyError {
 
     // Capture the human-readable span (e.g. "policy.star:12:5") before
     // consuming the error — `into_kind()` drops the location info.
-    let span_prefix = err
-        .span()
-        .map(|s| format!("{s}: "))
-        .unwrap_or_default();
+    let span_prefix = err.span().map(|s| format!("{s}: ")).unwrap_or_default();
 
     let anyhow_err = match err.into_kind() {
         ErrorKind::Native(e) => e,
