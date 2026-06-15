@@ -87,7 +87,9 @@ fn is_forced_sandbox_unavailable() -> bool {
 /// Return `true` when the sandbox infrastructure is available for `config`.
 ///
 /// This is a lightweight check used by callers to record audit state
-/// without forking. On non-Linux/macOS targets always returns `false`.
+/// without forking. On Windows, always returns `true` (Job Objects are
+/// available on all Vista+ systems). On other non-Linux/non-macOS targets
+/// always returns `false`.
 pub fn sandbox_available_for(config: &SandboxConfig) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -202,6 +204,13 @@ impl SandboxExecutor {
         Ok(SandboxResult::Success(exit_code))
     }
 
+    /// Windows implementation: runs `cmd` inside a Job Object.
+    ///
+    /// **MVP scope**: only `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is enforced —
+    /// child processes are killed when the job handle is closed. The
+    /// `allow_write` and `allow_network` fields of [`SandboxConfig`] are
+    /// accepted but **not enforced** on Windows; filesystem and network
+    /// restrictions require AppContainers or WFP, which are out of scope here.
     #[cfg(windows)]
     pub fn run(&self, cmd: &str) -> Result<SandboxResult, SandboxError> {
         if is_forced_sandbox_unavailable() {
