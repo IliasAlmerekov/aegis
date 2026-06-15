@@ -176,7 +176,7 @@ pub(crate) fn exec_command(
     {
         use std::os::unix::process::CommandExt;
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(sb_config) = sandbox {
             let shell_args: Vec<std::ffi::OsString> =
                 std::iter::once(std::ffi::OsString::from(launch.command_flag(&shell)))
@@ -200,7 +200,7 @@ pub(crate) fn exec_command(
             }
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let _ = sandbox;
 
         let mut command = Command::new(&shell);
