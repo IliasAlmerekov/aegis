@@ -18,6 +18,7 @@ use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
 use aegis_starlark::load_starlark_policy;
+use aegis_types::SandboxStatus;
 
 use super::user::detect_effective_user;
 
@@ -84,8 +85,8 @@ pub struct AuditWriteOptions<'a> {
     pub allowlist_effective: bool,
     /// Whether CI was detected for this invocation.
     pub ci_detected: bool,
-    /// Whether a sandbox profile was active for this execution.
-    pub sandbox_active: Option<bool>,
+    /// Whether a sandbox profile was applied, bypassed, or not configured.
+    pub sandbox_status: SandboxStatus,
 }
 
 /// Watch-mode correlation fields attached to each audit entry in watch transport.
@@ -260,7 +261,7 @@ impl RuntimeContext {
                     allowlist_match: watch.allowlist_match,
                     allowlist_effective: watch.allowlist_effective,
                     ci_detected: watch.ci_detected,
-                    sandbox_active: None,
+                    sandbox_status: SandboxStatus::NotConfigured,
                 },
             )
             .with_watch_context(watch.source, watch.cwd, watch.id);
@@ -303,7 +304,7 @@ impl RuntimeContext {
             options.allowlist_match.is_some(),
             options.allowlist_effective,
         )
-        .with_sandbox_active(options.sandbox_active)
+        .with_sandbox_status(options.sandbox_status)
     }
 }
 

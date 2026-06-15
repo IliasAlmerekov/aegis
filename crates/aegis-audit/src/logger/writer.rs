@@ -44,7 +44,7 @@ impl AuditEntry {
             entry_hash: None,
             allowlist_pattern,
             allowlist_reason,
-            sandbox_active: None,
+            sandbox_status: SandboxStatus::NotConfigured,
         })
     }
 
@@ -96,9 +96,10 @@ impl AuditEntry {
         self
     }
 
-    /// Set whether a sandbox profile was active for this execution.
-    pub fn with_sandbox_active(mut self, active: Option<bool>) -> Self {
-        self.as_base_mut().sandbox_active = active;
+    /// Record whether a sandbox profile was applied, bypassed, or not
+    /// configured for this execution.
+    pub fn with_sandbox_status(mut self, status: SandboxStatus) -> Self {
+        self.as_base_mut().sandbox_status = status;
         self
     }
 

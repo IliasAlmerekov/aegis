@@ -124,6 +124,15 @@ tell whether the log remained intact across rotation.
 **Residual risk:** Integrity mode is configurable, not universal. If it is off,
 the log is still useful operationally but not tamper-evident.
 
+**Known limitation:** the `sandbox_status` field (which records a sandbox
+bypass, `unavailable`) is intentionally outside the hash-chain payload for
+backwards compatibility with logs chained before the field existed. An attacker
+with write access to `audit.jsonl` could flip a recorded `unavailable` back to
+`active` without invalidating the chain. Closing this requires versioning
+`chain_alg` so new entries hash `sandbox_status` while old entries keep
+verifying under the original layout. See the note on `AuditIntegrityPayload` in
+`crates/aegis-audit/src/logger/integrity.rs`.
+
 ### 5. Snapshot failure or false recovery expectations
 
 **Threat:** Operators assume dangerous commands are always recoverable.

@@ -11,7 +11,7 @@ use time::format_description::well_known::Rfc3339;
 use aegis_config::{AuditIntegrityMode, Mode};
 use aegis_explanation::CommandExplanation;
 use aegis_scanner::MatchResult;
-use aegis_types::{Category, PatternSource, RiskLevel, SnapshotRecord};
+use aegis_types::{Category, PatternSource, RiskLevel, SandboxStatus, SnapshotRecord};
 
 use crate::error::AuditError;
 
@@ -151,8 +151,10 @@ pub struct DecisionEntry {
     pub allowlist_pattern: Option<String>,
     /// Reason the allowlist matched.
     pub allowlist_reason: Option<String>,
-    /// Whether a sandbox profile was active for this execution.
-    pub sandbox_active: Option<bool>,
+    /// Whether a sandbox profile was applied, bypassed, or not configured for
+    /// this execution. `SandboxStatus::Unavailable` records a sandbox bypass —
+    /// a configured sandbox that could not be applied (ROADMAP 6.4).
+    pub sandbox_status: SandboxStatus,
 }
 
 /// Watch-mode audit entry.
@@ -245,6 +247,12 @@ struct AuditEntryFlat {
     allowlist_pattern: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     allowlist_reason: Option<String>,
+    // Canonical sandbox field. Legacy logs omit it; we fall back to the
+    // `sandbox_active` boolean below when reading those.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sandbox_status: Option<SandboxStatus>,
+    // Legacy boolean projection, still written so that older readers keep
+    // working. `None` for not-configured entries (skipped on the wire).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sandbox_active: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -282,7 +290,11 @@ impl From<AuditEntryFlat> for AuditEntry {
             entry_hash: flat.entry_hash,
             allowlist_pattern: flat.allowlist_pattern,
             allowlist_reason: flat.allowlist_reason,
-            sandbox_active: flat.sandbox_active,
+            // Prefer the canonical field; fall back to the legacy boolean for
+            // logs written before `sandbox_status` existed.
+            sandbox_status: flat
+                .sandbox_status
+                .unwrap_or_else(|| SandboxStatus::from(flat.sandbox_active)),
         };
         if is_watch {
             AuditEntry::Watch(WatchEntry {
@@ -328,7 +340,8 @@ impl From<&AuditEntry> for AuditEntryFlat {
             entry_hash: base.entry_hash.clone(),
             allowlist_pattern: base.allowlist_pattern.clone(),
             allowlist_reason: base.allowlist_reason.clone(),
-            sandbox_active: base.sandbox_active,
+            sandbox_status: Some(base.sandbox_status),
+            sandbox_active: base.sandbox_status.as_legacy_active(),
             source,
             cwd,
             id,

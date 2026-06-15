@@ -28,6 +28,7 @@ use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{
     PromptDecision, show_confirmation, show_confirmation_decision, show_policy_block,
 };
+use aegis_types::SandboxStatus;
 
 use crate::shell_compat::{ShellLaunchOptions, exec_command};
 use crate::{EXIT_BLOCKED, EXIT_DENIED, EXIT_INTERNAL};
@@ -94,7 +95,7 @@ pub(crate) fn run_planned_shell_command(
                 plan,
                 Decision::AutoApproved,
                 &snapshots,
-                sandbox_config.map(aegis_sandbox::sandbox_available_for),
+                sandbox_status_for(sandbox_config),
             ) {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
@@ -124,13 +125,13 @@ pub(crate) fn run_planned_shell_command(
             } else {
                 Decision::Denied
             };
-            let sandbox_active = if approved {
-                sandbox_config.map(aegis_sandbox::sandbox_available_for)
+            let sandbox_status = if approved {
+                sandbox_status_for(sandbox_config)
             } else {
-                None
+                SandboxStatus::NotConfigured
             };
             if let Err(err) =
-                append_shell_audit(prepared, plan, decision, &snapshots, sandbox_active)
+                append_shell_audit(prepared, plan, decision, &snapshots, sandbox_status)
             {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
@@ -143,7 +144,13 @@ pub(crate) fn run_planned_shell_command(
         }
         ExecutionDisposition::Block => {
             show_block_for_plan(plan);
-            if let Err(err) = append_shell_audit(prepared, plan, Decision::Blocked, &[], None) {
+            if let Err(err) = append_shell_audit(
+                prepared,
+                plan,
+                Decision::Blocked,
+                &[],
+                SandboxStatus::NotConfigured,
+            ) {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
             }
@@ -182,7 +189,7 @@ fn append_shell_audit(
     plan: &InterceptionPlan,
     decision: Decision,
     snapshots: &[SnapshotRecord],
-    sandbox_active: Option<bool>,
+    sandbox_status: SandboxStatus,
 ) -> Result<(), aegis::error::AegisError> {
     if let PreparedPlanner::Ready(context) = prepared {
         return context.append_audit_entry(
@@ -194,11 +201,27 @@ fn append_shell_audit(
                 allowlist_match: plan.decision_context().allowlist_match(),
                 allowlist_effective: plan.policy_decision().allowlist_effective,
                 ci_detected: plan.decision_context().ci_detected(),
-                sandbox_active,
+                sandbox_status,
             },
         );
     }
     Ok(())
+}
+
+/// Map a sandbox config to the status recorded in the audit log.
+///
+/// `None` (no `[sandbox]` config) → `NotConfigured`; otherwise probe
+/// availability via [`aegis_sandbox::sandbox_available_for`]: available →
+/// `Active`, configured-but-unavailable → `Unavailable` (an audited bypass).
+///
+/// TOCTOU caveat: this is a separate availability probe from the one
+/// `prepare_for_exec` performs at exec time, so a sandbox that disappears (or
+/// appears) in between could make the audited status diverge from what actually
+/// happened. The source of truth should ultimately be the real
+/// `prepare_for_exec` outcome rather than this pre-probe; threading that result
+/// back into the audit entry is a known follow-up.
+fn sandbox_status_for(sandbox_config: Option<&aegis_sandbox::SandboxConfig>) -> SandboxStatus {
+    SandboxStatus::from(sandbox_config.map(aegis_sandbox::sandbox_available_for))
 }
 
 fn show_block_for_plan(plan: &InterceptionPlan) {
