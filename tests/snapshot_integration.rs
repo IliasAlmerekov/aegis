@@ -131,6 +131,7 @@ fn git_snapshot_and_rollback_work_from_repo_subdirectory() {
     init_git_repo(workspace.path());
     commit_file(workspace.path(), "tracked.txt", "original\n");
     fs::write(workspace.path().join("tracked.txt"), "subdir change\n").unwrap();
+    let subdir_cwd = subdir.canonicalize().unwrap();
 
     fs::write(
         subdir.join(".aegis.toml"),
@@ -144,7 +145,7 @@ pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "subdir snapshot test"
             "#,
-            subdir.display()
+            subdir_cwd.display()
         ),
     )
     .unwrap();
@@ -159,7 +160,11 @@ reason = "subdir snapshot test"
         .output()
         .unwrap();
 
-    assert!(intercept_output.status.success());
+    assert!(
+        intercept_output.status.success(),
+        "intercept stderr:\n{}",
+        String::from_utf8_lossy(&intercept_output.stderr)
+    );
     assert_eq!(
         fs::read_to_string(workspace.path().join("tracked.txt")).unwrap(),
         "original\n"
@@ -171,7 +176,7 @@ reason = "subdir snapshot test"
         .unwrap()
         .to_string();
     assert!(
-        snapshot_id.starts_with(&format!("{}{}", subdir.display(), '\t')),
+        snapshot_id.starts_with(&format!("{}{}", subdir_cwd.display(), '\t')),
         "snapshot id should encode the subdir cwd: {snapshot_id}"
     );
 
@@ -205,6 +210,7 @@ fn git_snapshot_and_rollback_work_from_git_worktree() {
     if !add_worktree(main_repo.path(), worktree.path()) {
         return;
     }
+    let worktree_cwd = worktree.path().canonicalize().unwrap();
 
     fs::write(worktree.path().join("tracked.txt"), "worktree change\n").unwrap();
     fs::write(
@@ -219,7 +225,7 @@ pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "worktree snapshot test"
             "#,
-            worktree.path().display()
+            worktree_cwd.display()
         ),
     )
     .unwrap();
@@ -234,7 +240,11 @@ reason = "worktree snapshot test"
         .output()
         .unwrap();
 
-    assert!(intercept_output.status.success());
+    assert!(
+        intercept_output.status.success(),
+        "intercept stderr:\n{}",
+        String::from_utf8_lossy(&intercept_output.stderr)
+    );
     assert_eq!(
         fs::read_to_string(worktree.path().join("tracked.txt")).unwrap(),
         "original\n"
@@ -273,6 +283,7 @@ fn rollback_conflict_reports_manual_recovery_commands_and_preserves_stash() {
     init_git_repo(workspace.path());
     commit_file(workspace.path(), "tracked.txt", "original\n");
     fs::write(workspace.path().join("tracked.txt"), "stashed change\n").unwrap();
+    let workspace_cwd = workspace.path().canonicalize().unwrap();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -285,7 +296,7 @@ pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "rollback conflict test"
             "#,
-            workspace.path().display()
+            workspace_cwd.display()
         ),
     )
     .unwrap();
@@ -300,7 +311,11 @@ reason = "rollback conflict test"
         .output()
         .unwrap();
 
-    assert!(intercept_output.status.success());
+    assert!(
+        intercept_output.status.success(),
+        "intercept stderr:\n{}",
+        String::from_utf8_lossy(&intercept_output.stderr)
+    );
     fs::write(workspace.path().join("tracked.txt"), "conflicting change\n").unwrap();
 
     let entries = read_audit_entries(home.path());
