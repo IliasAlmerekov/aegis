@@ -8,8 +8,10 @@
 //!
 //! Platform-specific implementation is gated on the respective `target_os`.
 
-use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::ffi::{OsStr, OsString};
 
 /// Typed error for sandbox operations.
 #[derive(Debug, thiserror::Error)]
