@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn sandbox_project_allow_network_does_not_reset_global_enabled() {
+    // When global config sets [sandbox] enabled = true and the project config
+    // sets [sandbox] allow_network = true, the per-field merge must keep
+    // enabled = true from the global layer.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[sandbox]\nenabled = true\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nallow_network = true\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert!(
+        config.sandbox.enabled,
+        "global sandbox.enabled must survive project overlay that only sets allow_network"
+    );
+    assert!(
+        config.sandbox.allow_network,
+        "project sandbox.allow_network must be set"
+    );
+}
+
+#[test]
 fn db_snapshot_nested_tables_do_not_inherit_base_values_on_overlay_replacement() {
     let base = AegisConfig {
         postgres_snapshot: PostgresSnapshotConfig {

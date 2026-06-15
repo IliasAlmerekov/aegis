@@ -139,6 +139,20 @@ pub struct ConfigLayerPath {
     pub path: PathBuf,
 }
 
+/// Sandbox configuration — controls whether commands run inside a bwrap sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+#[serde(default)]
+pub struct SandboxSettings {
+    /// Enable the sandbox layer.
+    pub enabled: bool,
+    /// Fail hard if the sandbox cannot be set up (instead of falling back to unsandboxed exec).
+    pub required: bool,
+    /// Paths the sandboxed process is allowed to write to.
+    pub allow_write: Vec<PathBuf>,
+    /// Whether the sandboxed process may access the network.
+    pub allow_network: bool,
+}
+
 /// Top-level Aegis runtime configuration.
 ///
 /// Loaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)
@@ -218,6 +232,8 @@ pub struct AegisConfig {
     /// Typed policy rules (TOML: `[[rules]]`).
     #[serde(default, rename = "rules")]
     pub rules: Vec<PolicyRule>,
+    /// Sandbox layer settings.
+    pub sandbox: SandboxSettings,
 }
 
 impl Default for AegisConfig {
@@ -278,6 +294,7 @@ impl AegisConfig {
             ci_policy: CiPolicy::Block,
             audit: AuditConfig::default(),
             rules: Vec::new(),
+            sandbox: SandboxSettings::default(),
         }
     }
 
@@ -484,6 +501,7 @@ impl AegisConfig {
                     .integrity_mode
                     .unwrap_or(base.audit.integrity_mode),
             },
+            sandbox: overlay.sandbox.merge_into(base.sandbox),
         }
     }
 
@@ -582,6 +600,30 @@ impl AegisConfig {
     }
 }
 
+/// Partial view of [`SandboxSettings`] used during layered config merge.
+///
+/// Allows individual sandbox fields to be set per-layer without resetting
+/// fields that were not mentioned in a later layer.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct PartialSandboxSettings {
+    enabled: Option<bool>,
+    required: Option<bool>,
+    allow_write: Option<Vec<PathBuf>>,
+    allow_network: Option<bool>,
+}
+
+impl PartialSandboxSettings {
+    fn merge_into(self, base: SandboxSettings) -> SandboxSettings {
+        SandboxSettings {
+            enabled: self.enabled.unwrap_or(base.enabled),
+            required: self.required.unwrap_or(base.required),
+            allow_write: self.allow_write.unwrap_or(base.allow_write),
+            allow_network: self.allow_network.unwrap_or(base.allow_network),
+        }
+    }
+}
+
 /// Partial config used for layered merging.
 /// Scalar fields are `Option` so we can distinguish "not set" from "set to
 /// the default value". Vec fields default to empty and are concatenated across
@@ -619,6 +661,7 @@ struct PartialConfig {
     audit: PartialAuditConfig,
     #[serde(default, rename = "rules")]
     rules: Vec<PolicyRule>,
+    sandbox: PartialSandboxSettings,
 }
 
 #[derive(Debug, Default, Deserialize)]

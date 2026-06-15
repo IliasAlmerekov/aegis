@@ -37,7 +37,7 @@ pub(crate) fn run_shell_wrapper(
         if matches!(toggle_state, toggle::ToggleState::Disabled)
             && matches!(output, CommandOutputFormat::Text)
         {
-            return shell_compat::exec_command(cmd, launch);
+            return shell_compat::exec_command(cmd, launch, None);
         }
     }
 

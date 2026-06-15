@@ -151,6 +151,8 @@ pub struct DecisionEntry {
     pub allowlist_pattern: Option<String>,
     /// Reason the allowlist matched.
     pub allowlist_reason: Option<String>,
+    /// Whether a sandbox profile was active for this execution.
+    pub sandbox_active: Option<bool>,
 }
 
 /// Watch-mode audit entry.
@@ -244,6 +246,8 @@ struct AuditEntryFlat {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     allowlist_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    sandbox_active: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
@@ -278,6 +282,7 @@ impl From<AuditEntryFlat> for AuditEntry {
             entry_hash: flat.entry_hash,
             allowlist_pattern: flat.allowlist_pattern,
             allowlist_reason: flat.allowlist_reason,
+            sandbox_active: flat.sandbox_active,
         };
         if is_watch {
             AuditEntry::Watch(WatchEntry {
@@ -323,6 +328,7 @@ impl From<&AuditEntry> for AuditEntryFlat {
             entry_hash: base.entry_hash.clone(),
             allowlist_pattern: base.allowlist_pattern.clone(),
             allowlist_reason: base.allowlist_reason.clone(),
+            sandbox_active: base.sandbox_active,
             source,
             cwd,
             id,

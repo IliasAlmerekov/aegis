@@ -26,7 +26,7 @@ use super::user::detect_effective_user;
 /// This is intentionally separate from the user-facing config model so the
 /// CLI entrypoints can read the values they need without exposing config
 /// serialization details.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     /// Effective operating mode.
     pub mode: crate::config::Mode,
@@ -36,15 +36,26 @@ pub struct RuntimeConfig {
     pub strict_allowlist_override: AllowlistOverrideLevel,
     /// Effective snapshot policy.
     pub snapshot_policy: SnapshotPolicy,
+    /// Effective sandbox config, or `None` if the sandbox is disabled.
+    pub sandbox: Option<aegis_sandbox::SandboxConfig>,
 }
 
 impl From<&AegisConfig> for RuntimeConfig {
     fn from(config: &AegisConfig) -> Self {
+        let sandbox = config
+            .sandbox
+            .enabled
+            .then(|| aegis_sandbox::SandboxConfig {
+                allow_write: config.sandbox.allow_write.clone(),
+                allow_network: config.sandbox.allow_network,
+                required: config.sandbox.required,
+            });
         Self {
             mode: config.mode,
             ci_policy: config.ci_policy,
             strict_allowlist_override: config.allowlist_override_level,
             snapshot_policy: config.snapshot_policy,
+            sandbox,
         }
     }
 }
@@ -73,6 +84,8 @@ pub struct AuditWriteOptions<'a> {
     pub allowlist_effective: bool,
     /// Whether CI was detected for this invocation.
     pub ci_detected: bool,
+    /// Whether a sandbox profile was active for this execution.
+    pub sandbox_active: Option<bool>,
 }
 
 /// Watch-mode correlation fields attached to each audit entry in watch transport.
@@ -247,6 +260,7 @@ impl RuntimeContext {
                     allowlist_match: watch.allowlist_match,
                     allowlist_effective: watch.allowlist_effective,
                     ci_detected: watch.ci_detected,
+                    sandbox_active: None,
                 },
             )
             .with_watch_context(watch.source, watch.cwd, watch.id);
@@ -289,6 +303,7 @@ impl RuntimeContext {
             options.allowlist_match.is_some(),
             options.allowlist_effective,
         )
+        .with_sandbox_active(options.sandbox_active)
     }
 }
 

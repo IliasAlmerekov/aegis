@@ -165,12 +165,43 @@ pub(crate) fn parse_shell_compat_command(
         .ok_or_else(|| "shell compatibility mode only supports UTF-8 command strings".to_string())
 }
 
-pub(crate) fn exec_command(cmd: &str, launch: &ShellLaunchOptions) -> i32 {
+pub(crate) fn exec_command(
+    cmd: &str,
+    launch: &ShellLaunchOptions,
+    sandbox: Option<&aegis_sandbox::SandboxConfig>,
+) -> i32 {
     let shell = resolve_shell();
 
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
+
+        #[cfg(target_os = "linux")]
+        if let Some(sb_config) = sandbox {
+            let shell_args: Vec<std::ffi::OsString> =
+                std::iter::once(std::ffi::OsString::from(launch.command_flag(&shell)))
+                    .chain(std::iter::once(std::ffi::OsString::from(cmd)))
+                    .chain(launch.positional_args.iter().cloned())
+                    .collect();
+            match aegis_sandbox::prepare_for_exec(sb_config, shell.as_os_str(), &shell_args) {
+                Ok(mut command) => {
+                    command
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit());
+                    let err = command.exec();
+                    eprintln!("error: failed to exec sandbox: {err}");
+                    return EXIT_INTERNAL;
+                }
+                Err(e) => {
+                    eprintln!("error: sandbox unavailable: {e}");
+                    return EXIT_INTERNAL;
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        let _ = sandbox;
 
         let mut command = Command::new(&shell);
         command
@@ -188,6 +219,7 @@ pub(crate) fn exec_command(cmd: &str, launch: &ShellLaunchOptions) -> i32 {
 
     #[cfg(not(unix))]
     {
+        let _ = sandbox;
         let mut command = Command::new(&shell);
         command
             .arg(launch.command_flag(&shell))

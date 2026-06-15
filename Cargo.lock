@@ -27,6 +27,7 @@ dependencies = [
  "aegis-explanation",
  "aegis-parser",
  "aegis-policy",
+ "aegis-sandbox",
  "aegis-scanner",
  "aegis-snapshot",
  "aegis-starlark",
@@ -112,6 +113,14 @@ dependencies = [
  "aegis-scanner",
  "aegis-types",
  "serde",
+]
+
+[[package]]
+name = "aegis-sandbox"
+version = "0.5.6"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
