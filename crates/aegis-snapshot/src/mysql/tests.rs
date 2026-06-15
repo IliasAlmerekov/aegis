@@ -593,7 +593,7 @@ async fn rollback_drains_large_stderr_without_deadlocking() {
     plugin.rollback(&snapshot_id).await.unwrap();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "current_thread")]
 async fn spawn_with_busy_retry_yields_to_tokio_runtime_during_sleep() {
     use std::sync::{

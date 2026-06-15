@@ -287,12 +287,14 @@ mod tests {
             .await
             .unwrap();
         let parts: Vec<_> = snapshot_id.split(SEP).collect();
+        let canonical_db_path = db_path.canonicalize().unwrap();
+        let canonical_snapshots_dir = snapshots_dir.canonicalize().unwrap();
 
         assert_eq!(parts.len(), 3);
         assert_eq!(parts[0], "v2");
-        assert_eq!(decode_hex(parts[1]), db_path.to_string_lossy());
+        assert_eq!(decode_hex(parts[1]), canonical_db_path.to_string_lossy());
         let dump = PathBuf::from(decode_hex(parts[2]));
-        assert_eq!(dump.parent().unwrap(), snapshots_dir.as_path());
+        assert_eq!(dump.parent().unwrap(), canonical_snapshots_dir.as_path());
         assert_eq!(fs::read(dump).unwrap(), b"before-snapshot");
     }
 
