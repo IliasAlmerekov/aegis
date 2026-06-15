@@ -417,7 +417,7 @@ fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
             allowlist_match: None,
             allowlist_effective: false,
             ci_detected: false,
-            sandbox_active: None,
+            sandbox_status: SandboxStatus::NotConfigured,
         },
     );
 
@@ -491,7 +491,7 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
             allowlist_match: allowlist_match.as_ref(),
             allowlist_effective: true,
             ci_detected: false,
-            sandbox_active: None,
+            sandbox_status: SandboxStatus::NotConfigured,
         },
     );
 

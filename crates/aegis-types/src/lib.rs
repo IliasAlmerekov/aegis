@@ -15,6 +15,7 @@ mod decision;
 mod pattern;
 mod policy;
 mod risk;
+mod sandbox;
 mod snapshot;
 
 pub use assessment::{Assessment, DecisionSource, HighlightRange, MatchResult};
@@ -23,6 +24,7 @@ pub use decision::Decision;
 pub use pattern::{Category, Pattern, PatternSource, PatternToken, PrefixPattern};
 pub use policy::{AllowlistOverrideLevel, CiPolicy, Mode, PolicyRuleDecision, SnapshotPolicy};
 pub use risk::RiskLevel;
+pub use sandbox::SandboxStatus;
 pub use snapshot::SnapshotRecord;
 
 #[cfg(test)]

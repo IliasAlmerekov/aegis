@@ -4,6 +4,25 @@ This changelog records the release-documentation state for Aegis. It is intended
 to stay aligned with the repository's current docs, release workflow, and
 installer behavior.
 
+## Unreleased
+
+### Highlights
+
+- **Sandbox bypass is an audit event** (ROADMAP 6.4): every executed command
+  now records a `sandbox_status` field in the audit log — `active` (a sandbox
+  profile was applied), `unavailable` (a configured sandbox could not be applied
+  and the command ran unconfined — a bypass), or `not_configured`. When a bypass
+  occurs, Aegis also emits a `WARN` on the `aegis::sandbox` target. Setting
+  `sandbox.required = true` still turns unavailability into a hard block.
+
+### Documentation and contracts
+
+- Audit log entries gain the canonical `sandbox_status` field. The legacy
+  `sandbox_active` boolean is still written (mirrored from the status) and read,
+  so existing log readers and older logs remain compatible.
+
+---
+
 ## v0.5.3
 
 ### Highlights

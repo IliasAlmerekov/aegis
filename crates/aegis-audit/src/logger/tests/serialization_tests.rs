@@ -146,6 +146,93 @@ fn audit_entry_keeps_existing_top_level_fields_for_backward_compatibility() {
 }
 
 #[test]
+fn sandbox_bypass_serializes_status_and_legacy_boolean() {
+    let entry = AuditEntry::new(
+        "rm -rf target",
+        RiskLevel::Danger,
+        vec![],
+        Decision::Approved,
+        vec![],
+        None,
+        None,
+    )
+    .with_sandbox_status(SandboxStatus::Unavailable);
+
+    let json = serde_json::to_value(&entry).unwrap();
+
+    assert_eq!(json["sandbox_status"], "unavailable");
+    // Legacy boolean is mirrored so older readers still see the bypass.
+    assert_eq!(json["sandbox_active"], serde_json::json!(false));
+}
+
+#[test]
+fn sandbox_active_serializes_status_and_legacy_boolean() {
+    let entry = AuditEntry::new(
+        "ls",
+        RiskLevel::Safe,
+        vec![],
+        Decision::Approved,
+        vec![],
+        None,
+        None,
+    )
+    .with_sandbox_status(SandboxStatus::Active);
+
+    let json = serde_json::to_value(&entry).unwrap();
+
+    assert_eq!(json["sandbox_status"], "active");
+    assert_eq!(json["sandbox_active"], serde_json::json!(true));
+}
+
+#[test]
+fn not_configured_omits_legacy_boolean() {
+    let entry = AuditEntry::new(
+        "ls",
+        RiskLevel::Safe,
+        vec![],
+        Decision::Approved,
+        vec![],
+        None,
+        None,
+    );
+
+    let json = serde_json::to_value(&entry).unwrap();
+
+    assert_eq!(json["sandbox_status"], "not_configured");
+    assert!(json.get("sandbox_active").is_none());
+}
+
+#[test]
+fn legacy_sandbox_active_false_deserializes_as_bypass() {
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    let legacy_entry = r#"{"timestamp":"2023-11-14T22:13:20Z","command":"rm -rf /","risk":"Danger","matched_patterns":[],"decision":"Approved","snapshots":[],"sandbox_active":false}"#;
+
+    fs::write(logger.path(), format!("{legacy_entry}\n")).unwrap();
+
+    let entries = logger.read_all().unwrap();
+    assert_eq!(
+        entries[0].as_base().sandbox_status,
+        SandboxStatus::Unavailable
+    );
+}
+
+#[test]
+fn legacy_entry_without_sandbox_fields_is_not_configured() {
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    let legacy_entry = r#"{"timestamp":"2023-11-14T22:13:20Z","command":"ls","risk":"Safe","matched_patterns":[],"decision":"AutoApproved","snapshots":[]}"#;
+
+    fs::write(logger.path(), format!("{legacy_entry}\n")).unwrap();
+
+    let entries = logger.read_all().unwrap();
+    assert_eq!(
+        entries[0].as_base().sandbox_status,
+        SandboxStatus::NotConfigured
+    );
+}
+
+#[test]
 fn read_all_accepts_legacy_unix_seconds_timestamp() {
     let dir = TempDir::new().unwrap();
     let logger = AuditLogger::new(dir.path().join("audit.jsonl"));

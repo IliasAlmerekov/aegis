@@ -190,7 +190,10 @@ impl SandboxExecutor {
         }
         let profile = match build_seatbelt_profile(&self.profile.config) {
             Ok(p) => p,
-            Err(_) if !self.profile.config.required => return Ok(SandboxResult::Unavailable),
+            Err(_) if !self.profile.config.required => {
+                warn_sandbox_bypass();
+                return Ok(SandboxResult::Unavailable);
+            }
             Err(e) => return Err(e),
         };
         // The profile was already validated by sandbox_available_for() and by
@@ -246,6 +249,7 @@ pub fn prepare_for_exec(
         if config.required {
             return Err(SandboxError::Required);
         }
+        warn_sandbox_bypass();
         let mut cmd = std::process::Command::new(program);
         cmd.args(args);
         return Ok(cmd);
@@ -279,6 +283,7 @@ pub fn prepare_for_exec(
         if config.required {
             return Err(SandboxError::Required);
         }
+        warn_sandbox_bypass();
         let mut cmd = std::process::Command::new(program);
         cmd.args(args);
         return Ok(cmd);
@@ -291,6 +296,7 @@ pub fn prepare_for_exec(
     let profile = match build_seatbelt_profile(config) {
         Ok(p) => p,
         Err(_) if !config.required => {
+            warn_sandbox_bypass();
             let mut cmd = std::process::Command::new(program);
             cmd.args(args);
             return Ok(cmd);
@@ -694,8 +700,21 @@ pub(crate) fn run_unavailable_result(required: bool) -> Result<SandboxResult, Sa
     if required {
         Err(SandboxError::Required)
     } else {
+        warn_sandbox_bypass();
         Ok(SandboxResult::Unavailable)
     }
+}
+
+/// Emit a structured warning when a configured sandbox is bypassed.
+///
+/// A bypass means the command will run unconfined because the sandbox could
+/// not be applied and `required = false`. The audit log records this as
+/// `SandboxStatus::Unavailable`; this `tracing` event surfaces it live.
+fn warn_sandbox_bypass() {
+    tracing::warn!(
+        target: "aegis::sandbox",
+        "sandbox unavailable; proceeding without confinement (set sandbox.required = true to make this a hard block)"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -957,6 +976,52 @@ mod tests {
             run_unavailable_result(true),
             Err(SandboxError::Required)
         ));
+    }
+
+    // ── Sandbox bypass is an audit/log event (ROADMAP 6.4) ────────────────────
+
+    /// Minimal `tracing::Subscriber` that counts WARN events on the
+    /// `aegis::sandbox` target, so tests can assert a bypass was reported.
+    #[derive(Clone, Default)]
+    struct WarnCounter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, _meta: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            let meta = event.metadata();
+            if *meta.level() == tracing::Level::WARN && meta.target() == "aegis::sandbox" {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _span: &tracing::span::Id) {}
+        fn exit(&self, _span: &tracing::span::Id) {}
+    }
+
+    #[test]
+    fn bypass_emits_warning_when_not_required() {
+        let counter = WarnCounter::default();
+        let count = counter.0.clone();
+        tracing::subscriber::with_default(counter, || {
+            let _ = run_unavailable_result(false);
+        });
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn hard_block_does_not_emit_bypass_warning() {
+        let counter = WarnCounter::default();
+        let count = counter.0.clone();
+        tracing::subscriber::with_default(counter, || {
+            let _ = run_unavailable_result(true);
+        });
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     // ── SandboxError::Display ─────────────────────────────────────────────────
@@ -1981,5 +2046,26 @@ mod tests {
             OsStr::new("/usr/bin/sandbox-exec"),
             "must return direct command (not sandbox-exec) when forced unavailable"
         );
+    }
+
+    /// The audit status (`Unavailable`) is computed separately from the live
+    /// `WARN`, so this guards that the exec path actually emits the warning when
+    /// it bypasses — keeping the live signal consistent with the audit record.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn prepare_for_exec_warns_on_bypass_when_forced_unavailable() {
+        use std::ffi::OsStr;
+        set_force_sandbox_unavailable(true);
+        let _guard = ForceUnavailableGuard;
+        let cfg = SandboxConfig {
+            required: false,
+            ..Default::default()
+        };
+        let counter = WarnCounter::default();
+        let count = counter.0.clone();
+        tracing::subscriber::with_default(counter, || {
+            let _ = super::prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[]);
+        });
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
