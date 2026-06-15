@@ -511,7 +511,7 @@ async fn rollback_returns_stderr_when_pg_restore_fails() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "current_thread")]
 async fn output_with_busy_retry_yields_to_tokio_runtime_during_sleep() {
     use std::sync::{

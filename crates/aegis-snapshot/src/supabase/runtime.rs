@@ -680,7 +680,12 @@ mod tests {
             "postgres",
         );
 
-        let mut plugin = SupabasePlugin::new(config, temp_dir.path().join("snaps"));
+        // Canonicalize the snapshot root so the dump path the runtime logs (built
+        // from the bundle dir) matches the canonical path encoded in the snapshot id
+        // (runtime canonicalizes the manifest path). On macOS `/var` is a symlink to
+        // `/private/var`, so without this the two paths differ.
+        let snapshot_root = temp_dir.path().canonicalize().unwrap().join("snaps");
+        let mut plugin = SupabasePlugin::new(config, snapshot_root);
         plugin.pg_dump_bin = pg_dump.display().to_string();
         plugin.pg_restore_bin = pg_restore.display().to_string();
 
@@ -1148,16 +1153,18 @@ mod tests {
                 .windows(2)
                 .any(|window| window[0] == "-d" && window[1] == "postgres")
         );
+        // The runtime canonicalizes the resolved artifact path before invoking
+        // pg_restore; canonicalize the expected path too so the comparison holds on
+        // macOS where `/var` is a symlink to `/private/var`.
+        let expected_dump = manifest_path
+            .parent()
+            .unwrap()
+            .join("artifacts/db.dump")
+            .canonicalize()
+            .unwrap();
         assert_eq!(
             logged_args.last().map(String::as_str),
-            Some(
-                manifest_path
-                    .parent()
-                    .unwrap()
-                    .join("artifacts/db.dump")
-                    .to_string_lossy()
-                    .as_ref()
-            )
+            Some(expected_dump.to_string_lossy().as_ref())
         );
         assert!(
             !logged_args.iter().any(|arg| arg == "drifted.supabase.co"),

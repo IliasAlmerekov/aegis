@@ -368,16 +368,42 @@ fn run_script(script_name: &str, envs: &[(&str, &str)]) -> Output {
     run_script_at(&script_copy, envs)
 }
 
+#[derive(Clone, Copy)]
+enum ScriptFlavor {
+    Bsd,
+    UtilLinux,
+}
+
+fn script_tty_args(flavor: ScriptFlavor) -> Vec<&'static str> {
+    match flavor {
+        ScriptFlavor::Bsd => vec![
+            "-q",
+            "/dev/null",
+            "/bin/sh",
+            "-c",
+            "cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh",
+        ],
+        ScriptFlavor::UtilLinux => vec![
+            "-qec",
+            "cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh",
+            "/dev/null",
+        ],
+    }
+}
+
 fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &str) -> Output {
     let sandbox_home = TempDir::new().unwrap();
     let script_cmd = find_command_on_path("script");
     let installer_script = script_path(script_name);
     let mut command = Command::new(script_cmd);
+    let script_flavor = if cfg!(target_os = "macos") {
+        ScriptFlavor::Bsd
+    } else {
+        ScriptFlavor::UtilLinux
+    };
 
     command
-        .arg("-qec")
-        .arg("cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh")
-        .arg("/dev/null")
+        .args(script_tty_args(script_flavor))
         .env("AEGIS_INSTALLER_SCRIPT", &installer_script)
         .env_remove("AEGIS_REAL_SHELL")
         .env_remove("AEGIS_SHELL_RC")
@@ -399,6 +425,36 @@ fn run_piped_script_with_tty(script_name: &str, envs: &[(&str, &str)], input: &s
         .unwrap();
 
     child.wait_with_output().unwrap()
+}
+
+#[test]
+fn script_tty_args_use_bsd_command_form_on_macos() {
+    let args = script_tty_args(ScriptFlavor::Bsd);
+
+    assert_eq!(
+        args,
+        [
+            "-q",
+            "/dev/null",
+            "/bin/sh",
+            "-c",
+            "cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh",
+        ]
+    );
+}
+
+#[test]
+fn script_tty_args_use_util_linux_command_form_on_linux() {
+    let args = script_tty_args(ScriptFlavor::UtilLinux);
+
+    assert_eq!(
+        args,
+        [
+            "-qec",
+            "cat \"$AEGIS_INSTALLER_SCRIPT\" | /bin/sh",
+            "/dev/null",
+        ]
+    );
 }
 
 fn managed_block(real_shell: &Path, aegis_path: &Path) -> String {

@@ -165,6 +165,7 @@ exit 0
 "#,
     );
 
+    let allowed_cwd = allowed_workspace.path().canonicalize().unwrap();
     let allowed_config = format!(
         r#"
 allowlist_override_level = "Danger"
@@ -175,7 +176,7 @@ pattern = "terraform destroy -target=module.test.*"
 cwd = "{}"
 reason = "cwd-scoped allowlist"
 "#,
-        allowed_workspace.path().display()
+        allowed_cwd.display()
     );
     fs::write(
         allowed_workspace.path().join(".aegis.toml"),
@@ -244,8 +245,8 @@ exit 0
     fs::write(enabled_workspace.path().join("dirty.txt"), "enabled\n").unwrap();
     fs::write(disabled_workspace.path().join("dirty.txt"), "disabled\n").unwrap();
 
-    let enabled_cwd = enabled_workspace.path().to_string_lossy();
-    let disabled_cwd = disabled_workspace.path().to_string_lossy();
+    let enabled_cwd = enabled_workspace.path().canonicalize().unwrap();
+    let disabled_cwd = disabled_workspace.path().canonicalize().unwrap();
     fs::write(
         enabled_workspace.path().join(".aegis.toml"),
         format!(
@@ -256,9 +257,10 @@ auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]
 pattern = "terraform destroy -target=module.test.*"
-cwd = "{enabled_cwd}"
+cwd = "{}"
 reason = "snapshot enabled"
-"#
+"#,
+            enabled_cwd.display()
         ),
     )
     .unwrap();
@@ -272,9 +274,10 @@ auto_snapshot_git = false
 auto_snapshot_docker = false
 [[allow]]
 pattern = "terraform destroy -target=module.test.*"
-cwd = "{disabled_cwd}"
+cwd = "{}"
 reason = "snapshot disabled"
-"#
+"#,
+            disabled_cwd.display()
         ),
     )
     .unwrap();

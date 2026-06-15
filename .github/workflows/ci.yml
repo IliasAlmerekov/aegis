@@ -123,6 +123,10 @@ jobs:
       - name: cargo build --release
         run: cargo build --release
 
+      - name: cargo test (macOS only)
+        if: matrix.os == 'macos-latest'
+        run: cargo test --workspace
+
   performance:
     name: Performance baseline (scanner bench)
     runs-on: ubuntu-latest

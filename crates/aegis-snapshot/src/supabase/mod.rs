@@ -456,15 +456,17 @@ fn sha256_hex(path: &Path) -> Result<String> {
 }
 
 fn sync_parent_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         let dir = fs::File::open(path)?;
         dir.sync_all()?;
         Ok(())
     }
 
-    #[cfg(not(unix))]
+    #[cfg(any(not(unix), target_os = "macos"))]
     {
+        // macOS does not support fsync on directory file descriptors and
+        // returns EINVAL. The manifest file itself is synced before rename.
         let _ = path;
         Ok(())
     }
