@@ -95,11 +95,19 @@ pub fn sandbox_available_for(config: &SandboxConfig) -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        // Validate the config (e.g. allow_write path existence + UTF-8) so the
-        // audit field reflects whether the sandbox will actually be applied.
+        // This is the single canonical availability check — it must run every
+        // validation that prepare_for_exec() would run, so the audit field and
+        // the actual execution path always agree. Specifically:
+        //   1. is_sandbox_exec_available(): binary exists + minimal probe works
+        //   2. build_seatbelt_profile(config): paths exist, are valid UTF-8
+        //   3. exec_true_in_profile(&profile): the actual per-command profile
+        //      is accepted by Seatbelt (not just a generic minimal profile)
+        // prepare_for_exec() trusts this result and does not re-probe.
         !is_forced_sandbox_unavailable()
             && is_sandbox_exec_available()
-            && build_seatbelt_profile(config).is_ok()
+            && build_seatbelt_profile(config)
+                .map(|profile| exec_true_in_profile(&profile))
+                .unwrap_or(false)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -250,29 +258,20 @@ pub fn prepare_for_exec(
         cmd.args(args);
         return Ok(cmd);
     }
+    // sandbox_available_for() already validated: binary present, profile builds
+    // cleanly, and exec_true_in_profile() passed. Callers in shell_flow.rs gate
+    // prepare_for_exec() on that result, so no re-probing is needed here.
+    // The only remaining error path is TOCTOU (sandbox disappears between the
+    // availability check and this call), which is unavoidable in exec-based design.
     let profile = match build_seatbelt_profile(config) {
         Ok(p) => p,
         Err(_) if !config.required => {
-            // Profile building failed (e.g. non-existent allow_write path);
-            // fall back to direct execution when the sandbox is not required.
             let mut cmd = std::process::Command::new(program);
             cmd.args(args);
             return Ok(cmd);
         }
         Err(e) => return Err(e),
     };
-    // Validate the actual profile before exec(). Once exec() replaces the process
-    // we cannot fall back, so we probe here while we still can.
-    if !config.required && !exec_true_in_profile(&profile) {
-        let mut cmd = std::process::Command::new(program);
-        cmd.args(args);
-        return Ok(cmd);
-    }
-    if config.required && !exec_true_in_profile(&profile) {
-        return Err(SandboxError::SetupFailed(
-            "Seatbelt rejected the sandbox profile".to_string(),
-        ));
-    }
     let mut cmd = std::process::Command::new("/usr/bin/sandbox-exec");
     cmd.arg("-p").arg(&profile).arg(program).args(args);
     Ok(cmd)
@@ -1486,5 +1485,82 @@ mod tests {
             }
             Ok(SandboxResult::Success(_)) | Ok(SandboxResult::Unavailable) | Err(_) => {}
         }
+    }
+
+    // ── macOS: prepare_for_exec production-path tests ────────────────────────
+    // These cover the actual shell flow path (prepare_for_exec → Command → exec).
+    // In tests we spawn instead of exec() so the test process is not replaced.
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn prepare_for_exec_returns_sandbox_exec_command_when_available() {
+        use std::ffi::OsStr;
+        if !super::sandbox_available_for(&SandboxConfig::default()) {
+            return;
+        }
+        let cmd =
+            super::prepare_for_exec(&SandboxConfig::default(), OsStr::new("/usr/bin/true"), &[])
+                .expect("prepare_for_exec must succeed when sandbox_available_for returned true");
+        assert_eq!(
+            cmd.get_program(),
+            "/usr/bin/sandbox-exec",
+            "returned command must be sandbox-exec when sandbox is available"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn prepare_for_exec_command_runs_successfully_when_spawned() {
+        use std::ffi::OsStr;
+        if !super::sandbox_available_for(&SandboxConfig::default()) {
+            return;
+        }
+        let mut cmd =
+            super::prepare_for_exec(&SandboxConfig::default(), OsStr::new("/usr/bin/true"), &[])
+                .expect("prepare_for_exec must succeed");
+        // Use spawn+wait instead of exec() so the test process is not replaced.
+        let status = cmd.status().expect("spawned command must run");
+        assert!(status.success(), "sandboxed /usr/bin/true must exit 0");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn prepare_for_exec_blocks_write_outside_allow_write() {
+        use std::ffi::{OsStr, OsString};
+        if !super::sandbox_available_for(&SandboxConfig::default()) {
+            return;
+        }
+        // Empty allow_write: (deny default) blocks all writes.
+        let args = vec![
+            OsString::from("-c"),
+            OsString::from("touch /tmp/aegis_pfe_blocked.tmp"),
+        ];
+        let mut cmd =
+            super::prepare_for_exec(&SandboxConfig::default(), OsStr::new("/bin/sh"), &args)
+                .expect("prepare_for_exec must succeed");
+        let status = cmd.status().expect("spawned command must run");
+        assert!(
+            !status.success(),
+            "write to /tmp must be blocked when allow_write is empty"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn prepare_for_exec_falls_back_to_direct_when_forced_unavailable() {
+        use std::ffi::OsStr;
+        set_force_sandbox_unavailable(true);
+        let _guard = ForceUnavailableGuard;
+        let cfg = SandboxConfig {
+            required: false,
+            ..Default::default()
+        };
+        let cmd = super::prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[])
+            .expect("must return Ok when required=false and sandbox unavailable");
+        assert_ne!(
+            cmd.get_program(),
+            OsStr::new("/usr/bin/sandbox-exec"),
+            "must return direct command (not sandbox-exec) when forced unavailable"
+        );
     }
 }
