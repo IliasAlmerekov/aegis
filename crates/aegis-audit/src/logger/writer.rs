@@ -44,6 +44,7 @@ impl AuditEntry {
             entry_hash: None,
             allowlist_pattern,
             allowlist_reason,
+            sandbox_active: None,
         })
     }
 
@@ -92,6 +93,12 @@ impl AuditEntry {
         base.ci_detected = Some(ci_detected);
         base.allowlist_matched = Some(allowlist_matched);
         base.allowlist_effective = Some(allowlist_effective);
+        self
+    }
+
+    /// Set whether a sandbox profile was active for this execution.
+    pub fn with_sandbox_active(mut self, active: Option<bool>) -> Self {
+        self.as_base_mut().sandbox_active = active;
         self
     }
 

@@ -81,15 +81,25 @@ pub(crate) fn run_planned_shell_command(
     plan: &InterceptionPlan,
     launch: &ShellLaunchOptions,
 ) -> i32 {
+    let sandbox_config = match prepared {
+        PreparedPlanner::Ready(context) => context.config().sandbox.as_ref(),
+        PreparedPlanner::SetupFailure(_) => None,
+    };
+
     match plan.execution_disposition() {
         ExecutionDisposition::Execute => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
-            if let Err(err) = append_shell_audit(prepared, plan, Decision::AutoApproved, &snapshots)
-            {
+            if let Err(err) = append_shell_audit(
+                prepared,
+                plan,
+                Decision::AutoApproved,
+                &snapshots,
+                sandbox_config.map(aegis_sandbox::sandbox_available_for),
+            ) {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
             }
-            exec_command(cmd, launch)
+            exec_command(cmd, launch, sandbox_config)
         }
         ExecutionDisposition::RequiresApproval => {
             let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
@@ -114,19 +124,26 @@ pub(crate) fn run_planned_shell_command(
             } else {
                 Decision::Denied
             };
-            if let Err(err) = append_shell_audit(prepared, plan, decision, &snapshots) {
+            let sandbox_active = if approved {
+                sandbox_config.map(aegis_sandbox::sandbox_available_for)
+            } else {
+                None
+            };
+            if let Err(err) =
+                append_shell_audit(prepared, plan, decision, &snapshots, sandbox_active)
+            {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
             }
             if approved {
-                exec_command(cmd, launch)
+                exec_command(cmd, launch, sandbox_config)
             } else {
                 EXIT_DENIED
             }
         }
         ExecutionDisposition::Block => {
             show_block_for_plan(plan);
-            if let Err(err) = append_shell_audit(prepared, plan, Decision::Blocked, &[]) {
+            if let Err(err) = append_shell_audit(prepared, plan, Decision::Blocked, &[], None) {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
             }
@@ -165,6 +182,7 @@ fn append_shell_audit(
     plan: &InterceptionPlan,
     decision: Decision,
     snapshots: &[SnapshotRecord],
+    sandbox_active: Option<bool>,
 ) -> Result<(), aegis::error::AegisError> {
     if let PreparedPlanner::Ready(context) = prepared {
         return context.append_audit_entry(
@@ -176,6 +194,7 @@ fn append_shell_audit(
                 allowlist_match: plan.decision_context().allowlist_match(),
                 allowlist_effective: plan.policy_decision().allowlist_effective,
                 ci_detected: plan.decision_context().ci_detected(),
+                sandbox_active,
             },
         );
     }

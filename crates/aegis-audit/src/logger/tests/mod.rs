@@ -49,6 +49,7 @@ pub fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
         entry_hash: None,
         allowlist_pattern: None,
         allowlist_reason: None,
+        sandbox_active: None,
     })
 }
 
