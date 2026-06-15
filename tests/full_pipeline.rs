@@ -440,7 +440,7 @@ fn json_output_allowlisted_danger_reports_effective_allowlist_and_snapshot_plan_
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -526,7 +526,7 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
 exit 0
 "#,
     );
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         &config_path,
         format!(
@@ -761,7 +761,7 @@ fn verbose_allowlist_match_prints_rule_name() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -814,7 +814,7 @@ fn quiet_allowlist_match_suppresses_aegis_diagnostics() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -862,7 +862,7 @@ fn verbosity_verbose_allowlist_match_prints_rule_name() {
 
     fs::create_dir_all(&bin_dir).unwrap();
     write_executable(&bin_dir.join("terraform"), "#!/bin/sh\nexit 0\n");
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -2474,7 +2474,7 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
 exit 0
 "#,
     );
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -2547,7 +2547,7 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
 exit 0
 "#,
     );
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -2631,7 +2631,7 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
 exit 0
 "#,
     );
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -2965,7 +2965,7 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
 exit 0
 "#,
     );
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
@@ -3050,7 +3050,7 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_TERRAFORM_LOG"
 exit 0
 "#,
     );
-    let workspace_cwd = workspace.path().to_string_lossy();
+    let workspace_cwd = workspace.path().canonicalize().unwrap().display().to_string();
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
