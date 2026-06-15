@@ -747,7 +747,7 @@ pub(crate) mod job_object {
         peak_job_memory_used: usize,
     }
 
-    extern "system" {
+    unsafe extern "system" {
         fn CreateJobObjectW(job_attributes: *const std::ffi::c_void, name: *const u16) -> HANDLE;
         fn SetInformationJobObject(
             job_handle: HANDLE,
@@ -878,10 +878,16 @@ fn run_in_job_object(cmd: &str) -> Result<SandboxResult, SandboxError> {
 
     // SAFETY: child.as_raw_handle() is valid while `child` is alive.
     // TOCTOU: there is a narrow window between spawn() and AssignProcessToJobObject()
-    // where the child could exit before assignment. This is inherent to the
-    // spawn-then-assign pattern; the error path is fail-closed.
-    job.assign_process(child.as_raw_handle() as job_object::HANDLE)
-        .map_err(|e| SandboxError::SetupFailed(format!("AssignProcessToJobObject: {e}")))?;
+    // where the child could spawn its own children that escape the Job Object.
+    // Full elimination requires CREATE_SUSPENDED + ResumeThread (future work).
+    // Error path is made fail-closed by killing the child on assignment failure.
+    if let Err(e) = job.assign_process(child.as_raw_handle() as job_object::HANDLE) {
+        // Kill the unsandboxed child before returning the error.
+        let _ = child.kill();
+        return Err(SandboxError::SetupFailed(format!(
+            "AssignProcessToJobObject: {e}"
+        )));
+    }
 
     let status = child
         .wait()

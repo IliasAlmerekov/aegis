@@ -506,8 +506,11 @@ approved command. Profile templates live in `crates/aegis-sandbox/profiles/`.
 
 ### 6.3 Windows — Job Objects
 
-Use Windows Job Objects to restrict the child process's ability to create new
-processes, modify the filesystem outside allowed paths, or open network sockets.
+Use Windows Job Objects to confine approved commands. The initial MVP delivers
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so all child processes are terminated when
+Aegis exits. Full restrictions on subprocess creation, filesystem writes outside
+allowed paths, and network access require AppContainers or WFP and are deferred
+to a follow-up task.
 
 ### 6.4 Sandbox bypass is an audit event
 

@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/IliasAlmerekov/aegis"
 homepage = "https://github.com/IliasAlmerekov/aegis"
 documentation = "https://docs.rs/aegis-sandbox"
-description = "Linux sandboxing layer for Aegis — bwrap + Landlock execution wrapper."
+description = "Sandboxing layer for Aegis — bwrap+Landlock (Linux), Seatbelt (macOS), Job Objects (Windows)."
 
 [dependencies]
 thiserror = "1"
