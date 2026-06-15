@@ -475,7 +475,12 @@ reason = "strict override allowlist"
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        output.status.success(),
+        "allowlisted danger in json mode must succeed; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     assert!(output.stderr.is_empty());
 
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -550,7 +555,12 @@ reason = "test allowlist"
         .output()
         .unwrap();
 
-    assert!(allowed_output.status.success());
+    assert!(
+        allowed_output.status.success(),
+        "allowlisted terraform destroy must succeed; status: {:?}\nstderr:\n{}",
+        allowed_output.status.code(),
+        String::from_utf8_lossy(&allowed_output.stderr),
+    );
     assert!(!String::from_utf8_lossy(&allowed_output.stderr).contains("AEGIS INTERCEPTED"));
     assert_eq!(
         fs::read_to_string(&log_path).unwrap(),
@@ -779,7 +789,12 @@ reason = "verbose allowlist test"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "verbose allowlist match must succeed; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("allowlist"),
@@ -827,7 +842,12 @@ reason = "quiet allowlist test"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "quiet allowlist match must succeed silently; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     assert!(
         output.stderr.is_empty(),
         "quiet mode must suppress Aegis diagnostics on stderr"
@@ -875,7 +895,12 @@ reason = "verbosity verbose test"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "verbose allowlist match must succeed; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("allowlist"),
@@ -2483,7 +2508,12 @@ reason = "protect allowlist"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "protect+ci+allowlisted danger must auto-approve; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     assert_eq!(
         fs::read_to_string(&log_path).unwrap(),
         "destroy -target=module.test.api\n"
@@ -2549,7 +2579,12 @@ reason = "structured ceiling test"
         .output()
         .unwrap();
 
-    assert!(allowed_output.status.success());
+    assert!(
+        allowed_output.status.success(),
+        "allowlisted warn must auto-approve; status: {:?}\nstderr:\n{}",
+        allowed_output.status.code(),
+        String::from_utf8_lossy(&allowed_output.stderr),
+    );
     assert_eq!(fs::read_to_string(&git_log).unwrap(), "stash clear\n");
 
     let denied_output = base_command(home.path())
@@ -2628,7 +2663,12 @@ reason = "ephemeral test teardown"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "allowlisted danger must auto-approve; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     assert_eq!(
         fs::read_to_string(&log_path).unwrap(),
         "destroy -target=module.test.api\n"
@@ -2978,7 +3018,12 @@ reason = "strict override allowlist"
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "strict+allowlisted danger must auto-approve; status: {:?}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+    );
     assert_eq!(
         fs::read_to_string(&log_path).unwrap(),
         "destroy -target=module.test.api\n"
@@ -3077,7 +3122,12 @@ reason = "rollback test allowlist"
         .output()
         .unwrap();
 
-    assert!(intercept_output.status.success());
+    assert!(
+        intercept_output.status.success(),
+        "intercept must succeed before rollback; status: {:?}\nstderr:\n{}",
+        intercept_output.status.code(),
+        String::from_utf8_lossy(&intercept_output.stderr),
+    );
     assert_eq!(
         fs::read_to_string(workspace.path().join("tracked.txt")).unwrap(),
         "original\n"
