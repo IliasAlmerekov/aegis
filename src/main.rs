@@ -63,6 +63,8 @@ enum Commands {
     Status,
     /// Roll back a previously recorded snapshot
     Rollback(RollbackArgs),
+    /// Inspect recorded snapshots
+    Snapshot(SnapshotArgs),
     /// Manage aegis configuration
     Config(ConfigArgs),
     /// Run as a Claude Code PreToolUse hook — rewrites Bash commands through aegis
@@ -151,6 +153,18 @@ enum AuditOutputFormat {
     Text,
     Json,
     Ndjson,
+}
+
+#[derive(Args)]
+struct SnapshotArgs {
+    #[command(subcommand)]
+    command: SnapshotCommand,
+}
+
+#[derive(Subcommand)]
+enum SnapshotCommand {
+    /// List recoverable snapshots recorded in the audit log
+    List,
 }
 
 #[derive(Args)]

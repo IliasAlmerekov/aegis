@@ -7,6 +7,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
@@ -184,16 +185,24 @@ pub(crate) fn write_settings_atomically(path: &Path, settings: &Value) -> Result
 }
 
 pub(crate) fn temporary_settings_path(parent: &Path) -> PathBuf {
+    // Per-process monotonic counter so two calls in the same process always yield
+    // distinct names — `SystemTime::now()` is not guaranteed to advance between
+    // rapid calls (its resolution is coarser than a nanosecond on some platforms,
+    // e.g. macOS), which would otherwise collide.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
     let pid = std::process::id();
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
 
-    // This name does not try to provide strong entropy on its own; the collision guard is
-    // write_settings_atomically() using create_new(true), which fails closed instead of
-    // silently overwriting another installer's temporary file.
-    parent.join(format!(".settings.json.aegis-{pid}-{nanos}.tmp"))
+    // pid+nanos give cross-process distinctness; seq guarantees in-process
+    // distinctness. The ultimate collision guard remains write_settings_atomically()
+    // using create_new(true), which fails closed instead of silently overwriting
+    // another installer's temporary file.
+    parent.join(format!(".settings.json.aegis-{pid}-{nanos}-{seq}.tmp"))
 }
 
 pub(crate) fn home_dir() -> Option<PathBuf> {
@@ -308,8 +317,8 @@ mod tests {
         // process).
         let path_a = temporary_settings_path(dir.path());
         let path_b = temporary_settings_path(dir.path());
-        // The nanos component increments monotonically, so two calls in
-        // sequence must produce different names.
+        // The per-process sequence counter guarantees two calls in the same
+        // process produce different names, independent of clock resolution.
         assert_ne!(
             path_a, path_b,
             "temporary_settings_path must generate distinct paths to avoid collisions"

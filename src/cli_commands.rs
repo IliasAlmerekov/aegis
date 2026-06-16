@@ -8,7 +8,8 @@ use aegis::toggle;
 
 use crate::{
     AuditArgs, AuditOutputFormat, ConfigArgs, ConfigCommand, ConfigValidateArgs,
-    ConfigValidateOutput, EXIT_DENIED, EXIT_INTERNAL, RollbackArgs, rollback,
+    ConfigValidateOutput, EXIT_DENIED, EXIT_INTERNAL, RollbackArgs, SnapshotArgs, SnapshotCommand,
+    rollback,
 };
 
 pub(crate) fn handle_audit_command(args: AuditArgs) -> i32 {
@@ -197,6 +198,81 @@ pub(crate) fn handle_rollback_command(
     }
 }
 
+pub(crate) fn handle_snapshot_command(args: SnapshotArgs) -> i32 {
+    match args.command {
+        SnapshotCommand::List => handle_snapshot_list_command(),
+    }
+}
+
+fn handle_snapshot_list_command() -> i32 {
+    let logger = AuditLogger::default();
+    match logger.read_all() {
+        Ok(entries) => {
+            print!("{}", format_snapshot_listing(&entries));
+            0
+        }
+        Err(err) => {
+            eprintln!("error: failed to read audit log: {err}");
+            EXIT_INTERNAL
+        }
+    }
+}
+
+/// Render every snapshot recorded in the audit log.
+///
+/// The audit log is append-only, so a recorded id does **not** guarantee the
+/// underlying stash/image/dump still exists (it may have been deleted, corrupted,
+/// or pruned). The output therefore reports *recorded* snapshots for discovery,
+/// not a recoverability guarantee.
+///
+/// Deduplication mirrors `aegis rollback`'s lookup
+/// (see `find_snapshot_target` in `rollback.rs`): rollback resolves an id to the
+/// **most recent** entry that recorded it, so this list keys by `snapshot_id` and
+/// keeps the latest occurrence's provider and timestamp. That keeps each row
+/// consistent with what `aegis rollback '<id>'` would actually target. Rows are
+/// listed newest-recorded first.
+pub(crate) fn format_snapshot_listing(entries: &[AuditEntry]) -> String {
+    use std::collections::HashMap;
+
+    // id -> (order, provider, recorded-at); `order` is the global occurrence index
+    // so the latest record wins and we can sort by it without parsing timestamps.
+    let mut latest: HashMap<&str, (usize, &str, String)> = HashMap::new();
+    let mut order = 0usize;
+    for entry in entries {
+        let base = entry.as_base();
+        for snapshot in &base.snapshots {
+            order += 1;
+            let recorded = base.timestamp.to_string();
+            latest
+                .entry(snapshot.snapshot_id.as_str())
+                .and_modify(|slot| *slot = (order, snapshot.plugin.as_str(), recorded.clone()))
+                .or_insert((order, snapshot.plugin.as_str(), recorded));
+        }
+    }
+
+    if latest.is_empty() {
+        return "No snapshots recorded.\n".to_string();
+    }
+
+    // (order, id, provider, recorded-at) sorted newest-recorded first.
+    let mut rows: Vec<(usize, &str, &str, &str)> = latest
+        .iter()
+        .map(|(id, (order_idx, provider, recorded))| {
+            (*order_idx, *id, *provider, recorded.as_str())
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut out = String::from("Recorded snapshots (newest first):\n");
+    for (_, id, provider, recorded) in &rows {
+        out.push('\n');
+        out.push_str(&format!("  provider: {provider}\n"));
+        out.push_str(&format!("  recorded: {recorded}\n"));
+        out.push_str(&format!("  id:       {id}\n"));
+    }
+    out
+}
+
 pub(crate) fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {
     let current_dir = match env::current_dir() {
         Ok(path) => path,
@@ -320,5 +396,107 @@ fn format_audit_summary(
         AuditOutputFormat::Ndjson => {
             Err("--summary cannot be used with --format ndjson".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_snapshot_listing;
+    use aegis::audit::{AuditEntry, AuditSnapshot, Decision};
+    use aegis::interceptor::RiskLevel;
+
+    fn entry_with_snapshot(command: &str, plugin: &str, snapshot_id: &str) -> AuditEntry {
+        AuditEntry::new(
+            command,
+            RiskLevel::Danger,
+            Vec::new(),
+            Decision::Approved,
+            vec![AuditSnapshot {
+                plugin: plugin.to_string(),
+                snapshot_id: snapshot_id.to_string(),
+            }],
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn lists_id_and_provider_for_each_snapshot() {
+        let entries = vec![
+            entry_with_snapshot("rm -rf src", "git", "snap-git-001"),
+            entry_with_snapshot("docker rm db", "docker", "snap-docker-001"),
+        ];
+
+        let output = format_snapshot_listing(&entries);
+
+        assert!(output.contains("snap-git-001"), "missing git id: {output}");
+        assert!(output.contains("git"), "missing git provider: {output}");
+        assert!(
+            output.contains("snap-docker-001"),
+            "missing docker id: {output}"
+        );
+        assert!(
+            output.contains("docker"),
+            "missing docker provider: {output}"
+        );
+    }
+
+    #[test]
+    fn deduplicates_repeated_snapshot_id() {
+        // The rollback audit entry re-records the same snapshot id; it must appear once.
+        let entries = vec![
+            entry_with_snapshot("rm -rf src", "git", "snap-001"),
+            entry_with_snapshot("aegis rollback snap-001", "git", "snap-001"),
+        ];
+
+        let output = format_snapshot_listing(&entries);
+
+        assert_eq!(
+            output.matches("snap-001").count(),
+            1,
+            "snap-001 must be listed exactly once: {output}"
+        );
+    }
+
+    #[test]
+    fn repeated_id_keeps_latest_provider_to_match_rollback() {
+        // `aegis rollback` resolves an id to its most recent entry; the listing must
+        // agree, so the latest occurrence's provider wins (not the earliest).
+        let entries = vec![
+            entry_with_snapshot("first", "git", "dup-id"),
+            entry_with_snapshot("second", "docker", "dup-id"),
+        ];
+
+        let output = format_snapshot_listing(&entries);
+
+        assert_eq!(output.matches("dup-id").count(), 1, "{output}");
+        assert!(output.contains("provider: docker"), "{output}");
+        assert!(!output.contains("provider: git"), "{output}");
+    }
+
+    #[test]
+    fn empty_log_yields_friendly_message() {
+        let output = format_snapshot_listing(&[]);
+
+        assert!(!output.is_empty());
+        assert!(
+            output.to_lowercase().contains("no snapshot"),
+            "expected a friendly empty message: {output}"
+        );
+    }
+
+    #[test]
+    fn preserves_tab_in_git_style_id() {
+        // Git snapshot ids are `"<cwd>\t<hash>"`; the tab must survive verbatim so
+        // the id stays copyable into `aegis rollback`.
+        let id = "/home/user/project\tabc123def456";
+        let entries = vec![entry_with_snapshot("rm -rf .", "git", id)];
+
+        let output = format_snapshot_listing(&entries);
+
+        assert!(
+            output.contains(id),
+            "tab-bearing id not preserved: {output:?}"
+        );
     }
 }
