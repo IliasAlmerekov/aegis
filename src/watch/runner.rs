@@ -403,6 +403,31 @@ async fn run_watch_plan(
         Decision::Approved | Decision::AutoApproved => {
             execute_and_emit(&frame.cmd, &cwd, id).await;
         }
+        Decision::Pruned => {
+            // `Pruned` is not a runtime command decision, but if it ever appears
+            // in this path we fail closed rather than executing.
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Blocked,
+                exit_code: 3,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+        _ => {
+            // Future unknown decision variants are also fail-closed rather than executed.
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Blocked,
+                exit_code: 3,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
     }
 }
 

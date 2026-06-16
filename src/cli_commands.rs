@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use aegis::audit::{AuditEntry, AuditIntegrityStatus, AuditLogger, AuditQuery};
+use aegis::audit::{AuditEntry, AuditIntegrityStatus, AuditLogger, AuditQuery, Decision};
 use aegis::config::{AegisConfig, ValidationReport, validate_config_layers};
 use aegis::error::AegisError;
 use aegis::toggle;
@@ -198,9 +198,21 @@ pub(crate) fn handle_rollback_command(
     }
 }
 
-pub(crate) fn handle_snapshot_command(args: SnapshotArgs) -> i32 {
+pub(crate) fn handle_snapshot_command(
+    args: SnapshotArgs,
+    runtime: &tokio::runtime::Runtime,
+) -> i32 {
     match args.command {
         SnapshotCommand::List => handle_snapshot_list_command(),
+        SnapshotCommand::Prune(prune_args) => {
+            match runtime.block_on(crate::prune::execute(prune_args)) {
+                Ok(_) => 0,
+                Err(err) => {
+                    eprintln!("error: prune failed: {err}");
+                    EXIT_INTERNAL
+                }
+            }
+        }
     }
 }
 
@@ -232,7 +244,23 @@ fn handle_snapshot_list_command() -> i32 {
 /// consistent with what `aegis rollback '<id>'` would actually target. Rows are
 /// listed newest-recorded first.
 pub(crate) fn format_snapshot_listing(entries: &[AuditEntry]) -> String {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+
+    // Collect snapshot ids that have been pruned so they can be hidden from the
+    // discoverable list. Prune records may store the removed id in the `command`
+    // field as `aegis prune <snapshot_id>` when the `snapshots` array is empty.
+    let mut pruned_ids: HashSet<&str> = HashSet::new();
+    for entry in entries {
+        let base = entry.as_base();
+        if base.decision == Decision::Pruned {
+            for snapshot in &base.snapshots {
+                pruned_ids.insert(snapshot.snapshot_id.as_str());
+            }
+            if let Some(id) = snapshot_id_from_prune_command(&base.command) {
+                pruned_ids.insert(id);
+            }
+        }
+    }
 
     // id -> (order, provider, recorded-at); `order` is the global occurrence index
     // so the latest record wins and we can sort by it without parsing timestamps.
@@ -241,6 +269,9 @@ pub(crate) fn format_snapshot_listing(entries: &[AuditEntry]) -> String {
     for entry in entries {
         let base = entry.as_base();
         for snapshot in &base.snapshots {
+            if pruned_ids.contains(snapshot.snapshot_id.as_str()) {
+                continue;
+            }
             order += 1;
             let recorded = base.timestamp.to_string();
             latest
@@ -251,7 +282,13 @@ pub(crate) fn format_snapshot_listing(entries: &[AuditEntry]) -> String {
     }
 
     if latest.is_empty() {
-        return "No snapshots recorded.\n".to_string();
+        if pruned_ids.is_empty() {
+            return "No snapshots recorded.\n".to_string();
+        }
+        return format!(
+            "No snapshots recorded. ({} pruned snapshot(s) hidden.)\n",
+            pruned_ids.len()
+        );
     }
 
     // (order, id, provider, recorded-at) sorted newest-recorded first.
@@ -270,7 +307,24 @@ pub(crate) fn format_snapshot_listing(entries: &[AuditEntry]) -> String {
         out.push_str(&format!("  recorded: {recorded}\n"));
         out.push_str(&format!("  id:       {id}\n"));
     }
+    if !pruned_ids.is_empty() {
+        out.push_str(&format!(
+            "\n  ({} pruned snapshot(s) hidden.)\n",
+            pruned_ids.len()
+        ));
+    }
     out
+}
+
+/// Extract a snapshot id from a prune audit entry's command field.
+///
+/// Prune records store the removed snapshot id as `aegis prune <snapshot_id>` in
+/// the `command` field when the `snapshots` array is empty.
+fn snapshot_id_from_prune_command(command: &str) -> Option<&str> {
+    const PRUNE_PREFIX: &str = "aegis prune ";
+    command
+        .strip_prefix(PRUNE_PREFIX)
+        .filter(|id| !id.is_empty())
 }
 
 pub(crate) fn handle_config_validate_command(args: ConfigValidateArgs) -> i32 {

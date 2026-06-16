@@ -95,5 +95,6 @@ fn minimal_record(container_id: &str, image: &str) -> String {
 
 // ── is_applicable ──────────────────────────────────────────────────────────
 
+mod delete_tests;
 mod rollback_tests;
 mod snapshot_tests;

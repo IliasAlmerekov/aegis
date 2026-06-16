@@ -94,7 +94,9 @@ pub fn build_outcome_explanation(
             Decision::Approved => ExecutionDecisionExplanation::Approved,
             Decision::Denied => ExecutionDecisionExplanation::Denied,
             Decision::AutoApproved => ExecutionDecisionExplanation::AutoApproved,
-            Decision::Blocked => ExecutionDecisionExplanation::Blocked,
+            Decision::Blocked | Decision::Pruned => ExecutionDecisionExplanation::Blocked,
+            // Fail closed for any future unknown decision variant.
+            _ => ExecutionDecisionExplanation::Blocked,
         },
         snapshots: snapshots
             .iter()

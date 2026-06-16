@@ -411,6 +411,8 @@ pub struct DecisionCounts {
     pub auto_approved: usize,
     /// Number of `Blocked` decisions.
     pub blocked: usize,
+    /// Number of `Pruned` decisions.
+    pub pruned: usize,
 }
 
 /// Count of each risk level.

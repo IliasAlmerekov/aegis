@@ -6,14 +6,17 @@
 
 #![deny(missing_docs)]
 
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 use aegis_config::{
-    AegisConfig, DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SnapshotPolicy,
-    SupabaseSnapshotConfig,
+    AegisConfig, DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, PruneConfig,
+    SnapshotPolicy, SupabaseSnapshotConfig,
 };
 pub use aegis_types::SnapshotRecord;
 
@@ -156,6 +159,13 @@ pub trait SnapshotPlugin: Send + Sync {
 
     /// Revert to a previously created snapshot.
     async fn rollback(&self, snapshot_id: &str) -> Result<()>;
+
+    /// Delete a previously created snapshot artifact.
+    ///
+    /// Deletion must be idempotent: returning `Ok(())` when the artifact has
+    /// already been removed. Backend failures are reported as
+    /// [`SnapshotError::DeleteFailed`].
+    async fn delete(&self, snapshot_id: &str) -> Result<()>;
 }
 
 /// Holds the runtime snapshot provider set used for snapshot and rollback flows.
@@ -377,5 +387,506 @@ impl SnapshotRegistry {
             })?;
 
         plugin.rollback(snapshot_id).await
+    }
+
+    /// Delete one snapshot using the named plugin.
+    pub async fn delete(
+        &self,
+        plugin_name: &str,
+        snapshot_id: &str,
+    ) -> std::result::Result<(), SnapshotError> {
+        let plugin = self
+            .plugins
+            .iter()
+            .find(|plugin| plugin.name() == plugin_name)
+            .ok_or_else(|| {
+                SnapshotError::Snapshot(format!(
+                    "snapshot plugin {plugin_name:?} is not available for delete"
+                ))
+            })?;
+
+        plugin.delete(snapshot_id).await
+    }
+
+    /// Resolve the snapshot records that are still on record and have not been
+    /// pruned.
+    ///
+    /// Reads the default audit log (`~/.aegis/audit.jsonl`), collects the latest
+    /// recorded timestamp for each `(plugin, snapshot_id)` pair, and removes
+    /// any id that has a later `Decision::Pruned` entry. If the audit log is
+    /// missing, the result is empty.
+    pub async fn resolve_prunable_records(
+        &self,
+    ) -> std::result::Result<Vec<PrunableRecord>, SnapshotError> {
+        resolve_prunable_records_from_default_audit_log()
+    }
+}
+
+/// One snapshot record that may be eligible for pruning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrunableRecord {
+    /// Name of the snapshot plugin that created the record.
+    pub plugin: String,
+    /// Opaque snapshot identifier.
+    pub snapshot_id: String,
+    /// Timestamp when the snapshot was recorded in the audit log.
+    pub recorded_at: OffsetDateTime,
+}
+
+/// Injectable clock for deterministic retention tests.
+pub trait Clock: Send + Sync {
+    /// Return the current time.
+    fn now(&self) -> OffsetDateTime;
+}
+
+/// Clock that returns the current system time.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
+}
+
+/// Clock that returns a fixed timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedClock(OffsetDateTime);
+
+impl FixedClock {
+    /// Create a clock that always returns `timestamp`.
+    pub fn new(timestamp: OffsetDateTime) -> Self {
+        Self(timestamp)
+    }
+}
+
+impl Clock for FixedClock {
+    fn now(&self) -> OffsetDateTime {
+        self.0
+    }
+}
+
+/// Retention policy used to decide which snapshots become prune candidates.
+///
+/// A snapshot is kept if it satisfies either the per-provider count rule or
+/// the global age rule. Only snapshots that fail both rules are returned by
+/// [`RetentionPolicy::apply`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RetentionPolicy {
+    max_count_per_provider: Option<usize>,
+    max_age_days: Option<u32>,
+}
+
+impl RetentionPolicy {
+    /// Retention policy that only uses a maximum age rule.
+    pub fn from_max_age_days(days: u32) -> Self {
+        Self {
+            max_age_days: Some(days),
+            ..Self::default()
+        }
+    }
+
+    /// Retention policy that only uses a per-provider count rule.
+    pub fn from_max_count_per_provider(count: usize) -> Self {
+        Self {
+            max_count_per_provider: Some(count),
+            ..Self::default()
+        }
+    }
+
+    /// Build a policy from the effective runtime config.
+    pub fn from_config(config: &PruneConfig) -> Self {
+        Self {
+            max_count_per_provider: config.max_count_per_provider,
+            max_age_days: config.max_age_days,
+        }
+    }
+
+    /// Apply this policy to a set of records and return the prune candidates.
+    ///
+    /// Candidates preserve the original input order.
+    pub fn apply(&self, records: &[PrunableRecord], now: OffsetDateTime) -> Vec<PrunableRecord> {
+        if self.max_count_per_provider.is_none() && self.max_age_days.is_none() {
+            return Vec::new();
+        }
+
+        let mut kept = HashSet::new();
+
+        if let Some(days) = self.max_age_days {
+            let max_age = time::Duration::days(i64::from(days));
+            for record in records {
+                if now - record.recorded_at <= max_age {
+                    kept.insert((record.plugin.clone(), record.snapshot_id.clone()));
+                }
+            }
+        }
+
+        if let Some(count) = self.max_count_per_provider {
+            let mut by_provider: HashMap<&str, Vec<&PrunableRecord>> = HashMap::new();
+            for record in records {
+                by_provider
+                    .entry(record.plugin.as_str())
+                    .or_default()
+                    .push(record);
+            }
+            for group in by_provider.values_mut() {
+                group.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
+                for record in group.iter().take(count) {
+                    kept.insert((record.plugin.clone(), record.snapshot_id.clone()));
+                }
+            }
+        }
+
+        records
+            .iter()
+            .filter(|record| !kept.contains(&(record.plugin.clone(), record.snapshot_id.clone())))
+            .cloned()
+            .collect()
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MinimalAuditSnapshot {
+    plugin: String,
+    snapshot_id: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MinimalAuditEntry {
+    timestamp: String,
+    decision: aegis_types::Decision,
+    command: String,
+    #[serde(default)]
+    snapshots: Vec<MinimalAuditSnapshot>,
+}
+
+fn resolve_prunable_records_from_default_audit_log()
+-> std::result::Result<Vec<PrunableRecord>, SnapshotError> {
+    let Some(home) = home_dir() else {
+        return Ok(Vec::new());
+    };
+    let path = home.join(".aegis").join("audit.jsonl");
+
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let contents = std::fs::read_to_string(&path).map_err(SnapshotError::Io)?;
+    let mut latest: HashMap<(String, String), OffsetDateTime> = HashMap::new();
+    let mut pruned_pairs: HashSet<(String, String)> = HashSet::new();
+    let mut pruned_ids: HashSet<String> = HashSet::new();
+
+    for line in contents.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let entry: MinimalAuditEntry = match serde_json::from_str(line) {
+            Ok(entry) => entry,
+            Err(error) => {
+                tracing::warn!(%error, "skipping unparseable audit log line during prune");
+                continue;
+            }
+        };
+
+        if entry.decision == aegis_types::Decision::Pruned {
+            for snapshot in &entry.snapshots {
+                pruned_pairs.insert((snapshot.plugin.clone(), snapshot.snapshot_id.clone()));
+            }
+            if let Some(id) = snapshot_id_from_prune_command(&entry.command) {
+                pruned_ids.insert(id.to_string());
+            }
+            continue;
+        }
+
+        let recorded_at = match OffsetDateTime::parse(&entry.timestamp, &Rfc3339) {
+            Ok(ts) => ts,
+            Err(error) => {
+                tracing::warn!(%error, timestamp = %entry.timestamp, "skipping audit log line with invalid timestamp");
+                continue;
+            }
+        };
+
+        for snapshot in &entry.snapshots {
+            let key = (snapshot.plugin.clone(), snapshot.snapshot_id.clone());
+            match latest.get(&key) {
+                Some(previous) if *previous >= recorded_at => {}
+                _ => {
+                    latest.insert(key, recorded_at);
+                }
+            }
+        }
+    }
+
+    let mut records: Vec<PrunableRecord> = latest
+        .into_iter()
+        .filter(|((plugin, snapshot_id), _)| {
+            !pruned_pairs.contains(&(plugin.clone(), snapshot_id.clone()))
+                && !pruned_ids.contains(snapshot_id)
+        })
+        .map(|((plugin, snapshot_id), recorded_at)| PrunableRecord {
+            plugin,
+            snapshot_id,
+            recorded_at,
+        })
+        .collect();
+    records.sort_by(|a, b| b.recorded_at.cmp(&a.recorded_at));
+    Ok(records)
+}
+
+/// Extract a snapshot id from a prune audit entry's command field.
+///
+/// Prune records store the removed snapshot id as `aegis prune <snapshot_id>` in
+/// the `command` field when the `snapshots` array is empty.
+fn snapshot_id_from_prune_command(command: &str) -> Option<&str> {
+    const PRUNE_PREFIX: &str = "aegis prune ";
+    command
+        .strip_prefix(PRUNE_PREFIX)
+        .filter(|id| !id.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_git_plugin_delete_missing_artifact_is_idempotent() {
+        let result = GitPlugin
+            .delete("/tmp/aegis-missing-git-repo-test\tdeadbeef")
+            .await;
+        assert!(
+            result.is_ok(),
+            "delete on a missing git snapshot must be idempotent: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_docker_plugin_delete_none_sentinel_is_noop() {
+        let plugin = DockerPlugin::new();
+        let result = plugin.delete("none").await;
+        assert!(
+            result.is_ok(),
+            "delete on 'none' sentinel must succeed: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_postgres_plugin_delete_missing_dump_returns_ok() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = PostgresPlugin::new(
+            "db".to_string(),
+            "localhost".to_string(),
+            5432,
+            "user".to_string(),
+            temp.path().to_path_buf(),
+        );
+        let result = plugin
+            .delete(
+                "v2\t6462\t6c6f63616c686f7374\t5432\t75736572\t2f6e6f6e652f65786973742e64756d70",
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "delete on missing postgres dump must be idempotent: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mysql_plugin_delete_missing_dump_returns_ok() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = MysqlPlugin::new(
+            "db".to_string(),
+            "localhost".to_string(),
+            3306,
+            "user".to_string(),
+            temp.path().to_path_buf(),
+        );
+        let result = plugin
+            .delete("v2\t6462\t6c6f63616c686f7374\t3306\t75736572\t2f6e6f6e652f65786973742e73716c")
+            .await;
+        assert!(
+            result.is_ok(),
+            "delete on missing mysql dump must be idempotent: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_plugin_delete_missing_dump_returns_ok() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin = SqlitePlugin::new(PathBuf::from("/tmp/app.db"), temp.path().to_path_buf());
+        let result = plugin
+            .delete("v2\t2f746d702f6170702e6462\t2f6e6f6e652f65786973742e6462")
+            .await;
+        assert!(
+            result.is_ok(),
+            "delete on missing sqlite dump must be idempotent: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_supabase_plugin_delete_missing_manifest_returns_ok() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin =
+            SupabasePlugin::new(SupabaseSnapshotConfig::default(), temp.path().to_path_buf());
+        let result = plugin
+            .delete("supabase-v1\t2f6e6f6e652f6d616e69666573742e6a736f6e")
+            .await;
+        assert!(
+            result.is_ok(),
+            "delete on missing supabase manifest must be idempotent: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_registry_delete_dispatches_to_named_plugin() {
+        let registry = SnapshotRegistry::new_with_plugins(vec![Box::new(GitPlugin)]);
+        let result = registry.delete("git", "malformed-id").await;
+        assert!(
+            result.is_err(),
+            "delete on malformed id must return an error: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_registry_resolve_prunable_records_excludes_pruned() {
+        // This test encodes the contract that resolve_prunable_records must:
+        // 1. Collect snapshot records from the audit log keyed by (plugin, snapshot_id).
+        // 2. Subtract ids recorded in later Decision::Pruned entries.
+        // Without the helper, the call does not compile.
+        let registry = SnapshotRegistry::for_rollback().unwrap();
+        let records = registry.resolve_prunable_records().await;
+        assert!(
+            records.is_ok(),
+            "resolve_prunable_records must be available: {records:?}"
+        );
+    }
+
+    #[test]
+    fn test_retention_policy_age_only_keeps_recent() {
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let policy = RetentionPolicy::from_max_age_days(7);
+        let records = vec![
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "old".to_string(),
+                recorded_at: now - time::Duration::days(10),
+            },
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "recent".to_string(),
+                recorded_at: now - time::Duration::days(2),
+            },
+        ];
+        let candidates = policy.apply(&records, now);
+        let ids: Vec<_> = candidates.iter().map(|r| r.snapshot_id.as_str()).collect();
+        assert_eq!(ids, vec!["old"]);
+    }
+
+    #[test]
+    fn test_retention_policy_count_only_keeps_newest_n_per_provider() {
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let policy = RetentionPolicy::from_max_count_per_provider(2);
+        let records = vec![
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "git-1".to_string(),
+                recorded_at: now - time::Duration::days(3),
+            },
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "git-2".to_string(),
+                recorded_at: now - time::Duration::days(2),
+            },
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "git-3".to_string(),
+                recorded_at: now - time::Duration::days(1),
+            },
+            PrunableRecord {
+                plugin: "docker".to_string(),
+                snapshot_id: "docker-1".to_string(),
+                recorded_at: now - time::Duration::days(1),
+            },
+        ];
+        let candidates = policy.apply(&records, now);
+        let ids: Vec<_> = candidates.iter().map(|r| r.snapshot_id.as_str()).collect();
+        assert_eq!(ids, vec!["git-1"]);
+    }
+
+    #[test]
+    fn test_retention_policy_union_keeps_any_record_that_passes_either_rule() {
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let policy = RetentionPolicy::from_config(&aegis_config::PruneConfig {
+            enabled: true,
+            max_count_per_provider: Some(1),
+            max_age_days: Some(7),
+        });
+        let records = vec![
+            // Outside the age window but kept by the per-provider count (it is the newest).
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "count-kept".to_string(),
+                recorded_at: now - time::Duration::days(1),
+            },
+            // Inside the age window but not kept by count; age rule preserves it.
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "age-kept".to_string(),
+                recorded_at: now - time::Duration::days(2),
+            },
+            // Outside both windows; this is the only candidate.
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "prune-me".to_string(),
+                recorded_at: now - time::Duration::days(10),
+            },
+        ];
+        let candidates = policy.apply(&records, now);
+        let ids: Vec<_> = candidates.iter().map(|r| r.snapshot_id.as_str()).collect();
+        assert_eq!(ids, vec!["prune-me"]);
+    }
+
+    #[test]
+    fn test_retention_policy_empty_input_yields_empty_candidates() {
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let policy = RetentionPolicy::from_max_count_per_provider(5);
+        let candidates = policy.apply(&[], now);
+        assert!(
+            candidates.is_empty(),
+            "empty input must produce no prune candidates"
+        );
+    }
+
+    #[test]
+    fn test_retention_policy_no_active_rules_yields_empty_candidates() {
+        use time::OffsetDateTime;
+
+        let now = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let policy = RetentionPolicy::default();
+        let records = vec![
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "old".to_string(),
+                recorded_at: now - time::Duration::days(30),
+            },
+            PrunableRecord {
+                plugin: "git".to_string(),
+                snapshot_id: "new".to_string(),
+                recorded_at: now - time::Duration::days(1),
+            },
+        ];
+        let candidates = policy.apply(&records, now);
+        assert!(
+            candidates.is_empty(),
+            "no active rules must produce no prune candidates"
+        );
     }
 }

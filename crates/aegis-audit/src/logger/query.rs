@@ -118,6 +118,9 @@ impl AuditLogger {
                 Decision::Denied => summary.decision_counts.denied += 1,
                 Decision::AutoApproved => summary.decision_counts.auto_approved += 1,
                 Decision::Blocked => summary.decision_counts.blocked += 1,
+                Decision::Pruned => summary.decision_counts.pruned += 1,
+                // Unknown future decision variants are not tallied in the v1 summary buckets.
+                _ => {}
             }
 
             match base.risk {
@@ -159,11 +162,12 @@ impl AuditLogger {
         out.push_str(&format!("  total entries: {}\n", summary.total_entries));
         out.push_str("  decisions:\n");
         out.push_str(&format!(
-            "    approved={} denied={} auto-approved={} blocked={}\n",
+            "    approved={} denied={} auto-approved={} blocked={} pruned={}\n",
             summary.decision_counts.approved,
             summary.decision_counts.denied,
             summary.decision_counts.auto_approved,
-            summary.decision_counts.blocked
+            summary.decision_counts.blocked,
+            summary.decision_counts.pruned
         ));
         out.push_str("  risks:\n");
         out.push_str(&format!(

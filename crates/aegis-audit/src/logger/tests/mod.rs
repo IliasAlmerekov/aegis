@@ -111,6 +111,7 @@ pub fn rotation_policy(
 
 mod append_tests;
 mod integrity_tests;
+mod prune_tests;
 mod query_tests;
 mod rotation_tests;
 mod serialization_tests;

@@ -113,6 +113,15 @@ mode = "Labeled"
 label = "aegis.snapshot" # Container must carry this label with value "true".
 name_patterns = []       # Name patterns for Names mode (Docker regex, ORed).
 
+# Prune retention for snapshot artifacts. Both rules are applied as a union:
+# a snapshot is kept if it is within max_age_days OR among the newest
+# max_count_per_provider for its provider. Set enabled = true and use
+# `aegis snapshot prune` to preview or remove artifacts.
+[prune]
+enabled = false
+max_count_per_provider = 10
+max_age_days = 30
+
 # CI policy: what to do when aegis detects it is running inside a CI environment.
 # Block (default) — hard-block any non-safe command; no interactive dialog is shown.
 # Allow           — pass-through; commands are executed without prompting (opt-in override).
@@ -151,6 +160,27 @@ pub struct SandboxSettings {
     pub allow_write: Vec<PathBuf>,
     /// Whether the sandboxed process may access the network.
     pub allow_network: bool,
+}
+
+/// Prune configuration for `aegis snapshot prune`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct PruneConfig {
+    /// Whether prune is enabled. Currently advisory; manual `--yes` is still required.
+    pub enabled: bool,
+    /// Keep the newest N snapshots per provider. `None` disables the count rule.
+    pub max_count_per_provider: Option<usize>,
+    /// Keep snapshots newer than this many days. `None` disables the age rule.
+    pub max_age_days: Option<u32>,
+}
+
+/// Partial view of [`PruneConfig`] used during layered config merge.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct PartialPruneConfig {
+    enabled: Option<bool>,
+    max_count_per_provider: Option<usize>,
+    max_age_days: Option<u32>,
 }
 
 /// Top-level Aegis runtime configuration.
@@ -234,6 +264,8 @@ pub struct AegisConfig {
     pub rules: Vec<PolicyRule>,
     /// Sandbox layer settings.
     pub sandbox: SandboxSettings,
+    /// Snapshot prune retention settings.
+    pub prune: PruneConfig,
 }
 
 impl Default for AegisConfig {
@@ -295,6 +327,7 @@ impl AegisConfig {
             audit: AuditConfig::default(),
             rules: Vec::new(),
             sandbox: SandboxSettings::default(),
+            prune: PruneConfig::default(),
         }
     }
 
@@ -502,6 +535,14 @@ impl AegisConfig {
                     .unwrap_or(base.audit.integrity_mode),
             },
             sandbox: overlay.sandbox.merge_into(base.sandbox),
+            prune: PruneConfig {
+                enabled: overlay.prune.enabled.unwrap_or(base.prune.enabled),
+                max_count_per_provider: overlay
+                    .prune
+                    .max_count_per_provider
+                    .or(base.prune.max_count_per_provider),
+                max_age_days: overlay.prune.max_age_days.or(base.prune.max_age_days),
+            },
         }
     }
 
@@ -662,6 +703,7 @@ struct PartialConfig {
     #[serde(default, rename = "rules")]
     rules: Vec<PolicyRule>,
     sandbox: PartialSandboxSettings,
+    prune: PartialPruneConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]

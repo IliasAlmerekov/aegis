@@ -169,6 +169,85 @@ impl SnapshotPlugin for GitPlugin {
         tracing::info!(stash_ref = %stash_ref, "git snapshot rolled back");
         Ok(())
     }
+
+    async fn delete(&self, snapshot_id: &str) -> Result<()> {
+        if snapshot_id == CLEAN_SENTINEL {
+            tracing::info!("git snapshot was clean, nothing to delete");
+            return Ok(());
+        }
+
+        let (cwd_str, hash) = snapshot_id.split_once(SEP).ok_or_else(|| {
+            SnapshotError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
+        })?;
+
+        let cwd_path = Path::new(cwd_str);
+        if !cwd_path.exists() {
+            tracing::info!(%snapshot_id, "git repository no longer exists, nothing to delete");
+            return Ok(());
+        }
+
+        let list_out = Command::new("git")
+            .args(["stash", "list", "--format=%H %gd"])
+            .current_dir(cwd_path)
+            .output()
+            .await
+            .map_err(|e| SnapshotError::Snapshot(format!("git stash list failed: {e}")))?;
+
+        if !list_out.status.success() {
+            let stderr = String::from_utf8_lossy(&list_out.stderr);
+            if stderr.to_lowercase().contains("not a git repository") {
+                tracing::info!(%snapshot_id, "git repository no longer exists, nothing to delete");
+                return Ok(());
+            }
+            return Err(SnapshotError::Snapshot(format!(
+                "git stash list failed: {stderr}"
+            )));
+        }
+
+        let list_stdout = String::from_utf8_lossy(&list_out.stdout);
+        let stash_ref = list_stdout.lines().find_map(|line| {
+            let (h, r) = line.split_once(' ')?;
+            (h == hash).then(|| r.to_string())
+        });
+
+        let Some(stash_ref) = stash_ref else {
+            tracing::info!(%snapshot_id, "git stash entry already removed");
+            return Ok(());
+        };
+
+        let drop_out = Command::new("git")
+            .args(["stash", "drop", &stash_ref])
+            .current_dir(cwd_path)
+            .output()
+            .await;
+
+        match drop_out {
+            Ok(output) if output.status.success() => {
+                tracing::info!(%stash_ref, "git snapshot deleted");
+                Ok(())
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if stderr
+                    .to_lowercase()
+                    .contains("is not a valid stash reference")
+                {
+                    tracing::info!(%stash_ref, "git stash entry already removed");
+                    return Ok(());
+                }
+                Err(SnapshotError::DeleteFailed {
+                    plugin: "git".to_string(),
+                    snapshot_id: snapshot_id.to_string(),
+                    source: format!("git stash drop failed: {stderr}"),
+                })
+            }
+            Err(error) => Err(SnapshotError::DeleteFailed {
+                plugin: "git".to_string(),
+                snapshot_id: snapshot_id.to_string(),
+                source: format!("git stash drop failed: {error}"),
+            }),
+        }
+    }
 }
 
 #[cfg(test)]
