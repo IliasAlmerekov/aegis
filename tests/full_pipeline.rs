@@ -1793,7 +1793,7 @@ fn append_audit_entry(home: &Path, plugin: &str, snapshot_id: &str) {
 }
 
 #[test]
-fn danger_command_denied_records_supabase_snapshot_in_audit() {
+fn danger_command_denied_records_no_supabase_snapshot_in_audit() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
     let bin_dir = workspace.path().join("bin");
@@ -1875,14 +1875,12 @@ user = "postgres"
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["decision"], "Denied");
     assert_eq!(entries[0]["risk"], "Danger");
-    assert_eq!(entries[0]["snapshots"].as_array().map(Vec::len), Some(1));
-    assert_eq!(entries[0]["snapshots"][0]["plugin"], "supabase");
-    let snapshot_id = entries[0]["snapshots"][0]["snapshot_id"]
-        .as_str()
-        .expect("snapshot_id must be a string");
+    let snapshots = entries[0]["snapshots"]
+        .as_array()
+        .expect("snapshots must be an array");
     assert!(
-        snapshot_id.starts_with("supabase-v1\t"),
-        "expected a supabase v1 snapshot id, got {snapshot_id:?}"
+        snapshots.is_empty(),
+        "denied danger command must record no snapshots, got {snapshots:?}"
     );
 }
 

@@ -88,24 +88,18 @@ pub(crate) fn run_planned_shell_command(
     };
 
     match plan.execution_disposition() {
-        ExecutionDisposition::Execute => {
-            let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
-            if let Err(err) = append_shell_audit(
-                prepared,
-                plan,
-                Decision::AutoApproved,
-                &snapshots,
-                sandbox_status_for(sandbox_config),
-            ) {
-                eprintln!("error: failed to write audit log: {err}");
-                return EXIT_INTERNAL;
-            }
-            exec_command(cmd, launch, sandbox_config)
-        }
+        ExecutionDisposition::Execute => execute_with_snapshots(
+            cmd,
+            verbose,
+            prepared,
+            plan,
+            launch,
+            Decision::AutoApproved,
+            sandbox_config,
+        ),
         ExecutionDisposition::RequiresApproval => {
-            let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
             let prompt_decision =
-                show_confirmation_decision(plan.assessment(), plan.explanation(), &snapshots);
+                show_confirmation_decision(plan.assessment(), plan.explanation(), &[]);
             if prompt_decision == PromptDecision::ApproveAlways
                 && let Err(err) = persist_rule(cmd, plan, append_allow_rule, "allow")
             {
@@ -120,25 +114,27 @@ pub(crate) fn run_planned_shell_command(
                 prompt_decision,
                 PromptDecision::Approve | PromptDecision::ApproveAlways
             );
-            let decision = if approved {
-                Decision::Approved
-            } else {
-                Decision::Denied
-            };
-            let sandbox_status = if approved {
-                sandbox_status_for(sandbox_config)
-            } else {
-                SandboxStatus::NotConfigured
-            };
-            if let Err(err) =
-                append_shell_audit(prepared, plan, decision, &snapshots, sandbox_status)
-            {
-                eprintln!("error: failed to write audit log: {err}");
-                return EXIT_INTERNAL;
-            }
             if approved {
-                exec_command(cmd, launch, sandbox_config)
+                execute_with_snapshots(
+                    cmd,
+                    verbose,
+                    prepared,
+                    plan,
+                    launch,
+                    Decision::Approved,
+                    sandbox_config,
+                )
             } else {
+                if let Err(err) = append_shell_audit(
+                    prepared,
+                    plan,
+                    Decision::Denied,
+                    &[],
+                    SandboxStatus::NotConfigured,
+                ) {
+                    eprintln!("error: failed to write audit log: {err}");
+                    return EXIT_INTERNAL;
+                }
                 EXIT_DENIED
             }
         }
@@ -157,6 +153,35 @@ pub(crate) fn run_planned_shell_command(
             EXIT_BLOCKED
         }
     }
+}
+
+/// Create snapshots, append the audit entry, and execute the command.
+///
+/// This helper captures the shared ordering for auto-approved and
+/// human-approved execution branches: snapshot creation happens after the
+/// final approval decision and before both the audit append and the child
+/// process start.
+fn execute_with_snapshots(
+    cmd: &str,
+    verbose: bool,
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+    launch: &ShellLaunchOptions,
+    decision: Decision,
+    sandbox_config: Option<&aegis_sandbox::SandboxConfig>,
+) -> i32 {
+    let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
+    if let Err(err) = append_shell_audit(
+        prepared,
+        plan,
+        decision,
+        &snapshots,
+        sandbox_status_for(sandbox_config),
+    ) {
+        eprintln!("error: failed to write audit log: {err}");
+        return EXIT_INTERNAL;
+    }
+    exec_command(cmd, launch, sandbox_config)
 }
 
 fn create_snapshots_for_plan(
@@ -290,20 +315,21 @@ fn execute_policy_decision(
     explanation: &CommandExplanation,
     verbose: bool,
 ) -> (Decision, Vec<SnapshotRecord>, bool) {
-    let snapshots = if policy_decision.snapshots_required {
-        context.create_snapshots(cwd, &assessment.command.raw, verbose)
-    } else {
-        Vec::new()
-    };
-
     match policy_decision.decision {
-        PolicyAction::AutoApprove => (
-            Decision::AutoApproved,
-            snapshots,
-            policy_decision.allowlist_effective,
-        ),
+        PolicyAction::AutoApprove => {
+            let snapshots = if policy_decision.snapshots_required {
+                context.create_snapshots(cwd, &assessment.command.raw, verbose)
+            } else {
+                Vec::new()
+            };
+            (
+                Decision::AutoApproved,
+                snapshots,
+                policy_decision.allowlist_effective,
+            )
+        }
         PolicyAction::Prompt => {
-            let prompt_decision = show_confirmation_decision(assessment, explanation, &snapshots);
+            let prompt_decision = show_confirmation_decision(assessment, explanation, &[]);
             let approved = matches!(
                 prompt_decision,
                 PromptDecision::Approve | PromptDecision::ApproveAlways
@@ -312,6 +338,11 @@ fn execute_policy_decision(
                 Decision::Approved
             } else {
                 Decision::Denied
+            };
+            let snapshots = if approved && policy_decision.snapshots_required {
+                context.create_snapshots(cwd, &assessment.command.raw, verbose)
+            } else {
+                Vec::new()
             };
 
             (decision, snapshots, policy_decision.allowlist_effective)
@@ -336,7 +367,7 @@ fn execute_policy_decision(
 
             (
                 Decision::Blocked,
-                snapshots,
+                Vec::new(),
                 policy_decision.allowlist_effective,
             )
         }
@@ -434,4 +465,147 @@ fn evaluate_policy_decision(
     });
 
     (decision, applicable_snapshot_plugins)
+}
+
+#[cfg(test)]
+mod snapshot_ordering_tests {
+    use std::path::Path;
+    use std::process::Command;
+
+    use tempfile::TempDir;
+    use tokio::runtime::Handle;
+
+    use super::*;
+    use aegis::config::{AegisConfig, AllowlistOverrideLevel, SnapshotPolicy};
+    use aegis::decision::{PolicyAction, PolicyDecision, PolicyRationale};
+    use aegis::runtime::RuntimeContext;
+
+    fn test_handle() -> Handle {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime build");
+        let handle = rt.handle().clone();
+        std::mem::forget(rt);
+        handle
+    }
+
+    fn danger_context() -> RuntimeContext {
+        let mut config = AegisConfig::default();
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+        config.allowlist_override_level = AllowlistOverrideLevel::Danger;
+        RuntimeContext::new(config, test_handle()).expect("runtime context")
+    }
+
+    fn init_git_repo(path: &Path) {
+        let init = Command::new("git")
+            .arg("init")
+            .current_dir(path)
+            .output()
+            .expect("git init");
+        assert!(init.status.success(), "git init failed: {init:?}");
+
+        let commit = Command::new("git")
+            .args([
+                "-c",
+                "user.email=test@aegis.dev",
+                "-c",
+                "user.name=Aegis Test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ])
+            .current_dir(path)
+            .output()
+            .expect("git commit");
+        assert!(commit.status.success(), "git commit failed: {commit:?}");
+    }
+
+    fn danger_explanation(
+        context: &RuntimeContext,
+        assessment: &aegis::interceptor::scanner::Assessment,
+        policy_decision: PolicyDecision,
+        plugins: &[&'static str],
+    ) -> CommandExplanation {
+        test_command_explanation(
+            context,
+            assessment,
+            policy_decision,
+            None,
+            false,
+            ExecutionTransport::Shell,
+            plugins,
+        )
+    }
+
+    #[test]
+    fn test_execute_policy_decision_prompt_denied_records_no_snapshots() {
+        let dir = TempDir::new().expect("temp dir");
+        init_git_repo(dir.path());
+
+        let context = danger_context();
+        let assessment = aegis::interceptor::assess("rm -rf /tmp/aegis-denied-target").unwrap();
+        assert_eq!(assessment.risk, aegis::interceptor::RiskLevel::Danger);
+
+        let policy_decision = PolicyDecision {
+            decision: PolicyAction::Prompt,
+            rationale: PolicyRationale::RequiresConfirmation,
+            requires_confirmation: true,
+            snapshots_required: true,
+            allowlist_effective: false,
+        };
+        let explanation = danger_explanation(&context, &assessment, policy_decision, &["git"]);
+
+        let (decision, snapshots, _) = execute_policy_decision(
+            &context,
+            &assessment,
+            dir.path(),
+            policy_decision,
+            &explanation,
+            false,
+        );
+
+        assert_eq!(decision, Decision::Denied);
+        assert!(
+            snapshots.is_empty(),
+            "denied prompt must not create snapshots, got {snapshots:?}"
+        );
+    }
+
+    #[test]
+    fn test_execute_policy_decision_block_records_no_snapshots() {
+        let dir = TempDir::new().expect("temp dir");
+        init_git_repo(dir.path());
+
+        let context = danger_context();
+        let assessment = aegis::interceptor::assess("rm -rf /").unwrap();
+        assert_eq!(assessment.risk, aegis::interceptor::RiskLevel::Block);
+
+        let policy_decision = PolicyDecision {
+            decision: PolicyAction::Block,
+            rationale: aegis::decision::PolicyRationale::IntrinsicRiskBlock,
+            requires_confirmation: false,
+            snapshots_required: true,
+            allowlist_effective: false,
+        };
+        let explanation = danger_explanation(&context, &assessment, policy_decision, &[]);
+
+        let (decision, snapshots, _) = execute_policy_decision(
+            &context,
+            &assessment,
+            dir.path(),
+            policy_decision,
+            &explanation,
+            false,
+        );
+
+        assert_eq!(decision, Decision::Blocked);
+        assert!(
+            snapshots.is_empty(),
+            "block decision must not create snapshots, got {snapshots:?}"
+        );
+    }
 }

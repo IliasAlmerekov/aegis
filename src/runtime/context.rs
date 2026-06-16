@@ -209,6 +209,12 @@ impl RuntimeContext {
             .block_on(self.snapshot_registry().applicable_plugins(cwd))
     }
 
+    /// Async variant of `applicable_snapshot_plugins` — call from within an
+    /// async runtime to avoid panicking with a nested `block_on`.
+    pub async fn applicable_snapshot_plugins_async(&self, cwd: &Path) -> Vec<&'static str> {
+        self.snapshot_registry().applicable_plugins(cwd).await
+    }
+
     /// Return a reference to the persistent async handle.
     pub fn async_handle(&self) -> &Handle {
         &self.async_handle

@@ -52,6 +52,69 @@ pub fn plan_with_context(
         Vec::new()
     };
 
+    build_planning_outcome(
+        context,
+        request,
+        assessment,
+        allowlist_match,
+        blocklist_match,
+        applicable_snapshot_plugins,
+    )
+}
+
+/// Async variant of `plan_with_context` for callers already inside an async
+/// runtime. Avoids the nested `block_on` panic when resolving applicable
+/// snapshot plugins.
+pub async fn plan_with_context_async(
+    context: &RuntimeContext,
+    request: PlanningRequest<'_>,
+) -> PlanningOutcome {
+    let assessment = context.assess(request.command);
+    let allowlist_match = match &request.cwd_state {
+        CwdState::Resolved(path) => {
+            context.allowlist_match_for_command(request.command, Some(path.as_path()))
+        }
+        CwdState::Unavailable => context.allowlist_match_for_command(request.command, None),
+    };
+    let blocklist_match = match &request.cwd_state {
+        CwdState::Resolved(path) => {
+            context.is_blocked_for_command(request.command, Some(path.as_path()))
+        }
+        CwdState::Unavailable => context.is_blocked_for_command(request.command, None),
+    };
+    let applicable_snapshot_plugins = if assessment.risk == crate::interceptor::RiskLevel::Danger
+        && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
+    {
+        match &request.cwd_state {
+            CwdState::Resolved(path) => context.applicable_snapshot_plugins_async(path).await,
+            CwdState::Unavailable => {
+                context
+                    .applicable_snapshot_plugins_async(Path::new("."))
+                    .await
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    build_planning_outcome(
+        context,
+        request,
+        assessment,
+        allowlist_match,
+        blocklist_match,
+        applicable_snapshot_plugins,
+    )
+}
+
+fn build_planning_outcome(
+    context: &RuntimeContext,
+    request: PlanningRequest<'_>,
+    assessment: crate::interceptor::scanner::Assessment,
+    allowlist_match: Option<crate::config::AllowlistMatch>,
+    blocklist_match: bool,
+    applicable_snapshot_plugins: Vec<&'static str>,
+) -> PlanningOutcome {
     let decision_context = DecisionContext::new(
         context.config().mode,
         request.transport,
