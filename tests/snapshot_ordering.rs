@@ -65,6 +65,7 @@ fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output
         .arg("watch")
         .env("AEGIS_REAL_SHELL", "/bin/sh")
         .env("AEGIS_CI", "0")
+        .env("AEGIS_FORCE_NO_TTY", "1")
         .env("HOME", home)
         .current_dir(cwd)
         .stdin(Stdio::piped())

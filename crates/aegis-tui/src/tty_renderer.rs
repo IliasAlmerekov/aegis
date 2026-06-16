@@ -22,6 +22,17 @@ pub fn show_confirmation_via_tty_with_decision(
     explanation: &CommandExplanation,
     snapshots: &[SnapshotRecord],
 ) -> PromptDecision {
+    if std::env::var_os("AEGIS_FORCE_NO_TTY")
+        .map(|value| value == "1")
+        .unwrap_or(false)
+    {
+        return if tty_unavailable_decision(assessment) {
+            PromptDecision::Approve
+        } else {
+            PromptDecision::Deny
+        };
+    }
+
     let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
         Ok(f) => f,
         Err(_) => {
