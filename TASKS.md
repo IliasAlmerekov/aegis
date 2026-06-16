@@ -37,16 +37,20 @@ Closes the open PRD decisions on snapshot management. No `Snapshot` subcommand
 group exists today (`main.rs` only has `Rollback`); these tasks introduce it.
 
 - [x] **M1.1 — `aegis snapshot list`**
-  Enumerate available snapshots with `snapshot_id`, provider name, and creation
+  Enumerate recorded snapshots with `snapshot_id`, provider name, and recorded
   time. Resolves the opaque `cwd+hash` id discoverability gap.
   - Added a `Snapshot` subcommand group with `list` (`prune` follows in M1.2).
   - Source of truth is the **audit log** — the same one `aegis rollback` resolves
-    against (`src/rollback.rs`) — so every listed id is guaranteed recoverable.
-    No `SnapshotPlugin` trait change was needed. Pure `format_snapshot_listing`
-    in `src/cli_commands.rs` (mirrors `format_audit_entries`); deduped by
-    `snapshot_id`, newest-first, creation time from the entry timestamp.
-  - _Done when (met):_ `aegis snapshot list` prints every recoverable snapshot
-    (provider + creation time + id, tab-bearing git ids preserved verbatim) and
+    against (`src/rollback.rs`). No `SnapshotPlugin` trait change was needed. Pure
+    `format_snapshot_listing` in `src/cli_commands.rs` (mirrors `format_audit_entries`);
+    deduped by `snapshot_id` keeping the **latest** occurrence so the row matches
+    the entry rollback would target, newest-recorded first.
+  - The log is append-only, so a listed id is *recorded*, not a recoverability
+    guarantee (the backing stash/image/dump may be gone or pruned). Output is
+    labelled "Recorded snapshots" accordingly; live existence checks would need
+    per-provider listing (deferred — overlaps with M1.2 prune).
+  - _Done when (met):_ `aegis snapshot list` prints every recorded snapshot
+    (provider + recorded time + id, tab-bearing git ids preserved verbatim) and
     exits 0 with a friendly message on an empty log. Covered by unit tests in
     `cli_commands.rs` and integration tests in `tests/snapshot_list.rs`.
 

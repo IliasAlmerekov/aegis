@@ -218,41 +218,56 @@ fn handle_snapshot_list_command() -> i32 {
     }
 }
 
-/// Render every recoverable snapshot recorded in the audit log.
+/// Render every snapshot recorded in the audit log.
 ///
-/// Mirrors `aegis rollback`'s source of truth: snapshots are discovered from the
-/// audit entries, so every id printed here is guaranteed resolvable by
-/// `aegis rollback '<id>'`. Entries are deduplicated by `snapshot_id` (the rollback
-/// audit entry re-records the same id), keeping the earliest occurrence as the
-/// creation time, and listed newest-first.
+/// The audit log is append-only, so a recorded id does **not** guarantee the
+/// underlying stash/image/dump still exists (it may have been deleted, corrupted,
+/// or pruned). The output therefore reports *recorded* snapshots for discovery,
+/// not a recoverability guarantee.
+///
+/// Deduplication mirrors `aegis rollback`'s lookup
+/// (see `find_snapshot_target` in `rollback.rs`): rollback resolves an id to the
+/// **most recent** entry that recorded it, so this list keys by `snapshot_id` and
+/// keeps the latest occurrence's provider and timestamp. That keeps each row
+/// consistent with what `aegis rollback '<id>'` would actually target. Rows are
+/// listed newest-recorded first.
 pub(crate) fn format_snapshot_listing(entries: &[AuditEntry]) -> String {
-    let mut seen = std::collections::HashSet::new();
-    let mut rows: Vec<(String, String, String)> = Vec::new();
+    use std::collections::HashMap;
+
+    // id -> (order, provider, recorded-at); `order` is the global occurrence index
+    // so the latest record wins and we can sort by it without parsing timestamps.
+    let mut latest: HashMap<&str, (usize, &str, String)> = HashMap::new();
+    let mut order = 0usize;
     for entry in entries {
         let base = entry.as_base();
         for snapshot in &base.snapshots {
-            if seen.insert(snapshot.snapshot_id.clone()) {
-                rows.push((
-                    base.timestamp.to_string(),
-                    snapshot.plugin.clone(),
-                    snapshot.snapshot_id.clone(),
-                ));
-            }
+            order += 1;
+            let recorded = base.timestamp.to_string();
+            latest
+                .entry(snapshot.snapshot_id.as_str())
+                .and_modify(|slot| *slot = (order, snapshot.plugin.as_str(), recorded.clone()))
+                .or_insert((order, snapshot.plugin.as_str(), recorded));
         }
     }
 
-    if rows.is_empty() {
+    if latest.is_empty() {
         return "No snapshots recorded.\n".to_string();
     }
 
-    // Entries arrive oldest-first; show the most recent snapshot at the top.
-    rows.reverse();
+    // (order, id, provider, recorded-at) sorted newest-recorded first.
+    let mut rows: Vec<(usize, &str, &str, &str)> = latest
+        .iter()
+        .map(|(id, (order_idx, provider, recorded))| {
+            (*order_idx, *id, *provider, recorded.as_str())
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
 
-    let mut out = String::from("Recoverable snapshots (newest first):\n");
-    for (created, provider, id) in &rows {
+    let mut out = String::from("Recorded snapshots (newest first):\n");
+    for (_, id, provider, recorded) in &rows {
         out.push('\n');
         out.push_str(&format!("  provider: {provider}\n"));
-        out.push_str(&format!("  created:  {created}\n"));
+        out.push_str(&format!("  recorded: {recorded}\n"));
         out.push_str(&format!("  id:       {id}\n"));
     }
     out
@@ -441,6 +456,22 @@ mod tests {
             1,
             "snap-001 must be listed exactly once: {output}"
         );
+    }
+
+    #[test]
+    fn repeated_id_keeps_latest_provider_to_match_rollback() {
+        // `aegis rollback` resolves an id to its most recent entry; the listing must
+        // agree, so the latest occurrence's provider wins (not the earliest).
+        let entries = vec![
+            entry_with_snapshot("first", "git", "dup-id"),
+            entry_with_snapshot("second", "docker", "dup-id"),
+        ];
+
+        let output = format_snapshot_listing(&entries);
+
+        assert_eq!(output.matches("dup-id").count(), 1, "{output}");
+        assert!(output.contains("provider: docker"), "{output}");
+        assert!(!output.contains("provider: git"), "{output}");
     }
 
     #[test]
