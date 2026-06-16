@@ -120,6 +120,33 @@
         "user": ""
       }
     },
+    "prune": {
+      "description": "Snapshot prune retention settings.",
+      "$ref": "#/$defs/PruneConfig",
+      "default": {
+        "enabled": false,
+        "max_age_days": null,
+        "max_count_per_provider": null
+      }
+    },
+    "rules": {
+      "description": "Typed policy rules (TOML: `[[rules]]`).",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PolicyRule"
+      }
+    },
+    "sandbox": {
+      "description": "Sandbox layer settings.",
+      "$ref": "#/$defs/SandboxSettings",
+      "default": {
+        "allow_network": false,
+        "allow_write": [],
+        "enabled": false,
+        "required": false
+      }
+    },
     "snapshot_policy": {
       "description": "Controls which snapshot plugins run before dangerous commands.",
       "$ref": "#/$defs/SnapshotPolicy",
@@ -448,6 +475,98 @@
       },
       "additionalProperties": false
     },
+    "PolicyPatternToken": {
+      "description": "A single token in a typed policy rule pattern.\n\n- `Single(s)` matches exactly the literal string `s`.\n- `Alts(v)` matches any one of the strings in `v`.",
+      "anyOf": [
+        {
+          "description": "A single literal token.",
+          "type": "string"
+        },
+        {
+          "description": "A set of alternative tokens (any one must match).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "PolicyRule": {
+      "description": "A typed `[[rules]]` entry in `aegis.toml`.\n\nEach rule defines a token-sequence pattern and the decision to apply when a\ncommand matches.  Optional `match_examples` / `not_match_examples` let you\nembed self-documenting test cases that are verified at config-load time.",
+      "type": "object",
+      "properties": {
+        "decision": {
+          "description": "Decision when this rule fires and no `when` clause overrides it.",
+          "$ref": "#/$defs/PolicyRuleDecision"
+        },
+        "justification": {
+          "description": "Human-readable rationale stored in audit logs and shown in the UI.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "match_examples": {
+          "description": "Example commands that MUST match this rule (validated at load time).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "not_match_examples": {
+          "description": "Example commands that must NOT match this rule (validated at load time).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "pattern": {
+          "description": "Ordered list of tokens the command must start with.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PolicyPatternToken"
+          }
+        },
+        "when": {
+          "description": "Optional conditional override.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WhenClause"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern",
+        "decision"
+      ]
+    },
+    "PolicyRuleDecision": {
+      "description": "Decision produced by a typed `[[rules]]` policy entry in `aegis.toml`.\n\nSerializes and deserializes as a snake_case string (`\"allow\"`, `\"prompt\"`,\n`\"block\"`), but also accepts an internally-tagged map `{ decision = \"allow\" }`\nwhen deserialized from a bare TOML document (used in unit tests).",
+      "oneOf": [
+        {
+          "description": "Auto-approve the command without prompting.",
+          "type": "string",
+          "const": "Allow"
+        },
+        {
+          "description": "Show an interactive confirmation prompt.",
+          "type": "string",
+          "const": "Prompt"
+        },
+        {
+          "description": "Hard-block the command without prompting.",
+          "type": "string",
+          "const": "Block"
+        }
+      ]
+    },
     "PostgresSnapshotConfig": {
       "description": "Connection settings for a PostgreSQL snapshot plugin.\n\nCredentials are provided externally via `PGPASSWORD` or `~/.pgpass`.\nThe plugin is a no-op when [`database`](Self::database) is empty.",
       "type": "object",
@@ -478,6 +597,38 @@
       },
       "additionalProperties": false
     },
+    "PruneConfig": {
+      "description": "Prune configuration for `aegis snapshot prune`.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether prune is enabled. Currently advisory; manual `--yes` is still required.",
+          "type": "boolean",
+          "default": false
+        },
+        "max_age_days": {
+          "description": "Keep snapshots newer than this many days. `None` disables the age rule.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "max_count_per_provider": {
+          "description": "Keep the newest N snapshots per provider. `None` disables the count rule.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
     "RiskLevel": {
       "description": "Classifies the risk level of a shell command.\n\nOrdered by severity: `Safe < Warn < Danger < Block`.\n\n`#[non_exhaustive]` ensures match arms in external crates require a wildcard,\npreserving forward-compatibility if new levels are added in v2.",
       "oneOf": [
@@ -502,6 +653,35 @@
           "const": "Block"
         }
       ]
+    },
+    "SandboxSettings": {
+      "description": "Sandbox configuration — controls whether commands run inside a bwrap sandbox.",
+      "type": "object",
+      "properties": {
+        "allow_network": {
+          "description": "Whether the sandboxed process may access the network.",
+          "type": "boolean",
+          "default": false
+        },
+        "allow_write": {
+          "description": "Paths the sandboxed process is allowed to write to.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "description": "Enable the sandbox layer.",
+          "type": "boolean",
+          "default": false
+        },
+        "required": {
+          "description": "Fail hard if the sandbox cannot be set up (instead of falling back to unsandboxed exec).",
+          "type": "boolean",
+          "default": false
+        }
+      }
     },
     "SnapshotPolicy": {
       "description": "Controls when and how snapshot plugins run before dangerous commands.\n\n- `None`      — never snapshot.\n- `Selective` — only plugins enabled by `auto_snapshot_git` /\n  `auto_snapshot_docker` / `auto_snapshot_postgres` /\n  `auto_snapshot_mysql` / `auto_snapshot_supabase` /\n  `auto_snapshot_sqlite`.\n- `Full`      — run every registered plugin regardless of per-plugin flags.",
@@ -596,6 +776,30 @@
         "risk",
         "pattern",
         "description"
+      ]
+    },
+    "WhenClause": {
+      "description": "Conditional override: when environment variable `env` equals `value`, use\n`then` as the decision instead of the rule's default `decision`.",
+      "type": "object",
+      "properties": {
+        "env": {
+          "description": "Environment variable name to check.",
+          "type": "string"
+        },
+        "then": {
+          "description": "Decision to use when the condition is met.",
+          "$ref": "#/$defs/PolicyRuleDecision"
+        },
+        "value": {
+          "description": "Expected value of the environment variable.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "env",
+        "value",
+        "then"
       ]
     }
   }

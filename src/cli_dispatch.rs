@@ -31,7 +31,7 @@ pub(crate) fn run_cli(cli: Cli, runtime: &tokio::runtime::Runtime, handle: Handl
         Some(Commands::Off) => cli_commands::handle_toggle_off_command(),
         Some(Commands::Status) => cli_commands::handle_toggle_status_command(),
         Some(Commands::Rollback(args)) => cli_commands::handle_rollback_command(args, runtime),
-        Some(Commands::Snapshot(args)) => cli_commands::handle_snapshot_command(args),
+        Some(Commands::Snapshot(args)) => cli_commands::handle_snapshot_command(args, runtime),
         Some(Commands::Config(args)) => cli_commands::handle_config_command(args),
         Some(Commands::Hook) => install::run_hook(),
         Some(Commands::InstallHooks(args)) => install::run_install(&args),

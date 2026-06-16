@@ -53,6 +53,20 @@ pub enum AegisError {
     #[error("config error: {0}")]
     Config(String),
 
+    /// One or more prune candidates could not be deleted.
+    #[error(
+        "prune completed with failures: {failed_count} candidate(s) could not be deleted. \
+         {pruned} snapshot(s) were pruned successfully.\n{failed}"
+    )]
+    PrunePartialFailure {
+        /// Number of snapshots successfully pruned.
+        pruned: usize,
+        /// Number of snapshots that could not be deleted.
+        failed_count: usize,
+        /// Human-readable descriptions of each failed deletion.
+        failed: String,
+    },
+
     /// Wrapped I/O error from the standard library.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -111,6 +125,13 @@ impl From<aegis_snapshot::SnapshotError> for AegisError {
             aegis_snapshot::SnapshotError::Config(msg) => Self::Config(msg),
             aegis_snapshot::SnapshotError::Io(io) => Self::Io(io),
             aegis_snapshot::SnapshotError::Snapshot(msg) => Self::Snapshot(msg),
+            aegis_snapshot::SnapshotError::DeleteFailed {
+                plugin,
+                snapshot_id,
+                source,
+            } => Self::Snapshot(format!(
+                "failed to delete {plugin} snapshot {snapshot_id}: {source}"
+            )),
         }
     }
 }

@@ -219,6 +219,25 @@ impl SnapshotPlugin for SqlitePlugin {
         tracing::info!(snapshot_id = snapshot_id, "sqlite snapshot rolled back");
         Ok(())
     }
+
+    async fn delete(&self, snapshot_id: &str) -> Result<()> {
+        let (_original_path, dump_path) = Self::parse_snapshot_id(snapshot_id)?;
+        match fs::remove_file(&dump_path) {
+            Ok(()) => {
+                tracing::info!(path = %dump_path.display(), "sqlite dump deleted");
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %dump_path.display(), "sqlite dump already removed");
+                Ok(())
+            }
+            Err(error) => Err(SnapshotError::DeleteFailed {
+                plugin: "sqlite".to_string(),
+                snapshot_id: snapshot_id.to_string(),
+                source: error.to_string(),
+            }),
+        }
+    }
 }
 
 #[cfg(all(test, unix))]

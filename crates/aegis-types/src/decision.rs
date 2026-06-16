@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// User-visible outcome of the interception flow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Decision {
     /// User explicitly approved the command.
     Approved,
@@ -16,6 +17,8 @@ pub enum Decision {
     AutoApproved,
     /// Blocked by policy or because the command is too dangerous.
     Blocked,
+    /// Snapshot was removed by `aegis snapshot prune`.
+    Pruned,
 }
 
 impl fmt::Display for Decision {
@@ -25,6 +28,7 @@ impl fmt::Display for Decision {
             Decision::Denied => "denied",
             Decision::AutoApproved => "auto-approved",
             Decision::Blocked => "blocked",
+            Decision::Pruned => "pruned",
         };
 
         f.write_str(value)
@@ -40,8 +44,9 @@ impl FromStr for Decision {
             "denied" => Ok(Self::Denied),
             "auto-approved" => Ok(Self::AutoApproved),
             "blocked" => Ok(Self::Blocked),
+            "pruned" => Ok(Self::Pruned),
             other => Err(format!(
-                "invalid decision '{other}', expected one of: approved, denied, auto-approved, blocked"
+                "invalid decision '{other}', expected one of: approved, denied, auto-approved, blocked, pruned"
             )),
         }
     }
@@ -63,6 +68,7 @@ mod tests {
             Decision::Denied,
             Decision::AutoApproved,
             Decision::Blocked,
+            Decision::Pruned,
         ] {
             assert_eq!(decision.to_string().parse::<Decision>().unwrap(), decision);
         }
@@ -71,5 +77,27 @@ mod tests {
     #[test]
     fn from_str_rejects_unknown_value() {
         assert!("maybe".parse::<Decision>().is_err());
+    }
+
+    #[test]
+    fn test_decision_pruned_variant_exists() {
+        let decision = Decision::Pruned;
+        assert_eq!(decision, Decision::Pruned);
+    }
+
+    #[test]
+    fn test_decision_pruned_round_trips_through_display_and_from_str() {
+        let decision = Decision::Pruned;
+        let text = decision.to_string();
+        let parsed: Decision = text
+            .parse()
+            .expect("Pruned must parse from its display text");
+        assert_eq!(parsed, Decision::Pruned);
+    }
+
+    #[test]
+    fn test_decision_pruned_serializes_to_snake_case() {
+        let json = serde_json::to_string(&Decision::Pruned).expect("Pruned must serialize");
+        assert!(json.contains("Pruned"), "expected 'Pruned' in JSON: {json}");
     }
 }

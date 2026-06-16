@@ -513,6 +513,25 @@ impl SnapshotPlugin for MysqlPlugin {
         tracing::info!(snapshot_id = snapshot_id, "mysql snapshot rolled back");
         Ok(())
     }
+
+    async fn delete(&self, snapshot_id: &str) -> Result<()> {
+        let target = self.parse_snapshot_id(snapshot_id)?;
+        match std::fs::remove_file(&target.dump_path) {
+            Ok(()) => {
+                tracing::info!(path = %target.dump_path.display(), "mysql dump deleted");
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %target.dump_path.display(), "mysql dump already removed");
+                Ok(())
+            }
+            Err(error) => Err(SnapshotError::DeleteFailed {
+                plugin: "mysql".to_string(),
+                snapshot_id: snapshot_id.to_string(),
+                source: error.to_string(),
+            }),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ pub enum SandboxStatus {
     Unavailable,
     /// No sandbox was configured for this invocation.
     #[default]
+    #[serde(alias = "NotConfigured")]
     NotConfigured,
 }
 

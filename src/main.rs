@@ -8,6 +8,7 @@ mod cli_commands;
 mod cli_dispatch;
 mod install;
 mod policy_output;
+mod prune;
 mod rollback;
 mod shell_compat;
 mod shell_flow;
@@ -125,7 +126,7 @@ struct AuditArgs {
     #[arg(long)]
     command_contains: Option<String>,
 
-    /// Filter entries by decision: approved, denied, auto-approved, blocked.
+    /// Filter entries by decision: approved, denied, auto-approved, blocked, pruned.
     #[arg(long, value_parser = parse_decision)]
     decision: Option<Decision>,
 
@@ -165,6 +166,19 @@ struct SnapshotArgs {
 enum SnapshotCommand {
     /// List recoverable snapshots recorded in the audit log
     List,
+    /// Remove snapshot artifacts outside the configured retention policy
+    Prune(PruneArgs),
+}
+
+#[derive(Args)]
+struct PruneArgs {
+    /// Actually delete artifacts. Without this flag, prune shows a dry-run preview.
+    #[arg(long, conflicts_with = "dry_run")]
+    yes: bool,
+
+    /// Show what would be pruned without deleting anything.
+    #[arg(long, conflicts_with = "yes")]
+    dry_run: bool,
 }
 
 #[derive(Args)]

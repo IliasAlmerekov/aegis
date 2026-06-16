@@ -386,6 +386,45 @@ impl SnapshotPlugin for DockerPlugin {
 
         Ok(())
     }
+
+    async fn delete(&self, snapshot_id: &str) -> Result<()> {
+        if snapshot_id == NO_CONTAINERS {
+            tracing::info!("docker snapshot had no containers, nothing to delete");
+            return Ok(());
+        }
+
+        for line in snapshot_id.lines() {
+            let record: ContainerRecord = serde_json::from_str(line).map_err(|e| {
+                SnapshotError::Snapshot(format!("malformed docker snapshot record: {e}"))
+            })?;
+
+            let rmi_out = self
+                .run_docker_output(["rmi", &record.image], "docker rmi failed")
+                .await?;
+
+            if rmi_out.status.success() {
+                tracing::info!(image = %record.image, "docker snapshot image deleted");
+                continue;
+            }
+
+            let stderr = String::from_utf8_lossy(&rmi_out.stderr).to_string();
+            if stderr.contains("No such image")
+                || stderr.contains("no such image")
+                || stderr.to_lowercase().contains("not found")
+            {
+                tracing::info!(image = %record.image, "docker image already removed");
+                continue;
+            }
+
+            return Err(SnapshotError::DeleteFailed {
+                plugin: "docker".to_string(),
+                snapshot_id: snapshot_id.to_string(),
+                source: format!("docker rmi failed: {stderr}"),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

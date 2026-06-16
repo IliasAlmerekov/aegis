@@ -497,6 +497,99 @@ impl SnapshotPlugin for SupabasePlugin {
         tracing::info!(snapshot_id = snapshot_id, "supabase snapshot rolled back");
         Ok(())
     }
+
+    async fn delete(&self, snapshot_id: &str) -> Result<()> {
+        let manifest_path = Self::parse_snapshot_id(snapshot_id)?;
+
+        match fs::metadata(&manifest_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %manifest_path.display(), "supabase manifest already removed");
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(SnapshotError::DeleteFailed {
+                    plugin: "supabase".to_string(),
+                    snapshot_id: snapshot_id.to_string(),
+                    source: error.to_string(),
+                });
+            }
+            Ok(_) => {}
+        }
+
+        let manifest_bytes = match fs::read(&manifest_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(path = %manifest_path.display(), "supabase manifest already removed");
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(SnapshotError::DeleteFailed {
+                    plugin: "supabase".to_string(),
+                    snapshot_id: snapshot_id.to_string(),
+                    source: error.to_string(),
+                });
+            }
+        };
+
+        let manifest: SupabaseManifest = match serde_json::from_slice(&manifest_bytes) {
+            Ok(m) => m,
+            Err(error) => {
+                return Err(SnapshotError::DeleteFailed {
+                    plugin: "supabase".to_string(),
+                    snapshot_id: snapshot_id.to_string(),
+                    source: format!("failed to parse manifest: {error}"),
+                });
+            }
+        };
+
+        if let Ok(dump_path) = manifest.resolve_db_artifact_path(&manifest_path) {
+            match fs::remove_file(&dump_path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(SnapshotError::DeleteFailed {
+                        plugin: "supabase".to_string(),
+                        snapshot_id: snapshot_id.to_string(),
+                        source: format!("failed to remove dump {}: {error}", dump_path.display()),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        match fs::remove_file(&manifest_path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(SnapshotError::DeleteFailed {
+                    plugin: "supabase".to_string(),
+                    snapshot_id: snapshot_id.to_string(),
+                    source: format!(
+                        "failed to remove manifest {}: {error}",
+                        manifest_path.display()
+                    ),
+                });
+            }
+            _ => {}
+        }
+
+        if let Some(bundle_dir) = manifest_path.parent() {
+            match fs::remove_dir(bundle_dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+                Err(error) => {
+                    return Err(SnapshotError::DeleteFailed {
+                        plugin: "supabase".to_string(),
+                        snapshot_id: snapshot_id.to_string(),
+                        source: format!(
+                            "failed to remove bundle {}: {error}",
+                            bundle_dir.display()
+                        ),
+                    });
+                }
+            }
+        }
+
+        tracing::info!(snapshot_id = snapshot_id, "supabase snapshot deleted");
+        Ok(())
+    }
 }
 
 #[cfg(test)]
