@@ -84,6 +84,20 @@ fn read_audit_json(home: &Path, workspace: &Path) -> Vec<Value> {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn assert_audit_integrity_verified(home: &Path, workspace: &Path) {
+    let output = base_command(home)
+        .current_dir(workspace)
+        .args(["audit", "--verify-integrity"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "verify-integrity failed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
 #[test]
 fn concurrent_writers_do_not_corrupt_audit_log() {
     let home = TempDir::new().unwrap();
@@ -124,6 +138,10 @@ fn concurrent_writers_do_not_corrupt_audit_log() {
         .map(|index| format!("printf writer-{index:02}"))
         .collect::<BTreeSet<_>>();
     assert_eq!(commands, expected);
+
+    // The flock-serialized appends must leave the SHA-256 hash chain intact:
+    // `aegis audit --verify-integrity` exits 0 only on `Verified`.
+    assert_audit_integrity_verified(home.path(), workspace.path());
 }
 
 #[test]
@@ -252,6 +270,9 @@ fn concurrent_multi_process_bursts_do_not_lose_or_duplicate_entries() {
         })
         .collect::<BTreeSet<_>>();
     assert_eq!(commands, expected);
+
+    // Parallel Aegis *processes* must not break the hash chain (PRD §5.6 done-when).
+    assert_audit_integrity_verified(home.path(), workspace.path());
 }
 
 #[test]
