@@ -42,7 +42,8 @@ fn sandbox_backend_available() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        const PROBE: &str = "(version 1)\n(deny default)\n(allow process*)\n(allow file-read*)\n(allow signal*)\n";
+        const PROBE: &str =
+            "(version 1)\n(deny default)\n(allow process*)\n(allow file-read*)\n(allow signal*)\n";
         Command::new("/usr/bin/sandbox-exec")
             .args(["-p", PROBE, "/usr/bin/true"])
             .stdout(Stdio::null())
@@ -91,6 +92,11 @@ fn init_git_repo(path: &Path) {
         .output()
         .expect("git commit");
     assert!(commit.status.success(), "git commit failed: {commit:?}");
+}
+
+fn canonical_test_path(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|err| panic!("failed to canonicalize test path {}: {err}", path.display()))
 }
 
 fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output {
@@ -214,9 +220,10 @@ fn test_watch_mode_approved_danger_command_records_snapshots_before_exec() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     init_git_repo(cwd.path());
+    let cwd_path = canonical_test_path(cwd.path());
 
     fs::write(
-        cwd.path().join(".aegis.toml"),
+        cwd_path.join(".aegis.toml"),
         format!(
             r#"
 allowlist_override_level = "Danger"
@@ -225,13 +232,13 @@ pattern = "rm -rf /tmp/aegis-watch-approved"
 cwd = "{}"
 reason = "approved watch test"
             "#,
-            cwd.path().display()
+            cwd_path.display()
         ),
     )
     .unwrap();
 
     let input = b"{\"cmd\":\"rm -rf /tmp/aegis-watch-approved\",\"id\":\"approved-1\"}\n";
-    let output = aegis_watch_in(home.path(), cwd.path(), input);
+    let output = aegis_watch_in(home.path(), &cwd_path, input);
 
     assert!(
         output.status.success(),
@@ -340,13 +347,14 @@ fn test_watch_mode_approved_danger_command_child_observes_snapshot_before_exec()
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     init_git_repo(cwd.path());
+    let cwd_path = canonical_test_path(cwd.path());
 
     // Commit a baseline file so the repo is valid for stashing.
-    let baseline = cwd.path().join("baseline.txt");
+    let baseline = cwd_path.join("baseline.txt");
     fs::write(&baseline, "baseline\n").unwrap();
     let add = Command::new("git")
         .args(["add", "baseline.txt"])
-        .current_dir(cwd.path())
+        .current_dir(&cwd_path)
         .output()
         .expect("git add baseline");
     assert!(add.status.success(), "git add failed: {add:?}");
@@ -360,18 +368,18 @@ fn test_watch_mode_approved_danger_command_child_observes_snapshot_before_exec()
             "-m",
             "baseline",
         ])
-        .current_dir(cwd.path())
+        .current_dir(&cwd_path)
         .output()
         .expect("git commit baseline");
     assert!(commit.status.success(), "git commit failed: {commit:?}");
 
     // Create an untracked marker file. The git snapshot must stash it before
     // the child runs, so the child should not see it.
-    let marker = cwd.path().join("marker.txt");
+    let marker = cwd_path.join("marker.txt");
     fs::write(&marker, "present\n").unwrap();
 
     fs::write(
-        cwd.path().join(".aegis.toml"),
+        cwd_path.join(".aegis.toml"),
         format!(
             r#"
 allowlist_override_level = "Danger"
@@ -380,7 +388,7 @@ pattern = "rm -rf /tmp/aegis-watch-before-exec*"
 cwd = "{}"
 reason = "approved before-exec test"
             "#,
-            cwd.path().display()
+            cwd_path.display()
         ),
     )
     .unwrap();
@@ -393,7 +401,7 @@ reason = "approved before-exec test"
     let input = format!(
         "{{\"cmd\":\"rm -rf /tmp/aegis-watch-before-exec\\ntest ! -f marker.txt\",\"id\":\"before-exec-1\"}}\n"
     );
-    let output = aegis_watch_in(home.path(), cwd.path(), input.as_bytes());
+    let output = aegis_watch_in(home.path(), &cwd_path, input.as_bytes());
 
     assert!(
         output.status.success(),
@@ -441,13 +449,14 @@ fn test_shell_approved_danger_command_child_observes_snapshot_before_exec() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     init_git_repo(cwd.path());
+    let cwd_path = canonical_test_path(cwd.path());
 
     // Commit a baseline file so the repo is valid for stashing.
-    let baseline = cwd.path().join("baseline.txt");
+    let baseline = cwd_path.join("baseline.txt");
     fs::write(&baseline, "baseline\n").unwrap();
     let add = Command::new("git")
         .args(["add", "baseline.txt"])
-        .current_dir(cwd.path())
+        .current_dir(&cwd_path)
         .output()
         .expect("git add baseline");
     assert!(add.status.success(), "git add failed: {add:?}");
@@ -461,18 +470,18 @@ fn test_shell_approved_danger_command_child_observes_snapshot_before_exec() {
             "-m",
             "baseline",
         ])
-        .current_dir(cwd.path())
+        .current_dir(&cwd_path)
         .output()
         .expect("git commit baseline");
     assert!(commit.status.success(), "git commit failed: {commit:?}");
 
     // Create an untracked marker file. The git snapshot must stash it before
     // the child runs, so the child should not see it.
-    let marker = cwd.path().join("marker.txt");
+    let marker = cwd_path.join("marker.txt");
     fs::write(&marker, "present\n").unwrap();
 
     fs::write(
-        cwd.path().join(".aegis.toml"),
+        cwd_path.join(".aegis.toml"),
         format!(
             r#"
 allowlist_override_level = "Danger"
@@ -481,7 +490,7 @@ pattern = "rm -rf /tmp/aegis-shell-before-exec*"
 cwd = "{}"
 reason = "approved shell before-exec test"
             "#,
-            cwd.path().display()
+            cwd_path.display()
         ),
     )
     .unwrap();
@@ -492,8 +501,11 @@ reason = "approved shell before-exec test"
     // harmless rm from the marker assertion so the allowlist glob (which
     // excludes `;`, `&`, and `|`) still matches the whole command.
     let output = base_command(home.path())
-        .current_dir(cwd.path())
-        .args(["-c", "rm -rf /tmp/aegis-shell-before-exec\ntest ! -f marker.txt"])
+        .current_dir(&cwd_path)
+        .args([
+            "-c",
+            "rm -rf /tmp/aegis-shell-before-exec\ntest ! -f marker.txt",
+        ])
         .output()
         .expect("run aegis shell wrapper");
 
@@ -528,13 +540,14 @@ fn test_sandboxed_approved_danger_command_records_snapshots_before_exec() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     init_git_repo(cwd.path());
+    let cwd_path = canonical_test_path(cwd.path());
 
     // Commit a baseline file so the repo is valid for stashing.
-    let baseline = cwd.path().join("baseline.txt");
+    let baseline = cwd_path.join("baseline.txt");
     fs::write(&baseline, "baseline\n").unwrap();
     let add = Command::new("git")
         .args(["add", "baseline.txt"])
-        .current_dir(cwd.path())
+        .current_dir(&cwd_path)
         .output()
         .expect("git add baseline");
     assert!(add.status.success(), "git add failed: {add:?}");
@@ -548,14 +561,14 @@ fn test_sandboxed_approved_danger_command_records_snapshots_before_exec() {
             "-m",
             "baseline",
         ])
-        .current_dir(cwd.path())
+        .current_dir(&cwd_path)
         .output()
         .expect("git commit baseline");
     assert!(commit.status.success(), "git commit failed: {commit:?}");
 
     // Create an untracked marker file. The git snapshot must stash it before
     // the child runs, so the child should not see it.
-    let marker = cwd.path().join("marker.txt");
+    let marker = cwd_path.join("marker.txt");
     fs::write(&marker, "present\n").unwrap();
 
     // bwrap on Linux does not bind /bin, so use a shell located under /usr so
@@ -567,7 +580,7 @@ fn test_sandboxed_approved_danger_command_records_snapshots_before_exec() {
     }
 
     fs::write(
-        cwd.path().join(".aegis.toml"),
+        cwd_path.join(".aegis.toml"),
         format!(
             r#"
 allowlist_override_level = "Danger"
@@ -582,15 +595,18 @@ required = false
 allow_write = ["{}"]
 allow_network = false
             "#,
-            cwd.path().display(),
-            cwd.path().display()
+            cwd_path.display(),
+            cwd_path.display()
         ),
     )
     .unwrap();
 
     let output = base_command_with_shell(home.path(), shell)
-        .current_dir(cwd.path())
-        .args(["-c", "rm -rf /tmp/aegis-sandbox-before-exec\ntest ! -f marker.txt"])
+        .current_dir(&cwd_path)
+        .args([
+            "-c",
+            "rm -rf /tmp/aegis-sandbox-before-exec\ntest ! -f marker.txt",
+        ])
         .output()
         .expect("run aegis shell wrapper");
 
