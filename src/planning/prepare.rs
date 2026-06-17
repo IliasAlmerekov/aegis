@@ -4,7 +4,7 @@ use tokio::runtime::Handle;
 
 use crate::decision::ExecutionTransport;
 use crate::error::AegisError;
-use crate::planning::core::{PlanningRequest, plan_with_context};
+use crate::planning::core::{PlanningRequest, plan_with_context, plan_with_context_async};
 use crate::planning::types::{
     FailClosedAction, PlanningOutcome, SetupFailureKind, SetupFailurePlan,
 };
@@ -37,6 +37,20 @@ pub fn prepare_and_plan(
 ) -> PlanningOutcome {
     match prepared {
         PreparedPlanner::Ready(context) => plan_with_context(context, request),
+        PreparedPlanner::SetupFailure(plan) => {
+            let _ = request;
+            PlanningOutcome::SetupFailure(plan.clone())
+        }
+    }
+}
+
+/// Async variant of `prepare_and_plan` for callers inside an async runtime.
+pub async fn prepare_and_plan_async(
+    prepared: &PreparedPlanner,
+    request: PlanningRequest<'_>,
+) -> PlanningOutcome {
+    match prepared {
+        PreparedPlanner::Ready(context) => plan_with_context_async(context, request).await,
         PreparedPlanner::SetupFailure(plan) => {
             let _ = request;
             PlanningOutcome::SetupFailure(plan.clone())

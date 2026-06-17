@@ -13,7 +13,7 @@ use crate::decision::{BlockReason, ExecutionTransport};
 use crate::interceptor::parser::{extract_prefix, split_tokens};
 use crate::planning::{
     CwdState, ExecutionDisposition, InterceptionPlan, PlanningOutcome, PreparedPlanner,
-    SetupFailureKind, SetupFailurePlan, prepare_and_plan,
+    SetupFailureKind, SetupFailurePlan, prepare_and_plan_async,
 };
 use crate::runtime::{RuntimeContext, WatchAuditContext};
 use crate::ui::confirm::{
@@ -190,7 +190,7 @@ async fn process_frame(line: String, prepared: &PreparedPlanner, ci_detected: bo
             Err(_) => CwdState::Unavailable,
         }
     };
-    let outcome = prepare_and_plan(
+    let outcome = prepare_and_plan_async(
         prepared,
         crate::planning::PlanningRequest {
             command: &frame.cmd,
@@ -198,7 +198,8 @@ async fn process_frame(line: String, prepared: &PreparedPlanner, ci_detected: bo
             transport: ExecutionTransport::Watch,
             ci_detected,
         },
-    );
+    )
+    .await;
 
     match outcome {
         PlanningOutcome::SetupFailure(plan) => {
@@ -259,17 +260,12 @@ async fn run_watch_plan(
     let id = frame.id.clone();
     let context = runtime_context(prepared);
     let cwd = watch_execution_cwd(plan.decision_context().cwd_state());
-    let snapshots = create_watch_snapshots(context, &plan, cwd.as_path()).await;
 
     let runtime_decision = match plan.execution_disposition() {
         ExecutionDisposition::Execute => Decision::AutoApproved,
         ExecutionDisposition::RequiresApproval => {
             let decision = tokio::task::block_in_place(|| {
-                show_confirmation_via_tty_with_decision(
-                    plan.assessment(),
-                    plan.explanation(),
-                    &snapshots,
-                )
+                show_confirmation_via_tty_with_decision(plan.assessment(), plan.explanation(), &[])
             });
             if decision == PromptDecision::ApproveAlways {
                 if let Some(config_path) = active_config_path_for_append() {
@@ -351,10 +347,143 @@ async fn run_watch_plan(
         }
     };
 
+    // Snapshot creation is gated on the final approval decision: only
+    // `Approved`/`AutoApproved` commands create snapshots, and they do so
+    // before the audit append and before spawning the (optionally sandboxed)
+    // child process. `Denied`, `Blocked`, and other fail-closed variants append
+    // audit entries with an empty snapshot list.
+    match runtime_decision {
+        Decision::Approved | Decision::AutoApproved => {
+            let snapshots = create_watch_snapshots(context, &plan, cwd.as_path()).await;
+            if let Err(err) = context.append_watch_audit_entry(
+                plan.assessment(),
+                runtime_decision,
+                &snapshots,
+                plan.explanation(),
+                WatchAuditContext {
+                    allowlist_match: plan.decision_context().allowlist_match(),
+                    allowlist_effective: plan.policy_decision().allowlist_effective,
+                    ci_detected,
+                    source: frame.source.clone(),
+                    cwd: frame.cwd.clone(),
+                    id: id.clone(),
+                },
+            ) {
+                if emit_frame(&OutputFrame::Error {
+                    id: id.clone(),
+                    exit_code: 4,
+                    message: format!("audit log write failed: {err}"),
+                })
+                .is_err()
+                {
+                    std::process::exit(4);
+                }
+                return;
+            }
+            execute_and_emit(&frame.cmd, &cwd, id).await;
+        }
+        Decision::Denied => {
+            if !append_watch_audit_with_empty_snapshots(
+                context,
+                &plan,
+                runtime_decision,
+                ci_detected,
+                &frame,
+                &id,
+            ) {
+                return;
+            }
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Denied,
+                exit_code: 2,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+        Decision::Blocked => {
+            if !append_watch_audit_with_empty_snapshots(
+                context,
+                &plan,
+                runtime_decision,
+                ci_detected,
+                &frame,
+                &id,
+            ) {
+                return;
+            }
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Blocked,
+                exit_code: 3,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+        Decision::Pruned => {
+            // `Pruned` is not a runtime command decision, but if it ever appears
+            // in this path we fail closed rather than executing.
+            if !append_watch_audit_with_empty_snapshots(
+                context,
+                &plan,
+                runtime_decision,
+                ci_detected,
+                &frame,
+                &id,
+            ) {
+                return;
+            }
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Blocked,
+                exit_code: 3,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+        _ => {
+            // Future unknown decision variants are also fail-closed rather than executed.
+            if !append_watch_audit_with_empty_snapshots(
+                context,
+                &plan,
+                runtime_decision,
+                ci_detected,
+                &frame,
+                &id,
+            ) {
+                return;
+            }
+            if emit_frame(&OutputFrame::Result {
+                id,
+                decision: OutputDecision::Blocked,
+                exit_code: 3,
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+        }
+    }
+}
+
+fn append_watch_audit_with_empty_snapshots(
+    context: &RuntimeContext,
+    plan: &InterceptionPlan,
+    runtime_decision: Decision,
+    ci_detected: bool,
+    frame: &InputFrame,
+    id: &Option<String>,
+) -> bool {
     if let Err(err) = context.append_watch_audit_entry(
         plan.assessment(),
         runtime_decision,
-        &snapshots,
+        &[],
         plan.explanation(),
         WatchAuditContext {
             allowlist_match: plan.decision_context().allowlist_match(),
@@ -374,61 +503,9 @@ async fn run_watch_plan(
         {
             std::process::exit(4);
         }
-        return;
+        return false;
     }
-
-    match runtime_decision {
-        Decision::Denied => {
-            if emit_frame(&OutputFrame::Result {
-                id,
-                decision: OutputDecision::Denied,
-                exit_code: 2,
-            })
-            .is_err()
-            {
-                std::process::exit(4);
-            }
-        }
-        Decision::Blocked => {
-            if emit_frame(&OutputFrame::Result {
-                id,
-                decision: OutputDecision::Blocked,
-                exit_code: 3,
-            })
-            .is_err()
-            {
-                std::process::exit(4);
-            }
-        }
-        Decision::Approved | Decision::AutoApproved => {
-            execute_and_emit(&frame.cmd, &cwd, id).await;
-        }
-        Decision::Pruned => {
-            // `Pruned` is not a runtime command decision, but if it ever appears
-            // in this path we fail closed rather than executing.
-            if emit_frame(&OutputFrame::Result {
-                id,
-                decision: OutputDecision::Blocked,
-                exit_code: 3,
-            })
-            .is_err()
-            {
-                std::process::exit(4);
-            }
-        }
-        _ => {
-            // Future unknown decision variants are also fail-closed rather than executed.
-            if emit_frame(&OutputFrame::Result {
-                id,
-                decision: OutputDecision::Blocked,
-                exit_code: 3,
-            })
-            .is_err()
-            {
-                std::process::exit(4);
-            }
-        }
-    }
+    true
 }
 
 fn runtime_context(prepared: &PreparedPlanner) -> &RuntimeContext {

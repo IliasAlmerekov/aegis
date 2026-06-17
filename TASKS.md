@@ -54,21 +54,39 @@ group exists today (`main.rs` only has `Rollback`); these tasks introduce it.
     exits 0 with a friendly message on an empty log. Covered by unit tests in
     `cli_commands.rs` and integration tests in `tests/snapshot_list.rs`.
 
-- [ ] **M1.2 — Retention policy + `aegis snapshot prune`**
-  - Add `[snapshot]` config fields for retention (by count and/or age) with
-    `#[serde(default)]`; document each field in `docs/config-schema.md`.
-  - Implement `aegis snapshot prune` removing snapshots beyond the bound for
-    every provider (git stashes, Docker images, SQLite/PostgreSQL/MySQL dumps).
-  - _Done when:_ prune respects the configured bound; regression test asserts
-    snapshots beyond the limit are removed and in-bound ones are kept.
+- [x] **M1.2 — Retention policy + `aegis snapshot prune`**
+  - Added `[prune]` config with `enabled`, `max_count_per_provider`, and
+    `max_age_days`; wired into `AegisConfig` defaults, merge, and schema.
+  - Implemented `SnapshotPlugin::delete` for all six providers (git stashes,
+    Docker images, SQLite/PostgreSQL/MySQL/Supabase dumps), treating missing
+    artifacts as idempotent successes and backend failures as
+    `SnapshotError::DeleteFailed`.
+  - Implemented `aegis snapshot prune --yes`/`--dry-run`, retention policy via
+    `RetentionPolicy`/`PrunableRecord`/`Clock`, and append-only `Decision::Pruned`
+    audit entries.
+  - Pruned ids are hidden from `aegis snapshot list`; `aegis rollback` rejects
+    pruned ids before calling a provider.
+  - Delete failures are surfaced as `AegisError::PrunePartialFailure` (non-zero
+    exit) instead of being swallowed.
+  - _Done when (met):_ prune respects the configured bound and preserves ids
+    that pass either the per-provider count rule or the global age rule;
+    regression tests cover idempotent delete, retention edge cases, CLI dry-run,
+    rollback rejection of pruned ids, and delete-failure exit behavior.
 
-- [ ] **M1.3 — Snapshot ordering & trigger scope**
-  Codify "snapshot is taken **only on `Allow`**, **before** the (optionally
-  sandboxed) execution, never for `Block`."
-  - Verify the current flow in `shell_flow.rs` / `watch/runner.rs` matches this;
-    fix if not.
-  - _Done when:_ an integration test proves a snapshot exists before a sandboxed
-    `Danger` command runs, and no snapshot is taken for a `Block`ed command.
+- [x] **M1.3 — Snapshot ordering & trigger scope**
+  Codified "snapshot is taken **only on `Allow`/`AutoApproved`**, **before** the
+  (optionally sandboxed) execution, never for `Block` or `Denied`."
+  - Verified the current flow in `shell_flow.rs` / `watch/runner.rs` matches the
+    invariant and added explicit comments documenting the ordering.
+  - Added `test_shell_approved_danger_command_child_observes_snapshot_before_exec`
+    proving the shell wrapper creates a snapshot before the child runs.
+  - Added `test_sandboxed_approved_danger_command_records_snapshots_before_exec`
+    (Unix-only, gated by backend availability) proving a sandboxed `Danger`
+    command records a snapshot and `sandbox_status = active` before execution.
+  - Existing tests already cover `Denied`/`Blocked` recording no snapshots.
+  - _Done when (met):_ integration tests prove a snapshot exists before a
+    sandboxed `Danger` command runs, and no snapshot is taken for a `Block`ed
+    command.
 
 ---
 

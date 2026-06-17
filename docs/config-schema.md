@@ -139,9 +139,13 @@ Snapshot requests matter only for `Danger` flows.
 
 Important details:
 
+- snapshots are created only after a `Danger` command is approved (human approval or allowlist auto-approval), never for `Block` or for denied prompts
+- snapshots are created before the command is executed; when a sandbox is configured, the snapshot happens before sandbox confinement is applied
 - if there are no applicable snapshot plugins, no snapshots are requested even for `Danger`
 - `Audit` does not request snapshots
 - `Warn` does not request snapshots
+- blocked commands write an audit entry with an empty `snapshots` array
+- denied commands write an audit entry with an empty `snapshots` array
 
 Example:
 
