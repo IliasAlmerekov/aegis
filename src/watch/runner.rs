@@ -347,6 +347,11 @@ async fn run_watch_plan(
         }
     };
 
+    // Snapshot creation is gated on the final approval decision: only
+    // `Approved`/`AutoApproved` commands create snapshots, and they do so
+    // before the audit append and before spawning the (optionally sandboxed)
+    // child process. `Denied`, `Blocked`, and other fail-closed variants append
+    // audit entries with an empty snapshot list.
     match runtime_decision {
         Decision::Approved | Decision::AutoApproved => {
             let snapshots = create_watch_snapshots(context, &plan, cwd.as_path()).await;

@@ -158,9 +158,10 @@ pub(crate) fn run_planned_shell_command(
 /// Create snapshots, append the audit entry, and execute the command.
 ///
 /// This helper captures the shared ordering for auto-approved and
-/// human-approved execution branches: snapshot creation happens after the
-/// final approval decision and before both the audit append and the child
-/// process start.
+/// human-approved execution branches: snapshot creation happens only after the
+/// final `Allow`/`AutoApproved` decision and before both the audit append and
+/// the (optionally sandboxed) child process start. `Block` and `Denied`
+/// branches never reach this function, so they cannot create snapshots.
 fn execute_with_snapshots(
     cmd: &str,
     verbose: bool,

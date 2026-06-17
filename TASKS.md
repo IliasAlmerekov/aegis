@@ -73,13 +73,20 @@ group exists today (`main.rs` only has `Rollback`); these tasks introduce it.
     regression tests cover idempotent delete, retention edge cases, CLI dry-run,
     rollback rejection of pruned ids, and delete-failure exit behavior.
 
-- [ ] **M1.3 — Snapshot ordering & trigger scope**
-  Codify "snapshot is taken **only on `Allow`**, **before** the (optionally
-  sandboxed) execution, never for `Block`."
-  - Verify the current flow in `shell_flow.rs` / `watch/runner.rs` matches this;
-    fix if not.
-  - _Done when:_ an integration test proves a snapshot exists before a sandboxed
-    `Danger` command runs, and no snapshot is taken for a `Block`ed command.
+- [x] **M1.3 — Snapshot ordering & trigger scope**
+  Codified "snapshot is taken **only on `Allow`/`AutoApproved`**, **before** the
+  (optionally sandboxed) execution, never for `Block` or `Denied`."
+  - Verified the current flow in `shell_flow.rs` / `watch/runner.rs` matches the
+    invariant and added explicit comments documenting the ordering.
+  - Added `test_shell_approved_danger_command_child_observes_snapshot_before_exec`
+    proving the shell wrapper creates a snapshot before the child runs.
+  - Added `test_sandboxed_approved_danger_command_records_snapshots_before_exec`
+    (Unix-only, gated by backend availability) proving a sandboxed `Danger`
+    command records a snapshot and `sandbox_status = active` before execution.
+  - Existing tests already cover `Denied`/`Blocked` recording no snapshots.
+  - _Done when (met):_ integration tests prove a snapshot exists before a
+    sandboxed `Danger` command runs, and no snapshot is taken for a `Block`ed
+    command.
 
 ---
 

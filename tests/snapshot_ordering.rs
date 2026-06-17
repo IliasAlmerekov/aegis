@@ -17,11 +17,44 @@ fn aegis_bin() -> PathBuf {
 }
 
 fn base_command(home: &Path) -> Command {
+    base_command_with_shell(home, Path::new("/bin/sh"))
+}
+
+fn base_command_with_shell(home: &Path, shell: &Path) -> Command {
     let mut command = Command::new(aegis_bin());
-    command.env("AEGIS_REAL_SHELL", "/bin/sh");
+    command.env("AEGIS_REAL_SHELL", shell);
     command.env("AEGIS_CI", "0");
     command.env("HOME", home);
     command
+}
+
+#[cfg(unix)]
+fn sandbox_backend_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("bwrap")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        const PROBE: &str = "(version 1)\n(deny default)\n(allow process*)\n(allow file-read*)\n(allow signal*)\n";
+        Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", PROBE, "/usr/bin/true"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        false
+    }
 }
 
 fn read_audit_entries(home: &Path) -> Vec<Value> {
@@ -400,6 +433,196 @@ reason = "approved before-exec test"
     assert!(
         !snapshots.is_empty(),
         "approved watch danger command must record snapshots, got {snapshots:?}"
+    );
+}
+
+#[test]
+fn test_shell_approved_danger_command_child_observes_snapshot_before_exec() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    init_git_repo(cwd.path());
+
+    // Commit a baseline file so the repo is valid for stashing.
+    let baseline = cwd.path().join("baseline.txt");
+    fs::write(&baseline, "baseline\n").unwrap();
+    let add = Command::new("git")
+        .args(["add", "baseline.txt"])
+        .current_dir(cwd.path())
+        .output()
+        .expect("git add baseline");
+    assert!(add.status.success(), "git add failed: {add:?}");
+    let commit = Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@aegis.dev",
+            "-c",
+            "user.name=Aegis Test",
+            "commit",
+            "-m",
+            "baseline",
+        ])
+        .current_dir(cwd.path())
+        .output()
+        .expect("git commit baseline");
+    assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+    // Create an untracked marker file. The git snapshot must stash it before
+    // the child runs, so the child should not see it.
+    let marker = cwd.path().join("marker.txt");
+    fs::write(&marker, "present\n").unwrap();
+
+    fs::write(
+        cwd.path().join(".aegis.toml"),
+        format!(
+            r#"
+allowlist_override_level = "Danger"
+[[allow]]
+pattern = "rm -rf /tmp/aegis-shell-before-exec*"
+cwd = "{}"
+reason = "approved shell before-exec test"
+            "#,
+            cwd.path().display()
+        ),
+    )
+    .unwrap();
+
+    // If the snapshot ran before the child, marker.txt is gone and the test
+    // command succeeds. If the child ran first, marker.txt still exists, the
+    // test fails, and the shell exits non-zero. Use a newline to separate the
+    // harmless rm from the marker assertion so the allowlist glob (which
+    // excludes `;`, `&`, and `|`) still matches the whole command.
+    let output = base_command(home.path())
+        .current_dir(cwd.path())
+        .args(["-c", "rm -rf /tmp/aegis-shell-before-exec\ntest ! -f marker.txt"])
+        .output()
+        .expect("run aegis shell wrapper");
+
+    assert!(
+        output.status.success(),
+        "shell child must observe marker.txt already stashed (snapshot before exec), stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1, "exactly one audit entry expected");
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Danger");
+
+    let snapshots = entries[0]["snapshots"]
+        .as_array()
+        .expect("snapshots must be an array");
+    assert!(
+        !snapshots.is_empty(),
+        "approved shell danger command must record snapshots, got {snapshots:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_sandboxed_approved_danger_command_records_snapshots_before_exec() {
+    if !sandbox_backend_available() {
+        println!("sandbox backend not available on this host; skipping");
+        return;
+    }
+
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    init_git_repo(cwd.path());
+
+    // Commit a baseline file so the repo is valid for stashing.
+    let baseline = cwd.path().join("baseline.txt");
+    fs::write(&baseline, "baseline\n").unwrap();
+    let add = Command::new("git")
+        .args(["add", "baseline.txt"])
+        .current_dir(cwd.path())
+        .output()
+        .expect("git add baseline");
+    assert!(add.status.success(), "git add failed: {add:?}");
+    let commit = Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@aegis.dev",
+            "-c",
+            "user.name=Aegis Test",
+            "commit",
+            "-m",
+            "baseline",
+        ])
+        .current_dir(cwd.path())
+        .output()
+        .expect("git commit baseline");
+    assert!(commit.status.success(), "git commit failed: {commit:?}");
+
+    // Create an untracked marker file. The git snapshot must stash it before
+    // the child runs, so the child should not see it.
+    let marker = cwd.path().join("marker.txt");
+    fs::write(&marker, "present\n").unwrap();
+
+    // bwrap on Linux does not bind /bin, so use a shell located under /usr so
+    // the sandboxed child can actually exec it.
+    let shell = Path::new("/usr/bin/bash");
+    if !shell.exists() {
+        println!("{shell:?} not present; skipping sandboxed ordering test");
+        return;
+    }
+
+    fs::write(
+        cwd.path().join(".aegis.toml"),
+        format!(
+            r#"
+allowlist_override_level = "Danger"
+[[allow]]
+pattern = "rm -rf /tmp/aegis-sandbox-before-exec*"
+cwd = "{}"
+reason = "approved sandbox before-exec test"
+
+[sandbox]
+enabled = true
+required = false
+allow_write = ["{}"]
+allow_network = false
+            "#,
+            cwd.path().display(),
+            cwd.path().display()
+        ),
+    )
+    .unwrap();
+
+    let output = base_command_with_shell(home.path(), shell)
+        .current_dir(cwd.path())
+        .args(["-c", "rm -rf /tmp/aegis-sandbox-before-exec\ntest ! -f marker.txt"])
+        .output()
+        .expect("run aegis shell wrapper");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        && stderr.contains("landlock restrict_self: Operation not permitted")
+    {
+        println!("landlock restrict_self unavailable in this environment; skipping");
+        return;
+    }
+
+    assert!(
+        output.status.success(),
+        "sandboxed child must observe marker.txt already stashed (snapshot before exec), stderr:\n{stderr}"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries.len(), 1, "exactly one audit entry expected");
+    assert_eq!(entries[0]["decision"], "AutoApproved");
+    assert_eq!(entries[0]["risk"], "Danger");
+    assert_eq!(
+        entries[0]["sandbox_status"], "active",
+        "sandboxed command must record active sandbox status, got: {}",
+        entries[0]["sandbox_status"]
+    );
+
+    let snapshots = entries[0]["snapshots"]
+        .as_array()
+        .expect("snapshots must be an array");
+    assert!(
+        !snapshots.is_empty(),
+        "approved sandboxed danger command must record snapshots, got {snapshots:?}"
     );
 }
 
