@@ -23,6 +23,7 @@ These items are launch blockers for the current public line:
 
 - [ ] `README.md`, `docs/*`, and release notes agree on Aegis being a
       heuristic shell guardrail, not a sandbox or hard security boundary.
+- [ ] CI exercises the `curl | sh` installer against a real GitHub Release artifact on every supported platform.
 - [ ] The convenience installer and troubleshooting paths are documented
       clearly enough for first-time users to complete installation.
 - [ ] The release workflow is exercised on a real tag before the release is
@@ -47,6 +48,10 @@ posture later:
       flow.
 - [ ] Clear maturity policy for snapshot providers and their rollback limits.
 - [ ] Stronger default guidance for audit integrity and log verification.
+
+## Live installer validation
+
+The convenience installer is exercised end-to-end in CI on `ubuntu-latest` and `macos-latest` by the `live-installer` job. The test downloads the latest GitHub Release asset for the host platform, verifies the SHA-256 sidecar, installs the binary into a temporary `BINDIR`, and asserts that `aegis --version` succeeds. This job is gated in the test suite by the `AEGIS_TEST_LIVE_INSTALL=1` environment variable so default `cargo test` remains network-free.
 
 ## Verification-first manual install path
 

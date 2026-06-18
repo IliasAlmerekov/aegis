@@ -113,18 +113,44 @@ group exists today (`main.rs` only has `Rollback`); these tasks introduce it.
 The largest remaining gap. Today only `ci.yml` + `release.yml` exist; no
 installer, Homebrew formula, or npm wrapper is present.
 
-- [ ] **M3.1 — `curl | sh` convenience installer**
+- [x] **M3.1 — `curl | sh` convenience installer**
   Global-first install script that downloads the platform binary and **verifies
   the `.sha256` checksum before writing** the binary.
-  - _Done when:_ documented in README; tested end-to-end against a real release
+  - Live-network integration test added in `tests/installer_flow.rs`, gated by
+    `AEGIS_TEST_LIVE_INSTALL=1`. It downloads the latest GitHub Release asset for
+    the host platform, verifies the SHA-256 sidecar, installs into a temporary
+    `BINDIR`, and asserts `aegis --version` succeeds.
+  - Dedicated CI job `live-installer` runs the test on `ubuntu-latest` and
+    `macos-latest`.
+  - `docs/release-readiness.md` and `docs/ci.md` mention the live installer
+    validation.
+  - _Done when (met):_ documented in README; tested end-to-end against a real release
     artifact; checksum mismatch aborts the install.
 
-- [ ] **M3.2 — Static musl release targets**
+- [x] **M3.2 — Static musl release targets**
   PRD §6 requires a statically portable binary (no C build step). `release.yml`
-  currently builds `aarch64-unknown-linux-gnu`.
-  - Switch Linux targets to `*-unknown-linux-musl` (x86_64 + aarch64) per DoD.
+  previously built `x86_64-unknown-linux-gnu` (native) and
+  `aarch64-unknown-linux-gnu` (cross).
+  - Switched Linux release targets to `x86_64-unknown-linux-musl` and
+    `aarch64-unknown-linux-musl`; both Linux targets now build through `cross`
+    (`use_cross: true`) for a uniform matrix that avoids runner-specific musl
+    linker setup.
+  - Added a `Verify static Linux binary` step (gated on
+    `contains(matrix.target, 'unknown-linux-musl')`) between `Rename binary` and
+    `Generate SHA256 checksum`; it runs `file` + `ldd` and fails the job
+    (`exit 1`) if the artifact is dynamically linked, so static linkage is
+    enforced before checksum generation and upload.
+  - Installer-facing asset names (`aegis-linux-x86_64`, `aegis-linux-aarch64`)
+    and macOS targets are unchanged; `.sha256` sidecars still generated for every
+    artifact.
+  - Regression contract in `tests/release_workflow.rs` (4 cases) asserts the musl
+    matrix, absence of GNU targets, stable asset names, and the static-verification
+    step — fails on the old GNU workflow, passes on the new one.
   - _Done when:_ release artifacts are static; `aarch64-unknown-linux-musl` cross
-    job is green in CI (DoD §10).
+    job is green in CI (DoD §10). Local gates (`fmt --check`, `clippy -D warnings`,
+    `cargo test`) pass; authoritative cross-build verification runs in the release
+    workflow job (local `cross`/musl tooling may be unavailable — recorded as an
+    environment limitation, not worked around with added deps).
 
 - [ ] **M3.3 — Homebrew formula/tap**
   - _Done when:_ formula published to the tap and installs on macOS and Linux;

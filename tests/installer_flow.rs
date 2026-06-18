@@ -84,6 +84,16 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{digest:x}")
 }
 
+fn host_asset_name() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Some("aegis-linux-x86_64"),
+        ("linux", "aarch64") => Some("aegis-linux-aarch64"),
+        ("macos", "x86_64") => Some("aegis-macos-x86_64"),
+        ("macos", "aarch64") => Some("aegis-macos-aarch64"),
+        _ => None,
+    }
+}
+
 fn write_release_checksum(path: &Path, asset_name: &str, digest: &str) {
     fs::write(path, format!("{digest}  {asset_name}\n")).unwrap();
 }
@@ -1566,5 +1576,70 @@ fn uninstall_script_honors_explicit_rc_override_without_shell_detection() {
     assert!(
         !aegis_path.exists(),
         "uninstall must still remove the installed binary when using an explicit rc override"
+    );
+}
+#[test]
+fn test_installer_live_github_release_download() {
+    if std::env::var("AEGIS_TEST_LIVE_INSTALL").ok().as_deref() != Some("1") {
+        return;
+    }
+
+    let asset = host_asset_name().expect("unsupported host platform for live installer test");
+    let temp = TempDir::new().unwrap();
+    let bindir = temp.path().join("bin");
+    let rc_file = temp.path().join(".bashrc");
+    let stub_dir = temp.path().join("stub-bin");
+
+    fs::create_dir_all(&bindir).unwrap();
+    fs::write(&rc_file, "").unwrap();
+
+    let real_path = std::env::var("PATH").unwrap_or_default();
+    let path_value = format!("{}:{}", installer_path(&temp, &stub_dir), real_path);
+    let bindir_str = bindir.display().to_string();
+    let rc_file_str = rc_file.display().to_string();
+    let (os, arch) = asset
+        .strip_prefix("aegis-")
+        .unwrap()
+        .split_once('-')
+        .unwrap();
+
+    let output = run_script(
+        "install.sh",
+        &[
+            ("AEGIS_BINDIR", &bindir_str),
+            ("AEGIS_SHELL_RC", &rc_file_str),
+            ("AEGIS_OS", os),
+            ("AEGIS_ARCH", arch),
+            ("PATH", &path_value),
+            ("SHELL", "/bin/bash"),
+            ("AEGIS_REAL_SHELL", "/bin/bash"),
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "live installer must succeed: stdout=
+{}
+stderr=
+{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let aegis_path = bindir.join("aegis");
+    assert!(
+        aegis_path.exists(),
+        "live installer must place binary into bindir"
+    );
+
+    let version_output = Command::new(&aegis_path).arg("--version").output().unwrap();
+    assert!(
+        version_output.status.success(),
+        "installed aegis --version must succeed: stdout=
+{}
+stderr=
+{}",
+        String::from_utf8_lossy(&version_output.stdout),
+        String::from_utf8_lossy(&version_output.stderr)
     );
 }
