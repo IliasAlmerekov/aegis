@@ -1,0 +1,119 @@
+use std::path::Path;
+
+fn repo_file(path: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} should be readable: {error}", path.display()))
+}
+
+fn formula() -> String {
+    repo_file("packaging/homebrew/Formula/aegis.rb")
+}
+
+#[test]
+fn homebrew_formula_should_install_release_binary_assets_for_all_supported_platforms() {
+    let formula = formula();
+
+    for asset in [
+        "aegis-linux-x86_64",
+        "aegis-linux-aarch64",
+        "aegis-macos-x86_64",
+        "aegis-macos-aarch64",
+    ] {
+        assert!(
+            formula.contains(asset),
+            "Homebrew formula must reference release asset {asset}"
+        );
+    }
+
+    assert!(
+        formula.contains("on_macos do"),
+        "formula must branch for macOS assets"
+    );
+    assert!(
+        formula.contains("on_linux do"),
+        "formula must branch for Linux assets"
+    );
+}
+
+#[test]
+fn homebrew_formula_should_pin_each_download_with_a_sha256() {
+    let formula = formula();
+    let sha_count = formula
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            trimmed.starts_with("sha256 \"")
+                && trimmed.ends_with('"')
+                && trimmed
+                    .trim_start_matches("sha256 \"")
+                    .trim_end_matches('"')
+                    .chars()
+                    .all(|ch| ch.is_ascii_hexdigit())
+                && trimmed.trim_start_matches("sha256 \"").trim_end_matches('"').len() == 64
+        })
+        .count();
+
+    assert_eq!(
+        sha_count, 4,
+        "formula must pin exactly four binary downloads with 64-hex SHA256 values"
+    );
+}
+
+#[test]
+fn homebrew_formula_should_install_only_the_aegis_binary() {
+    let formula = formula();
+
+    assert!(
+        formula.contains("bin.install"),
+        "formula must install the downloaded binary into Homebrew's bin directory"
+    );
+    assert!(
+        formula.contains("=> \"aegis\""),
+        "formula must rename the platform asset to the executable name aegis"
+    );
+    assert!(
+        !formula.contains("curl -fsSL"),
+        "Homebrew formula must not shell out to the convenience curl installer"
+    );
+    assert!(
+        !formula.contains(".bashrc") && !formula.contains(".zshrc"),
+        "Homebrew formula must not mutate user shell rc files during install"
+    );
+}
+
+#[test]
+fn homebrew_formula_should_have_a_non_interactive_runtime_test() {
+    let formula = formula();
+
+    assert!(
+        formula.contains("test do"),
+        "formula must include a Homebrew test block"
+    );
+    assert!(
+        formula.contains("#{bin}/aegis -c"),
+        "formula test should exercise Aegis command execution, not only --version"
+    );
+    assert!(
+        formula.contains("brew-test"),
+        "formula test should assert a deterministic safe command output"
+    );
+}
+
+#[test]
+fn homebrew_formula_should_explain_post_install_setup_caveats() {
+    let formula = formula();
+
+    assert!(
+        formula.contains("def caveats"),
+        "formula must explain Homebrew-specific post-install setup"
+    );
+    assert!(
+        formula.contains("aegis install-hooks --all"),
+        "caveats should tell users how to install supported agent hooks"
+    );
+    assert!(
+        formula.contains("AEGIS_REAL_SHELL"),
+        "caveats should explain shell proxy setup is explicit after brew install"
+    );
+}
