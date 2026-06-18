@@ -174,12 +174,15 @@ installer, Homebrew formula, or npm wrapper is present.
 The PRD drops **native Windows** (WSL2-only); `ROADMAP.md` Phase 0.5 / 6.3 still
 reference native Windows CI and Job Objects. Align the repo with the PRD.
 
-- [ ] **M4.1 — Remove native-Windows scope**
-  - Drop / gate the native `windows-latest` CI job and any Windows Job Object
-    sandbox code that the PRD now lists as out of scope (§11).
-  - Ensure docs (`docs/platform-support.md`, README) state: Windows is supported
-    **only inside WSL2**, where it behaves as Linux.
-  - _Done when:_ CI matrix matches PRD §8 (Linux x86_64/aarch64, macOS
+- [x] **M4.1 — Remove native-Windows scope**
+  - Removed the native `windows-latest` CI job from the 1.0 matrix.
+  - Removed native Windows Job Object sandbox dispatch/code from
+    `aegis-sandbox`; native Windows now routes to unsupported sandbox behavior,
+    while WSL2 continues to use the Linux implementation.
+  - Native Windows shell execution fails explicitly with WSL2 guidance instead
+    of falling through to `PowerShell`/`cmd.exe` semantics.
+  - Docs and regression tests keep WSL2-as-Linux separate from native Windows.
+  - _Done when (met):_ CI matrix matches PRD §8 (Linux x86_64/aarch64, macOS
     arm64/x86_64; Windows covered transitively via WSL2/Linux); no doc claims
     native PowerShell/cmd support.
 
@@ -249,7 +252,7 @@ Final checklist; many items depend on M1–M5.
 1. ~~**M2** (audit flock)~~ — ✅ done; lock was already implemented, done-when now proven by `tests/audit_concurrency.rs`.
 2. **M1** (snapshot lifecycle/UX) — self-contained feature work; **next up**, start with M1.1 (`aegis snapshot list`).
 3. ~~**M5.1** (800-LoC file-size budget)~~ — ✅ done; sandbox split plus config/snapshot/integration-test extractions complete, enforced by `tests/file_size_budget.rs`.
-4. **M4** (platform reconciliation) — prevents shipping contradictory Windows claims.
+4. ~~**M4** (platform reconciliation)~~ — ✅ done; native Windows scope removed, WSL2 documented as Linux.
 5. **M3** (distribution) — largest effort; can parallelize formula/npm/installer.
 6. **M5.2–M5.4** (CI gates) — fold into the release-hardening push.
 7. **M6** (DoD sign-off) — final gate before tagging 1.0.

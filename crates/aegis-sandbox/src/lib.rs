@@ -5,12 +5,14 @@
 //! sandbox on supported platforms:
 //! - **Linux**: bwrap + Landlock
 //! - **macOS**: Seatbelt (`sandbox-exec`)
-//! - **Windows**: Job Objects
+//!
+//! Native Windows is intentionally unsupported for Aegis 1.0. Windows users
+//! should run Aegis inside WSL2, where it behaves as Linux.
 //!
 //! Platform-specific implementation lives in a private `platform` module alias
-//! that resolves to one of `linux.rs`, `macos.rs`, `windows.rs`, or
-//! `unsupported.rs` depending on the build target. Shared helpers
-//! (forced-unavailable test hook, bypass warning) live in `support.rs`.
+//! that resolves to `linux.rs`, `macos.rs`, or `unsupported.rs` depending on the
+//! build target. Shared helpers (forced-unavailable test hook, bypass warning)
+//! live in `support.rs`.
 
 use std::path::PathBuf;
 
@@ -27,11 +29,9 @@ mod platform;
 #[path = "macos.rs"]
 mod platform;
 
-#[cfg(windows)]
-#[path = "windows.rs"]
-mod platform;
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+// Native `windows` is intentionally routed to the unsupported module for
+// Aegis 1.0; Windows users should run Aegis inside WSL2/Linux.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[path = "unsupported.rs"]
 mod platform;
 
@@ -92,9 +92,8 @@ pub enum SandboxResult {
 /// Return `true` when the sandbox infrastructure is available for `config`.
 ///
 /// This is a lightweight check used by callers to record audit state
-/// without forking. On Windows, always returns `true` (Job Objects are
-/// available on all Vista+ systems). On other non-Linux/non-macOS targets
-/// always returns `false`.
+/// without forking. Native Windows and other non-Linux/non-macOS targets
+/// always return `false`; Windows users should run Aegis inside WSL2/Linux.
 pub fn sandbox_available_for(config: &SandboxConfig) -> bool {
     platform::sandbox_available_for(config)
 }

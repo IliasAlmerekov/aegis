@@ -220,39 +220,30 @@ pub(crate) fn exec_command(
     #[cfg(not(unix))]
     {
         #[cfg(windows)]
-        if let Some(sb_config) = sandbox {
-            let profile = aegis_sandbox::SandboxProfile::from_config(sb_config);
-            let executor = aegis_sandbox::SandboxExecutor::new(profile);
-            match executor.run(cmd) {
-                Ok(aegis_sandbox::SandboxResult::Success(code)) => return code,
-                Ok(aegis_sandbox::SandboxResult::Unavailable) if !sb_config.required => {}
-                Ok(aegis_sandbox::SandboxResult::Unavailable) => {
-                    eprintln!("error: sandbox required but unavailable on this system");
-                    return EXIT_INTERNAL;
-                }
-                Err(e) => {
-                    eprintln!("error: sandbox execution failed: {e}");
-                    return EXIT_INTERNAL;
-                }
-            }
+        {
+            let _ = (cmd, launch, sandbox);
+            eprintln!("error: native Windows is unsupported; run Aegis inside WSL2/Linux instead");
+            return EXIT_INTERNAL;
         }
 
         #[cfg(not(windows))]
-        let _ = sandbox;
+        {
+            let _ = sandbox;
 
-        let mut command = Command::new(&shell);
-        command
-            .arg(launch.command_flag(&shell))
-            .arg(cmd)
-            .args(&launch.positional_args)
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        match command.status() {
-            Ok(status) => status.code().unwrap_or(EXIT_INTERNAL),
-            Err(err) => {
-                eprintln!("error: failed to spawn shell {}: {err}", shell.display());
-                EXIT_INTERNAL
+            let mut command = Command::new(&shell);
+            command
+                .arg(launch.command_flag(&shell))
+                .arg(cmd)
+                .args(&launch.positional_args)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+            match command.status() {
+                Ok(status) => status.code().unwrap_or(EXIT_INTERNAL),
+                Err(err) => {
+                    eprintln!("error: failed to spawn shell {}: {err}", shell.display());
+                    EXIT_INTERNAL
+                }
             }
         }
     }
