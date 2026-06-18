@@ -33,9 +33,12 @@ regenerated from a release tag by `scripts/update-homebrew-formula.sh`. The
 required `brew tap` / `brew install` / `brew test` commands on macOS and Linux
 are listed in `docs/release-readiness.md`. A gated live test
 (`AEGIS_TEST_LIVE_HOMEBREW=1`) lives in `tests/homebrew_live.rs` and keeps
-default `cargo test` network-free; a CI job that runs it on
-`ubuntu-latest`/`macos-latest` will be added only after explicit workflow
-sign-off.
+default `cargo test` network-free.
+
+The manual `.github/workflows/homebrew-live.yml` workflow runs that gated test
+on `ubuntu-latest` and `macos-latest` via `workflow_dispatch` only. Do not wire
+it into default push/pull-request CI until the tap is published and explicit
+workflow sign-off is granted.
 
 ## What CI Guarantees
 

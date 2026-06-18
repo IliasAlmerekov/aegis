@@ -66,7 +66,9 @@ The convenience installer is exercised end-to-end in CI on `ubuntu-latest` and `
 Homebrew validation is currently a release-operator smoke test rather than a
 default CI job. The required commands are listed above; a gated live test
 (`AEGIS_TEST_LIVE_HOMEBREW=1`) lives in `tests/homebrew_live.rs` and can be
-run manually where Homebrew is available.
+run manually where Homebrew is available. The manual
+`.github/workflows/homebrew-live.yml` workflow can run the same gated test on
+GitHub-hosted Linux and macOS runners after the tap is published.
 
 ## Homebrew tap publish runbook
 
