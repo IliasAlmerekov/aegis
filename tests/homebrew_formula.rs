@@ -203,3 +203,25 @@ fn homebrew_formula_should_download_raw_binaries_without_decompression() {
         "every raw-binary url must opt out of archive decompression with using: :nounzip"
     );
 }
+
+#[test]
+fn release_readiness_should_publish_a_concrete_tap_runbook() {
+    let docs = repo_file("docs/release-readiness.md");
+
+    assert!(
+        docs.contains("gh repo create IliasAlmerekov/homebrew-aegis"),
+        "runbook must show how to create the tap repository"
+    );
+    assert!(
+        docs.contains("brew audit --strict --online --formula aegis"),
+        "runbook must audit the formula inside the tap"
+    );
+    assert!(
+        docs.contains("brew test aegis"),
+        "runbook must smoke-test the published formula with brew test"
+    );
+    assert!(
+        docs.contains("scripts/update-homebrew-formula.sh"),
+        "runbook must regenerate the formula from the deterministic updater"
+    );
+}

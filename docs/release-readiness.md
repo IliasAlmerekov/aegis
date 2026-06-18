@@ -68,6 +68,64 @@ default CI job. The required commands are listed above; a gated live test
 (`AEGIS_TEST_LIVE_HOMEBREW=1`) lives in `tests/homebrew_live.rs` and can be
 run manually where Homebrew is available.
 
+## Homebrew tap publish runbook
+
+Operator runbook for closing M3.3 Task 6. Run every step on release; the
+formula is generated deterministically by `scripts/update-homebrew-formula.sh`
+so the source-of-truth file is `packaging/homebrew/Formula/aegis.rb`.
+
+1. Regenerate the formula from the release tag (idempotent):
+
+   ```bash
+   scripts/update-homebrew-formula.sh vX.Y.Z
+   ```
+
+2. Create the tap repository once (skip if it already exists):
+
+   ```bash
+   gh repo create IliasAlmerekov/homebrew-aegis --public --description "Homebrew tap for Aegis"
+   ```
+
+3. Clone the tap and lay out the formula under `Formula/`:
+
+   ```bash
+   git clone git@github.com:IliasAlmerekov/homebrew-aegis.git /tmp/homebrew-aegis
+   mkdir -p /tmp/homebrew-aegis/Formula
+   cp packaging/homebrew/Formula/aegis.rb /tmp/homebrew-aegis/Formula/aegis.rb
+   ```
+
+4. Audit the formula inside the tap:
+
+   ```bash
+   cd /tmp/homebrew-aegis
+   brew audit --strict --online --formula aegis
+   ```
+
+   Expected: `0 problems`. Fix any style issue in
+   `packaging/homebrew/Formula/aegis.rb` first, regenerate, and re-copy so the
+   source repo and the tap stay in sync.
+
+5. Commit and push the tap:
+
+   ```bash
+   git add Formula/aegis.rb
+   git commit -m "aegis X.Y.Z"
+   git push origin main
+   ```
+
+6. Smoke-test the public install on macOS and on Linux (clean Homebrew prefix):
+
+   ```bash
+   brew untap IliasAlmerekov/aegis 2>/dev/null || true
+   brew tap IliasAlmerekov/aegis
+   brew install aegis
+   brew test aegis
+   aegis --version
+   ```
+
+7. Record evidence for both platforms (macOS and Linux) in the release notes,
+   then proceed to the M3.3 completion checklist.
+
 ## Verification-first manual install path
 
 Use this path when you want to validate a release asset before installing it.
