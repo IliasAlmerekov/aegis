@@ -69,6 +69,10 @@ If you see a version number, the install worked and the `aegis` binary is availa
 
 ### Alternative: install with Homebrew
 
+> The third-party tap `IliasAlmerekov/aegis` is published as part of release
+> readiness; if `brew tap` below reports an unknown tap, the formula has not
+> been published yet for the current release (see `docs/release-readiness.md`).
+
 ```bash
 brew tap IliasAlmerekov/aegis
 brew install aegis
