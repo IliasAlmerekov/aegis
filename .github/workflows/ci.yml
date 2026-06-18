@@ -193,7 +193,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-live-installer-
 
       - name: Run live installer test
-        run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_flow test_installer_live_github_release_download
+        run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_live_release test_installer_live_github_release_download
   windows:
     name: Windows (compile + unit tests)
     runs-on: windows-latest
