@@ -50,7 +50,11 @@ fn homebrew_formula_should_pin_each_download_with_a_sha256() {
                     .trim_end_matches('"')
                     .chars()
                     .all(|ch| ch.is_ascii_hexdigit())
-                && trimmed.trim_start_matches("sha256 \"").trim_end_matches('"').len() == 64
+                && trimmed
+                    .trim_start_matches("sha256 \"")
+                    .trim_end_matches('"')
+                    .len()
+                    == 64
         })
         .count();
 
