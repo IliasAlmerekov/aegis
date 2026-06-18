@@ -25,6 +25,18 @@ Current GitHub Actions workflows run these jobs:
   - `aarch64-apple-darwin`
 - `Release / release`: artifact download plus GitHub Release publication
 
+## Homebrew tap validation
+
+Homebrew validation is currently a release-operator smoke test rather than a
+default CI job. The formula lives at `packaging/homebrew/Formula/aegis.rb` and is
+regenerated from a release tag by `scripts/update-homebrew-formula.sh`. The
+required `brew tap` / `brew install` / `brew test` commands on macOS and Linux
+are listed in `docs/release-readiness.md`. A gated live test
+(`AEGIS_TEST_LIVE_HOMEBREW=1`) lives in `tests/homebrew_live.rs` and keeps
+default `cargo test` network-free; a CI job that runs it on
+`ubuntu-latest`/`macos-latest` will be added only after explicit workflow
+sign-off.
+
 ## What CI Guarantees
 
 - the workflow definitions do not depend on floating toolchain, tool, or action refs
