@@ -228,7 +228,7 @@ fn run_in_job_object(cmd: &str) -> Result<SandboxResult, SandboxError> {
 //     → compile error on Windows until Phase 6.3 adds `pub(crate) mod job_object`.
 //   - Test 6 drives the actual subprocess path through a Job Object.
 
-#[cfg(windows)]
+#[cfg(all(test, windows))]
 mod windows_tests {
     use crate::sandbox_available_for;
     use crate::support::set_force_sandbox_unavailable;
@@ -357,7 +357,7 @@ mod windows_tests {
 // modules compile and pass; on any truly-unsupported target (FreeBSD, …) this
 // module is compiled out because `windows.rs` is only built on Windows.
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, not(any(target_os = "linux", target_os = "macos"))))]
 mod fallback_platform_tests {
     use crate::sandbox_available_for;
     use crate::support::set_force_sandbox_unavailable;
