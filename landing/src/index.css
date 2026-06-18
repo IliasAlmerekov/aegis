@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-void: #000000;
+  --color-carbon: #212525;
+  --color-moss: #3e4a3c;
+  --color-fern: #485346;
+  --color-lichen: #677d64;
+  --color-slate: #697368;
+  --color-stone: #859085;
+  --color-phosphor: #ddffdc;
+  --color-reactor: #7fee64;
+  --color-glow: #c8f9b6;
+  --color-mist: #def0dd;
+  --color-sage: #aed2a4;
+  --color-bone: #ffffff;
+
+  --font-display: "Barlow", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #000000;
+  color: #ddffdc;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv11" on;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-feature-settings: "ss01" on;
+}
+
+@keyframes scroll-hint {
+  0%, 100% { opacity: 0.4; transform: translateX(-50%) translateY(0); }
+  55% { opacity: 0.9; transform: translateX(-50%) translateY(5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

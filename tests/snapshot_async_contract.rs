@@ -11,7 +11,7 @@ const SNAPSHOT_PLUGINS: &[(&str, &str)] = &[
     ("crates/aegis-snapshot/src/mysql/mod.rs", "MysqlPlugin"),
     ("crates/aegis-snapshot/src/sqlite.rs", "SqlitePlugin"),
     (
-        "crates/aegis-snapshot/src/supabase/runtime.rs",
+        "crates/aegis-snapshot/src/supabase/runtime/mod.rs",
         "SupabasePlugin",
     ),
 ];

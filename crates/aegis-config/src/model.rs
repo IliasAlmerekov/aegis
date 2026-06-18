@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +28,11 @@ pub(crate) fn validate_custom_patterns(patterns: &[UserPattern]) -> Result<()> {
 }
 
 mod enums;
+mod migration;
+mod partial;
 mod rules;
+mod serde_helpers;
+mod template;
 
 pub use enums::{AllowlistOverrideLevel, AuditIntegrityMode, CiPolicy, Mode, SnapshotPolicy};
 pub use rules::{
@@ -37,105 +40,19 @@ pub use rules::{
     UserPattern, WhenClause,
 };
 
-const PROJECT_CONFIG_FILE: &str = ".aegis.toml";
+// Bring submodule items into the `model` namespace so they remain reachable
+// from `model::tests` (which does `pub use super::*`) and from the merge logic
+// below. These stay private aliases — visibility is unchanged.
+use partial::PartialConfig;
+use serde_helpers::{
+    default_config_version, deserialize_allowlist_rules, deserialize_config_version,
+};
+use template::PROJECT_CONFIG_FILE;
+
 const GLOBAL_CONFIG_DIR: &str = ".config/aegis";
 const GLOBAL_CONFIG_FILE: &str = "config.toml";
 /// Current configuration schema version.
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
-const LEGACY_ALLOWLIST_REASON: &str = "migrated from legacy allowlist entry";
-
-const INIT_TEMPLATE: &str = r#"# Aegis project configuration.
-config_version = 1 # Schema version. Omit only when loading a pre-version legacy config for migration.
-mode = "Protect" # Protect prompts on Warn/Danger, Audit is non-blocking audit-only, Strict blocks non-safe and indirect execution forms by default.
-
-custom_patterns = [] # Extra user-defined patterns loaded for this project.
-allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Danger | Never.
-# Warn auto-approves allowlisted Warn commands in Protect/Strict.
-# Danger also auto-approves allowlisted Danger commands.
-# Never disables allowlist auto-approval for non-safe commands.
-# Block never bypasses in Protect/Strict.
-
-# Structured allow rules use array-of-tables entries.
-# Every runtime-effective allow rule must declare cwd or user scope.
-# Legacy string-array allowlist entries stay readable for migration and
-# inspection, but they are invalid for runtime until you add scope.
-# [[allow]]
-# pattern = "terraform destroy -target=module.test.*"
-# cwd = "/srv/infra"
-# user = "ci"
-# expires_at = "2030-01-01T00:00:00Z"
-# reason = "ephemeral test teardown"
-
-# Structured block rules also use array-of-tables entries.
-# [[block]]
-# pattern = "rm -rf /"
-# cwd = "/srv/infra"
-# reason = "never allow recursive root deletion"
-
-snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin flags below, Full = all plugins.
-auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
-auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
-auto_snapshot_postgres = false # PostgreSQL snapshot before dangerous commands. Requires pg_dump on PATH and [postgres_snapshot] config.
-auto_snapshot_mysql = false    # MySQL/MariaDB snapshot. Requires mysqldump on PATH and [mysql_snapshot] config.
-auto_snapshot_supabase = false # Supabase project-level snapshot. Phase 1 captures a DB-only manifest bundle.
-auto_snapshot_sqlite = false   # SQLite snapshot. Set sqlite_snapshot_path to your .db file path.
-sqlite_snapshot_path = ""      # Path to SQLite database file (relative to the current working directory or absolute).
-
-# PostgreSQL connection for snapshots. Credentials via PGPASSWORD env var or ~/.pgpass — never stored here.
-[postgres_snapshot]
-database = ""        # Database name to dump. Required when auto_snapshot_postgres = true.
-host = "localhost"
-port = 5432
-user = ""            # Leave empty to use PGUSER env var or OS user.
-
-# MySQL/MariaDB connection for snapshots. Credentials via MYSQL_PWD env var or ~/.my.cnf.
-[mysql_snapshot]
-database = ""        # Database name to dump. Required when auto_snapshot_mysql = true.
-host = "localhost"
-port = 3306
-user = ""            # Leave empty to use MYSQL_USER env var or ~/.my.cnf.
-
-# Supabase project-level snapshot settings. Phase 1 uses the direct PostgreSQL transport.
-[supabase_snapshot]
-project_ref = "" # Advisory-only project ref for audit/UI/future phases.
-require_config_target_match_on_rollback = true # Fail closed if current config target differs from the manifest target.
-
-[supabase_snapshot.db]
-database = ""    # Direct PostgreSQL database name used by the Supabase provider.
-host = "localhost"
-port = 5432
-user = ""
-
-# Which Docker containers to include in snapshots.
-# mode: Labeled (default) = only containers with opt-in label, All = every running container, Names = match by name pattern.
-[docker_scope]
-mode = "Labeled"
-label = "aegis.snapshot" # Container must carry this label with value "true".
-name_patterns = []       # Name patterns for Names mode (Docker regex, ORed).
-
-# Prune retention for snapshot artifacts. Both rules are applied as a union:
-# a snapshot is kept if it is within max_age_days OR among the newest
-# max_count_per_provider for its provider. Set enabled = true and use
-# `aegis snapshot prune` to preview or remove artifacts.
-[prune]
-enabled = false
-max_count_per_provider = 10
-max_age_days = 30
-
-# CI policy: what to do when aegis detects it is running inside a CI environment.
-# Block (default) — hard-block any non-safe command; no interactive dialog is shown.
-# Allow           — pass-through; commands are executed without prompting (opt-in override).
-ci_policy = "Block"
-
-[audit]
-# Rotate ~/.aegis/audit.jsonl after it grows beyond this many bytes.
-# Rotation is disabled by default to preserve the historical single-file contract.
-rotation_enabled = false
-max_file_size_bytes = 10485760
-retention_files = 5
-compress_rotated = true
-integrity_mode = "ChainSha256" # Off = no chain hashes, ChainSha256 = tamper-evident chained SHA-256.
-"#;
 
 type Result<T> = std::result::Result<T, ConfigError>;
 
@@ -172,15 +89,6 @@ pub struct PruneConfig {
     pub max_count_per_provider: Option<usize>,
     /// Keep snapshots newer than this many days. `None` disables the age rule.
     pub max_age_days: Option<u32>,
-}
-
-/// Partial view of [`PruneConfig`] used during layered config merge.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct PartialPruneConfig {
-    enabled: Option<bool>,
-    max_count_per_provider: Option<usize>,
-    max_age_days: Option<u32>,
 }
 
 /// Top-level Aegis runtime configuration.
@@ -335,26 +243,6 @@ impl AegisConfig {
     pub fn to_toml_string(&self) -> Result<String> {
         toml::to_string_pretty(self)
             .map_err(|error| ConfigError::Config(format!("failed to serialize config: {error}")))
-    }
-
-    /// Return the starter `aegis.toml` template text.
-    pub fn init_template() -> &'static str {
-        INIT_TEMPLATE
-    }
-
-    /// Write the starter `aegis.toml` to `current_dir`. Returns the path to the
-    /// new file. Errors if a config file already exists at that path.
-    pub fn init_in(current_dir: &Path) -> Result<PathBuf> {
-        let path = current_dir.join(PROJECT_CONFIG_FILE);
-        if path.exists() {
-            return Err(ConfigError::Config(format!(
-                "config file already exists at {}",
-                path.display()
-            )));
-        }
-
-        fs::write(&path, Self::init_template())?;
-        Ok(path)
     }
 
     /// Validate config invariants required before constructing runtime state.
@@ -638,276 +526,6 @@ impl AegisConfig {
                 LayeredBlocklistRule { rule, source_layer }
             })
             .collect()
-    }
-}
-
-/// Partial view of [`SandboxSettings`] used during layered config merge.
-///
-/// Allows individual sandbox fields to be set per-layer without resetting
-/// fields that were not mentioned in a later layer.
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-pub(crate) struct PartialSandboxSettings {
-    enabled: Option<bool>,
-    required: Option<bool>,
-    allow_write: Option<Vec<PathBuf>>,
-    allow_network: Option<bool>,
-}
-
-impl PartialSandboxSettings {
-    fn merge_into(self, base: SandboxSettings) -> SandboxSettings {
-        SandboxSettings {
-            enabled: self.enabled.unwrap_or(base.enabled),
-            required: self.required.unwrap_or(base.required),
-            allow_write: self.allow_write.unwrap_or(base.allow_write),
-            allow_network: self.allow_network.unwrap_or(base.allow_network),
-        }
-    }
-}
-
-/// Partial config used for layered merging.
-/// Scalar fields are `Option` so we can distinguish "not set" from "set to
-/// the default value". Vec fields default to empty and are concatenated across
-/// layers (global first, then project).
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct PartialConfig {
-    #[serde(default, deserialize_with = "deserialize_optional_config_version")]
-    config_version: Option<u32>,
-    mode: Option<Mode>,
-    custom_patterns: Vec<UserPattern>,
-    #[serde(
-        default,
-        rename = "allow",
-        alias = "allowlist",
-        deserialize_with = "deserialize_allowlist_rules"
-    )]
-    allowlist: Vec<AllowlistRule>,
-    #[serde(default, rename = "block", alias = "blocklist")]
-    blocklist: Vec<BlockRule>,
-    allowlist_override_level: Option<AllowlistOverrideLevel>,
-    snapshot_policy: Option<SnapshotPolicy>,
-    auto_snapshot_git: Option<bool>,
-    auto_snapshot_docker: Option<bool>,
-    auto_snapshot_postgres: Option<bool>,
-    postgres_snapshot: Option<PostgresSnapshotConfig>,
-    auto_snapshot_mysql: Option<bool>,
-    mysql_snapshot: Option<MysqlSnapshotConfig>,
-    auto_snapshot_supabase: Option<bool>,
-    supabase_snapshot: Option<SupabaseSnapshotConfig>,
-    auto_snapshot_sqlite: Option<bool>,
-    sqlite_snapshot_path: Option<String>,
-    docker_scope: Option<DockerScope>,
-    ci_policy: Option<CiPolicy>,
-    audit: PartialAuditConfig,
-    #[serde(default, rename = "rules")]
-    rules: Vec<PolicyRule>,
-    sandbox: PartialSandboxSettings,
-    prune: PartialPruneConfig,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct PartialAuditConfig {
-    rotation_enabled: Option<bool>,
-    max_file_size_bytes: Option<u64>,
-    retention_files: Option<usize>,
-    compress_rotated: Option<bool>,
-    integrity_mode: Option<AuditIntegrityMode>,
-}
-
-/// Find the text bounds of a TOML array assignment `key = [...]`.
-///
-/// Returns `(start, end)` byte indices in `text` covering the entire
-/// `key = [ ... ]` declaration, or `None` if not found.
-fn find_toml_array_bounds(text: &str, key: &str) -> Option<(usize, usize)> {
-    let prefix = format!("{key} = [");
-    let start = text.find(&prefix)?;
-    let mut depth = 1usize;
-    let mut in_string = false;
-    let mut in_literal = false;
-    let mut escaped = false;
-
-    for (i, ch) in text[start + prefix.len()..].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_literal {
-            if ch == '\'' {
-                in_literal = false;
-            }
-            continue;
-        }
-        if ch == '\\' && !in_literal {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' && !in_string {
-            in_string = true;
-        } else if ch == '"' && in_string {
-            in_string = false;
-        } else if ch == '\'' && !in_string {
-            in_literal = true;
-        } else if !in_string && !in_literal {
-            match ch {
-                '[' => depth += 1,
-                ']' => {
-                    depth = depth.saturating_sub(1);
-                    if depth == 0 {
-                        return Some((start, start + prefix.len() + i + 1));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
-/// Migrate deprecated `allowlist` syntax in a config file to `[[allow]]`.
-///
-/// Called after parsing succeeds so the file is known-valid TOML.
-/// Replaces `[[allowlist]]` with `[[allow]]` and converts `allowlist = [...]`
-/// to equivalent `[[allow]]` tables.  The write is atomic (temp file + rename).
-fn migrate_deprecated_allowlist_in_file(
-    contents: &str,
-    path: &Path,
-    migrated_rules: &[AllowlistRule],
-) -> Result<()> {
-    let mut new_contents = contents.to_string();
-    let mut migrated = false;
-
-    // 1. Replace deprecated table headers.
-    if contents.contains("[[allowlist]]") {
-        new_contents = new_contents.replace("[[allowlist]]", "[[allow]]");
-        migrated = true;
-    }
-
-    // 2. Convert legacy string array to structured tables.
-    if contents.contains("allowlist = [")
-        && let Some((start, end)) = find_toml_array_bounds(contents, "allowlist")
-    {
-        let mut replacement = String::new();
-        for rule in migrated_rules {
-            let body = toml::to_string_pretty(rule).map_err(|error| {
-                ConfigError::Config(format!("failed to serialize migrated rule: {error}"))
-            })?;
-            replacement.push_str(&format!("[[allow]]\n{body}"));
-        }
-        new_contents.replace_range(start..end, &replacement);
-        migrated = true;
-    }
-
-    if migrated {
-        let pid = std::process::id();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let tmp_path = path.with_extension(format!("tmp.{pid}.{nanos}"));
-        {
-            let mut tmp = fs::File::create(&tmp_path)?;
-            std::io::Write::write_all(&mut tmp, new_contents.as_bytes())?;
-            tmp.sync_all()?;
-        }
-        fs::rename(&tmp_path, path).inspect_err(|_| {
-            let _ = fs::remove_file(&tmp_path);
-        })?;
-        tracing::info!(
-            "Migrated deprecated allowlist syntax to [[allow]] in {}",
-            path.display()
-        );
-    }
-
-    Ok(())
-}
-
-impl PartialConfig {
-    fn from_path(path: &Path) -> Result<Self> {
-        let contents = fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&contents).map_err(|error| {
-            ConfigError::Config(format!("failed to parse {}: {error}", path.display()))
-        })?;
-
-        let deprecated = contents.contains("[[allowlist]]") || contents.contains("allowlist = [");
-        if deprecated {
-            migrate_deprecated_allowlist_in_file(&contents, path, &config.allowlist)?;
-        }
-
-        Ok(config)
-    }
-}
-
-fn deserialize_allowlist_rules<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Vec<AllowlistRule>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum AllowlistField {
-        Structured(Vec<AllowlistRule>),
-        Legacy(Vec<String>),
-    }
-
-    let field = Option::<AllowlistField>::deserialize(deserializer)?;
-    Ok(match field {
-        None => Vec::new(),
-        Some(AllowlistField::Structured(rules)) => rules,
-        Some(AllowlistField::Legacy(patterns)) => patterns
-            .into_iter()
-            .map(|pattern| AllowlistRule {
-                pattern,
-                cwd: None,
-                user: None,
-                expires_at: None,
-                reason: LEGACY_ALLOWLIST_REASON.to_string(),
-            })
-            .collect(),
-    })
-}
-
-fn default_config_version() -> u32 {
-    CURRENT_CONFIG_VERSION
-}
-
-fn deserialize_config_version<'de, D>(deserializer: D) -> std::result::Result<u32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let version = u32::deserialize(deserializer)?;
-    validate_config_version(version).map_err(serde::de::Error::custom)
-}
-
-fn deserialize_optional_config_version<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Option<u32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<u32>::deserialize(deserializer)?
-        .map(validate_config_version)
-        .transpose()
-        .map_err(serde::de::Error::custom)
-}
-
-fn validate_config_version(version: u32) -> std::result::Result<u32, String> {
-    match version.cmp(&CURRENT_CONFIG_VERSION) {
-        std::cmp::Ordering::Equal => Ok(version),
-        std::cmp::Ordering::Greater => Err(format!(
-            "config_version {version} requires a newer version of Aegis \
-             (this binary supports schema version {CURRENT_CONFIG_VERSION}).\n\
-             To upgrade: install a newer Aegis release that supports schema {version}, \
-             then run `aegis config validate` to confirm compatibility.\n\
-             To downgrade the config to schema {CURRENT_CONFIG_VERSION}: \
-             run `aegis config init` to regenerate a fresh config file."
-        )),
-        std::cmp::Ordering::Less => Err(format!(
-            "config_version {version} is below the minimum supported version \
-             ({CURRENT_CONFIG_VERSION}); run `aegis config init` to regenerate your config."
-        )),
     }
 }
 
