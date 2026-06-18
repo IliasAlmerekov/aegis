@@ -13,13 +13,14 @@
 Current GitHub Actions workflows run these jobs:
 
 - `Quality (fmt, clippy, test)`: formatting, clippy, and tests
+- `Live installer validation`: downloads the latest GitHub Release asset for the host platform, verifies the SHA-256 sidecar, installs to a temporary `BINDIR`, and asserts `aegis --version` succeeds. Runs on `ubuntu-latest` and `macos-latest`; gated in the test suite by `AEGIS_TEST_LIVE_INSTALL=1` so default `cargo test` stays network-free.
 - `Security (audit, deny)`: `cargo-audit` and `cargo-deny`
 - `Release build`: release builds on Ubuntu and macOS
 - `Performance baseline (scanner bench)`: `scanner_bench` plus benchmark policy evaluation
 - `Fuzzing (parser + scanner)`: `cargo +nightly fuzz run parser` and `cargo +nightly fuzz run scanner` with bounded `-runs`
 - `Release / build`: tagged release binaries for:
-  - `x86_64-unknown-linux-gnu`
-  - `aarch64-unknown-linux-gnu`
+  - `x86_64-unknown-linux-musl`
+  - `aarch64-unknown-linux-musl`
   - `x86_64-apple-darwin`
   - `aarch64-apple-darwin`
 - `Release / release`: artifact download plus GitHub Release publication
@@ -57,8 +58,9 @@ Current runtime behavior is documented in `docs/config-schema.md`, but at a high
 The current release workflow is triggered by tags matching `v*` and:
 
 - installs Rust `1.94.0`
-- uses `cross 0.2.5` only for Linux `aarch64`
+- uses `cross 0.2.5` for both Linux musl targets (`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`) so the release matrix does not depend on runner-specific musl linker setup
 - builds the current four-target release matrix
+- verifies Linux musl artifacts are statically linked (`ldd` reports `not a dynamic executable`) before checksum generation
 - copies and renames the `aegis` binary per target asset name
 - generates SHA-256 checksum sidecar files
 - uploads artifacts from the build job
