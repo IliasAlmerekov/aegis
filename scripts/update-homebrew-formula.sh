@@ -4,7 +4,9 @@ set -eu
 # Regenerates packaging/homebrew/Formula/aegis.rb for a release tag by
 # downloading the four <asset>.sha256 sidecars published alongside the
 # GitHub Release. Fails closed if any sidecar is missing or its checksum
-# is not exactly 64 hex characters.
+# is not exactly 64 hex characters. The release assets are raw single-file
+# binaries (not archives), so every url is emitted with `using: :nounzip`
+# to stop Homebrew from trying to decompress them.
 
 usage() {
   printf 'Usage: %s vX.Y.Z\n' "$0" >&2
@@ -66,20 +68,20 @@ class Aegis < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "${base_url}/aegis-macos-aarch64"
+      url "${base_url}/aegis-macos-aarch64", using: :nounzip
       sha256 "${macos_aarch64}"
     else
-      url "${base_url}/aegis-macos-x86_64"
+      url "${base_url}/aegis-macos-x86_64", using: :nounzip
       sha256 "${macos_x86_64}"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "${base_url}/aegis-linux-aarch64"
+      url "${base_url}/aegis-linux-aarch64", using: :nounzip
       sha256 "${linux_aarch64}"
     else
-      url "${base_url}/aegis-linux-x86_64"
+      url "${base_url}/aegis-linux-x86_64", using: :nounzip
       sha256 "${linux_x86_64}"
     end
   end

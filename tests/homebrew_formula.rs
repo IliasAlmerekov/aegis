@@ -182,3 +182,24 @@ fn release_readiness_should_track_homebrew_evidence() {
         "release readiness docs must require macOS and Linux smoke-test evidence"
     );
 }
+
+#[test]
+fn homebrew_formula_should_download_raw_binaries_without_decompression() {
+    let formula = formula();
+    let url_lines: Vec<&str> = formula
+        .lines()
+        .filter(|line| line.trim_start().starts_with("url \""))
+        .collect();
+
+    assert_eq!(
+        url_lines.len(),
+        4,
+        "formula must have exactly four binary download urls"
+    );
+    assert!(
+        url_lines
+            .iter()
+            .all(|line| line.contains("using: :nounzip")),
+        "every raw-binary url must opt out of archive decompression with using: :nounzip"
+    );
+}
