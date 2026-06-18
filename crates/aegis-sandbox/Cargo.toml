@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/IliasAlmerekov/aegis"
 homepage = "https://github.com/IliasAlmerekov/aegis"
 documentation = "https://docs.rs/aegis-sandbox"
-description = "Sandboxing layer for Aegis — bwrap+Landlock (Linux), Seatbelt (macOS), Job Objects (Windows)."
+description = "Sandboxing layer for Aegis — bwrap+Landlock (Linux), Seatbelt (macOS); native Windows unsupported."
 
 [dependencies]
 thiserror = "1"

@@ -8,17 +8,24 @@
 use crate::{SandboxError, SandboxResult};
 
 // ── Test injection ────────────────────────────────────────────────────────────
-
+//
+// The forced-unavailable hook is only exercised by the Linux and macOS sandbox
+// modules' "sandbox unavailable" code paths. Gate it to those targets so it is
+// not dead code on native Windows (which routes to `unsupported.rs` and never
+// consults the hook).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg(test)]
 thread_local! {
     static FORCE_SANDBOX_UNAVAILABLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg(test)]
 pub(crate) fn set_force_sandbox_unavailable(val: bool) {
     FORCE_SANDBOX_UNAVAILABLE.with(|c| c.set(val));
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn is_forced_sandbox_unavailable() -> bool {
     #[cfg(test)]
     return FORCE_SANDBOX_UNAVAILABLE.with(|c| c.get());
@@ -54,8 +61,14 @@ pub(crate) fn warn_sandbox_bypass() {
 #[cfg(test)]
 pub(crate) mod test_helpers {
     /// RAII guard that clears the forced-unavailable flag on drop.
+    ///
+    /// Only meaningful where the forced-unavailable hook exists (Linux/macOS);
+    /// gate it to those targets so the module compiles cleanly on native
+    /// Windows, which routes to `unsupported.rs` and never sets the flag.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) struct ForceUnavailableGuard;
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     impl Drop for ForceUnavailableGuard {
         fn drop(&mut self) {
             super::set_force_sandbox_unavailable(false);
