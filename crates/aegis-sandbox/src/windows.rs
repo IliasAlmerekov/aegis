@@ -32,8 +32,14 @@ pub(crate) mod job_object {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 
     /// Raw Win32 `HANDLE` — a nullable pointer to an opaque kernel object.
+    // These type aliases keep the canonical Win32 names (HANDLE/BOOL/DWORD) to
+    // match the Microsoft docs and the `windows-sys`/`winapi` crate conventions;
+    // renaming to `Handle`/`Bool`/`Dword` would only obscure the FFI surface.
+    #[expect(clippy::upper_case_acronyms)]
     pub type HANDLE = *mut std::ffi::c_void;
+    #[expect(clippy::upper_case_acronyms)]
     type BOOL = i32;
+    #[expect(clippy::upper_case_acronyms)]
     type DWORD = u32;
 
     /// Kill all processes in the job when the last job handle is closed.
@@ -73,6 +79,8 @@ pub(crate) mod job_object {
             job_object_information_length: DWORD,
         ) -> BOOL;
         fn AssignProcessToJobObject(job_handle: HANDLE, process_handle: HANDLE) -> BOOL;
+        // Only called by `has_kill_on_close_limit`, which is a test-only verifier.
+        #[cfg(test)]
         fn QueryInformationJobObject(
             job_handle: HANDLE,
             job_object_information_class: u32,
@@ -140,6 +148,13 @@ pub(crate) mod job_object {
         }
 
         /// Return `true` if `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is set.
+        ///
+        /// Test-only verifier: asserts the Job Object was created with
+        /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` set, so orphaned child processes
+        /// are killed when Aegis exits. No non-test code path queries the limit
+        /// flags, so it (and the `QueryInformationJobObject` import it needs) is
+        /// gated `#[cfg(test)]` to avoid dead code in production builds.
+        #[cfg(test)]
         pub fn has_kill_on_close_limit(&self) -> bool {
             // SAFETY: zeroed memory is valid for this plain-data C struct.
             let mut info: ExtendedLimitInformation = unsafe { std::mem::zeroed() };
@@ -232,14 +247,8 @@ fn run_in_job_object(cmd: &str) -> Result<SandboxResult, SandboxError> {
 mod windows_tests {
     use crate::sandbox_available_for;
     use crate::support::set_force_sandbox_unavailable;
+    use crate::support::test_helpers::ForceUnavailableGuard;
     use crate::{SandboxConfig, SandboxError, SandboxExecutor, SandboxProfile, SandboxResult};
-
-    struct ForceUnavailableGuard;
-    impl Drop for ForceUnavailableGuard {
-        fn drop(&mut self) {
-            set_force_sandbox_unavailable(false);
-        }
-    }
 
     // Test 1: sandbox_available_for returns true on Windows when the
     // forced-unavailable flag is clear.
@@ -361,14 +370,8 @@ mod windows_tests {
 mod fallback_platform_tests {
     use crate::sandbox_available_for;
     use crate::support::set_force_sandbox_unavailable;
+    use crate::support::test_helpers::ForceUnavailableGuard;
     use crate::{SandboxConfig, SandboxExecutor, SandboxProfile, SandboxResult};
-
-    struct ForceUnavailableGuard;
-    impl Drop for ForceUnavailableGuard {
-        fn drop(&mut self) {
-            set_force_sandbox_unavailable(false);
-        }
-    }
 
     // On Windows (the only non-Linux/non-macOS target Aegis supports in v1),
     // `sandbox_available_for` must return `true` after Phase 6.3.
