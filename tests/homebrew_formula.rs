@@ -101,6 +101,31 @@ fn homebrew_formula_should_have_a_non_interactive_runtime_test() {
 }
 
 #[test]
+fn homebrew_formula_updater_should_exist_and_fail_closed_on_missing_release_input() {
+    let script = repo_file("scripts/update-homebrew-formula.sh");
+
+    assert!(
+        script.contains("set -eu"),
+        "updater script must fail closed on unset variables and command failures"
+    );
+    assert!(
+        script.contains("usage()"),
+        "updater script must provide a usage path"
+    );
+    assert!(
+        script.contains("aegis-linux-x86_64.sha256")
+            && script.contains("aegis-linux-aarch64.sha256")
+            && script.contains("aegis-macos-x86_64.sha256")
+            && script.contains("aegis-macos-aarch64.sha256"),
+        "updater must fetch all four release checksum sidecars"
+    );
+    assert!(
+        script.contains("grep -Eq '^[[:xdigit:]]{64}$'"),
+        "updater must validate checksum format before writing the formula"
+    );
+}
+
+#[test]
 fn homebrew_formula_should_explain_post_install_setup_caveats() {
     let formula = formula();
 
