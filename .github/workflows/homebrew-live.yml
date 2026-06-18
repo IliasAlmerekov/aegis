@@ -1,0 +1,56 @@
+name: Homebrew tap live validation
+
+# DRAFT — not wired into default push/PR CI.
+#
+# This workflow is triggered manually (workflow_dispatch) only. It taps the
+# published Homebrew repository `IliasAlmerekov/aegis`, installs the `aegis`
+# formula, runs `brew test`, and verifies `aegis --version` on macOS and Linux.
+#
+# Prerequisites before enabling it as a regular CI job:
+#   1. The tap `IliasAlmerekov/homebrew-aegis` must be published (M3.3 Task 6).
+#   2. Explicit workflow sign-off per the repository change-control rules.
+# Until both hold, keep this file dispatch-only so default `cargo test` and
+# the CI `on: push/pull_request` workflows stay network-free and green.
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUST_TOOLCHAIN: 1.94.0
+
+jobs:
+  live-homebrew:
+    name: Live Homebrew validation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Homebrew on Linux
+        if: runner.os == 'Linux'
+        run: |
+          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-live-homebrew-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-live-homebrew-
+
+      - name: Run live Homebrew test
+        run: AEGIS_TEST_LIVE_HOMEBREW=1 cargo test --test homebrew_live -- --nocapture

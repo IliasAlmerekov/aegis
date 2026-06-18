@@ -225,3 +225,17 @@ fn release_readiness_should_publish_a_concrete_tap_runbook() {
         "runbook must regenerate the formula from the deterministic updater"
     );
 }
+
+#[test]
+fn homebrew_live_workflow_must_stay_manual_until_signoff() {
+    let wf = repo_file(".github/workflows/homebrew-live.yml");
+
+    assert!(
+        wf.contains("workflow_dispatch"),
+        "homebrew live workflow must be manually triggered"
+    );
+    assert!(
+        !wf.contains("branches:"),
+        "homebrew live workflow must not be wired into push/PR CI until workflow sign-off and tap publication"
+    );
+}
