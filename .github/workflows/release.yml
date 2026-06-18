@@ -19,11 +19,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             asset_name: aegis-linux-x86_64
+            use_cross: true
 
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             asset_name: aegis-linux-aarch64
             use_cross: true
@@ -55,7 +56,7 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-
 
-      - name: Install cross (Linux aarch64 only)
+      - name: Install cross
         if: matrix.use_cross
         run: cargo install cross --version ${{ env.CROSS_VERSION }} --locked
 
@@ -72,6 +73,18 @@ jobs:
         run: |
           cp target/${{ matrix.target }}/release/aegis ${{ matrix.asset_name }}
           chmod 0755 ${{ matrix.asset_name }}
+
+      - name: Verify static Linux binary
+        if: contains(matrix.target, 'unknown-linux-musl')
+        shell: bash
+        run: |
+          file "${{ matrix.asset_name }}"
+          if ldd "${{ matrix.asset_name }}" 2>&1 | grep -q "not a dynamic executable"; then
+            exit 0
+          fi
+          echo "expected static Linux binary, but ldd found dynamic dependencies" >&2
+          ldd "${{ matrix.asset_name }}" >&2
+          exit 1
 
       - name: Generate SHA256 checksum
         shell: bash
