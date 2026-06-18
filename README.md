@@ -67,6 +67,18 @@ aegis --version
 
 If you see a version number, the install worked and the `aegis` binary is available.
 
+### Alternative: install with Homebrew
+
+```bash
+brew tap IliasAlmerekov/aegis
+brew install aegis
+```
+
+Homebrew installs the binary only. It does not run the global shell installer
+and does not edit your shell startup files. After installing with Homebrew, run
+`aegis install-hooks --all` if you want supported Claude Code or Codex hooks,
+or configure `SHELL` and `AEGIS_REAL_SHELL` explicitly for shell-proxy usage.
+
 ---
 
 ## Check that Aegis is really working

@@ -146,3 +146,39 @@ fn homebrew_formula_should_explain_post_install_setup_caveats() {
         "caveats should explain shell proxy setup is explicit after brew install"
     );
 }
+
+#[test]
+fn readme_should_document_homebrew_install_without_overclaiming_shell_setup() {
+    let readme = repo_file("README.md");
+
+    assert!(
+        readme.contains("brew tap IliasAlmerekov/aegis"),
+        "README must document the tap command"
+    );
+    assert!(
+        readme.contains("brew install aegis"),
+        "README must document brew install"
+    );
+    assert!(
+        readme.contains("Homebrew installs the binary only"),
+        "README must explain that Homebrew does not run the global shell installer"
+    );
+}
+
+#[test]
+fn release_readiness_should_track_homebrew_evidence() {
+    let docs = repo_file("docs/release-readiness.md");
+
+    assert!(
+        docs.contains("Homebrew"),
+        "release readiness docs must mention Homebrew"
+    );
+    assert!(
+        docs.contains("brew install"),
+        "release readiness docs must require brew install evidence"
+    );
+    assert!(
+        docs.contains("macOS") && docs.contains("Linux"),
+        "release readiness docs must require macOS and Linux smoke-test evidence"
+    );
+}

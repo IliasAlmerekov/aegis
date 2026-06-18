@@ -53,6 +53,21 @@ posture later:
 
 The convenience installer is exercised end-to-end in CI on `ubuntu-latest` and `macos-latest` by the `live-installer` job. The test downloads the latest GitHub Release asset for the host platform, verifies the SHA-256 sidecar, installs the binary into a temporary `BINDIR`, and asserts that `aegis --version` succeeds. This job is gated in the test suite by the `AEGIS_TEST_LIVE_INSTALL=1` environment variable so default `cargo test` remains network-free.
 
+## Homebrew tap validation
+
+- [ ] `packaging/homebrew/Formula/aegis.rb` was generated from the selected
+      GitHub Release tag.
+- [ ] The published tap contains the same `Formula/aegis.rb`.
+- [ ] `brew audit --strict --online --formula aegis` passes in the tap.
+- [ ] `brew install IliasAlmerekov/aegis/aegis` succeeds on macOS.
+- [ ] `brew install IliasAlmerekov/aegis/aegis` succeeds on Linux.
+- [ ] `brew test IliasAlmerekov/aegis/aegis` passes on both platforms.
+
+Homebrew validation is currently a release-operator smoke test rather than a
+default CI job. The required commands are listed above; a gated live test
+(`AEGIS_TEST_LIVE_HOMEBREW=1`) lives in `tests/homebrew_live.rs` and can be
+run manually where Homebrew is available.
+
 ## Verification-first manual install path
 
 Use this path when you want to validate a release asset before installing it.
