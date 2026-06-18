@@ -187,11 +187,23 @@ reference native Windows CI and Job Objects. Align the repo with the PRD.
 
 ## Milestone M5 — Code-quality & NFR gates (PRD §6)
 
-- [ ] **M5.1 — Split `aegis-sandbox/src/lib.rs` (2071 LoC)**
-  Violates the 800-LoC budget (PRD §6). Extract into a submodule (e.g.
-  `linux.rs` / `macos.rs` / `profile.rs` / `lib.rs` wiring), moving tests with
-  their code.
-  - _Done when:_ no file in the workspace exceeds 800 LoC; tests still pass.
+- [x] **M5.1 — Enforce the 800-LoC file-size budget across the workspace**
+  The original wording targeted only `aegis-sandbox/src/lib.rs` (2071 LoC); that
+  sandbox split was already completed into `linux.rs` / `macos.rs` / `windows.rs`
+  / `support.rs` / `unsupported.rs` under 800 LoC. The remaining `Done when`
+  contract is broader — "no file in the workspace exceeds 800 LoC; tests still
+  pass" — so this task closed the rest of the budget with mechanical, no-behavior
+  extractions: split `crates/aegis-config/src/model.rs` into `model/{template,
+  partial,serde_helpers,migration,tests}`; split `crates/aegis-snapshot/src/
+  lib.rs` into `{registry,retention,clock,testing,paths}`; split `crates/
+  aegis-snapshot/src/supabase/runtime.rs` into `runtime/{mod,manifest_io,
+  manifest_state,rollback,tests}` preserving atomic manifest writes, rollback
+  eligibility, snapshot-ID encoding, and test-only write-failure injection; and
+  split the `tests/full_pipeline.rs` and `tests/installer_flow.rs` integration
+  suites into focused files under `tests/support/`.
+  - A regression test `tests/file_size_budget.rs` now enforces the 800-LoC budget
+    so M5.1 cannot silently regress.
+  - _Done when:_ no file in the workspace exceeds 800 LoC; tests still pass. ✅
 
 - [ ] **M5.2 — Fuzz corpus ≥ 100 000 iterations per target in CI**
   Targets: `parser::parse`, `scanner::assess`, heredoc unwrapping (PRD §6, DoD).
@@ -236,7 +248,7 @@ Final checklist; many items depend on M1–M5.
 
 1. ~~**M2** (audit flock)~~ — ✅ done; lock was already implemented, done-when now proven by `tests/audit_concurrency.rs`.
 2. **M1** (snapshot lifecycle/UX) — self-contained feature work; **next up**, start with M1.1 (`aegis snapshot list`).
-3. **M5.1** (sandbox split) — unblocks clean review of sandbox area.
+3. ~~**M5.1** (800-LoC file-size budget)~~ — ✅ done; sandbox split plus config/snapshot/integration-test extractions complete, enforced by `tests/file_size_budget.rs`.
 4. **M4** (platform reconciliation) — prevents shipping contradictory Windows claims.
 5. **M3** (distribution) — largest effort; can parallelize formula/npm/installer.
 6. **M5.2–M5.4** (CI gates) — fold into the release-hardening push.

@@ -9,8 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 use tokio::process::Command;
 
 use aegis_config::SupabaseSnapshotConfig;

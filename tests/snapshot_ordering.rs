@@ -398,9 +398,7 @@ reason = "approved before-exec test"
     // test fails, and the shell exits non-zero. Use a newline to separate the
     // harmless rm from the marker assertion so the allowlist glob (which
     // excludes `;`, `&`, and `|`) still matches the whole command.
-    let input = format!(
-        "{{\"cmd\":\"rm -rf /tmp/aegis-watch-before-exec\\ntest ! -f marker.txt\",\"id\":\"before-exec-1\"}}\n"
-    );
+    let input = "{\"cmd\":\"rm -rf /tmp/aegis-watch-before-exec\\ntest ! -f marker.txt\",\"id\":\"before-exec-1\"}\n";
     let output = aegis_watch_in(home.path(), &cwd_path, input.as_bytes());
 
     assert!(

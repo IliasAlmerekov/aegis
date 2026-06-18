@@ -50,10 +50,11 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()>
                 continue;
             }
             collect_rust_files(&path, out)?;
-        } else if path.is_file() {
-            if path.extension().and_then(|e| e.to_str()) == Some("rs") && !is_skipped(&path) {
-                out.push(path);
-            }
+        } else if path.is_file()
+            && path.extension().and_then(|e| e.to_str()) == Some("rs")
+            && !is_skipped(&path)
+        {
+            out.push(path);
         }
     }
     Ok(())
