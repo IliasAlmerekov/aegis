@@ -116,3 +116,26 @@ fn npm_updater_should_fetch_all_sidecars_and_fail_closed() {
         "npm updater must write packaging/npm/checksums.json"
     );
 }
+
+#[test]
+fn npm_installer_should_fail_closed_and_support_test_overrides() {
+    let installer = repo_file("packaging/npm/scripts/install.js");
+
+    assert!(
+        installer.contains("process.env.AEGIS_NPM_PLATFORM")
+            && installer.contains("process.env.AEGIS_NPM_ARCH"),
+        "installer should support deterministic platform/arch overrides for tests"
+    );
+    assert!(
+        installer.contains("Unsupported platform or architecture"),
+        "installer must fail closed on unsupported hosts"
+    );
+    assert!(
+        installer.contains("SHA256 mismatch"),
+        "installer must fail closed on checksum mismatch"
+    );
+    assert!(
+        installer.contains("AEGIS_NPM_SKIP_DOWNLOAD"),
+        "installer should support a no-network test path"
+    );
+}
