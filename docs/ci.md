@@ -37,6 +37,17 @@ default `cargo test` network-free; a CI job that runs it on
 `ubuntu-latest`/`macos-latest` will be added only after explicit workflow
 sign-off.
 
+## npm package validation
+
+npm package validation is a release-operator smoke test until explicit CI
+workflow sign-off is granted. Network-free contract tests live in
+`tests/npm_package.rs` and assert the manifest, installer fail-closed
+behavior, checksums, updater, and docs without touching the network. The gated
+live test in `tests/npm_live.rs` runs only when `AEGIS_TEST_LIVE_NPM=1` is set,
+keeping default `cargo test` network-free. The npm wrapper downloads a pinned
+GitHub Release binary during `postinstall`, verifies SHA256, and does not edit
+shell startup files or agent config.
+
 ## What CI Guarantees
 
 - the workflow definitions do not depend on floating toolchain, tool, or action refs

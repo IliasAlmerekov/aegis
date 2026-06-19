@@ -126,6 +126,31 @@ so the source-of-truth file is `packaging/homebrew/Formula/aegis.rb`.
 7. Record evidence for both platforms (macOS and Linux) in the release notes,
    then proceed to the M3.3 completion checklist.
 
+## npm wrapper validation
+
+- [ ] `scripts/update-npm-package.sh vX.Y.Z` regenerated
+      `packaging/npm/checksums.json` from the selected release tag.
+- [ ] `npm publish --dry-run` succeeds from `packaging/npm`.
+- [ ] `npm i -g @iliasalmerekov/aegis` succeeds on Linux x64.
+- [ ] `npm i -g @iliasalmerekov/aegis` succeeds on macOS arm64 or x64.
+- [ ] `aegis --version` prints the selected release version after npm install.
+- [ ] npm install does not mutate shell startup files or agent config.
+
+## Cargo install validation
+
+- [ ] `cargo install --git https://github.com/IliasAlmerekov/aegis --tag vX.Y.Z aegis`
+      succeeds on a clean machine with a current stable Rust toolchain.
+- [ ] `aegis --version` prints the selected release version after Cargo install.
+- [ ] crates.io publication, if enabled, is handled as a separate release
+      checkpoint because the root crate depends on internal workspace crates.
+
+npm wrapper validation is currently a release-operator smoke test rather than a
+default CI job. Network-free contract tests live in `tests/npm_package.rs` and
+the gated live test (`AEGIS_TEST_LIVE_NPM=1`) lives in `tests/npm_live.rs`; both
+keep default `cargo test` network-free. Cargo support for M3.4 is the documented
+`cargo install --git` source-build path; crates.io publication remains a
+separate human-controlled release checkpoint.
+
 ## Verification-first manual install path
 
 Use this path when you want to validate a release asset before installing it.

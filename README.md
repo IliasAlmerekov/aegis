@@ -83,6 +83,31 @@ and does not edit your shell startup files. After installing with Homebrew, run
 `aegis install-hooks --all` if you want supported Claude Code or Codex hooks,
 or configure `SHELL` and `AEGIS_REAL_SHELL` explicitly for shell-proxy usage.
 
+### Alternative: install with npm
+
+```bash
+npm i -g @iliasalmerekov/aegis
+```
+
+npm and Cargo install the binary only. They do not run the global shell
+installer and do not edit your shell startup files. After installing with npm,
+run `aegis install-hooks --all` if you want supported Claude Code or Codex
+hooks, or configure `SHELL` and `AEGIS_REAL_SHELL` explicitly for shell-proxy
+usage.
+
+### Developer path: install with Cargo
+
+If you already have the Rust toolchain installed, you can build from the release
+tag:
+
+```bash
+cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis
+```
+
+Cargo builds from source and is intended for Rust developers. It does not run
+global shell setup; run `aegis install-hooks --all` or configure the shell proxy
+explicitly after installation.
+
 ---
 
 ## Check that Aegis is really working

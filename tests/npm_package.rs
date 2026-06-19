@@ -139,3 +139,40 @@ fn npm_installer_should_fail_closed_and_support_test_overrides() {
         "installer should support a no-network test path"
     );
 }
+
+#[test]
+fn readme_should_document_npm_and_cargo_without_overclaiming_shell_setup() {
+    let readme = repo_file("README.md");
+
+    assert!(
+        readme.contains("npm i -g @iliasalmerekov/aegis"),
+        "README must document npm global install"
+    );
+    assert!(
+        readme.contains("cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis"),
+        "README must document cargo install from a release tag"
+    );
+    assert!(
+        readme.contains("npm and Cargo install the binary only")
+            || readme.contains("npm installs the binary only"),
+        "README must explain npm/Cargo do not run global shell setup"
+    );
+}
+
+#[test]
+fn release_readiness_should_track_npm_and_cargo_evidence() {
+    let docs = repo_file("docs/release-readiness.md");
+
+    assert!(
+        docs.contains("npm i -g @iliasalmerekov/aegis"),
+        "release readiness must require npm global install evidence"
+    );
+    assert!(
+        docs.contains("npm publish --dry-run"),
+        "release readiness must include npm dry-run packaging"
+    );
+    assert!(
+        docs.contains("cargo install --git"),
+        "release readiness must document Cargo source-build validation"
+    );
+}
