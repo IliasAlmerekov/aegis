@@ -45,24 +45,49 @@ function releaseUrl(checksums, asset) {
   return `${baseUrl}/${asset}`;
 }
 
-function download(url, destination) {
+const MAX_REDIRECTS = 5;
+
+function download(url, destination, redirects = 0) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destination, { mode: 0o755 });
+    if (redirects > MAX_REDIRECTS) {
+      reject(new Error(`too many redirects for ${url}`));
+      return;
+    }
+
     https.get(url, response => {
-      if (response.statusCode !== 200) {
-        file.close();
-        fs.rmSync(destination, { force: true });
-        reject(new Error(`download failed with HTTP ${response.statusCode}: ${url}`));
+      const status = response.statusCode;
+
+      // GitHub release asset URLs respond with 301/302/303/307/308 and a
+      // Location header pointing at release-assets.githubusercontent.com. Node's
+      // https.get does not follow redirects automatically, so follow them here.
+      if (status === 301 || status === 302 || status === 303 || status === 307 || status === 308) {
+        const location = response.headers.location;
+        response.resume();
+        if (!location) {
+          reject(new Error(`redirect ${status} without Location header from ${url}`));
+          return;
+        }
+        const nextUrl = new URL(location, url).toString();
+        download(nextUrl, destination, redirects + 1).then(resolve, reject);
         return;
       }
 
+      if (status !== 200) {
+        response.resume();
+        reject(new Error(`download failed with HTTP ${status}: ${url}`));
+        return;
+      }
+
+      const file = fs.createWriteStream(destination, { mode: 0o755 });
       response.pipe(file);
       file.on("finish", () => {
         file.close(resolve);
       });
+      file.on("error", error => {
+        fs.rmSync(destination, { force: true });
+        reject(error);
+      });
     }).on("error", error => {
-      file.close();
-      fs.rmSync(destination, { force: true });
       reject(error);
     });
   });

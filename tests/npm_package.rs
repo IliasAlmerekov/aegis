@@ -142,6 +142,30 @@ fn npm_installer_should_fail_closed_and_support_test_overrides() {
 }
 
 #[test]
+fn npm_installer_should_follow_github_release_redirects() {
+    let installer = repo_file("packaging/npm/scripts/install.js");
+
+    // GitHub release asset URLs respond with 302 -> release-assets.githubusercontent.com;
+    // Node's https.get does not follow redirects automatically, so the installer
+    // must follow the Location header itself to be functional on real installs.
+    assert!(
+        installer.contains("headers.location"),
+        "installer must follow the Location header on GitHub release redirects"
+    );
+    assert!(
+        installer.contains("301")
+            && installer.contains("302")
+            && installer.contains("307")
+            && installer.contains("308"),
+        "installer must handle the standard permanent/temporary redirect status codes"
+    );
+    assert!(
+        installer.contains("MAX_REDIRECTS"),
+        "installer must cap redirect following to avoid redirect loops"
+    );
+}
+
+#[test]
 fn readme_should_document_npm_and_cargo_without_overclaiming_shell_setup() {
     let readme = repo_file("README.md");
 
