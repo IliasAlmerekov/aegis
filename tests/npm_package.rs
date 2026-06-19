@@ -23,11 +23,15 @@ fn npm_package_should_define_global_aegis_binary_and_postinstall() {
         "npm package must download and verify the native binary during postinstall"
     );
     assert!(
-        package.contains("\"os\": [") && package.contains("\"darwin\"") && package.contains("\"linux\""),
+        package.contains("\"os\": [")
+            && package.contains("\"darwin\"")
+            && package.contains("\"linux\""),
         "npm package must declare supported operating systems"
     );
     assert!(
-        package.contains("\"cpu\": [") && package.contains("\"x64\"") && package.contains("\"arm64\""),
+        package.contains("\"cpu\": [")
+            && package.contains("\"x64\"")
+            && package.contains("\"arm64\""),
         "npm package must declare supported CPU architectures"
     );
 }
@@ -75,10 +79,7 @@ fn npm_checksums_should_pin_each_supported_asset() {
         "aegis-macos-x86_64",
         "aegis-macos-aarch64",
     ] {
-        assert!(
-            checksums.contains(asset),
-            "checksums.json must pin {asset}"
-        );
+        assert!(checksums.contains(asset), "checksums.json must pin {asset}");
     }
 
     let sha_count = checksums
@@ -149,7 +150,9 @@ fn readme_should_document_npm_and_cargo_without_overclaiming_shell_setup() {
         "README must document npm global install"
     );
     assert!(
-        readme.contains("cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis"),
+        readme.contains(
+            "cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis"
+        ),
         "README must document cargo install from a release tag"
     );
     assert!(
