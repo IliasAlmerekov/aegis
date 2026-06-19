@@ -1,0 +1,44 @@
+{
+  "name": "@iliasalmerekov/aegis",
+  "version": "0.5.6",
+  "description": "Terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations",
+  "license": "MIT",
+  "homepage": "https://github.com/IliasAlmerekov/aegis",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IliasAlmerekov/aegis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/IliasAlmerekov/aegis/issues"
+  },
+  "bin": {
+    "aegis": "./bin/aegis.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "smoke": "node scripts/smoke.js"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "files": [
+    "bin/",
+    "scripts/",
+    "vendor/",
+    "checksums.json",
+    "README.md"
+  ],
+  "keywords": [
+    "aegis",
+    "security",
+    "ai",
+    "shell",
+    "cli",
+    "safety"
+  ]
+}

@@ -1,0 +1,7 @@
+.DS_Store
+*.tmp
+*.log
+node_modules/
+vendor/aegis
+vendor/aegis.tmp
+vendor/aegis.sha256
