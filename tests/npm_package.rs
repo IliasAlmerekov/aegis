@@ -91,3 +91,28 @@ fn npm_checksums_should_pin_each_supported_asset() {
         "checksums.json must contain exactly four 64-hex SHA256 values"
     );
 }
+
+#[test]
+fn npm_updater_should_fetch_all_sidecars_and_fail_closed() {
+    let script = repo_file("scripts/update-npm-package.sh");
+
+    assert!(
+        script.contains("set -eu"),
+        "npm updater must fail closed on unset variables and command failures"
+    );
+    assert!(
+        script.contains("aegis-linux-x86_64.sha256")
+            && script.contains("aegis-linux-aarch64.sha256")
+            && script.contains("aegis-macos-x86_64.sha256")
+            && script.contains("aegis-macos-aarch64.sha256"),
+        "npm updater must fetch all four checksum sidecars"
+    );
+    assert!(
+        script.contains("grep -Eq '^[[:xdigit:]]{64}$'"),
+        "npm updater must validate checksum format"
+    );
+    assert!(
+        script.contains("checksums.json"),
+        "npm updater must write packaging/npm/checksums.json"
+    );
+}
