@@ -176,10 +176,12 @@ installer, Homebrew formula, or npm wrapper is present.
     install not yet verified. See `docs/release-readiness.md` → "npm wrapper
     validation". Stays open per done-when.
 
-- [ ] **M3.5 — GitHub Releases with `.sha256` sidecars**
+- [x] **M3.5 — GitHub Releases with `.sha256` sidecars**
   Already partially present in `release.yml`.
-  - _Done when:_ a real tag produces prebuilt binaries for all supported targets
-    each with a `.sha256` sidecar (DoD §10).
+  - _Done when (met):_ real tag `v0.5.6` produced prebuilt binaries for all
+    supported targets, each with a `.sha256` sidecar. Verified by
+    `tests/release_assets_live.rs`; evidence recorded in
+    `docs/release-readiness.md`.
 
 ---
 

@@ -91,6 +91,14 @@ The current release workflow is triggered by tags matching `v*` and:
 
 This is a deterministic workflow-input contract, not a formal reproducible-build guarantee.
 
+M3.5 live release validation is covered by the gated
+`tests/release_assets_live.rs` integration test. It is disabled during default
+`rtk cargo test`; release operators run it with
+`rtk env AEGIS_TEST_LIVE_RELEASE=1 AEGIS_TEST_RELEASE_TAG=vX.Y.Z cargo test
+--test release_assets_live -- --nocapture` after a tag has been published to
+prove that GitHub Release assets and `.sha256` sidecars are both present and
+mutually consistent.
+
 For users who want to validate a downloaded release asset before installing it,
 see [Release readiness](release-readiness.md). That document also splits launch
 blockers from longer-term security hardening items.
