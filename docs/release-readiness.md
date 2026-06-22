@@ -36,6 +36,31 @@ These items are launch blockers for the current public line:
 - [ ] Threat-model and limitation language is visible, honest, and easy to
       find.
 
+## GitHub Release asset validation
+
+- [ ] `.github/workflows/release.yml` includes all four supported release assets:
+      `aegis-linux-x86_64`, `aegis-linux-aarch64`, `aegis-macos-x86_64`,
+      and `aegis-macos-aarch64`.
+- [ ] The release workflow publishes a matching `.sha256` sidecar for each asset.
+- [ ] `rtk cargo test --test release_workflow` passes.
+- [ ] `rtk env AEGIS_TEST_LIVE_RELEASE=1 AEGIS_TEST_RELEASE_TAG=vX.Y.Z cargo test --test release_assets_live -- --nocapture`
+      passes against the selected real tag.
+- [ ] Every downloaded sidecar verifies its matching binary with `sha256sum -c`
+      or `shasum -a 256 -c`.
+
+The live release test is gated by `AEGIS_TEST_LIVE_RELEASE=1` so default
+`rtk cargo test` stays network-free. M3.5 is not complete until this live check
+passes against the tag being used for installer, Homebrew, and npm checksum
+updates.
+
+### Evidence recorded 2026-06-22 (release v0.5.6)
+
+`rtk cargo test --test release_workflow`: PASS (9 tests, including the binary +
+`.sha256` publication contract). `AEGIS_TEST_LIVE_RELEASE=1
+AEGIS_TEST_RELEASE_TAG=v0.5.6 rtk cargo test --test release_assets_live --
+--nocapture`: PASS. The GitHub Release contains all four supported binaries and
+all four `.sha256` sidecars; each sidecar verifies its matching binary.
+
 ## Security-Grade Checklist
 
 These items are not launch blockers, but they matter for a more security-grade
