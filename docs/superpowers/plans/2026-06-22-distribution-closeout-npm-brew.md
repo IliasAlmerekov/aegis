@@ -162,8 +162,20 @@ Expected:
 Run:
 
 ```bash
-rtk npm --prefix packaging/npm pack --dry-run
+rtk npm pack --dry-run ./packaging/npm
 ```
+
+To capture machine-readable evidence of the packed file list, use the JSON
+variant:
+
+```bash
+rtk npm pack --dry-run --json ./packaging/npm
+```
+
+> Note: `npm --prefix <dir> pack` does not resolve the package directory in
+> npm 11 — it looks for `package.json` at the repo root and fails with `ENOENT`.
+> Pass the package directory as a positional argument (`./packaging/npm`)
+> instead.
 
 Expected:
 
@@ -183,7 +195,7 @@ Expected:
 Run:
 
 ```bash
-rtk npm --prefix packaging/npm publish --dry-run
+rtk npm publish --dry-run ./packaging/npm
 ```
 
 Expected:
