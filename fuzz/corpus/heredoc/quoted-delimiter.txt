@@ -1,0 +1,3 @@
+cat <<'SQL'
+DROP TABLE users;
+SQL

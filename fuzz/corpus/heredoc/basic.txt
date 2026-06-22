@@ -1,0 +1,3 @@
+cat <<EOF
+rm -rf /tmp/aegis-fuzz-heredoc
+EOF

@@ -28,3 +28,10 @@ path = "fuzz_targets/scanner.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "heredoc"
+path = "fuzz_targets/heredoc.rs"
+test = false
+doc = false
+bench = false

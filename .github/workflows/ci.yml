@@ -195,7 +195,7 @@ jobs:
       - name: Run live installer test
         run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_live_release test_installer_live_github_release_download
   fuzz:
-    name: Fuzzing (parser + scanner)
+    name: Fuzzing (parser + scanner + heredoc)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -224,3 +224,6 @@ jobs:
 
       - name: Run scanner fuzz
         run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run scanner fuzz/corpus/scanner -- -runs=100000 -max_len=65536
+
+      - name: Run heredoc fuzz
+        run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run heredoc fuzz/corpus/heredoc -- -runs=100000 -max_len=65536

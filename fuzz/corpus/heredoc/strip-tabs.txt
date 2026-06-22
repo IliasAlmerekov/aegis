@@ -1,0 +1,3 @@
+cat <<-EOF
+		echo stripped tab body
+EOF
