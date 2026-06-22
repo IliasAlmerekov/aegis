@@ -56,8 +56,8 @@ updates.
 ### Evidence recorded 2026-06-22 (release v0.5.6)
 
 `rtk cargo test --test release_workflow`: PASS (9 tests, including the binary +
-`.sha256` publication contract). `AEGIS_TEST_LIVE_RELEASE=1
-AEGIS_TEST_RELEASE_TAG=v0.5.6 rtk cargo test --test release_assets_live --
+`.sha256` publication contract). `rtk env AEGIS_TEST_LIVE_RELEASE=1
+AEGIS_TEST_RELEASE_TAG=v0.5.6 cargo test --test release_assets_live --
 --nocapture`: PASS. The GitHub Release contains all four supported binaries and
 all four `.sha256` sidecars; each sidecar verifies its matching binary.
 
