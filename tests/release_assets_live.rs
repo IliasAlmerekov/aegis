@@ -4,7 +4,7 @@
 //! network-free. Release operators run it after publishing a tag with:
 //!
 //! ```text
-//! AEGIS_TEST_LIVE_RELEASE=1 AEGIS_TEST_RELEASE_TAG=vX.Y.Z \
+//! rtk env AEGIS_TEST_LIVE_RELEASE=1 AEGIS_TEST_RELEASE_TAG=vX.Y.Z \
 //!   cargo test --test release_assets_live -- --nocapture
 //! ```
 //!
@@ -33,6 +33,19 @@ fn run(command: &str, args: &[&str]) -> std::process::Output {
         .unwrap_or_else(|error| panic!("failed to run {command} {args:?}: {error}"))
 }
 
+/// Probes whether `command args` runs and exits successfully. Unlike `run`,
+/// this must not panic when the command is absent: on macOS `sha256sum` is
+/// typically not installed, so `Command::new("sha256sum").output()` returns
+/// `Err(NotFound)`. A panicking probe would abort before the `shasum` fallback
+/// could be selected, breaking the portable macOS path.
+fn command_succeeds(command: &str, args: &[&str]) -> bool {
+    Command::new(command)
+        .args(args)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn release_tag() -> String {
     std::env::var("AEGIS_TEST_RELEASE_TAG").unwrap_or_else(|_| "v0.5.6".to_string())
 }
@@ -58,7 +71,7 @@ fn download(url: &str, destination: &Path) {
 }
 
 fn checksum_tool() -> (&'static str, Vec<&'static str>) {
-    if run("sha256sum", &["--version"]).status.success() {
+    if command_succeeds("sha256sum", &["--version"]) {
         ("sha256sum", vec!["-c"])
     } else {
         ("shasum", vec!["-a", "256", "-c"])
