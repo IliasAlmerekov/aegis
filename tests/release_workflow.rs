@@ -180,7 +180,9 @@ fn release_workflow_should_generate_sha256_before_uploading_artifacts() {
     );
     assert!(
         wf.contains("sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256")
-            || wf.contains("shasum -a 256 ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256"),
+            || wf.contains(
+                "shasum -a 256 ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256"
+            ),
         "release workflow must write checksum output to <asset>.sha256"
     );
 }

@@ -38,14 +38,16 @@ fn release_tag() -> String {
 }
 
 fn repository() -> String {
-    std::env::var("AEGIS_TEST_RELEASE_REPO")
-        .unwrap_or_else(|_| "IliasAlmerekov/aegis".to_string())
+    std::env::var("AEGIS_TEST_RELEASE_REPO").unwrap_or_else(|_| "IliasAlmerekov/aegis".to_string())
 }
 
 fn download(url: &str, destination: &Path) {
-    let destination = destination
-        .to_str()
-        .unwrap_or_else(|| panic!("download destination should be UTF-8: {}", destination.display()));
+    let destination = destination.to_str().unwrap_or_else(|| {
+        panic!(
+            "download destination should be UTF-8: {}",
+            destination.display()
+        )
+    });
     let output = run("curl", &["-fL", "-sS", url, "-o", destination]);
     assert!(
         output.status.success(),
@@ -68,7 +70,12 @@ fn verify_sidecar(download_dir: &Path, sidecar: &Path) {
     let sidecar_name = sidecar
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or_else(|| panic!("sidecar path should have UTF-8 file name: {}", sidecar.display()));
+        .unwrap_or_else(|| {
+            panic!(
+                "sidecar path should have UTF-8 file name: {}",
+                sidecar.display()
+            )
+        });
     args.push(sidecar_name);
 
     let output = Command::new(tool)
@@ -120,6 +127,9 @@ fn live_github_release_has_all_binaries_and_matching_sha256_sidecars() {
             download(browser_download_url, &destination);
         }
 
-        verify_sidecar(temp.path(), &PathBuf::from(temp.path()).join(format!("{asset}.sha256")));
+        verify_sidecar(
+            temp.path(),
+            &PathBuf::from(temp.path()).join(format!("{asset}.sha256")),
+        );
     }
 }
