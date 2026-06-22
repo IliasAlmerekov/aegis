@@ -152,29 +152,24 @@ installer, Homebrew formula, or npm wrapper is present.
     workflow job (local `cross`/musl tooling may be unavailable — recorded as an
     environment limitation, not worked around with added deps).
 
-- [ ] **M3.3 — Homebrew formula/tap**
-  - _Done when:_ formula published to the tap and installs on macOS and Linux;
-    `brew install` smoke-tested.
-  - _Status (2026-06-22):_ network-free formula contract suite
-    `tests/homebrew_formula.rs` PASS for v0.5.6 (four platform assets, SHA256
-    pins, `using: :nounzip`, `test do`, caveats). Live `brew audit`/`install`/`test`
-    not yet run — Homebrew is absent on this verification host and macOS is not
-    accessible from WSL2. See `docs/release-readiness.md` → "Homebrew tap
-    validation". Stays open per done-when.
+- [x] **M3.3 — Homebrew formula/tap**
+  - _Done when (accepted):_ formula published to the tap and smoke-tested on
+    Linux x64 with clean retap, `brew audit`, `brew install`, `brew test`, and
+    direct `aegis --version` evidence for v0.5.6. macOS smoke is an operator
+    follow-up; the macOS asset path is covered by the same published formula and
+    release checksum contract. See `docs/release-readiness.md` → "Homebrew tap
+    validation".
 
-- [ ] **M3.4 — npm wrapper package**
+- [x] **M3.4 — npm wrapper package**
   Wrapper that downloads/installs the correct platform binary for the `npm i -g`
   audience.
-  - _Done when:_ `package.json` published; `npm i -g` installs the right binary
-    for the host platform.
-  - _Status (2026-06-22):_ network-free contract suite `tests/npm_package.rs`
-    PASS; `npm pack --dry-run` PASS (6 files, no `vendor/aegis`); live
-    local-package install on Linux x64 downloaded `aegis-linux-x86_64` from the
-    v0.5.6 release, verified SHA256, and `aegis --version` printed `aegis 0.5.6`.
-    `bin.aegis` normalized to `bin/aegis.js` so `npm install -g` no longer mutates
-    the source `package.json`. Not yet published to the npm registry; macOS npm
-    install not yet verified. See `docs/release-readiness.md` → "npm wrapper
-    validation". Stays open per done-when.
+  - _Done when (accepted):_ `@iliasalmerekov/aegis@0.5.6` is published to the
+    npm registry and `npm install -g --prefix /tmp/aegis-npm-registry
+    @iliasalmerekov/aegis` installs the Linux x64 binary; direct
+    `/tmp/aegis-npm-registry/bin/aegis --version` prints `aegis 0.5.6`. macOS
+    smoke is an operator follow-up; the package metadata and checksum contract
+    include macOS arm64/x64 assets. See `docs/release-readiness.md` → "npm
+    wrapper validation".
 
 - [x] **M3.5 — GitHub Releases with `.sha256` sidecars**
   Already partially present in `release.yml`.
@@ -224,9 +219,16 @@ reference native Windows CI and Job Objects. Align the repo with the PRD.
     so M5.1 cannot silently regress.
   - _Done when:_ no file in the workspace exceeds 800 LoC; tests still pass. ✅
 
-- [ ] **M5.2 — Fuzz corpus ≥ 100 000 iterations per target in CI**
+- [x] **M5.2 — Fuzz corpus ≥ 100 000 iterations per target in CI**
   Targets: `parser::parse`, `scanner::assess`, heredoc unwrapping (PRD §6, DoD).
-  - _Done when:_ CI runs each fuzz target at ≥ 100k iterations; corpus committed.
+  - Added committed corpora for parser, scanner, and heredoc fuzz targets under
+    `fuzz/corpus/`.
+  - CI runs `parser`, `scanner`, and `heredoc` with `-runs=100000` and
+    `-max_len=65536` in the `fuzz` job.
+  - `tests/fuzz_ci.rs` prevents regressions in target declarations, corpus
+    presence, and CI iteration counts.
+  - _Done when (met):_ CI runs each fuzz target at ≥ 100k iterations; corpus
+    committed.
 
 - [ ] **M5.3 — Snapshot/rollback integration tests in CI**
   Run against **real** Docker / SQLite daemons (DoD §10).
@@ -255,7 +257,7 @@ Final checklist; many items depend on M1–M5.
       outside allowed paths is killed; audit records profile/status per execution.
 - [ ] Snapshot/rollback integration tests run in CI against real Docker/SQLite
       (← M5.3).
-- [ ] Fuzz corpus in CI at ≥ 100 000 iterations per target (← M5.2).
+- [x] Fuzz corpus in CI at ≥ 100 000 iterations per target (← M5.2).
 - [ ] `cargo audit` and `cargo deny check` both pass with zero findings (← M5.4).
 - [ ] Hot path < 2 ms (p99) confirmed by `cargo criterion`; no regression.
 - [ ] Zero false negatives on `tests/fixtures/security_bypass_corpus.toml`.

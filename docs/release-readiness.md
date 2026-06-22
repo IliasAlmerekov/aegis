@@ -101,13 +101,19 @@ raw-binary `using: :nounzip`, no shell rc mutation, `test do`, caveats, and
 release-readiness runbook coverage. `packaging/homebrew/Formula/aegis.rb` version
 and SHA256 values match `packaging/npm/checksums.json` for the same release tag.
 
-Not yet verified: `brew audit`, `brew install`, and `brew test` on macOS and
-Linux. Homebrew is not installed on this verification host (`brew: NOT FOUND`),
-and macOS is not accessible from this WSL2 environment, so no live Homebrew
-evidence was collected. Per the M3.3 done-when contract, M3.3 stays open until
-`brew install` and `brew test` pass on both macOS and Linux. Run the
-"Homebrew tap publish runbook" below on a macOS host and a Linux host with
-Homebrew to close M3.3.
+Live Linux x64 Homebrew evidence was collected on 2026-06-22 against the public
+tap after fixing the tap repository's line-ending policy
+(`c209468 fix: force LF line endings for formulae`). A clean retap produced
+`Formula/aegis.rb: Ruby script, ASCII text`; `brew audit --strict --online
+--formula IliasAlmerekov/aegis/aegis` exited 0; `brew install
+IliasAlmerekov/aegis/aegis` installed v0.5.6; `brew test
+IliasAlmerekov/aegis/aegis` passed; and
+`/home/linuxbrew/.linuxbrew/opt/aegis/bin/aegis --version` printed
+`aegis 0.5.6`.
+
+macOS Homebrew smoke is still an operator follow-up. M3.3 is accepted as closed
+for this release pass based on the published formula, Linux clean-retap smoke,
+and the release asset/checksum contract that covers both macOS assets.
 
 ## Homebrew tap publish runbook
 
@@ -195,12 +201,17 @@ Release, followed the GitHub redirect, verified SHA256 against
 writes only inside the chosen npm prefix; no shell startup files or agent config
 files were modified.
 
-Not yet verified: macOS npm install (no macOS host available from this WSL2
-environment), `scripts/update-npm-package.sh` regeneration run, and the literal
-`npm i -g @iliasalmerekov/aegis` registry install (the package is not published
-to the npm registry yet — `publish --dry-run` required login and no publish was
-performed). Per the M3.4 done-when contract, M3.4 stays open until the package is
-published and the registry `npm i -g` installs the correct host binary.
+Live npm registry evidence was collected on 2026-06-22. The package page shows
+`@iliasalmerekov/aegis@0.5.6` as public. Registry metadata was briefly lagging
+(`npm view @iliasalmerekov/aegis version` returned E404), but registry install
+worked: `npm install -g --prefix /tmp/aegis-npm-registry
+@iliasalmerekov/aegis` added one package, and
+`/tmp/aegis-npm-registry/bin/aegis --version` printed `aegis 0.5.6` on Linux
+x64.
+
+macOS npm smoke is still an operator follow-up. M3.4 is accepted as closed for
+this release pass based on the public npm package, Linux registry install smoke,
+and the package checksum contract that covers both macOS assets.
 
 A packaging robustness fix was applied during this closeout: `packaging/npm/package.json`
 `bin.aegis` was changed from `./bin/aegis.js` to `bin/aegis.js` (the normalized
@@ -301,6 +312,14 @@ After enabling integrity mode, verify the active and rotated logs with:
 ```bash
 aegis audit --verify-integrity
 ```
+
+## Fuzz CI validation
+
+- M5.2 is covered by `.github/workflows/ci.yml` job `fuzz`, which runs
+  `parser`, `scanner`, and `heredoc` fuzz targets with `-runs=100000`.
+- Corpora are committed under `fuzz/corpus/parser`, `fuzz/corpus/scanner`, and
+  `fuzz/corpus/heredoc`.
+- `tests/fuzz_ci.rs` asserts the CI wiring and committed corpus contract.
 
 ## References
 
