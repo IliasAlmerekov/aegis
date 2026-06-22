@@ -78,6 +78,15 @@ posture later:
 
 The convenience installer is exercised end-to-end in CI on `ubuntu-latest` and `macos-latest` by the `live-installer` job. The test downloads the latest GitHub Release asset for the host platform, verifies the SHA-256 sidecar, installs the binary into a temporary `BINDIR`, and asserts that `aegis --version` succeeds. This job is gated in the test suite by the `AEGIS_TEST_LIVE_INSTALL=1` environment variable so default `cargo test` remains network-free.
 
+
+## Snapshot/rollback live backend validation
+
+The `Live snapshot/rollback (Docker + SQLite)` CI job closes M5.3 by exercising snapshot and rollback against real backends on `ubuntu-latest`.
+
+- Docker coverage runs `tests/docker_integration.rs::snapshot_rollback_reverts_filesystem_change` with `AEGIS_DOCKER_TESTS=1` after pulling the `alpine` fixture image.
+- SQLite coverage runs `tests/snapshot_rollback_live.rs::sqlite_snapshot_rollback_restores_database_file_through_aegis_cli` with `AEGIS_SQLITE_SNAPSHOT_TESTS=1` after installing the real `sqlite3` CLI.
+- The SQLite test uses the Aegis CLI end-to-end: a Danger-shaped allowlisted command creates a pre-execution SQLite snapshot, mutates the database through `sqlite3`, rolls back by the audit-recorded snapshot id, and verifies the post-rollback database contents.
+
 ## Homebrew tap validation
 
 - [ ] `packaging/homebrew/Formula/aegis.rb` was generated from the selected

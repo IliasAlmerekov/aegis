@@ -14,6 +14,7 @@ Current GitHub Actions workflows run these jobs:
 
 - `Quality (fmt, clippy, test)`: formatting, clippy, and tests
 - `Live installer validation`: downloads the latest GitHub Release asset for the host platform, verifies the SHA-256 sidecar, installs to a temporary `BINDIR`, and asserts `aegis --version` succeeds. Runs on `ubuntu-latest` and `macos-latest`; gated in the test suite by `AEGIS_TEST_LIVE_INSTALL=1` so default `cargo test` stays network-free.
+- `Live snapshot/rollback (Docker + SQLite)`: runs on `ubuntu-latest`, pulls the real `alpine` Docker fixture image, installs the real `sqlite3` CLI, then runs the gated Docker and SQLite snapshot/rollback integration tests with `AEGIS_DOCKER_TESTS=1` and `AEGIS_SQLITE_SNAPSHOT_TESTS=1`.
 - `Security (audit, deny)`: `cargo-audit` and `cargo-deny`
 - `Release build`: release builds on Ubuntu and macOS
 - `Performance baseline (scanner bench)`: `scanner_bench` plus benchmark policy evaluation
@@ -54,6 +55,7 @@ shell startup files or agent config.
 - CI runs formatting, linting, tests, dependency audit, deny policy checks, release builds, and benchmark policy checks exactly as defined in the pinned workflows
 - CI additionally verifies parser and scanner fuzzing with bounded corpus-backed runs.
 - release artifacts are checksumed and uploaded by the pinned release workflow
+- CI exercises snapshot and rollback behavior against live Docker and SQLite backends in the dedicated M5.3 job.
 
 ## What CI Does Not Guarantee
 
