@@ -103,3 +103,84 @@ fn release_workflow_should_build_linux_musl_targets_via_cross() {
         );
     }
 }
+
+/// The four installer-facing release assets M3.5 requires. Every supported
+/// target must produce a binary and a matching `.sha256` sidecar.
+fn expected_release_assets() -> [&'static str; 4] {
+    [
+        "aegis-linux-x86_64",
+        "aegis-linux-aarch64",
+        "aegis-macos-x86_64",
+        "aegis-macos-aarch64",
+    ]
+}
+
+#[test]
+fn release_workflow_should_define_all_supported_asset_names_in_matrix() {
+    let wf = release_workflow();
+
+    for asset in expected_release_assets() {
+        assert!(
+            wf.contains(&format!("asset_name: {asset}")),
+            "release workflow matrix must define asset_name: {asset}"
+        );
+    }
+}
+
+#[test]
+fn release_workflow_should_upload_binary_and_sha256_for_each_matrix_entry() {
+    let wf = release_workflow();
+
+    assert!(
+        wf.contains("name: ${{ matrix.asset_name }}"),
+        "upload-artifact must name each artifact from matrix.asset_name"
+    );
+    assert!(
+        wf.contains("${{ matrix.asset_name }}.sha256"),
+        "upload-artifact path must include each matrix asset's .sha256 sidecar"
+    );
+    assert!(
+        wf.contains("if-no-files-found: error"),
+        "upload-artifact must fail closed if any binary or sidecar is missing"
+    );
+}
+
+#[test]
+fn release_workflow_should_publish_each_binary_and_matching_sha256_sidecar() {
+    // The workflow file is checked out with CRLF on some hosts (core.autocrlf),
+    // so normalize to LF before asserting on line-anchored substrings. The
+    // contract is about which assets are published, not their line endings.
+    let wf = release_workflow().replace("\r\n", "\n");
+
+    for asset in expected_release_assets() {
+        assert!(
+            wf.contains(&format!("artifacts/{asset}\n")),
+            "GitHub Release files list must publish binary artifact {asset}"
+        );
+        assert!(
+            wf.contains(&format!("artifacts/{asset}.sha256")),
+            "GitHub Release files list must publish checksum sidecar {asset}.sha256"
+        );
+    }
+}
+
+#[test]
+fn release_workflow_should_generate_sha256_before_uploading_artifacts() {
+    let wf = release_workflow();
+    let checksum_step = wf
+        .find("name: Generate SHA256 checksum")
+        .expect("release workflow must generate SHA256 sidecars");
+    let upload_step = wf
+        .find("name: Upload binary artifact")
+        .expect("release workflow must upload binary artifacts");
+
+    assert!(
+        checksum_step < upload_step,
+        "release workflow must generate SHA256 sidecars before artifact upload"
+    );
+    assert!(
+        wf.contains("sha256sum ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256")
+            || wf.contains("shasum -a 256 ${{ matrix.asset_name }} > ${{ matrix.asset_name }}.sha256"),
+        "release workflow must write checksum output to <asset>.sha256"
+    );
+}
