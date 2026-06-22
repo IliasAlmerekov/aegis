@@ -15,7 +15,7 @@ fn npm_package_should_define_global_aegis_binary_and_postinstall() {
         "npm package should use the confirmed scoped package name"
     );
     assert!(
-        package.contains("\"bin\"") && package.contains("\"aegis\": \"./bin/aegis.js\""),
+        package.contains("\"bin\"") && package.contains("\"aegis\": \"bin/aegis.js\""),
         "npm package must expose a global aegis command"
     );
     assert!(

@@ -68,6 +68,22 @@ default CI job. The required commands are listed above; a gated live test
 (`AEGIS_TEST_LIVE_HOMEBREW=1`) lives in `tests/homebrew_live.rs` and can be
 run manually where Homebrew is available.
 
+### Evidence recorded 2026-06-22 (Linux x64 / WSL2, release v0.5.6)
+
+Network-free formula contract suite `tests/homebrew_formula.rs`: PASS — confirms
+all four platform assets, four 64-hex SHA256 pins pinned to the v0.5.6 release,
+raw-binary `using: :nounzip`, no shell rc mutation, `test do`, caveats, and
+release-readiness runbook coverage. `packaging/homebrew/Formula/aegis.rb` version
+and SHA256 values match `packaging/npm/checksums.json` for the same release tag.
+
+Not yet verified: `brew audit`, `brew install`, and `brew test` on macOS and
+Linux. Homebrew is not installed on this verification host (`brew: NOT FOUND`),
+and macOS is not accessible from this WSL2 environment, so no live Homebrew
+evidence was collected. Per the M3.3 done-when contract, M3.3 stays open until
+`brew install` and `brew test` pass on both macOS and Linux. Run the
+"Homebrew tap publish runbook" below on a macOS host and a Linux host with
+Homebrew to close M3.3.
+
 ## Homebrew tap publish runbook
 
 Operator runbook for closing M3.3 Task 6. Run every step on release; the
@@ -133,8 +149,41 @@ so the source-of-truth file is `packaging/homebrew/Formula/aegis.rb`.
 - [ ] `npm publish --dry-run` succeeds from `packaging/npm`.
 - [ ] `npm i -g @iliasalmerekov/aegis` succeeds on Linux x64.
 - [ ] `npm i -g @iliasalmerekov/aegis` succeeds on macOS arm64 or x64.
-- [ ] `aegis --version` prints the selected release version after npm install.
-- [ ] npm install does not mutate shell startup files or agent config.
+- [x] `aegis --version` prints the selected release version after npm install.
+- [x] npm install does not mutate shell startup files or agent config.
+
+### Evidence recorded 2026-06-22 (Linux x64 / WSL2, release v0.5.6)
+
+Network-free contract suite `tests/npm_package.rs`: PASS (8 tests). `npm pack
+--dry-run --json ./packaging/npm`: PASS — tarball contains exactly `package.json`,
+`README.md`, `checksums.json`, `bin/aegis.js`, `scripts/install.js`,
+`scripts/smoke.js`; no `vendor/aegis`, no build artifacts. `npm publish --dry-run`
+reports the tarball and `@iliasalmerekov/aegis@0.5.6` metadata but requires
+registry login in this environment (recorded as an environment limitation; `npm
+pack --dry-run` evidence retained). Skip-download install
+(`AEGIS_NPM_SKIP_DOWNLOAD=1 npm install -g --prefix /tmp/... ./packaging/npm`):
+PASS — `aegis --version` prints `aegis test binary`, exit 0. Live local-package
+install (`npm install -g --prefix /tmp/aegis-npm-live ./packaging/npm`): PASS on
+Linux x64 — the installer downloaded `aegis-linux-x86_64` from the v0.5.6 GitHub
+Release, followed the GitHub redirect, verified SHA256 against
+`checksums.json`, and `aegis --version` printed `aegis 0.5.6` (exit 0). Install
+writes only inside the chosen npm prefix; no shell startup files or agent config
+files were modified.
+
+Not yet verified: macOS npm install (no macOS host available from this WSL2
+environment), `scripts/update-npm-package.sh` regeneration run, and the literal
+`npm i -g @iliasalmerekov/aegis` registry install (the package is not published
+to the npm registry yet — `publish --dry-run` required login and no publish was
+performed). Per the M3.4 done-when contract, M3.4 stays open until the package is
+published and the registry `npm i -g` installs the correct host binary.
+
+A packaging robustness fix was applied during this closeout: `packaging/npm/package.json`
+`bin.aegis` was changed from `./bin/aegis.js` to `bin/aegis.js` (the normalized
+form npm emits in the published tarball). Previously `npm install -g
+./packaging/npm` triggered `npm pkg fix` auto-correction that mutated the source
+`package.json` in place and broke `tests/npm_package.rs` on the next `cargo test`.
+The normalized form is stable under `npm install` and matches the published
+tarball; `tests/npm_package.rs` was updated to assert the same form.
 
 ## Cargo install validation
 

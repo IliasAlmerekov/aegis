@@ -12,7 +12,7 @@
     "url": "https://github.com/IliasAlmerekov/aegis/issues"
   },
   "bin": {
-    "aegis": "./bin/aegis.js"
+    "aegis": "bin/aegis.js"
   },
   "scripts": {
     "postinstall": "node scripts/install.js",
