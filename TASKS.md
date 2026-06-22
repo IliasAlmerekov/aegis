@@ -155,12 +155,26 @@ installer, Homebrew formula, or npm wrapper is present.
 - [ ] **M3.3 — Homebrew formula/tap**
   - _Done when:_ formula published to the tap and installs on macOS and Linux;
     `brew install` smoke-tested.
+  - _Status (2026-06-22):_ network-free formula contract suite
+    `tests/homebrew_formula.rs` PASS for v0.5.6 (four platform assets, SHA256
+    pins, `using: :nounzip`, `test do`, caveats). Live `brew audit`/`install`/`test`
+    not yet run — Homebrew is absent on this verification host and macOS is not
+    accessible from WSL2. See `docs/release-readiness.md` → "Homebrew tap
+    validation". Stays open per done-when.
 
 - [ ] **M3.4 — npm wrapper package**
   Wrapper that downloads/installs the correct platform binary for the `npm i -g`
   audience.
   - _Done when:_ `package.json` published; `npm i -g` installs the right binary
     for the host platform.
+  - _Status (2026-06-22):_ network-free contract suite `tests/npm_package.rs`
+    PASS; `npm pack --dry-run` PASS (6 files, no `vendor/aegis`); live
+    local-package install on Linux x64 downloaded `aegis-linux-x86_64` from the
+    v0.5.6 release, verified SHA256, and `aegis --version` printed `aegis 0.5.6`.
+    `bin.aegis` normalized to `bin/aegis.js` so `npm install -g` no longer mutates
+    the source `package.json`. Not yet published to the npm registry; macOS npm
+    install not yet verified. See `docs/release-readiness.md` → "npm wrapper
+    validation". Stays open per done-when.
 
 - [ ] **M3.5 — GitHub Releases with `.sha256` sidecars**
   Already partially present in `release.yml`.
