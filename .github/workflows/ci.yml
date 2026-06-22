@@ -194,6 +194,47 @@ jobs:
 
       - name: Run live installer test
         run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_live_release test_installer_live_github_release_download
+
+  snapshot-rollback-live:
+    name: Live snapshot/rollback (Docker + SQLite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-snapshot-rollback-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-snapshot-rollback-
+
+      - name: Install SQLite CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+
+      - name: Pull Docker fixture image
+        run: docker pull alpine
+
+      - name: Run live Docker snapshot rollback test
+        env:
+          AEGIS_DOCKER_TESTS: "1"
+        run: cargo test --test docker_integration snapshot_rollback_reverts_filesystem_change -- --exact --nocapture
+
+      - name: Run live SQLite snapshot rollback test
+        env:
+          AEGIS_SQLITE_SNAPSHOT_TESTS: "1"
+        run: cargo test --test snapshot_rollback_live sqlite_snapshot_rollback_restores_database_file_through_aegis_cli -- --exact --nocapture
+
   fuzz:
     name: Fuzzing (parser + scanner + heredoc)
     runs-on: ubuntu-latest

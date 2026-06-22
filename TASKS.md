@@ -230,9 +230,21 @@ reference native Windows CI and Job Objects. Align the repo with the PRD.
   - _Done when (met):_ CI runs each fuzz target at ≥ 100k iterations; corpus
     committed.
 
-- [ ] **M5.3 — Snapshot/rollback integration tests in CI**
+- [x] **M5.3 — Snapshot/rollback integration tests in CI**
   Run against **real** Docker / SQLite daemons (DoD §10).
-  - _Done when:_ CI job exercises snapshot+rollback against live Docker/SQLite.
+  - Added a dedicated `snapshot-rollback-live` CI job on `ubuntu-latest`.
+  - Docker coverage runs the existing real-daemon lifecycle test
+    `tests/docker_integration.rs::snapshot_rollback_reverts_filesystem_change`
+    with `AEGIS_DOCKER_TESTS=1` after pulling `alpine`.
+  - SQLite coverage runs
+    `tests/snapshot_rollback_live.rs::sqlite_snapshot_rollback_restores_database_file_through_aegis_cli`
+    with `AEGIS_SQLITE_SNAPSHOT_TESTS=1` after installing the real `sqlite3`
+    CLI. The test exercises the Aegis CLI end-to-end: snapshot before command
+    execution, SQLite mutation, rollback by audit snapshot id, and rollback
+    audit logging.
+  - `tests/snapshot_rollback_ci.rs` prevents the CI job, env gates, or targeted
+    commands from silently regressing.
+  - _Done when (met):_ CI job exercises snapshot+rollback against live Docker/SQLite.
 
 - [ ] **M5.4 — Supply-chain gates green**
   `rtk cargo audit` (0 CVEs) and `rtk cargo deny check` (permissive licenses

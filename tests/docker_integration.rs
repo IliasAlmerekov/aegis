@@ -210,7 +210,7 @@ async fn snapshot_rollback_reverts_filesystem_change() {
     let name = unique_name("lifecycle");
     let _guard = ContainerGuard(name.clone());
 
-    start_alpine(&name, &[]).await;
+    start_alpine(&name, &["--label", "aegis.snapshot=true"]).await;
 
     let plugin = DockerPlugin::new();
 
