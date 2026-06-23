@@ -338,6 +338,18 @@ fn assess_flags_uppercase_echo_pipe_bash() {
     );
 }
 
+// Mixed-case variants: real attacks rarely use full uppercase. case_insensitive
+// built-in regex compilation must catch mixed case just like full uppercase.
+#[test]
+fn assess_blocks_mixedcase_rm_rf_root() {
+    assert_assessment_matches_pattern("Rm -rF /", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn assess_flags_mixedcase_shred() {
+    assert_assessment_matches_pattern("Shred -U secrets.txt", RiskLevel::Danger, "FS-004");
+}
+
 #[test]
 fn custom_regex_patterns_remain_case_sensitive() {
     let custom = Pattern {
