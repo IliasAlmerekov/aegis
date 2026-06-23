@@ -11,6 +11,9 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Changed
+- Prepare release metadata for v0.5.8 after the v0.5.7 release build hit the stale `ldd` static-link verification path (M3.2).
+
 ### Added
 - `aegis setup-shell` — explicit opt-in command for shell hook installation (ADR-009)
 - Supply-chain gates: `cargo audit` + `cargo deny check` both green in CI (M5.4)

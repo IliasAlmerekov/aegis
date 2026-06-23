@@ -1,6 +1,6 @@
 {
   "name": "@iliasalmerekov/aegis",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations",
   "license": "MIT",
   "homepage": "https://github.com/IliasAlmerekov/aegis",

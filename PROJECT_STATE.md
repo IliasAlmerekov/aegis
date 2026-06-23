@@ -8,11 +8,11 @@
 
 ## Current version
 
-`0.5.6` — pre-1.0, targeting `1.0.0`
+`0.5.8` — pre-1.0, targeting `1.0.0`
 
 ## Active branch
 
-`feat/npm-wrapper` (branched from `main`)
+`feat/shell-security` (branched from `main`)
 
 ## Last updated
 
@@ -41,11 +41,9 @@
 
 ## What was done last session (2026-06-23)
 
-- Added `aegis setup-shell` explicit opt-in command for shell hook installation
-- Blocked symlink recursion and rc injection in setup-shell
-- Closed supply-chain gates: starlark-policy dependency gated, `cargo audit`/`cargo deny` pass
-- Fixed Starlark feature-gate test to remove unsafe code
-- Updated `docs/release-readiness.md` to reflect M5.4 evidence
+- Prepared v0.5.8 release metadata after the v0.5.7 release build used a stale `ldd` static-link check
+- Verified the release workflow contract uses `readelf` for static Linux musl artifacts
+- Updated CI/task docs to describe the `readelf` static-link verification contract
 
 ---
 

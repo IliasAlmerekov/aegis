@@ -137,9 +137,10 @@ installer, Homebrew formula, or npm wrapper is present.
     linker setup.
   - Added a `Verify static Linux binary` step (gated on
     `contains(matrix.target, 'unknown-linux-musl')`) between `Rename binary` and
-    `Generate SHA256 checksum`; it runs `file` + `ldd` and fails the job
-    (`exit 1`) if the artifact is dynamically linked, so static linkage is
-    enforced before checksum generation and upload.
+    `Generate SHA256 checksum`; it runs `file` + `readelf` and fails the job
+    (`exit 1`) if the artifact has a dynamic interpreter (`PT_INTERP`) or shared
+    library dependencies (`DT_NEEDED`), so static linkage is enforced before
+    checksum generation and upload.
   - Installer-facing asset names (`aegis-linux-x86_64`, `aegis-linux-aarch64`)
     and macOS targets are unchanged; `.sha256` sidecars still generated for every
     artifact.

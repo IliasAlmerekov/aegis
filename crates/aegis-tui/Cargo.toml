@@ -1,6 +1,6 @@
 [package]
 name = "aegis-tui"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,11 +10,11 @@ documentation = "https://docs.rs/aegis-tui"
 description = "Crossterm confirmation TUI for Aegis. Depends on aegis-types, aegis-explanation, and crossterm."
 
 [dependencies]
-aegis-types = { version = "0.5.7", path = "../aegis-types" }
-aegis-explanation = { version = "0.5.7", path = "../aegis-explanation" }
+aegis-types = { version = "0.5.8", path = "../aegis-types" }
+aegis-explanation = { version = "0.5.8", path = "../aegis-explanation" }
 crossterm = "0.28"
 
 [dev-dependencies]
-aegis-parser = { version = "0.5.7", path = "../aegis-parser" }
-aegis-config = { version = "0.5.7", path = "../aegis-config" }
+aegis-parser = { version = "0.5.8", path = "../aegis-parser" }
+aegis-config = { version = "0.5.8", path = "../aegis-config" }
 regex = "1.11"
