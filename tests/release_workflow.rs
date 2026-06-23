@@ -82,12 +82,16 @@ fn release_workflow_should_verify_static_linux_binaries() {
         "release workflow must reference unknown-linux-musl in verification"
     );
     assert!(
-        wf.contains("ldd"),
-        "release workflow must invoke ldd to verify static linkage"
+        wf.contains("readelf"),
+        "release workflow must invoke readelf to verify static linkage (ldd is unreliable for static-pie and cross-compiled binaries)"
     );
     assert!(
-        wf.contains("not a dynamic executable"),
-        "release workflow must assert 'not a dynamic executable' output from ldd"
+        wf.contains("INTERP"),
+        "release workflow must assert the binary has no dynamic interpreter (PT_INTERP)"
+    );
+    assert!(
+        wf.contains("NEEDED"),
+        "release workflow must assert the binary has no shared library dependencies (DT_NEEDED)"
     );
 }
 
