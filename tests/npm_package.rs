@@ -119,6 +119,32 @@ fn npm_updater_should_fetch_all_sidecars_and_fail_closed() {
 }
 
 #[test]
+fn release_workflow_should_publish_npm_after_github_release_assets_exist() {
+    let workflow = repo_file(".github/workflows/release.yml");
+
+    assert!(
+        workflow.contains("publish-npm:"),
+        "release workflow must include an npm publish job"
+    );
+    assert!(
+        workflow.contains("needs: release"),
+        "npm publish must wait for the GitHub Release job so checksum sidecars exist"
+    );
+    assert!(
+        workflow.contains("scripts/update-npm-package.sh \"${{ github.ref_name }}\""),
+        "npm publish must generate checksums.json from the pushed release tag"
+    );
+    assert!(
+        workflow.contains("secrets.NPM_TOKEN"),
+        "npm publish must use the repository NPM_TOKEN secret"
+    );
+    assert!(
+        workflow.contains("npm publish --access public"),
+        "release workflow must publish the scoped public npm package"
+    );
+}
+
+#[test]
 fn npm_installer_should_fail_closed_and_support_test_overrides() {
     let installer = repo_file("packaging/npm/scripts/install.js");
 
@@ -189,7 +215,7 @@ fn readme_should_document_npm_and_cargo_without_overclaiming_shell_setup() {
     );
     assert!(
         readme.contains(
-            "cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis"
+            "cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.7 aegis"
         ),
         "README must document cargo install from a release tag"
     );

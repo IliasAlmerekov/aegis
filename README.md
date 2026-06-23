@@ -102,7 +102,7 @@ If you already have the Rust toolchain installed, you can build from the release
 tag:
 
 ```bash
-cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis
+cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.7 aegis
 ```
 
 Cargo builds from source and is intended for Rust developers. It does not run
