@@ -85,7 +85,9 @@ The current release workflow is triggered by tags matching `v*` and:
 - installs Rust `1.94.0`
 - uses `cross 0.2.5` for both Linux musl targets (`x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`) so the release matrix does not depend on runner-specific musl linker setup
 - builds the current four-target release matrix
-- verifies Linux musl artifacts are statically linked (`ldd` reports `not a dynamic executable`) before checksum generation
+- verifies Linux musl artifacts are statically linked with `readelf` by checking
+  that the ELF headers contain no dynamic interpreter (`PT_INTERP`) and no
+  shared library dependencies (`DT_NEEDED`) before checksum generation
 - copies and renames the `aegis` binary per target asset name
 - generates SHA-256 checksum sidecar files
 - uploads artifacts from the build job
