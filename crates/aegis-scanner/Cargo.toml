@@ -1,6 +1,6 @@
 [package]
 name = "aegis-scanner"
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,8 +10,8 @@ documentation = "https://docs.rs/aegis-scanner"
 description = "Command risk scanner for Aegis: PatternSet loading, Aho-Corasick quick scan, regex full scan, and prefix-rule matching. Depends on aegis-types and aegis-parser."
 
 [dependencies]
-aegis-types = { version = "0.5.6", path = "../aegis-types" }
-aegis-parser = { version = "0.5.6", path = "../aegis-parser" }
+aegis-types = { version = "0.5.7", path = "../aegis-types" }
+aegis-parser = { version = "0.5.7", path = "../aegis-parser" }
 regex = "1.11"
 aho-corasick = "1.1"
 toml = "0.8"

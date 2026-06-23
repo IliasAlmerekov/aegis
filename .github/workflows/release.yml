@@ -139,3 +139,48 @@ jobs:
             artifacts/aegis-macos-x86_64.sha256
             artifacts/aegis-macos-aarch64
             artifacts/aegis-macos-aarch64.sha256
+
+  publish-npm:
+    name: Publish npm package
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Generate npm checksums from release assets
+        env:
+          AEGIS_RELEASE_REPO: ${{ github.repository }}
+        run: scripts/update-npm-package.sh "${{ github.ref_name }}"
+
+      - name: Verify npm package contract
+        run: cargo test --test npm_package
+
+      - name: Verify npm package contents
+        working-directory: packaging/npm
+        env:
+          AEGIS_NPM_SKIP_DOWNLOAD: "1"
+        run: npm pack --dry-run
+
+      - name: Configure npm authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is required to publish @iliasalmerekov/aegis" >&2
+            exit 1
+          fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
+
+      - name: Publish npm package
+        working-directory: packaging/npm
+        run: npm publish --access public

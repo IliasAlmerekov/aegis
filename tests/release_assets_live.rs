@@ -47,7 +47,7 @@ fn command_succeeds(command: &str, args: &[&str]) -> bool {
 }
 
 fn release_tag() -> String {
-    std::env::var("AEGIS_TEST_RELEASE_TAG").unwrap_or_else(|_| "v0.5.6".to_string())
+    std::env::var("AEGIS_TEST_RELEASE_TAG").unwrap_or_else(|_| "v0.5.7".to_string())
 }
 
 fn repository() -> String {
