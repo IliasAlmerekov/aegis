@@ -87,6 +87,25 @@ The `Live snapshot/rollback (Docker + SQLite)` CI job closes M5.3 by exercising 
 - SQLite coverage runs `tests/snapshot_rollback_live.rs::sqlite_snapshot_rollback_restores_database_file_through_aegis_cli` with `AEGIS_SQLITE_SNAPSHOT_TESTS=1` after installing the real `sqlite3` CLI.
 - The SQLite test uses the Aegis CLI end-to-end: a Danger-shaped allowlisted command creates a pre-execution SQLite snapshot, mutates the database through `sqlite3`, rolls back by the audit-recorded snapshot id, and verifies the post-rollback database contents.
 
+## Supply-chain gate evidence
+
+### Evidence recorded 2026-06-23
+
+- `rtk cargo audit`: PASS, exits 0. 4 unmaintained warnings present (RUSTSEC-2023-0089,
+  RUSTSEC-2024-0388, RUSTSEC-2025-0057, RUSTSEC-2024-0436), all routing through
+  `starlark 0.14.2` which is only reachable via the optional `starlark-policy`
+  feature. Default build is not exposed to these crates at runtime.
+- `rtk cargo deny check`: PASS, exits 0. Advisories, bans, licenses, and sources
+  all clean. The four starlark-chain advisories are narrowly ignored in `deny.toml`
+  with documented justification and a revisit note.
+- CI security job updated to run `cargo deny check` (full check, including advisories),
+  matching the local gate. Previously ran `cargo deny check bans licenses sources`.
+- `aegis-starlark` is now an opt-in `starlark-policy` feature (`default = []`).
+  Default build is advisory-clean. If `~/.aegis/policy.star` exists but the binary
+  was compiled without the feature, `RuntimeContext::new` returns `AegisError::Config`
+  (fail-closed). CI contract tests (`tests/supply_chain_ci.rs`) and feature-gate
+  regression tests (`tests/starlark_feature_gate.rs`) prevent silent regressions.
+
 ## Homebrew tap validation
 
 - [ ] `packaging/homebrew/Formula/aegis.rb` was generated from the selected

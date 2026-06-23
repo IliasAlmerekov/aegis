@@ -17,6 +17,7 @@ use crate::explanation::formatter::{CommandExplanationExt, build_outcome_explana
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
+#[cfg(feature = "starlark-policy")]
 use aegis_starlark::load_starlark_policy;
 use aegis_types::SandboxStatus;
 
@@ -119,11 +120,22 @@ impl RuntimeContext {
         let current_user = detect_effective_user();
 
         // Merge TOML [[rules]] with rules from ~/.aegis/policy.star when present.
+        #[cfg(feature = "starlark-policy")]
         let mut policy_rules = config.rules.clone();
+        #[cfg(not(feature = "starlark-policy"))]
+        let policy_rules = config.rules.clone();
+        #[cfg(feature = "starlark-policy")]
         if let Some(star_path) = starlark_policy_path().filter(|p| p.exists()) {
             let star_rules = load_starlark_policy(&star_path)
                 .map_err(|e| AegisError::Config(format!("policy.star: {e}")))?;
             policy_rules.extend(star_rules);
+        }
+        #[cfg(not(feature = "starlark-policy"))]
+        if let Some(star_path) = starlark_policy_path().filter(|p| p.exists()) {
+            return Err(AegisError::Config(format!(
+                "policy.star exists at {} but this Aegis build was compiled without the starlark-policy feature",
+                star_path.display()
+            )));
         }
 
         Ok(Self {

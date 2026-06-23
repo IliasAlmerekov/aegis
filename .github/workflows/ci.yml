@@ -94,7 +94,7 @@ jobs:
           fi
 
       - name: cargo deny check
-        run: cargo deny check bans licenses sources
+        run: cargo deny check
 
   build:
     name: Release build (${{ matrix.os }})

@@ -1,6 +1,17 @@
-# Advisory (CVE) checks are handled by `cargo audit` in CI.
-# cargo-deny advisories parsing is unstable across DB versions — excluded here
-# to avoid false CI failures from upstream parser bugs.
+# Advisory (CVE) checks are run by both cargo-audit (in a dedicated CI step) and
+# cargo-deny. The four unmaintained advisories below all route exclusively through
+# starlark 0.14.2, which is only reachable via the optional starlark-policy
+# feature. The default build is not exposed to these crates at runtime; they are
+# present in Cargo.lock only because they are workspace members.
+# Accepted with the feature-gate decision on 2026-06-23. Revisit if starlark
+# updates its dependency chain or if a newer advisory-clean version is published.
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill via heapless->postcard->pagable->starlark; optional starlark-policy feature only, default build unaffected" },
+    { id = "RUSTSEC-2024-0388", reason = "derivative direct dep of starlark; optional starlark-policy feature only, default build unaffected" },
+    { id = "RUSTSEC-2025-0057", reason = "fxhash via starlark_map; optional starlark-policy feature only, default build unaffected" },
+    { id = "RUSTSEC-2024-0436", reason = "paste direct dep of starlark; optional starlark-policy feature only, default build unaffected" },
+]
 
 [licenses]
 version = 2
@@ -25,7 +36,7 @@ multiple-versions = "warn"
 # Keep the ban in place for workspace code while allowing the current third-party
 # crates that still depend on it directly.
 deny = [
-    { name = "once_cell", wrappers = ["criterion", "dashmap", "pagable", "starlark", "starlark_syntax", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "superseded by std::sync::LazyLock (stable since Rust 1.80); only allowed through audited third-party wrappers until the ecosystem catches up" },
+    { name = "once_cell", wrappers = ["criterion", "dashmap", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "superseded by std::sync::LazyLock (stable since Rust 1.80); only allowed through audited third-party wrappers until the ecosystem catches up" },
 ]
 
 [sources]
