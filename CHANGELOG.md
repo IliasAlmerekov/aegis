@@ -1,8 +1,37 @@
 # Changelog
 
-This changelog records the release-documentation state for Aegis. It is intended
-to stay aligned with the repository's current docs, release workflow, and
-installer behavior.
+All notable changes to Aegis are documented here.  
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Versioning: [SemVer](https://semver.org/).
+
+**Agent instructions:** prepend a new entry under `[Unreleased]` after every feature,
+fix, or breaking change. Use categories: `Added`, `Changed`, `Fixed`, `Removed`, `Security`.
+Reference the ADR number when an architectural decision was made (e.g. `(ADR-011)`).
+
+---
+
+## [Unreleased]
+
+### Added
+- `aegis setup-shell` — explicit opt-in command for shell hook installation (ADR-009)
+- Supply-chain gates: `cargo audit` + `cargo deny check` both green in CI (M5.4)
+- npm wrapper package with native binary download per platform (M3.4)
+- npm checksum updater script for release automation
+- GitHub Releases CI: static musl targets for Linux (M3.2)
+- Homebrew formula/tap with formula updater (M3.3)
+- GitHub Releases with `.sha256` sidecars (M3.5)
+- Fuzz corpus CI job at ≥ 100 000 iterations per target (M5.2)
+- Snapshot/rollback integration tests in CI (M5.3)
+
+### Fixed
+- `setup-shell`: block symlink recursion and rc injection
+- Gate starlark-policy dependency — closed supply-chain lint warnings
+- Follow GitHub release redirects in npm installer
+- Keep npm package contents minimal
+
+### Security
+- `setup-shell` rejects symlink loops and prevents injection into shell rc files
+
+---
 
 ## v0.5.6
 

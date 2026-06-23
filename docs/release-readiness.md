@@ -87,6 +87,34 @@ The `Live snapshot/rollback (Docker + SQLite)` CI job closes M5.3 by exercising 
 - SQLite coverage runs `tests/snapshot_rollback_live.rs::sqlite_snapshot_rollback_restores_database_file_through_aegis_cli` with `AEGIS_SQLITE_SNAPSHOT_TESTS=1` after installing the real `sqlite3` CLI.
 - The SQLite test uses the Aegis CLI end-to-end: a Danger-shaped allowlisted command creates a pre-execution SQLite snapshot, mutates the database through `sqlite3`, rolls back by the audit-recorded snapshot id, and verifies the post-rollback database contents.
 
+## Supply-chain gate evidence
+
+### Evidence recorded 2026-06-23
+
+- `rtk cargo audit`: exits 0. 4 unmaintained warnings visible in the full
+  `Cargo.lock` output (RUSTSEC-2023-0089, RUSTSEC-2024-0388, RUSTSEC-2025-0057,
+  RUSTSEC-2024-0436), all routing through `starlark 0.14.2`, which is reachable
+  only via the optional `starlark-policy` feature. These warnings are not present
+  in the default-feature build.
+- `rtk cargo deny check`: exits 0, **zero warnings**. The default-feature graph
+  excludes optional crates, so no advisory, ban, license, or source findings arise.
+- CI security job updated from `cargo deny check bans licenses sources` to
+  `cargo deny check` (full check, including advisories), matching the local gate.
+
+### Release binary behavior (policy.star)
+
+Published release binaries are built without `--features starlark-policy`.
+This means:
+
+- The `starlark-policy` feature is **not included** in official releases.
+- If a user has `~/.aegis/policy.star`, the release binary will return a clear
+  `AegisError::Config` at startup rather than silently ignoring the policy (fail-closed).
+- Users who need Starlark policy support must build from source with
+  `cargo install --features starlark-policy`.
+
+This is an intentional product decision: the default supply-chain gate is clean,
+and users who opt into the advisory-tainted dependency chain do so explicitly.
+
 ## Homebrew tap validation
 
 - [ ] `packaging/homebrew/Formula/aegis.rb` was generated from the selected

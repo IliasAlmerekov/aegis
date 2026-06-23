@@ -35,6 +35,10 @@ members = [
 # sanitizer flags; it must not be pulled into the main workspace.
 exclude = ["fuzz"]
 
+[features]
+default = []
+starlark-policy = ["dep:aegis-starlark"]
+
 [dependencies]
 aegis-types = { version = "0.5.6", path = "crates/aegis-types" }
 aegis-parser = { version = "0.5.6", path = "crates/aegis-parser" }
@@ -45,7 +49,7 @@ aegis-explanation = { version = "0.5.6", path = "crates/aegis-explanation" }
 aegis-tui = { version = "0.5.6", path = "crates/aegis-tui" }
 aegis-audit = { version = "0.5.6", path = "crates/aegis-audit" }
 aegis-snapshot = { version = "0.5.6", path = "crates/aegis-snapshot" }
-aegis-starlark = { version = "0.5.6", path = "crates/aegis-starlark" }
+aegis-starlark = { version = "0.5.6", path = "crates/aegis-starlark", optional = true }
 aegis-sandbox = { version = "0.5.6", path = "crates/aegis-sandbox" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }

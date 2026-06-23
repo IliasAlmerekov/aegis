@@ -142,8 +142,8 @@ fn homebrew_formula_should_explain_post_install_setup_caveats() {
         "caveats should tell users how to install supported agent hooks"
     );
     assert!(
-        formula.contains("AEGIS_REAL_SHELL"),
-        "caveats should explain shell proxy setup is explicit after brew install"
+        formula.contains("aegis setup-shell"),
+        "caveats should recommend the explicit aegis setup-shell command for shell-proxy mode"
     );
 }
 

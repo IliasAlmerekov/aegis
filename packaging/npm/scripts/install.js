@@ -25,6 +25,22 @@ function fail(message) {
   process.exit(1);
 }
 
+// Binary-only install: never edit shell startup files here. Point users at the
+// explicit opt-in `aegis setup-shell` command so enabling the shell proxy is a
+// deliberate user action, not a side effect of `npm i -g`.
+function printNextSteps() {
+  console.log("Aegis installed.");
+  console.log("");
+  console.log("Test:");
+  console.log("  aegis -c 'echo hello'");
+  console.log("");
+  console.log("Enable shell-proxy mode for tools that launch commands via $SHELL -c:");
+  console.log("  aegis setup-shell");
+  console.log("");
+  console.log("Undo shell-proxy setup:");
+  console.log("  aegis setup-shell --remove");
+}
+
 function readChecksums() {
   const raw = fs.readFileSync(checksumsPath, "utf8");
   return JSON.parse(raw);
@@ -111,6 +127,7 @@ async function main() {
 
   if (process.env.AEGIS_NPM_SKIP_DOWNLOAD === "1") {
     fs.writeFileSync(binaryPath, "#!/bin/sh\nprintf 'aegis test binary\\n'\n", { mode: 0o755 });
+    printNextSteps();
     return;
   }
 
@@ -125,6 +142,7 @@ async function main() {
 
   fs.renameSync(tmpPath, binaryPath);
   fs.chmodSync(binaryPath, 0o755);
+  printNextSteps();
 }
 
 main().catch(error => {

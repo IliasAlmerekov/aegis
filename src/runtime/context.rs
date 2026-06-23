@@ -17,6 +17,7 @@ use crate::explanation::formatter::{CommandExplanationExt, build_outcome_explana
 use crate::interceptor;
 use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
+#[cfg(feature = "starlark-policy")]
 use aegis_starlark::load_starlark_policy;
 use aegis_types::SandboxStatus;
 
@@ -114,16 +115,42 @@ impl RuntimeContext {
 
     /// Build a runtime context from an already resolved config.
     pub fn new(config: AegisConfig, handle: Handle) -> Result<Self, AegisError> {
+        let policy_path = starlark_policy_path();
+        Self::new_with_policy_path(config, handle, policy_path.as_deref())
+    }
+
+    /// Build a runtime context with an explicit policy path override.
+    ///
+    /// Prefer [`RuntimeContext::new`] for production use. This variant exists
+    /// to allow integration tests to supply a controlled path without mutating
+    /// the process environment.
+    #[doc(hidden)]
+    pub fn new_with_policy_path(
+        config: AegisConfig,
+        handle: Handle,
+        explicit_policy_path: Option<&std::path::Path>,
+    ) -> Result<Self, AegisError> {
         config.validate_runtime_requirements()?;
         let scanner = interceptor::scanner_for(&config.custom_patterns)?;
         let current_user = detect_effective_user();
 
         // Merge TOML [[rules]] with rules from ~/.aegis/policy.star when present.
+        #[cfg(feature = "starlark-policy")]
         let mut policy_rules = config.rules.clone();
-        if let Some(star_path) = starlark_policy_path().filter(|p| p.exists()) {
-            let star_rules = load_starlark_policy(&star_path)
+        #[cfg(not(feature = "starlark-policy"))]
+        let policy_rules = config.rules.clone();
+        #[cfg(feature = "starlark-policy")]
+        if let Some(star_path) = explicit_policy_path.filter(|p| p.exists()) {
+            let star_rules = load_starlark_policy(star_path)
                 .map_err(|e| AegisError::Config(format!("policy.star: {e}")))?;
             policy_rules.extend(star_rules);
+        }
+        #[cfg(not(feature = "starlark-policy"))]
+        if let Some(star_path) = explicit_policy_path.filter(|p| p.exists()) {
+            return Err(AegisError::Config(format!(
+                "policy.star exists at {} but this Aegis build was compiled without the starlark-policy feature",
+                star_path.display()
+            )));
         }
 
         Ok(Self {

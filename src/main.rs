@@ -73,6 +73,8 @@ enum Commands {
     /// Install aegis hooks into Claude Code and Codex
     #[command(alias = "install")]
     InstallHooks(InstallArgs),
+    /// Configure Aegis as an explicit opt-in $SHELL proxy for new terminal sessions
+    SetupShell(SetupShellArgs),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -207,6 +209,25 @@ struct InstallArgs {
     codex: bool,
 }
 
+#[derive(Args)]
+struct SetupShellArgs {
+    /// Remove the managed Aegis shell setup block instead of installing it.
+    #[arg(long)]
+    remove: bool,
+
+    /// Real shell to execute after Aegis approves a command, for example /bin/zsh.
+    #[arg(long)]
+    shell: Option<std::path::PathBuf>,
+
+    /// Shell startup file to modify, for example ~/.zshrc or ~/.bashrc.
+    #[arg(long = "rc-file")]
+    rc_file: Option<std::path::PathBuf>,
+
+    /// Path to the Aegis binary that SHELL should point to.
+    #[arg(long = "aegis-bin")]
+    aegis_bin: Option<std::path::PathBuf>,
+}
+
 #[derive(Subcommand)]
 enum ConfigCommand {
     /// Create a project-local .aegis.toml in the current directory
@@ -311,3 +332,7 @@ fn parse_decision(value: &str) -> Result<Decision, String> {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "setup_shell_parse_tests.rs"]
+mod setup_shell_parse_tests;

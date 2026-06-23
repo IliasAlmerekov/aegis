@@ -166,6 +166,20 @@ fn npm_installer_should_follow_github_release_redirects() {
 }
 
 #[test]
+fn npm_installer_should_print_shell_setup_next_steps() {
+    let installer = repo_file("packaging/npm/scripts/install.js");
+
+    assert!(
+        installer.contains("aegis setup-shell"),
+        "npm postinstall should point users at the explicit shell-proxy setup command"
+    );
+    assert!(
+        installer.contains("aegis -c 'echo hello'"),
+        "npm postinstall should show a quick smoke-test command"
+    );
+}
+
+#[test]
 fn readme_should_document_npm_and_cargo_without_overclaiming_shell_setup() {
     let readme = repo_file("README.md");
 

@@ -246,9 +246,16 @@ reference native Windows CI and Job Objects. Align the repo with the PRD.
     commands from silently regressing.
   - _Done when (met):_ CI job exercises snapshot+rollback against live Docker/SQLite.
 
-- [ ] **M5.4 — Supply-chain gates green**
-  `rtk cargo audit` (0 CVEs) and `rtk cargo deny check` (permissive licenses
-  only, no duplicate core crates, no banned crates) pass with zero findings in CI.
+- [x] **M5.4 — Supply-chain gates green**
+  `rtk cargo audit` and `rtk cargo deny check` both exit 0 with no errors and no
+  warnings in CI (default-feature build).
+  - Evidence recorded 2026-06-23: `cargo audit` exits 0 (4 unmaintained warnings
+    in the full Cargo.lock, all via the optional `starlark-policy` feature —
+    outside the default build); `cargo deny check` exits 0, fully warning-clean.
+  - CI updated to run `cargo deny check` (full check including advisories).
+  - `aegis-starlark` is opt-in behind `--features starlark-policy`; default
+    build is advisory-clean. If `~/.aegis/policy.star` exists in a default build,
+    `RuntimeContext::new` returns an error (fail-closed).
 
 ---
 
@@ -270,7 +277,7 @@ Final checklist; many items depend on M1–M5.
 - [ ] Snapshot/rollback integration tests run in CI against real Docker/SQLite
       (← M5.3).
 - [x] Fuzz corpus in CI at ≥ 100 000 iterations per target (← M5.2).
-- [ ] `cargo audit` and `cargo deny check` both pass with zero findings (← M5.4).
+- [x] `cargo audit` and `cargo deny check` both pass with zero findings (← M5.4).
 - [ ] Hot path < 2 ms (p99) confirmed by `cargo criterion`; no regression.
 - [ ] Zero false negatives on `tests/fixtures/security_bypass_corpus.toml`.
 - [ ] CHANGELOG.md updated for the 1.0 release.

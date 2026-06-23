@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod hook;
+mod shell;
 
 use std::env;
 use std::fs;
@@ -13,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value};
 
 pub(crate) use hook::run_hook;
+pub(crate) use shell::run_setup_shell;
 
 /// Install aegis hooks for the selected agent targets.
 pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {

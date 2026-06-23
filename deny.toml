@@ -1,17 +1,17 @@
-# Advisory (CVE) checks are handled by `cargo audit` in CI.
-# cargo-deny advisories parsing is unstable across DB versions — excluded here
-# to avoid false CI failures from upstream parser bugs.
+# cargo-audit handles the full Cargo.lock scan (including optional crates) in CI.
+# cargo-deny checks the resolved default-feature graph. aegis-starlark and its
+# transitive crates (atomic-polyfill, derivative, fxhash, paste) are reachable
+# only via the optional starlark-policy feature and are excluded from the default
+# graph, so no advisory findings are present here.
+[advisories]
 
 [licenses]
 version = 2
-# Only allow permissive licenses
+# Only allow permissive licenses actually used by the default-feature dependency graph.
 allow = [
     "MIT",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "BSL-1.0",
     "Unicode-3.0",
     "Zlib",
 ]
@@ -21,11 +21,17 @@ confidence-threshold = 0.8
 [bans]
 # Lint level for when multiple versions of the same crate are detected
 multiple-versions = "warn"
+# crossterm 0.28 requires windows-sys 0.59.x while clap/tokio require 0.61+.
+# This is a platform artifact; both versions are indirect and cannot be unified
+# without upgrading crossterm beyond the currently pinned version.
+skip = [
+    { name = "windows-sys", version = "0.59", reason = "crossterm 0.28 requires 0.59.x; clap/tokio require 0.61+; platform artifact" },
+]
 # Banned crates — once_cell is superseded by std::sync::LazyLock (stable since Rust 1.80).
 # Keep the ban in place for workspace code while allowing the current third-party
 # crates that still depend on it directly.
 deny = [
-    { name = "once_cell", wrappers = ["criterion", "dashmap", "pagable", "starlark", "starlark_syntax", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "superseded by std::sync::LazyLock (stable since Rust 1.80); only allowed through audited third-party wrappers until the ecosystem catches up" },
+    { name = "once_cell", wrappers = ["criterion", "tempfile", "tracing-core", "tracing-log", "tracing-subscriber"], reason = "superseded by std::sync::LazyLock (stable since Rust 1.80); only allowed through audited third-party wrappers until the ecosystem catches up" },
 ]
 
 [sources]
