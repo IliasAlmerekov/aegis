@@ -48,7 +48,7 @@ export function HowItWorks() {
         id="how-it-works-heading"
         className="font-display text-4xl font-medium leading-tight tracking-tight text-[#ddffdc] lg:text-5xl"
       >
-        Up in three steps.
+        Up in 3 steps.
       </h2>
 
       <div

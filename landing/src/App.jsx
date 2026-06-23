@@ -2,8 +2,6 @@ import { Nav } from './components/ui/Nav'
 import { Hero } from './components/sections/Hero'
 import { FeatureSection } from './components/sections/FeatureSection'
 import { HowItWorks } from './components/sections/HowItWorks'
-import { TrustStrip } from './components/sections/TrustStrip'
-import { AuditSection } from './components/sections/AuditSection'
 import { CTABanner } from './components/sections/CTABanner'
 import { Footer } from './components/sections/Footer'
 
@@ -28,8 +26,6 @@ export default function App() {
         <FeatureSection />
         <Divider />
         <HowItWorks />
-        <TrustStrip />
-        <AuditSection />
         <Divider />
         <CTABanner />
       </main>

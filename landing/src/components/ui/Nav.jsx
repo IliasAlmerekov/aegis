@@ -3,7 +3,6 @@ import { useState } from 'react'
 const NAV_LINKS = [
   { label: 'Why Aegis', href: '#why-aegis' },
   { label: 'How It Works', href: '#how-it-works' },
-  { label: 'Audit Trail', href: '#audit-trail' },
 ]
 
 export function Nav() {
