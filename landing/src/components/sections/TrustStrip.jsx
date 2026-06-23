@@ -1,8 +1,8 @@
 const STATS = [
   {
-    value: '< 2ms',
-    label: 'Safe path latency',
-    detail: 'Safe commands clear the Aho-Corasick scan and pass through without adding perceptible delay.',
+    value: '1-pass',
+    label: 'Safe-path scan',
+    detail: 'Safe commands clear the Aho-Corasick fast scan in a single pass — no regex on the hot path, so overhead stays minimal.',
   },
   {
     value: '0',
@@ -12,7 +12,7 @@ const STATS = [
   {
     value: '100%',
     label: 'Decisions on record',
-    detail: 'Every approval, denial, and auto-pass writes a signed entry to your local audit log.',
+    detail: 'Every approval, denial, and auto-pass appends an entry to your local JSONL audit log — tamper-evident when hash-chain integrity is enabled.',
   },
   {
     value: 'MIT',

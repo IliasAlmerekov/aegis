@@ -5,11 +5,11 @@ const ENTRIES = [
     ts: '2026-06-17T09:12:43Z',
     cmd: 'rm -rf /var/log/nginx',
     decision: 'denied',
-    pattern: 'FS-003',
+    pattern: 'FS-001',
   },
   {
     ts: '2026-06-17T09:13:01Z',
-    cmd: 'git commit -m "fix: auth"',
+    cmd: 'git reset --hard HEAD~3',
     decision: 'approved',
     pattern: 'GIT-001',
   },
@@ -29,7 +29,7 @@ const ENTRIES = [
     ts: '2026-06-17T09:18:55Z',
     cmd: 'kubectl delete pod api-7f9d --force',
     decision: 'denied',
-    pattern: 'K8S-002',
+    pattern: 'CL-003',
   },
 ]
 

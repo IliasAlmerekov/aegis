@@ -98,13 +98,13 @@ export function FeatureSection() {
               {/* Warning box */}
               <div className="mt-4 rounded border border-[#7fee64]/30 p-3" style={{ backgroundColor: '#0f1e0f' }}>
                 <p className="text-xs font-semibold" style={{ color: '#c8f9b6' }}>
-                  ⚠ DANGER — FS-003
+                  ⚠ DANGER — FS-001
                 </p>
                 <p className="mt-1 text-xs text-[#677d64]">
-                  Recursive delete of system log directory
+                  Recursive force delete — no recovery path
                 </p>
                 <p className="mt-1 text-xs text-[#485346]">
-                  safe alt: truncate -s 0 /var/log/nginx/*.log
+                  safe alt: mv /var/log/nginx /tmp/backup-$(date +%s)
                 </p>
               </div>
 
