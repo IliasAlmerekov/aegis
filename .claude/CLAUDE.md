@@ -44,6 +44,47 @@ Use short conventional commits. **Never** add `Co-Authored-By` trailers.
 
 ---
 
+## Session Context
+
+**At the start of every session:** read `PROJECT_STATE.md` to understand what was done
+before and where the project stands. Do not skip this step on non-trivial tasks.
+
+**After completing any significant change:** update `PROJECT_STATE.md`:
+- Update "Last updated" date.
+- Replace "What was done last session" with a concise summary of what changed this session.
+- Update "Milestone status" rows whose status changed.
+- Update "Open decisions / blockers" if any were resolved or new ones surfaced.
+
+---
+
+## Changelog Maintenance
+
+After every feature, fix, or breaking change, prepend an entry under `## [Unreleased]`
+in `CHANGELOG.md`:
+
+- Use Keep a Changelog categories: `Added`, `Changed`, `Fixed`, `Removed`, `Security`.
+- One line per change; reference the milestone (e.g. `M5.4`) or ADR (e.g. `ADR-011`)
+  when applicable.
+- When cutting a release, rename `[Unreleased]` to the version and date, then add a fresh
+  empty `[Unreleased]` block above it.
+
+---
+
+## Architecture Decision Records
+
+When making a significant architectural decision — new crate, change to a public API,
+new plugin, performance trade-off, security model change, or intentional non-goal —
+write an ADR in `docs/adr/`:
+
+- Number sequentially: check existing files (`rtk git ls-files docs/adr/`) for the next free number.
+- Filename: `adr-NNN-short-slug.md`.
+- Required sections: **Status** (Accepted / Proposed / Deprecated), **Context**,
+  **Decision**, **Consequences**.
+- Keep it short — one page max.
+- Update `docs/adr/README.md` index after adding a new ADR.
+
+---
+
 ## Project Overview
 
 Aegis is a lightweight Rust CLI that acts as a `$SHELL` proxy, intercepting AI agent commands and requiring human confirmation before destructive operations. It must be fast (< 2ms for safe paths), correct, and minimal.
