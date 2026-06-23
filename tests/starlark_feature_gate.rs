@@ -23,22 +23,13 @@ fn default_build_does_not_enable_starlark_policy_loader() {
 #[cfg(not(feature = "starlark-policy"))]
 #[test]
 fn runtime_context_fails_closed_when_policy_star_exists_without_feature() {
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    // Serialize env-var mutation to avoid race conditions with other tests.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-    let _guard = ENV_LOCK.lock().unwrap();
 
     let home = TempDir::new().expect("temp dir");
     let aegis_dir = home.path().join(".aegis");
     fs::create_dir_all(&aegis_dir).expect("create .aegis dir");
-    fs::write(aegis_dir.join("policy.star"), "# test policy placeholder\n")
-        .expect("write policy.star");
-
-    let prev_home = std::env::var_os("HOME");
-    // SAFETY: single-threaded access guarded by ENV_LOCK.
-    unsafe { std::env::set_var("HOME", home.path()) };
+    let policy_path = aegis_dir.join("policy.star");
+    fs::write(&policy_path, "# test policy placeholder\n").expect("write policy.star");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -47,22 +38,18 @@ fn runtime_context_fails_closed_when_policy_star_exists_without_feature() {
     let handle = rt.handle().clone();
 
     let config = aegis::config::AegisConfig::default();
-    let result = aegis::runtime::RuntimeContext::new(config, handle);
+    let result =
+        aegis::runtime::RuntimeContext::new_with_policy_path(config, handle, Some(&policy_path));
 
-    // Restore HOME before asserting (so cleanup always happens).
-    match prev_home {
-        Some(h) => unsafe { std::env::set_var("HOME", h) },
-        None => unsafe { std::env::remove_var("HOME") },
-    }
-
-    match result {
+    let err = match result {
         Ok(_) => panic!(
-            "RuntimeContext::new must fail closed when policy.star exists without starlark-policy feature"
+            "RuntimeContext must fail closed when policy.star exists without starlark-policy feature"
         ),
-        Err(err) => assert!(
-            err.to_string()
-                .contains("compiled without the starlark-policy feature"),
-            "error must mention the missing feature, got: {err}"
-        ),
-    }
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("compiled without the starlark-policy feature"),
+        "error must mention the missing feature, got: {err}"
+    );
 }
