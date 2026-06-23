@@ -41,6 +41,7 @@
 
 ## What was done last session (2026-06-23)
 
+- Switched the README hero GIF from an HTML `<img>` wrapper to standard Markdown image syntax to match the animated README behavior seen in the Raspi repo
 - Rewrote `README.md` to a minimal public contract (What / Why / Install / How it works) with a visible threat-model link and an honest "heuristic, not a sandbox" statement
 - Updated landing page **content only**, preserving the existing design (3D shield and section layout untouched): installer/Homebrew/npm/Cargo, `aegis setup-shell` opt-in, `v0.5.8`, and honest audit wording (append-only; tamper-evident when hash-chain integrity is enabled) replacing the prior overclaim
 - Removed non-production tracked artifacts not used by the landing runtime: `test_q` (stray ELF binary), `landing/pencil.pen`, `landing/DESIGN.md`, `landing/tokens.json`, unused image assets; ignored `landing/node_modules`/`landing/dist` cleaned locally

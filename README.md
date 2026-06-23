@@ -1,8 +1,6 @@
 # Aegis
 
-<p align="center">
-  <img src="src/assets/aegis.gif" alt="How Aegis works: an AI agent's command is screened by Aegis — safe commands run instantly, dangerous ones wait for human approval" width="760">
-</p>
+![How Aegis works: an AI agent's command is screened by Aegis — safe commands run instantly, dangerous ones wait for human approval](src/assets/aegis.gif)
 
 > A small safety layer for AI agents that run shell commands.
 
