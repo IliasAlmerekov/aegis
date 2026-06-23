@@ -42,9 +42,8 @@
 ## What was done last session (2026-06-23)
 
 - Rewrote `README.md` to a minimal public contract (What / Why / Install / How it works) with a visible threat-model link and an honest "heuristic, not a sandbox" statement
-- Aligned landing copy with the current install flow: installer/Homebrew/npm/Cargo, `aegis setup-shell` opt-in, `v0.5.8`, and honest audit wording (append-only; tamper-evident when hash-chain integrity is enabled) replacing the prior overclaim
-- Tree-shook the landing bundle: removed the 3D runtime (`@react-three/*`, `three`, `ShieldScene`), unused `TrustStrip`/`AuditSection` sections, and the `three-vendor` manual chunk — `landing/dist` dropped from ~17 MB to ~196 KB
-- Removed non-production tracked artifacts: `test_q` (stray ELF binary), `landing/pencil.pen`, `landing/DESIGN.md`, `landing/tokens.json`, 3D `.glb`/`.png` assets, and ignored `landing/node_modules`/`landing/dist`
+- Updated landing page **content only**, preserving the existing design (3D shield and section layout untouched): installer/Homebrew/npm/Cargo, `aegis setup-shell` opt-in, `v0.5.8`, and honest audit wording (append-only; tamper-evident when hash-chain integrity is enabled) replacing the prior overclaim
+- Removed non-production tracked artifacts not used by the landing runtime: `test_q` (stray ELF binary), `landing/pencil.pen`, `landing/DESIGN.md`, `landing/tokens.json`, unused image assets; ignored `landing/node_modules`/`landing/dist` cleaned locally
 - Reconciled M6 status: marked evidence-backed docs items in `docs/release-readiness.md` and `TASKS.md`; left perf, security-corpus, ARM cross-compile, and macOS smoke gates open
 
 ---

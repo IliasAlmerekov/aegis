@@ -1,4 +1,8 @@
-import { TerminalWindow } from '../ui/TerminalWindow'
+import { lazy, Suspense } from 'react'
+
+const ShieldScene = lazy(() =>
+  import('../3d/ShieldScene').then((m) => ({ default: m.ShieldScene }))
+)
 
 export function Hero() {
   return (
@@ -91,24 +95,17 @@ export function Hero() {
           </div>
         </div>
 
-        {/* Right column — static command-flow card */}
-        <div className="relative flex w-full max-w-[440px] items-center justify-center lg:max-w-[500px]">
-          <TerminalWindow title="aegis — zsh">
-            <div className="space-y-1.5 font-mono text-xs">
-              <p className="text-[#677d64]">
-                <span className="text-[#7fee64]">$</span> aegis -c 'git status'
-              </p>
-              <p className="text-[#7fee64]">→ safe — pass through</p>
-              <p className="mt-3 text-[#677d64]">
-                <span className="text-[#7fee64]">$</span> aegis -c 'git push --force'
-              </p>
-              <p className="text-[#aed2a4]">⚠ warn — ask first</p>
-              <p className="mt-3 text-[#677d64]">
-                <span className="text-[#7fee64]">$</span> aegis -c 'rm -rf /'
-              </p>
-              <p className="text-[#859085]">✖ block — refused</p>
-            </div>
-          </TerminalWindow>
+        {/* Right column — 3D Shield */}
+        <div className="relative flex h-[420px] w-full max-w-[420px] items-center justify-center lg:h-[560px] lg:max-w-[500px]">
+          <Suspense
+            fallback={
+              <div className="flex h-full w-full items-center justify-center">
+                <div className="h-32 w-24 rounded-lg border border-[#3e4a3c]/40 bg-[#7fee64]/5 animate-pulse" />
+              </div>
+            }
+          >
+            <ShieldScene />
+          </Suspense>
         </div>
       </div>
 
