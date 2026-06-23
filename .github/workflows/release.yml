@@ -78,13 +78,25 @@ jobs:
         if: contains(matrix.target, 'unknown-linux-musl')
         shell: bash
         run: |
-          file "${{ matrix.asset_name }}"
-          if ldd "${{ matrix.asset_name }}" 2>&1 | grep -q "not a dynamic executable"; then
-            exit 0
+          asset="${{ matrix.asset_name }}"
+          file "$asset"
+          # Inspect the ELF headers directly instead of running ldd. ldd executes
+          # the binary's loader, which is unreliable for cross-compiled foreign
+          # architectures and misreports static-pie binaries. A truly static
+          # binary has no dynamic interpreter (PT_INTERP) and no shared library
+          # dependencies (DT_NEEDED) — this holds for both classic "statically
+          # linked" and musl "static-pie linked" outputs.
+          if readelf -l "$asset" | grep -qw INTERP; then
+            echo "expected static binary, but found a dynamic interpreter (PT_INTERP)" >&2
+            readelf -l "$asset" >&2
+            exit 1
           fi
-          echo "expected static Linux binary, but ldd found dynamic dependencies" >&2
-          ldd "${{ matrix.asset_name }}" >&2
-          exit 1
+          if readelf -d "$asset" 2>/dev/null | grep -qw NEEDED; then
+            echo "expected static binary, but found shared library dependencies (DT_NEEDED)" >&2
+            readelf -d "$asset" >&2
+            exit 1
+          fi
+          echo "OK: $asset is statically linked (no PT_INTERP, no DT_NEEDED)"
 
       - name: Generate SHA256 checksum
         shell: bash
