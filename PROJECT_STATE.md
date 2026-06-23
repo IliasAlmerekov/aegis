@@ -54,6 +54,7 @@
 - Sandbox tests on `ubuntu-latest` / `macos-latest` with real Docker/SQLite pending
 - Hot path p99 < 2 ms not yet confirmed by criterion run on current workspace
 - macOS Homebrew/npm smoke still an operator follow-up
+- Follow-up (P3): `tests/contracts_docs.rs::readme_links_to_contract_docs` still asserts removed install-mode vocabulary (`Local`/`Binary`); the README satisfies it only via "The old Local … Binary-only … modes have been removed". Clean the test so it stops pinning deleted modes in the README.
 
 ---
 
