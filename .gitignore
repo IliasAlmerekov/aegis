@@ -1,4 +1,5 @@
 /target
+/test_q
 .env
 *.log
 .claude/

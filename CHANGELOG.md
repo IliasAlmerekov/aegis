@@ -12,7 +12,13 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 ## [Unreleased]
 
 ### Changed
+- Simplified `README.md` to a minimal public contract (What / Why / Install / How it works) with a visible threat-model link and an honest heuristic-not-a-sandbox statement (M6 docs gate).
+- Aligned landing page copy with the current install flow while keeping the existing design (3D shield and section layout unchanged): installer/Homebrew/npm/Cargo, `aegis setup-shell` opt-in, `v0.5.8`, and honest audit wording (append-only; tamper-evident when hash-chain integrity is enabled) replacing the prior overclaim (M6).
 - Prepare release metadata for v0.5.8 after the v0.5.7 release build hit the stale `ldd` static-link verification path (M3.2).
+
+### Removed
+- Non-production landing source artifacts not used by the runtime: `landing/pencil.pen`, `landing/DESIGN.md`, `landing/tokens.json`, and unused image assets (`landing/images/Hitem3d-1781772057946.glb`, `landing/images/generated-1781681175337.png`) (M6).
+- `test_q` stray compiled ELF binary from the repo root (M6).
 
 ### Added
 - `aegis setup-shell` — explicit opt-in command for shell hook installation (ADR-009)
@@ -26,6 +32,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - Snapshot/rollback integration tests in CI (M5.3)
 
 ### Fixed
+- Ignore `/test_q` at the repo root so the stray compiled ELF cannot be re-committed (M6).
 - Release CI: verify static Linux binaries via `readelf` (ELF headers) instead of `ldd`; fixes false failures on musl `static-pie` (x86_64) and cross-compiled `aarch64` binaries (M3.2)
 - `setup-shell`: block symlink recursion and rc injection
 - Gate starlark-policy dependency — closed supply-chain lint warnings

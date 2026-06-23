@@ -33,7 +33,7 @@
 | M5.2 | Fuzz corpus CI (≥ 100 000 iters/target) | ✅ Done |
 | M5.3 | Snapshot/rollback CI integration tests | ✅ Done |
 | M5.4 | Supply-chain gates green | ✅ Done |
-| 1.0 docs gate | README, threat model, docs accuracy | 🔲 Open |
+| 1.0 docs gate | README, threat model, docs accuracy | ✅ Done |
 | 1.0 perf gate | Hot path < 2 ms (p99) via criterion | 🔲 Open |
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
 
@@ -41,19 +41,20 @@
 
 ## What was done last session (2026-06-23)
 
-- Prepared v0.5.8 release metadata after the v0.5.7 release build used a stale `ldd` static-link check
-- Verified the release workflow contract uses `readelf` for static Linux musl artifacts
-- Updated CI/task docs to describe the `readelf` static-link verification contract
+- Rewrote `README.md` to a minimal public contract (What / Why / Install / How it works) with a visible threat-model link and an honest "heuristic, not a sandbox" statement
+- Updated landing page **content only**, preserving the existing design (3D shield and section layout untouched): installer/Homebrew/npm/Cargo, `aegis setup-shell` opt-in, `v0.5.8`, and honest audit wording (append-only; tamper-evident when hash-chain integrity is enabled) replacing the prior overclaim
+- Removed non-production tracked artifacts not used by the landing runtime: `test_q` (stray ELF binary), `landing/pencil.pen`, `landing/DESIGN.md`, `landing/tokens.json`, unused image assets; ignored `landing/node_modules`/`landing/dist` cleaned locally
+- Reconciled M6 status: marked evidence-backed docs items in `docs/release-readiness.md` and `TASKS.md`; left perf, security-corpus, ARM cross-compile, and macOS smoke gates open
 
 ---
 
 ## Open decisions / blockers
 
-- `TASKS.md` 1.0 docs gate: README and docs need updating for all Phase 6 features
-- Threat model link needs to appear on README
 - CI ARM cross-compilation (`aarch64-unknown-linux-musl`) pending
 - Sandbox tests on `ubuntu-latest` / `macos-latest` with real Docker/SQLite pending
 - Hot path p99 < 2 ms not yet confirmed by criterion run on current workspace
+- macOS Homebrew/npm smoke still an operator follow-up
+- Follow-up (P3): `tests/contracts_docs.rs::readme_links_to_contract_docs` still asserts removed install-mode vocabulary (`Local`/`Binary`); the README satisfies it only via "The old Local … Binary-only … modes have been removed". Clean the test so it stops pinning deleted modes in the README.
 
 ---
 

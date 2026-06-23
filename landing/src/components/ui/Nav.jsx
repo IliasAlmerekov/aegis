@@ -18,23 +18,15 @@ export function Nav() {
             href="#"
             className="flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] rounded"
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path
-                d="M12 2L4 6v6c0 4.418 3.358 8.564 8 9.93C16.642 20.564 20 16.418 20 12V6L12 2z"
-                stroke="#7fee64"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-                fill="none"
-              />
-              <path
-                d="M9 12l2 2 4-4"
-                stroke="#7fee64"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <span className="font-display text-[15px] font-medium tracking-tight text-[#ddffdc]">
+            <img
+              src="/shield-icon.png"
+              width="30"
+              height="30"
+              alt=""
+              aria-hidden="true"
+              className="h-[30px] w-[30px] object-contain"
+            />
+            <span className="font-display text-base font-semibold uppercase tracking-wide text-[#ddffdc]">
               aegis
             </span>
           </a>

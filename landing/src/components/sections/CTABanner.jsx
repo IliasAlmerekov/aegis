@@ -28,9 +28,9 @@ export function CTABanner() {
           Guard your stack in minutes.
         </h2>
         <p className="relative mx-auto mt-5 max-w-[480px] font-body text-[15px] leading-relaxed text-[#677d64]">
-          Open source, zero telemetry, under 2 ms on the safe path. One{' '}
-          <code className="font-mono text-xs text-[#ddffdc]">cargo install</code> and
-          your AI agents work under supervision.
+          Open source, zero telemetry, minimal overhead on the safe path. Install
+          with the installer, Homebrew, npm, or Cargo and your AI agents work
+          under supervision.
         </p>
 
         <div className="relative mt-8 flex flex-wrap items-center justify-center gap-3">

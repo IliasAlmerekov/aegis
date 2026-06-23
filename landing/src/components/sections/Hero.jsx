@@ -33,12 +33,12 @@ export function Hero() {
 
       <div className="relative mx-auto flex w-full max-w-[1200px] flex-col items-center gap-16 px-6 py-20 lg:flex-row lg:gap-8">
         {/* Left column — text */}
-        <div className="flex flex-1 flex-col items-center text-center lg:items-start lg:text-left">
+        <div className="flex w-full min-w-0 flex-1 flex-col items-center text-center lg:items-start lg:text-left">
           {/* Eyebrow */}
           <div className="mb-5 flex items-center gap-2 rounded-full border border-[#3e4a3c] px-3 py-1.5" style={{ backgroundColor: '#1a2018' }}>
             <span className="h-1.5 w-1.5 rounded-full bg-[#7fee64]" aria-hidden="true" />
             <span className="font-mono text-xs font-medium tracking-widest text-[#677d64] uppercase">
-              Open Source · Rust · v0.1
+              Open Source · Rust · v0.5.8
             </span>
           </div>
 
@@ -52,7 +52,7 @@ export function Hero() {
           <p className="mt-6 max-w-[480px] font-body text-[17px] leading-relaxed text-[#aed2a4]">
             Aegis sits between your AI assistant and the shell. Dangerous commands —
             deletes, drops, overwrites — pause for your approval. Safe ones pass
-            through in under 2&nbsp;ms.
+            through with minimal overhead.
           </p>
 
           {/* CTAs */}
@@ -77,15 +77,15 @@ export function Hero() {
           </div>
 
           {/* Install snippet */}
-          <div className="mt-8 flex items-center gap-3 rounded border border-[#3e4a3c] px-4 py-2.5" style={{ backgroundColor: '#0d1210' }}>
-            <span className="font-mono text-xs text-[#677d64]">$</span>
-            <code className="font-mono text-sm text-[#7fee64]">
-              cargo install aegis-guard
+          <div className="mt-8 flex w-full min-w-0 max-w-full items-start gap-3 rounded border border-[#3e4a3c] px-4 py-2.5 text-left" style={{ backgroundColor: '#0d1210' }}>
+            <span className="font-mono text-xs leading-relaxed text-[#677d64]">$</span>
+            <code className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-[#7fee64]">
+              curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
             </code>
             <button
-              className="ml-2 rounded p-1 text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] cursor-pointer"
+              className="ml-1 shrink-0 rounded p-1 text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] cursor-pointer"
               aria-label="Copy install command"
-              onClick={() => navigator.clipboard?.writeText('cargo install aegis-guard')}
+              onClick={() => navigator.clipboard?.writeText('curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh')}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>

@@ -21,7 +21,7 @@ non-blocking hardening work.
 
 These items are launch blockers for the current public line:
 
-- [ ] `README.md`, `docs/*`, and release notes agree on Aegis being a
+- [x] `README.md`, `docs/*`, and release notes agree on Aegis being a
       heuristic shell guardrail, not a sandbox or hard security boundary.
 - [ ] CI exercises the `curl | sh` installer against a real GitHub Release artifact on every supported platform.
 - [ ] The convenience installer and troubleshooting paths are documented
@@ -32,8 +32,8 @@ These items are launch blockers for the current public line:
       before installation.
 - [ ] Install and uninstall guidance is current and matches the shipped
       release assets.
-- [ ] Supported platforms are stated clearly and match the shipped binaries.
-- [ ] Threat-model and limitation language is visible, honest, and easy to
+- [x] Supported platforms are stated clearly and match the shipped binaries.
+- [x] Threat-model and limitation language is visible, honest, and easy to
       find.
 
 ## GitHub Release asset validation
