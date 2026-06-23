@@ -12,7 +12,14 @@ the `aegis` command.
 
 NPM installs the binary only. It does not edit `.bashrc`, `.zshrc`, Codex
 configuration, or Claude configuration. After installation, run
-`aegis install-hooks --all` if you want supported agent hooks, or configure
-`SHELL` and `AEGIS_REAL_SHELL` explicitly for shell-proxy usage.
+`aegis install-hooks --all` if you want supported agent hooks, or run
+`aegis setup-shell` to opt in to shell-proxy mode for tools that launch commands
+through `$SHELL -c`.
+
+To undo shell-proxy setup later:
+
+```bash
+aegis setup-shell --remove
+```
 
 Native Windows shells are not supported; use Aegis from WSL2 on Windows.

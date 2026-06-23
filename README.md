@@ -81,7 +81,8 @@ brew install aegis
 Homebrew installs the binary only. It does not run the global shell installer
 and does not edit your shell startup files. After installing with Homebrew, run
 `aegis install-hooks --all` if you want supported Claude Code or Codex hooks,
-or configure `SHELL` and `AEGIS_REAL_SHELL` explicitly for shell-proxy usage.
+or run `aegis setup-shell` to opt in to shell-proxy mode for tools that launch
+commands through `$SHELL -c`.
 
 ### Alternative: install with npm
 
@@ -92,8 +93,8 @@ npm i -g @iliasalmerekov/aegis
 npm and Cargo install the binary only. They do not run the global shell
 installer and do not edit your shell startup files. After installing with npm,
 run `aegis install-hooks --all` if you want supported Claude Code or Codex
-hooks, or configure `SHELL` and `AEGIS_REAL_SHELL` explicitly for shell-proxy
-usage.
+hooks, or run `aegis setup-shell` to opt in to shell-proxy mode for tools that
+launch commands through `$SHELL -c`.
 
 ### Developer path: install with Cargo
 
@@ -105,8 +106,8 @@ cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.6 aegis
 ```
 
 Cargo builds from source and is intended for Rust developers. It does not run
-global shell setup; run `aegis install-hooks --all` or configure the shell proxy
-explicitly after installation.
+global shell setup; run `aegis install-hooks --all` or run `aegis setup-shell`
+to opt in to shell-proxy mode after installation.
 
 ---
 
@@ -133,6 +134,28 @@ echo "$AEGIS_REAL_SHELL"
 
 - `SHELL` should point to Aegis
 - `AEGIS_REAL_SHELL` should point to your real shell, like `/bin/zsh` or `/bin/bash`
+
+### Optional: enable shell-proxy routing
+
+Package-manager installs are binary-only and do not edit your shell startup files.
+To opt in explicitly:
+
+```bash
+aegis setup-shell
+```
+
+This adds a managed block to `~/.zshrc` or `~/.bashrc` that sets:
+
+```bash
+export AEGIS_REAL_SHELL="/path/to/your/real/shell"
+export SHELL="/path/to/aegis"
+```
+
+To remove only the managed Aegis block:
+
+```bash
+aegis setup-shell --remove
+```
 
 ---
 

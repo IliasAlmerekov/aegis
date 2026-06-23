@@ -97,9 +97,11 @@ class Aegis < Formula
       To install supported Claude Code and Codex hooks after installation:
         aegis install-hooks --all
 
-      To use Aegis as a shell proxy, configure your shell or agent explicitly:
-        export SHELL="\$(brew --prefix)/bin/aegis"
-        export AEGIS_REAL_SHELL="/path/to/your/real/shell"
+      To enable shell-proxy mode for tools that launch commands through \$SHELL -c:
+        aegis setup-shell
+
+      To undo shell-proxy setup:
+        aegis setup-shell --remove
 
       Native Windows shells are not supported; use Aegis from WSL2 on Windows.
     EOS

@@ -206,3 +206,17 @@ fn troubleshooting_covers_manual_checksum_and_integrity_verification() {
         );
     }
 }
+
+#[test]
+fn docs_should_document_explicit_shell_proxy_setup() {
+    let readme = fs::read_to_string(repo_path("README.md")).expect("README.md must exist");
+
+    assert!(
+        readme.contains("aegis setup-shell"),
+        "README must document the explicit `aegis setup-shell` opt-in command"
+    );
+    assert!(
+        readme.contains("aegis setup-shell --remove"),
+        "README must document how to undo shell-proxy setup with `aegis setup-shell --remove`"
+    );
+}
