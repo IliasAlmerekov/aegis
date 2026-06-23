@@ -264,8 +264,8 @@ reference native Windows CI and Job Objects. Align the repo with the PRD.
 
 Final checklist; many items depend on M1–M5.
 
-- [ ] README and docs accurately describe all features through Phase 6.
-- [ ] Threat model and known limitations visible **on the README** (link to
+- [x] README and docs accurately describe all features through Phase 6.
+- [x] Threat model and known limitations visible **on the README** (link to
       `docs/threat-model.md`).
 - [ ] `curl | sh` installer documented and tested (← M3.1).
 - [ ] Homebrew formula/tap published and tested (← M3.3).
