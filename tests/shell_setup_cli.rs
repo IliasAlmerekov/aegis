@@ -154,3 +154,78 @@ fn setup_shell_fails_closed_when_shell_points_at_aegis_binary() {
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot determine the real shell"));
 }
+
+// The recursion guard must canonicalize paths: a $SHELL that is a symlink to
+// the Aegis binary is lexically different but resolves to the same file. A
+// purely lexical compare would let it through and write Aegis as the real
+// shell — infinite recursion. `same_file` (which canonicalizes) must catch it.
+#[cfg(unix)]
+#[test]
+fn setup_shell_fails_closed_when_shell_is_symlink_to_aegis_binary() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let aegis = aegis_bin();
+    // A symlink with a lexically different path that resolves to the Aegis
+    // binary — the exact case a lexical-only guard misses.
+    let symlink_path = temp.path().join("aegis-link");
+    symlink(&aegis, &symlink_path).expect("create symlink to aegis binary");
+
+    let output = run_setup_shell(
+        &[
+            "--rc-file",
+            temp.path().join(".zshrc").to_str().expect("utf8"),
+            "--aegis-bin",
+            aegis.to_str().expect("utf8 aegis path"),
+        ],
+        temp.path(),
+        &[("SHELL", symlink_path.to_str().expect("utf8 symlink path"))],
+    );
+
+    assert!(
+        !output.status.success(),
+        "setup must not recurse when $SHELL is a symlink to the Aegis binary"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot determine the real shell"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// `--aegis-bin` is interpolated raw into `export SHELL="..."`. A payload with
+// quotes/semicolons must be rejected before any rc file is written, otherwise
+// the generated startup file contains injected shell commands.
+#[test]
+fn setup_shell_rejects_shell_injection_via_aegis_bin() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let rc_file = temp.path().join(".zshrc");
+
+    let output = run_setup_shell(
+        &[
+            "--shell",
+            "/bin/zsh",
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            "/tmp/aegis\"; export EVIL=1; #",
+        ],
+        temp.path(),
+        &[("SHELL", "/bin/zsh")],
+    );
+
+    assert!(
+        !output.status.success(),
+        "setup must reject shell-injection payloads in --aegis-bin"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsafe characters"),
+        "expected unsafe-characters error, got: {stderr}"
+    );
+    // The rc file must not be created when validation fails.
+    assert!(
+        !rc_file.exists(),
+        "rc file must not be written when --aegis-bin validation fails"
+    );
+}

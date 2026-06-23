@@ -41,6 +41,13 @@ fn run_setup_shell_inner(args: &crate::SetupShellArgs) -> Result<String, String>
         ));
     }
 
+    // `aegis_bin` is interpolated raw into `export SHELL="..."` in the managed
+    // block, so it must pass the same strict path validation as the real shell.
+    // Without this, `--aegis-bin '/tmp/aegis"; export EVIL=1; #'` would write
+    // command-injection straight into the user's startup file. `--remove` does
+    // not write `aegis_bin`, so it is intentionally not validated there.
+    validate_shell_path(&aegis_bin)?;
+
     install_shell_setup_file(&rc_file, &real_shell, &aegis_bin)?;
     Ok(format!(
         "Aegis shell proxy enabled in {}.\nOpen a new terminal or run:\n  source {}\n\nWhat changed:\n  SHELL points to Aegis for tools that launch commands via $SHELL -c.\n  AEGIS_REAL_SHELL keeps your real shell ({}) for command execution.\n\nTo undo this change:\n  aegis setup-shell --remove",
@@ -51,9 +58,12 @@ fn run_setup_shell_inner(args: &crate::SetupShellArgs) -> Result<String, String>
 }
 
 // Detect the real shell the user wants Aegis to delegate to. AEGIS_REAL_SHELL
-// wins outright; otherwise $SHELL is used unless it already points at the Aegis
-// binary itself (which would cause recursive wrapping). Fails closed with an
-// actionable message when neither is available.
+// wins outright; otherwise $SHELL is used unless it already resolves to the
+// Aegis binary itself (which would cause recursive wrapping). The comparison
+// canonicalizes both paths via `shell_compat::same_file` so a $SHELL that is a
+// symlink (or other lexically-different path) to the Aegis binary is still
+// caught — a purely lexical compare would let it through and write Aegis as the
+// real shell. Fails closed with an actionable message when neither is usable.
 fn detect_real_shell(aegis_bin: &Path) -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os("AEGIS_REAL_SHELL")
         && !value.is_empty()
@@ -65,7 +75,7 @@ fn detect_real_shell(aegis_bin: &Path) -> Result<PathBuf, String> {
         && !value.is_empty()
     {
         let shell = PathBuf::from(value);
-        if shell != aegis_bin {
+        if !crate::shell_compat::same_file(&shell, Some(aegis_bin)) {
             return Ok(shell);
         }
     }
@@ -247,6 +257,16 @@ mod tests {
     #[test]
     fn validate_shell_path_rejects_newline_injection() {
         let err = validate_shell_path(Path::new("/bin/zsh\nexport EVIL=1")).unwrap_err();
+
+        assert!(err.contains("unsafe characters"));
+    }
+
+    // The same validator must guard --aegis-bin, which is interpolated raw into
+    // `export SHELL="..."`. Quotes, semicolons, spaces, and `#` would otherwise
+    // allow command injection in the generated rc file.
+    #[test]
+    fn validate_shell_path_rejects_quote_semicolon_injection_payload() {
+        let err = validate_shell_path(Path::new("/tmp/aegis\"; export EVIL=1; #")).unwrap_err();
 
         assert!(err.contains("unsafe characters"));
     }
