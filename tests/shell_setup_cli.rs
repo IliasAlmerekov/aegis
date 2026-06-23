@@ -229,3 +229,151 @@ fn setup_shell_rejects_shell_injection_via_aegis_bin() {
         "rc file must not be written when --aegis-bin validation fails"
     );
 }
+
+// The recursion invariant — the final real shell must never resolve to the
+// Aegis binary — must hold for EVERY source of the real shell, not only $SHELL.
+// AEGIS_REAL_SHELL "wins outright", so a value pointing at the Aegis binary
+// (directly or via symlink) must be rejected before any rc file is written.
+#[test]
+fn setup_shell_rejects_aegis_real_shell_pointing_at_aegis_binary() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let aegis = aegis_bin();
+    let rc_file = temp.path().join(".zshrc");
+
+    let output = run_setup_shell(
+        &[
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            aegis.to_str().expect("utf8 aegis path"),
+        ],
+        temp.path(),
+        &[("AEGIS_REAL_SHELL", aegis.to_str().expect("utf8 aegis path"))],
+    );
+
+    assert!(
+        !output.status.success(),
+        "setup must not write Aegis as the real shell via AEGIS_REAL_SHELL"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("infinite recursion"),
+        "expected recursion error, got: {stderr}"
+    );
+    assert!(
+        !rc_file.exists(),
+        "rc file must not be written when AEGIS_REAL_SHELL resolves to Aegis"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_shell_rejects_aegis_real_shell_symlink_to_aegis_binary() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let aegis = aegis_bin();
+    let symlink_path = temp.path().join("real-shell-link");
+    symlink(&aegis, &symlink_path).expect("create symlink to aegis binary");
+    let rc_file = temp.path().join(".zshrc");
+
+    let output = run_setup_shell(
+        &[
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            aegis.to_str().expect("utf8 aegis path"),
+        ],
+        temp.path(),
+        &[(
+            "AEGIS_REAL_SHELL",
+            symlink_path.to_str().expect("utf8 symlink path"),
+        )],
+    );
+
+    assert!(
+        !output.status.success(),
+        "setup must not recurse when AEGIS_REAL_SHELL is a symlink to Aegis"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("infinite recursion"),
+        "expected recursion error"
+    );
+    assert!(
+        !rc_file.exists(),
+        "rc file must not be written when AEGIS_REAL_SHELL is a symlink to Aegis"
+    );
+}
+
+// The explicit `--shell` flag is taken directly with no recursion check. It
+// must be subject to the same invariant as every other real-shell source.
+#[test]
+fn setup_shell_rejects_explicit_shell_pointing_at_aegis_binary() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let aegis = aegis_bin();
+    let rc_file = temp.path().join(".zshrc");
+
+    let output = run_setup_shell(
+        &[
+            "--shell",
+            aegis.to_str().expect("utf8 aegis path"),
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            aegis.to_str().expect("utf8 aegis path"),
+        ],
+        temp.path(),
+        &[],
+    );
+
+    assert!(
+        !output.status.success(),
+        "setup must not write Aegis as the real shell via --shell"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("infinite recursion"),
+        "expected recursion error"
+    );
+    assert!(
+        !rc_file.exists(),
+        "rc file must not be written when --shell resolves to Aegis"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_shell_rejects_explicit_shell_symlink_to_aegis_binary() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let aegis = aegis_bin();
+    let symlink_path = temp.path().join("explicit-shell-link");
+    symlink(&aegis, &symlink_path).expect("create symlink to aegis binary");
+    let rc_file = temp.path().join(".zshrc");
+
+    let output = run_setup_shell(
+        &[
+            "--shell",
+            symlink_path.to_str().expect("utf8 symlink path"),
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            aegis.to_str().expect("utf8 aegis path"),
+        ],
+        temp.path(),
+        &[],
+    );
+
+    assert!(
+        !output.status.success(),
+        "setup must not recurse when --shell is a symlink to Aegis"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("infinite recursion"),
+        "expected recursion error"
+    );
+    assert!(
+        !rc_file.exists(),
+        "rc file must not be written when --shell is a symlink to Aegis"
+    );
+}

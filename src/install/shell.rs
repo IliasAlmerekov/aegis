@@ -28,6 +28,25 @@ fn run_setup_shell_inner(args: &crate::SetupShellArgs) -> Result<String, String>
         Some(path) => path.clone(),
         None => detect_real_shell(&aegis_bin)?,
     };
+
+    // Invariant: the real shell must never resolve to the Aegis binary itself,
+    // regardless of which source supplied it (--shell, AEGIS_REAL_SHELL, or
+    // $SHELL). Writing Aegis as AEGIS_REAL_SHELL would make it exec itself
+    // recursively. `same_file` canonicalizes both paths so symlinks — and any
+    // lexically-different path to the same file — are caught. This centralizes
+    // the guard the $SHELL branch already applies inside detect_real_shell, so
+    // AEGIS_REAL_SHELL (which "wins outright") and an explicit --shell cannot
+    // bypass it. Applied before --remove too: a self-referential real shell is
+    // never a sane state to proceed from.
+    if crate::shell_compat::same_file(&real_shell, Some(&aegis_bin)) {
+        return Err(
+            "the resolved real shell is the Aegis binary itself, which would \
+             cause infinite recursion; pass --shell /bin/zsh or set \
+             AEGIS_REAL_SHELL to your real shell"
+                .to_string(),
+        );
+    }
+
     validate_shell_path(&real_shell)?;
 
     let rc_file = resolve_rc_file(&home, &real_shell, args.rc_file.as_deref())?;
