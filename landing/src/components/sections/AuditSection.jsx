@@ -60,10 +60,10 @@ export function AuditSection() {
             <span className="text-[#7fee64]">on the record.</span>
           </h2>
           <p className="mt-5 font-body text-[15px] leading-relaxed text-[#677d64]">
-            Aegis appends a signed JSONL entry to{' '}
+            Aegis appends a JSONL entry to{' '}
             <code className="font-mono text-xs text-[#ddffdc]">~/.aegis/audit.jsonl</code>{' '}
-            for every command — approved, denied, or auto-passed. Immutable,
-            structured, and ready for your SIEM or compliance toolchain.
+            for every command — approved, denied, or auto-passed. Append-only,
+            structured, and tamper-evident when hash-chain integrity is enabled.
           </p>
           <a
             href="https://github.com/IliasAlmerekov/aegis#audit-log"

@@ -6,7 +6,7 @@ const TABS = [
     id: 'intercept',
     label: 'INTERCEPT',
     heading: 'Every command scanned before it runs.',
-    body: 'Aegis sits as your $SHELL, intercepting every command your AI agent attempts. The Aho-Corasick fast scan classifies risk in under 2 ms — safe commands pass through invisibly.',
+    body: 'Aegis sits as your $SHELL, intercepting every command your AI agent attempts. The Aho-Corasick fast scan classifies risk with minimal overhead — safe commands pass through invisibly.',
   },
   {
     id: 'approve',
@@ -18,7 +18,7 @@ const TABS = [
     id: 'audit',
     label: 'AUDIT',
     heading: 'Append-only log of every decision.',
-    body: 'Every approval and denial writes a signed JSONL entry to ~/.aegis/audit.jsonl. Immutable, timestamped, ready to pipe into your SIEM or grep.',
+    body: 'Every approval and denial appends a JSONL entry to ~/.aegis/audit.jsonl. Append-only, timestamped, tamper-evident when hash-chain integrity is enabled.',
   },
 ]
 
@@ -89,7 +89,7 @@ export function FeatureSection() {
           <TerminalWindow title="aegis — zsh">
             <div className="space-y-1 font-mono text-sm">
               <p className="text-[#677d64]">
-                <span className="text-[#7fee64]">$</span> aegis run -- zsh
+                <span className="text-[#7fee64]">$</span> aegis setup-shell
               </p>
               <p className="text-[#677d64] text-xs mt-3">
                 agent: rm -rf /var/log/nginx &amp;&amp; systemctl restart nginx

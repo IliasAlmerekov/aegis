@@ -3,23 +3,21 @@ import { TerminalWindow } from '../ui/TerminalWindow'
 const STEPS = [
   {
     num: '01',
-    heading: 'Set Aegis as your shell',
-    body: "Point your AI tool’s SHELL env var at the aegis binary. One line in your config — no patching, no wrappers.",
+    heading: 'Install Aegis',
+    body: 'Use the installer, Homebrew, npm, or Cargo source install. Package-manager installs are binary-only.',
     lines: [
-      { prompt: '$', text: 'export SHELL=$(which aegis)', color: '#ddffdc' },
-      { prompt: '$', text: 'aegis run -- claude code', color: '#ddffdc' },
-      { text: 'aegis ready. shell: zsh', color: '#7fee64' },
+      { prompt: '$', text: 'npm i -g @iliasalmerekov/aegis', color: '#ddffdc' },
+      { prompt: '$', text: 'aegis --version', color: '#ddffdc' },
+      { text: 'aegis 0.5.8', color: '#7fee64' },
     ],
   },
   {
     num: '02',
-    heading: 'Work as usual',
-    body: "Safe commands — git status, ls, cargo build — pass through invisibly in under 2 ms. You'll never notice it's there.",
+    heading: 'Opt in to shell-proxy mode',
+    body: 'Run setup-shell when you want tools that use $SHELL -c to route through Aegis.',
     lines: [
-      { prompt: 'agent:', text: 'git status', color: '#ddffdc' },
-      { text: '→ safe (GIT) — pass through', color: '#7fee64' },
-      { prompt: 'agent:', text: 'cargo build --release', color: '#ddffdc' },
-      { text: '→ safe (BUILD) — pass through', color: '#7fee64' },
+      { prompt: '$', text: 'aegis setup-shell', color: '#ddffdc' },
+      { text: 'managed shell block installed', color: '#7fee64' },
     ],
   },
   {
