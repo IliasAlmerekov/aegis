@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aho_corasick::AhoCorasick;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use crate::error::ScannerError;
 #[cfg(test)]
 use crate::nested::MAX_NESTED_SCAN_DEPTH;
-use crate::patterns::{Pattern, PatternSet};
+use crate::patterns::{Pattern, PatternSet, PatternSource};
 
 pub use crate::patterns::{PatternToken, PrefixRule};
 pub use assessment::{Assessment, DecisionSource, MatchResult};
@@ -68,6 +68,20 @@ pub struct Scanner {
 }
 
 impl Scanner {
+    /// Compile a single pattern's regex, enabling case-insensitive mode for
+    /// built-in patterns only. Custom user patterns retain their authored case
+    /// semantics.
+    fn compile_regex(pattern: &Pattern) -> Result<Regex, ScannerError> {
+        let mut builder = RegexBuilder::new(pattern.pattern.as_ref());
+        if pattern.source == PatternSource::Builtin {
+            builder.case_insensitive(true);
+        }
+        builder.build().map_err(|e| ScannerError::InvalidPattern {
+            id: pattern.id.to_string(),
+            reason: format!("invalid regex: {e}"),
+        })
+    }
+
     /// Build a [`Scanner`] from a compiled [`PatternSet`].
     ///
     /// The Aho-Corasick automaton is constructed once here; subsequent calls to
@@ -88,10 +102,7 @@ impl Scanner {
         for p in effective_patterns {
             // Compile each regex once. Invalid regex (e.g. from a user pattern) is
             // a typed error, not a panic.
-            let rx = Regex::new(&p.pattern).map_err(|e| ScannerError::InvalidPattern {
-                id: p.id.to_string(),
-                reason: format!("invalid regex: {e}"),
-            })?;
+            let rx = Self::compile_regex(p)?;
             let entry = (Arc::clone(p), rx);
 
             // Build AC keyword set.

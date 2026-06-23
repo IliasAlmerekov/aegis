@@ -32,6 +32,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - Snapshot/rollback integration tests in CI (M5.3)
 
 ### Fixed
+- Fixed C1 uppercase scanner bypass by compiling built-in regex patterns case-insensitively while preserving custom regex case sensitivity.
 - Render the README hero GIF through standard Markdown image syntax so GitHub treats it like other animated demos (M6 docs gate).
 - Ignore `/test_q` at the repo root so the stray compiled ELF cannot be re-committed (M6).
 - Release CI: verify static Linux binaries via `readelf` (ELF headers) instead of `ldd`; fixes false failures on musl `static-pie` (x86_64) and cross-compiled `aarch64` binaries (M3.2)
