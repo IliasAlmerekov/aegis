@@ -42,10 +42,22 @@
 ## What was done last session (2026-06-24)
 
 - Closed P0 release blocker C3 (project-local config weakening):
-  - project `.aegis.toml` can only tighten `mode`, `allowlist_override_level`,
-    `ci_policy`, `snapshot_policy`, and `sandbox.required`;
+  - project `.aegis.toml` can only tighten security-critical fields: `mode`,
+    `allowlist_override_level`, `ci_policy`, `snapshot_policy`, `sandbox.enabled`,
+    `sandbox.required`, `sandbox.allow_network`, `sandbox.allow_write`, and the
+    six `auto_snapshot_*` flags;
+  - directionality is field-specific: `true`-is-stricter fields
+    (`sandbox.enabled`/`required`, `auto_snapshot_*`) keep `base || requested`;
+    `sandbox.allow_network` (`true` is weaker) keeps `base && requested`;
+    `sandbox.allow_write` keeps the base set under the project layer;
+  - this closes the sibling-field bypasses where a project could otherwise force
+    `sandbox: None` (`enabled = false`) or disable a globally-enabled snapshot
+    plugin (`auto_snapshot_* = false`) despite a stricter `snapshot_policy`/
+    `sandbox.required`;
   - weakening attempts are ignored in favor of the stricter inherited value and
     surfaced as `project_security_ratchet` warnings by `aegis config validate`;
+    merge and warning share the same typed ratchet helpers so the reported value
+    always matches the effective merge;
   - ADR-013 documents the trusted-global / untrusted-project merge boundary.
 - Pre-ADR-012 session work (now under "Previous session"):
   - Implemented the `2026-06-24-claude-code-hook-shim-migration.md` plan (ADR-012),
