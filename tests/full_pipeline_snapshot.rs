@@ -45,7 +45,11 @@ exit 0
     );
 
     // Both snapshot flags off: git-off is under test, docker-off isolates the
-    // assertion so a stray docker invocation cannot add noise.
+    // assertion so a stray docker invocation cannot add noise. `auto_snapshot_git`
+    // defaults to `true` and a project can no longer disable it (C3 security
+    // ratchet), so the trusted global config opts out of git snapshots; the
+    // project's matching `false` is then a no-op rather than a weakening.
+    write_global_config(home.path(), "auto_snapshot_git = false\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         "auto_snapshot_git = false\nauto_snapshot_docker = false\n",
@@ -297,12 +301,12 @@ exit 0
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
 mode = "Strict"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]
@@ -387,11 +391,11 @@ exit 0
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]

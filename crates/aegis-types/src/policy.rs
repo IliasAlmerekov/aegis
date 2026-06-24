@@ -111,7 +111,10 @@ pub enum Mode {
 /// `Allow` is an explicit opt-in override for cases where a project has
 /// audited its CI pipeline and is confident that destructive commands are
 /// intentional (e.g., a release script that runs `terraform destroy` in a
-/// tear-down job).  Set this only in `.aegis.toml`, not globally.
+/// tear-down job).  Because a project-local `.aegis.toml` is untrusted, `Allow`
+/// is only honored from the trusted global config
+/// (`~/.config/aegis/config.toml`); a project cannot weaken an inherited
+/// `Block` to `Allow` (see ADR-013).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema,
 )]

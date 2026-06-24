@@ -175,7 +175,7 @@ fn load_minimal_project_config_without_errors() {
 
     let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
 
-    assert_eq!(config.mode, Mode::Audit);
+    assert_eq!(config.mode, Mode::Protect);
     assert!(config.custom_patterns.is_empty());
     assert!(config.allowlist.is_empty());
     assert!(config.auto_snapshot_git);

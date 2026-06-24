@@ -18,11 +18,11 @@ fn config_show_prints_effective_allowlist_override_level() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
 mode = "Strict"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "/srv/infra"

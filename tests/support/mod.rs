@@ -73,6 +73,18 @@ pub fn write_disabled_toggle(home: &Path) {
     fs::write(aegis_dir.join("disabled"), "timestamp=x\npid=1\n").unwrap();
 }
 
+/// Write a global user config (`~/.config/aegis/config.toml`) with the given
+/// contents.
+///
+/// The project layer can no longer weaken security-critical fields like
+/// `allowlist_override_level` (C3 security ratchet). Tests that need a
+/// permissive posture must set it in the trusted global config instead.
+pub fn write_global_config(home: &Path, contents: &str) {
+    let global_dir = home.join(".config/aegis");
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(global_dir.join("config.toml"), contents).unwrap();
+}
+
 /// Read the invocation log written by a PATH-stub executable.
 ///
 /// Returns the lines recorded by the stub, or an empty `Vec` when the log

@@ -167,10 +167,10 @@ fn json_output_snapshot_policy_none_disables_snapshot_request_for_danger() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
+    write_global_config(home.path(), "snapshot_policy = \"None\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
-snapshot_policy = "None"
 auto_snapshot_git = true
 auto_snapshot_docker = true
 "#,
@@ -212,12 +212,12 @@ fn json_output_allowlisted_danger_reports_effective_allowlist_and_snapshot_plan_
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
 mode = "Strict"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]

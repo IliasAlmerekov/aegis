@@ -168,7 +168,6 @@ exit 0
     let allowed_cwd = allowed_workspace.path().canonicalize().unwrap();
     let allowed_config = format!(
         r#"
-allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 [[allow]]
@@ -178,6 +177,16 @@ reason = "cwd-scoped allowlist"
 "#,
         allowed_cwd.display()
     );
+    // The project layer can no longer weaken `allowlist_override_level` below
+    // the default `Warn` (C3 security ratchet). Set it in the trusted global
+    // config instead so the cwd-scoped Danger allowlist can auto-approve.
+    let global_config_dir = home.path().join(".config/aegis");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "allowlist_override_level = \"Danger\"\n",
+    )
+    .unwrap();
     fs::write(
         allowed_workspace.path().join(".aegis.toml"),
         &allowed_config,
@@ -245,6 +254,22 @@ exit 0
     fs::write(enabled_workspace.path().join("dirty.txt"), "enabled\n").unwrap();
     fs::write(disabled_workspace.path().join("dirty.txt"), "disabled\n").unwrap();
 
+    // The project layer can no longer weaken `allowlist_override_level` below
+    // the default `Warn` (C3 security ratchet). Set it in the trusted global
+    // config so the cwd-scoped Danger allowlist can auto-approve in both
+    // workspaces. Likewise `auto_snapshot_git` defaults to `true` and a project
+    // can no longer disable it (C3 ratchet), so the trusted global config opts
+    // out of git snapshots; the `enabled` workspace then re-enables them via a
+    // project-layer tightening (which the ratchet keeps), while the `disabled`
+    // workspace inherits the global `false`.
+    let global_config_dir = home.path().join(".config/aegis");
+    fs::create_dir_all(&global_config_dir).unwrap();
+    fs::write(
+        global_config_dir.join("config.toml"),
+        "allowlist_override_level = \"Danger\"\nauto_snapshot_git = false\n",
+    )
+    .unwrap();
+
     let enabled_cwd = enabled_workspace.path().canonicalize().unwrap();
     let disabled_cwd = disabled_workspace.path().canonicalize().unwrap();
     fs::write(
@@ -252,7 +277,6 @@ exit 0
         format!(
             r#"
 mode = "Strict"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]
@@ -269,7 +293,6 @@ reason = "snapshot enabled"
         format!(
             r#"
 mode = "Strict"
-allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 [[allow]]

@@ -41,7 +41,26 @@
 
 ## What was done last session (2026-06-24)
 
-- Implemented the `2026-06-24-claude-code-hook-shim-migration.md` plan (ADR-012),
+- Closed P0 release blocker C3 (project-local config weakening):
+  - project `.aegis.toml` can only tighten security-critical fields: `mode`,
+    `allowlist_override_level`, `ci_policy`, `snapshot_policy`, `sandbox.enabled`,
+    `sandbox.required`, `sandbox.allow_network`, `sandbox.allow_write`, and the
+    six `auto_snapshot_*` flags;
+  - directionality is field-specific: `true`-is-stricter fields
+    (`sandbox.enabled`/`required`, `auto_snapshot_*`) keep `base || requested`;
+    `sandbox.allow_network` (`true` is weaker) keeps `base && requested`;
+    `sandbox.allow_write` keeps the base set under the project layer;
+  - this closes the sibling-field bypasses where a project could otherwise force
+    `sandbox: None` (`enabled = false`) or disable a globally-enabled snapshot
+    plugin (`auto_snapshot_* = false`) despite a stricter `snapshot_policy`/
+    `sandbox.required`;
+  - weakening attempts are ignored in favor of the stricter inherited value and
+    surfaced as `project_security_ratchet` warnings by `aegis config validate`;
+    merge and warning share the same typed ratchet helpers so the reported value
+    always matches the effective merge;
+  - ADR-013 documents the trusted-global / untrusted-project merge boundary.
+- Pre-ADR-012 session work (now under "Previous session"):
+  - Implemented the `2026-06-24-claude-code-hook-shim-migration.md` plan (ADR-012),
   bringing the Claude Code hook to PATH-independent parity with Codex across 8
   TDD phases (red-test → green → gate → commit each):
   - Phase 1: lifted `write_executable`, `resolved_aegis_bin`, and
@@ -105,7 +124,6 @@
 
 ## Open decisions / blockers
 
-- Remaining P0 release blocker from the security review: project-local config weakening to audit-only (C3). C2 (`$IFS` obfuscation bypass) is now closed.
 - CI ARM cross-compilation (`aarch64-unknown-linux-musl`) pending
 - Sandbox tests on `ubuntu-latest` / `macos-latest` with real Docker/SQLite pending
 - Hot path p99 < 2 ms not yet confirmed by criterion run on current workspace

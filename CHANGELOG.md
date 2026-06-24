@@ -11,6 +11,14 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex project configuration and agent prompts now reference `.codex/AGENTS.md` after moving the Codex instruction file out of the repository root.
+
+### Security
+
+- Project-local `.aegis.toml` can no longer weaken security-critical config fields inherited from defaults/global config; project attempts to set audit-only mode, broader allowlist overrides, weaker CI policy, disabled snapshots (`auto_snapshot_*` flags), or a weaker sandbox (`sandbox.enabled`/`required`/`allow_network`/`allow_write`) are ratcheted to the stricter value and reported by `aegis config validate`. `true`-is-stricter fields keep `base || requested`, `allow_network` keeps `base && requested`, and `allow_write` keeps the trusted base set under the project layer (ADR-013).
+
 ## [0.5.9] - 2026-06-24
 
 ### Security

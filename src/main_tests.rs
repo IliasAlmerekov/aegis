@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -19,7 +20,9 @@ use crate::shell_compat::{
     same_file,
 };
 use crate::shell_flow::decide_command;
-use aegis::config::{AllowlistMatch, AllowlistOverrideLevel, CiPolicy, ConfigSourceLayer, Mode};
+use aegis::config::{
+    AllowlistMatch, AllowlistOverrideLevel, CiPolicy, ConfigSourceLayer, Mode, SnapshotPolicy,
+};
 use aegis::error::AegisError;
 
 // ── Scanner init failure ──────────────────────────────────────────────────
@@ -746,4 +749,29 @@ fn strict_mode_allowlisted_warn_still_blocks_with_never_override_level() {
 
     assert_eq!(decision, Decision::Blocked);
     assert!(snapshots.is_empty());
+}
+
+#[test]
+fn project_audit_only_attack_config_is_ratchet_back_to_protective_defaults() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+mode = "Audit"
+allowlist_override_level = "Danger"
+snapshot_policy = "None"
+"#,
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(config.mode, Mode::Protect);
+    assert_eq!(
+        config.allowlist_override_level,
+        AllowlistOverrideLevel::Warn
+    );
+    assert_eq!(config.snapshot_policy, SnapshotPolicy::Selective);
 }

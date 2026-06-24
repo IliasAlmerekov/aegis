@@ -30,6 +30,7 @@ pub(crate) fn validate_custom_patterns(patterns: &[UserPattern]) -> Result<()> {
 mod enums;
 mod migration;
 mod partial;
+mod ratchet;
 mod rules;
 mod serde_helpers;
 mod template;
@@ -55,6 +56,121 @@ const GLOBAL_CONFIG_FILE: &str = "config.toml";
 pub const CURRENT_CONFIG_VERSION: u32 = 1;
 
 type Result<T> = std::result::Result<T, ConfigError>;
+
+fn merge_project_mode(base: Mode, overlay: Option<Mode>, layer: ConfigSourceLayer) -> Mode {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_mode(base, requested),
+    }
+}
+
+fn most_restrictive_mode(left: Mode, right: Mode) -> Mode {
+    if mode_rank(right) >= mode_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn mode_rank(mode: Mode) -> u8 {
+    match mode {
+        Mode::Audit => 0,
+        Mode::Protect => 1,
+        Mode::Strict => 2,
+    }
+}
+
+fn merge_project_allowlist_override_level(
+    base: AllowlistOverrideLevel,
+    overlay: Option<AllowlistOverrideLevel>,
+    layer: ConfigSourceLayer,
+) -> AllowlistOverrideLevel {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_allowlist_override_level(base, requested),
+    }
+}
+
+fn most_restrictive_allowlist_override_level(
+    left: AllowlistOverrideLevel,
+    right: AllowlistOverrideLevel,
+) -> AllowlistOverrideLevel {
+    if allowlist_override_level_rank(right) >= allowlist_override_level_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn allowlist_override_level_rank(level: AllowlistOverrideLevel) -> u8 {
+    match level {
+        AllowlistOverrideLevel::Danger => 0,
+        AllowlistOverrideLevel::Warn => 1,
+        AllowlistOverrideLevel::Never => 2,
+    }
+}
+
+fn merge_project_ci_policy(
+    base: CiPolicy,
+    overlay: Option<CiPolicy>,
+    layer: ConfigSourceLayer,
+) -> CiPolicy {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_ci_policy(base, requested),
+    }
+}
+
+fn most_restrictive_ci_policy(left: CiPolicy, right: CiPolicy) -> CiPolicy {
+    if ci_policy_rank(right) >= ci_policy_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn ci_policy_rank(policy: CiPolicy) -> u8 {
+    match policy {
+        CiPolicy::Allow => 0,
+        CiPolicy::Block => 1,
+    }
+}
+
+fn merge_project_snapshot_policy(
+    base: SnapshotPolicy,
+    overlay: Option<SnapshotPolicy>,
+    layer: ConfigSourceLayer,
+) -> SnapshotPolicy {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_snapshot_policy(base, requested),
+    }
+}
+
+fn most_restrictive_snapshot_policy(left: SnapshotPolicy, right: SnapshotPolicy) -> SnapshotPolicy {
+    if snapshot_policy_rank(right) >= snapshot_policy_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn snapshot_policy_rank(policy: SnapshotPolicy) -> u8 {
+    match policy {
+        SnapshotPolicy::None => 0,
+        SnapshotPolicy::Selective => 1,
+        SnapshotPolicy::Full => 2,
+    }
+}
+
+// The ratchet helpers live in `model::ratchet`; `merge_layer` below and the
+// `partial` submodule both call them so the merge path and the warning
+// collector share one definition of the effective `kept` value.
+use ratchet::ratchet_bool_tighten;
 
 /// A resolved config file path together with the layer it represents.
 #[derive(Debug, Clone)]
@@ -94,8 +210,12 @@ pub struct PruneConfig {
 /// Top-level Aegis runtime configuration.
 ///
 /// Loaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)
-/// → `.aegis.toml` (project). Later layers override scalar fields; `allow`/`block`
-/// rules are concatenated.
+/// → `.aegis.toml` (project). Later layers override ordinary scalar fields.
+/// Project-local security-critical fields are ratcheted so they can only tighten,
+/// never loosen: `mode`, `allowlist_override_level`, `ci_policy`,
+/// `snapshot_policy`, `sandbox.enabled`/`required`/`allow_network`/`allow_write`,
+/// and the `auto_snapshot_*` flags. `allow`/`block` rules are concatenated. See
+/// ADR-013 for the full ordering.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct AegisConfig {
@@ -327,6 +447,8 @@ impl AegisConfig {
     }
 
     fn merge_layer(base: Self, overlay: PartialConfig, allowlist_layer: ConfigSourceLayer) -> Self {
+        let ratchet_tighten =
+            |base_val, overlay_val| ratchet_bool_tighten(base_val, overlay_val, allowlist_layer);
         let mut custom_patterns = base.custom_patterns;
         let custom_pattern_count = overlay.custom_patterns.len();
         custom_patterns.extend(overlay.custom_patterns);
@@ -350,7 +472,7 @@ impl AegisConfig {
 
         Self {
             config_version: overlay.config_version.unwrap_or(base.config_version),
-            mode: overlay.mode.unwrap_or(base.mode),
+            mode: merge_project_mode(base.mode, overlay.mode, allowlist_layer),
             custom_patterns,
             custom_pattern_layers,
             allowlist,
@@ -367,34 +489,45 @@ impl AegisConfig {
             } else {
                 base.audit_retention_files_source
             },
-            allowlist_override_level: overlay
-                .allowlist_override_level
-                .unwrap_or(base.allowlist_override_level),
-            snapshot_policy: overlay.snapshot_policy.unwrap_or(base.snapshot_policy),
-            auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
-            auto_snapshot_docker: overlay
-                .auto_snapshot_docker
-                .unwrap_or(base.auto_snapshot_docker),
-            auto_snapshot_postgres: overlay
-                .auto_snapshot_postgres
-                .unwrap_or(base.auto_snapshot_postgres),
+            allowlist_override_level: merge_project_allowlist_override_level(
+                base.allowlist_override_level,
+                overlay.allowlist_override_level,
+                allowlist_layer,
+            ),
+            snapshot_policy: merge_project_snapshot_policy(
+                base.snapshot_policy,
+                overlay.snapshot_policy,
+                allowlist_layer,
+            ),
+            auto_snapshot_git: ratchet_tighten(base.auto_snapshot_git, overlay.auto_snapshot_git),
+            auto_snapshot_docker: ratchet_tighten(
+                base.auto_snapshot_docker,
+                overlay.auto_snapshot_docker,
+            ),
+            auto_snapshot_postgres: ratchet_tighten(
+                base.auto_snapshot_postgres,
+                overlay.auto_snapshot_postgres,
+            ),
             postgres_snapshot: overlay.postgres_snapshot.unwrap_or(base.postgres_snapshot),
-            auto_snapshot_mysql: overlay
-                .auto_snapshot_mysql
-                .unwrap_or(base.auto_snapshot_mysql),
+            auto_snapshot_mysql: ratchet_tighten(
+                base.auto_snapshot_mysql,
+                overlay.auto_snapshot_mysql,
+            ),
             mysql_snapshot: overlay.mysql_snapshot.unwrap_or(base.mysql_snapshot),
-            auto_snapshot_supabase: overlay
-                .auto_snapshot_supabase
-                .unwrap_or(base.auto_snapshot_supabase),
+            auto_snapshot_supabase: ratchet_tighten(
+                base.auto_snapshot_supabase,
+                overlay.auto_snapshot_supabase,
+            ),
             supabase_snapshot: overlay.supabase_snapshot.unwrap_or(base.supabase_snapshot),
-            auto_snapshot_sqlite: overlay
-                .auto_snapshot_sqlite
-                .unwrap_or(base.auto_snapshot_sqlite),
+            auto_snapshot_sqlite: ratchet_tighten(
+                base.auto_snapshot_sqlite,
+                overlay.auto_snapshot_sqlite,
+            ),
             sqlite_snapshot_path: overlay
                 .sqlite_snapshot_path
                 .unwrap_or(base.sqlite_snapshot_path),
             docker_scope: overlay.docker_scope.unwrap_or(base.docker_scope),
-            ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
+            ci_policy: merge_project_ci_policy(base.ci_policy, overlay.ci_policy, allowlist_layer),
             rules: {
                 let mut r = base.rules;
                 r.extend(overlay.rules);
@@ -422,7 +555,7 @@ impl AegisConfig {
                     .integrity_mode
                     .unwrap_or(base.audit.integrity_mode),
             },
-            sandbox: overlay.sandbox.merge_into(base.sandbox),
+            sandbox: overlay.sandbox.merge_into(base.sandbox, allowlist_layer),
             prune: PruneConfig {
                 enabled: overlay.prune.enabled.unwrap_or(base.prune.enabled),
                 max_count_per_provider: overlay

@@ -36,11 +36,11 @@ exit 0
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         &config_path,
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "terraform destroy -target=module.test.*"
 cwd = "{workspace_cwd}"
@@ -210,11 +210,11 @@ fn verbose_allowlist_match_prints_rule_name() {
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
@@ -268,11 +268,11 @@ fn quiet_allowlist_match_suppresses_aegis_diagnostics() {
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
@@ -321,11 +321,11 @@ fn verbosity_verbose_allowlist_match_prints_rule_name() {
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "terraform destroy -target=module.ci.*"
 cwd = "{workspace_cwd}"
@@ -419,13 +419,13 @@ exit 0
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
 mode = "Protect"
 ci_policy = "Block"
-allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 [[allow]]
@@ -586,12 +586,12 @@ exit 0
         .unwrap()
         .display()
         .to_string();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
 mode = "Strict"
-allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 [[allow]]

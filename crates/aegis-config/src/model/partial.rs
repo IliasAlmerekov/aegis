@@ -6,11 +6,12 @@ use serde::Deserialize;
 use crate::error::ConfigError;
 
 use super::migration::migrate_deprecated_allowlist_in_file;
+use super::ratchet::{ratchet_bool_loosen, ratchet_bool_tighten};
 use super::serde_helpers::{deserialize_allowlist_rules, deserialize_optional_config_version};
 use super::{
-    AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy, DockerScope,
-    Mode, MysqlSnapshotConfig, PolicyRule, PostgresSnapshotConfig, SandboxSettings, SnapshotPolicy,
-    SupabaseSnapshotConfig, UserPattern,
+    AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy,
+    ConfigSourceLayer, DockerScope, Mode, MysqlSnapshotConfig, PolicyRule, PostgresSnapshotConfig,
+    SandboxSettings, SnapshotPolicy, SupabaseSnapshotConfig, UserPattern,
 };
 
 type Result<T> = std::result::Result<T, ConfigError>;
@@ -38,13 +39,41 @@ pub(super) struct PartialSandboxSettings {
 }
 
 impl PartialSandboxSettings {
-    pub(super) fn merge_into(self, base: SandboxSettings) -> SandboxSettings {
+    pub(super) fn merge_into(
+        self,
+        base: SandboxSettings,
+        source_layer: ConfigSourceLayer,
+    ) -> SandboxSettings {
         SandboxSettings {
-            enabled: self.enabled.unwrap_or(base.enabled),
-            required: self.required.unwrap_or(base.required),
-            allow_write: self.allow_write.unwrap_or(base.allow_write),
-            allow_network: self.allow_network.unwrap_or(base.allow_network),
+            enabled: ratchet_bool_tighten(base.enabled, self.enabled, source_layer),
+            required: ratchet_bool_tighten(base.required, self.required, source_layer),
+            allow_write: match source_layer {
+                ConfigSourceLayer::Global => self.allow_write.unwrap_or(base.allow_write),
+                // Project cannot expand the writable surface; keep the trusted base.
+                ConfigSourceLayer::Project => base.allow_write,
+            },
+            allow_network: ratchet_bool_loosen(
+                base.allow_network,
+                self.allow_network,
+                source_layer,
+            ),
         }
+    }
+
+    pub(super) fn required(&self) -> Option<bool> {
+        self.required
+    }
+
+    pub(super) fn enabled(&self) -> Option<bool> {
+        self.enabled
+    }
+
+    pub(super) fn allow_network(&self) -> Option<bool> {
+        self.allow_network
+    }
+
+    pub(super) fn allow_write(&self) -> Option<Vec<PathBuf>> {
+        self.allow_write.clone()
     }
 }
 
@@ -112,5 +141,21 @@ impl PartialConfig {
         }
 
         Ok(config)
+    }
+
+    pub(super) fn sandbox_required(&self) -> Option<bool> {
+        self.sandbox.required()
+    }
+
+    pub(super) fn sandbox_enabled(&self) -> Option<bool> {
+        self.sandbox.enabled()
+    }
+
+    pub(super) fn sandbox_allow_network(&self) -> Option<bool> {
+        self.sandbox.allow_network()
+    }
+
+    pub(super) fn sandbox_allow_write(&self) -> Option<Vec<PathBuf>> {
+        self.sandbox.allow_write()
     }
 }
