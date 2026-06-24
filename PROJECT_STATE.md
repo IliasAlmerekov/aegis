@@ -67,6 +67,23 @@
     CHANGELOG, and PROJECT_STATE updated.
 - Verification: `cargo test` green (install:: + agent_hooks), `cargo clippy
   -- -D warnings` clean, `cargo fmt --check` clean.
+- Post-ADR-012 review reconciliation (commit `851c65e`):
+  - `scripts/hooks/claude-code.sh` now ends with a trailing `\n` (POSIX
+    convention) and its self-comment / ADR-012 consequence / the
+    `render_claude_pre_tool_use_hook` doc comment were corrected from
+    "byte-identical except header" to "behaviorally identical; only
+    agent-specific comments differ" (the two shims cross-reference each
+    other by name, so they are not byte-identical).
+  - `scripts/uninstall.sh` normalizes a trailing slash on `$HOME` up front
+    (guarding root `/`) so the string-built prune paths match the absolute
+    path `std::path::absolute`/`Path::join` registers.
+  - `tests/agent_hooks.rs::claude_install_migrates_legacy_aegis_hook_registration_to_absolute_shim`
+    closes the migration seam end-to-end through the public
+    `aegis install-hooks --claude-code` surface (seed a real legacy
+    `aegis hook` → assert migration to the absolute shim + user-hook
+    preservation).
+  - Verification: 532 tests pass, file-size budget green (claude.rs 774,
+    agent_hooks.rs 796), `cargo audit`/`cargo deny check` clean.
 
 ### Previous session (2026-06-24)
 
