@@ -103,9 +103,19 @@ If `echo hello` runs right away and the risky command prompts, Aegis is working.
 
 ### Connect to your AI agent
 
-For **Claude Code**, run `command -v aegis` and paste that path into the
-`shell` field. For other agents that respect `$SHELL`, Aegis works
-automatically; otherwise find the `shell` field and set it to the aegis path.
+**Claude Code** and **Codex** are protected through their `PreToolUse` hooks,
+which `aegis install-hooks` registers and keeps pointed at an absolute,
+PATH-independent shim. Re-run `aegis install-hooks --claude-code` (or `--all`)
+after upgrading to migrate any older `aegis hook` / `aegis-rewrite.sh`
+registration to the new shim. These hooks — not `setup-shell` — are what
+intercept those agents' Bash commands, since they ignore a non-bash/zsh
+`$SHELL` in their Bash tool.
+
+`aegis setup-shell` only helps tools that genuinely launch commands via
+`$SHELL -c` (interactive shells, some terminal-based agents). For an agent that
+respects `$SHELL`, run `command -v aegis` to get the absolute path and paste it
+into the agent's `shell` field; otherwise find the `shell` field and set it to
+the aegis path.
 
 ### Developer source install
 

@@ -155,11 +155,59 @@ untrusted.
 1. Confirm `~/.codex/config.toml` has `[features] hooks = true`.
 2. Review and trust hooks inside Codex with `/hooks`.
 3. For Claude Code, confirm `~/.claude/settings.json` has a `PreToolUse` `Bash`
-   hook running `aegis hook`.
+   hook whose `command` is the absolute shim path
+   `~/.claude/hooks/aegis-pre-tool-use.sh` (not the bare `aegis hook`).
 4. Verify the rewrite end to end:
    `printf '{"tool_input":{"command":"git status"}}' | aegis hook` should print a
    `permissionDecision: "allow"` response whose `updatedInput.command` is
    `aegis --command 'git status'`.
+
+### Claude hook not firing / not on PATH
+
+**Why:** Older installs registered the bare `aegis hook` command, which only
+works when `aegis` is on the PATH Claude Code uses to execute hooks. Current
+installs register an absolute, PATH-independent shim path and migrate the
+legacy registration away.
+
+**Fix:**
+
+1. Re-run `aegis install-hooks --claude-code` (or `--all`) to materialize the
+   shim at `~/.claude/hooks/aegis-pre-tool-use.sh` and register its absolute
+   path.
+2. Confirm `~/.claude/settings.json` `PreToolUse` `Bash` hook `command` is the
+   absolute shim path, not `aegis hook`.
+3. Re-run after any Aegis upgrade so the shim's embedded `__AEGIS_BIN__` is
+   refreshed to the current binary path.
+
+### Legacy `aegis-rewrite.sh` still present
+
+**Why:** The original Claude hook (jq-based, `aegis-hook-version: 1`) installed
+to `~/.claude/hooks/aegis-rewrite.sh`. The current installer no longer writes it
+and migrates its registration to the new shim, but a stale file or registration
+can remain from an older install.
+
+**Fix:**
+
+1. Re-run `aegis install-hooks --claude-code`; the installer prunes the legacy
+   `aegis hook` and `aegis-rewrite.sh` registrations and registers the new shim.
+2. To clean up entirely, run `aegis-uninstall` (or `scripts/uninstall.sh`),
+   which removes `aegis-rewrite.sh`, the new shim, and both registrations, then
+   reinstall.
+
+### Project-local Claude hook not removed by uninstall
+
+**Why:** `scripts/uninstall.sh` prunes only the global `~/.claude/settings.json`
+and `~/.claude/hooks/` paths. A project-local install (`aegis install-hooks
+--claude-code --local`, writing `<project>/.claude/`) is out of uninstall's
+scope by design.
+
+**Fix:**
+
+1. In the project, remove `<project>/.claude/hooks/aegis-pre-tool-use.sh` and
+   the `PreToolUse` `Bash` entry pointing at it from
+   `<project>/.claude/settings.json`.
+2. Or re-run `aegis install-hooks --claude-code --local` to refresh the local
+   shim if you want to keep it.
 
 ### Older Codex hook fails with missing `jq` or `python3`
 
