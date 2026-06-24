@@ -6,8 +6,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::{
-    AgentInstallResult, InstallOutcome, agent_dir_exists, resolved_aegis_bin, shell_quote,
-    temporary_settings_path, write_executable, write_settings_atomically,
+    AgentInstallResult, InstallOutcome, agent_dir_exists, combine_outcomes, resolved_aegis_bin,
+    shell_quote, temporary_settings_path, write_executable, write_settings_atomically,
 };
 
 const CODEX_PRE_TOOL_USE_HOOK_SH: &str = include_str!("../../scripts/hooks/codex-pre-tool-use.sh");
@@ -274,16 +274,6 @@ fn codex_hook_present(
     }
 
     Ok(found)
-}
-
-fn combine_outcomes(lhs: InstallOutcome, rhs: InstallOutcome) -> InstallOutcome {
-    if matches!(lhs, InstallOutcome::Installed) || matches!(rhs, InstallOutcome::Installed) {
-        InstallOutcome::Installed
-    } else if matches!(lhs, InstallOutcome::Skipped) || matches!(rhs, InstallOutcome::Skipped) {
-        InstallOutcome::Skipped
-    } else {
-        InstallOutcome::AlreadyPresent
-    }
 }
 
 #[cfg(test)]

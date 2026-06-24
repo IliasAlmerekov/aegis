@@ -318,16 +318,27 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
         .join(".codex")
         .join("hooks")
         .join("aegis-pre-tool-use.sh");
+    let claude_shim = home
+        .path()
+        .join(".claude")
+        .join("hooks")
+        .join("aegis-pre-tool-use.sh");
 
     assert!(claude_settings.exists());
     assert!(codex_hooks.exists());
     assert!(session_hook.exists());
     assert!(ptu_hook.exists());
+    assert!(claude_shim.exists(), "Claude shim must be materialized by install");
 
     let claude_json = read_json(&claude_settings);
+    let claude_shim_command = claude_shim.display().to_string();
     assert!(
-        json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
-        "Claude settings.json must register the binary-first aegis hook before uninstall"
+        json_contains_command(&claude_json, "PreToolUse", &claude_shim_command),
+        "Claude settings.json must register the absolute shim path before uninstall"
+    );
+    assert!(
+        !json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
+        "Claude install must register the absolute shim, not the legacy bare command"
     );
 
     let rc_file_str = rc_file.display().to_string();

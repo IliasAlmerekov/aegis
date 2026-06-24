@@ -180,6 +180,20 @@ pub(crate) fn agent_dir_exists(agent_dir: &Path) -> Result<bool, String> {
     ))
 }
 
+/// Combine two install outcomes into one: `Installed` wins over `Skipped`/`
+/// AlreadyPresent`, `Skipped` wins over `AlreadyPresent`. Shared by the Codex
+/// and Claude installers to fold the shim-materialize outcome together with
+/// the settings-registration outcome.
+pub(crate) fn combine_outcomes(lhs: InstallOutcome, rhs: InstallOutcome) -> InstallOutcome {
+    if matches!(lhs, InstallOutcome::Installed) || matches!(rhs, InstallOutcome::Installed) {
+        InstallOutcome::Installed
+    } else if matches!(lhs, InstallOutcome::Skipped) || matches!(rhs, InstallOutcome::Skipped) {
+        InstallOutcome::Skipped
+    } else {
+        InstallOutcome::AlreadyPresent
+    }
+}
+
 pub(crate) fn load_settings(path: &Path) -> Result<Value, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
