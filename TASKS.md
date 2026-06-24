@@ -56,10 +56,10 @@ fundamental design failure. They are fixable with targeted work.
   `Danger` / `Block` pattern.
 - **Resolution:** built-in regex patterns are compiled case-insensitively, with regression tests for uppercase destructive commands and custom-pattern case sensitivity.
 
-### [ ] C2 — `$IFS` obfuscation bypasses most patterns
+### [x] C2 — `$IFS` obfuscation bypasses most patterns
 
 - **Risk:** Critical.
-- **Status:** confirmed.
+- **Status:** resolved.
 - **Evidence:** `rm$IFS-rf$IFS/` → `Safe`; `rm${IFS}-rf${IFS}/` → `Safe`;
   `dd${IFS}of=/dev/sda` → `Safe`. In a real shell, `$IFS` is whitespace, so these
   execute as destructive commands. The bypass composes through `bash -c`, heredoc,
@@ -69,6 +69,15 @@ fundamental design failure. They are fixable with targeted work.
   deterministic shell word-splitting primitive, not an unknown variable.
 - **Fix:** treat literal `$IFS` and `${IFS}` as separators in tokenization or
   normalization. This is cheap and does not require full variable expansion.
+- **Resolution:** `split_tokens` now treats unquoted literal `$IFS` / `${IFS}` as
+  shell word-separators via the `ifs_marker_len` helper (bare `$IFS` only at an
+  identifier boundary; braced `${IFS}` self-delimited). The fix flows through
+  `Parser::parse` and `logical_segments` into direct, nested-shell (`bash -c` /
+  `sh -c`), heredoc, and process-substitution scan paths. Quoted (`'$IFS'`,
+  `"$IFS"`), escaped (`\$IFS`), and non-IFS variable forms (`$PATH`, `$IFSHOME`)
+  stay opaque. Covered by tokenizer positive/negative tests, parser
+  normalized-form tests, and scanner regressions across PS-006, FS-002, FS-003,
+  FS-004, and FS-006.
 
 ### [ ] C3 — Project-local `.aegis.toml` can weaken Aegis to audit-only
 
@@ -237,6 +246,11 @@ fundamental design failure. They are fixable with targeted work.
 
 - [ ] SQLite snapshot TOCTOU: `exists()` + `copy` instead of `create_new`.
 - [ ] Backslash-newline tokenization edge cases.
+- [ ] C-next — IFS parameter-expansion modifiers: the C2 fix normalizes only the
+      literal `$IFS` / `${IFS}` default spellings. Parametric forms
+      (`${IFS:-x}`, `${IFS:+x}`) and runtime `IFS=` reassignment are not
+      normalized and remain opaque. Decide whether broader shell-state analysis
+      is warranted.
 - [ ] `stdout_renderer` final `_ => Approve` arm is future fail-open for new risk
       variants; currently unreachable.
 - [ ] Sandbox status TOCTOU.
@@ -274,7 +288,7 @@ fundamental design failure. They are fixable with targeted work.
 
 1. [ ] C1 — `RegexBuilder::case_insensitive(true)` for built-in patterns plus
        uppercase regression tests.
-2. [ ] C2 — normalize `$IFS` / `${IFS}` as separators in tokenizer or
+2. [x] C2 — normalize `$IFS` / `${IFS}` as separators in tokenizer or
        normalization plus fixtures.
 3. [ ] C3 / M6 — restrictive merge ratchet for security fields:
        `mode`, `*_override_level`, `ci_policy`, `snapshot_policy`,

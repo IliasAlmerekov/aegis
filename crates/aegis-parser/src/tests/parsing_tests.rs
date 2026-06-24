@@ -541,3 +541,23 @@ fn extract_prefix_keeps_multiple_flags() {
         vec!["git", "log", "--oneline", "--graph", "--all"]
     );
 }
+
+// ── C2: parser normalizes literal `$IFS` separators ───────────────────────
+
+#[test]
+fn parse_normalizes_dollar_ifs_as_space_between_rm_arguments() {
+    let parsed = Parser::parse("rm$IFS-rf$IFS/");
+
+    assert_eq!(parsed.program.as_deref(), Some("rm"));
+    assert_eq!(parsed.argv, vec!["-rf", "/"]);
+    assert_eq!(parsed.normalized, "rm -rf /");
+}
+
+#[test]
+fn parse_normalizes_braced_ifs_as_space_between_rm_arguments() {
+    let parsed = Parser::parse("rm${IFS}-rf${IFS}/");
+
+    assert_eq!(parsed.program.as_deref(), Some("rm"));
+    assert_eq!(parsed.argv, vec!["-rf", "/"]);
+    assert_eq!(parsed.normalized, "rm -rf /");
+}
