@@ -2,9 +2,12 @@ use super::*;
 
 #[test]
 fn sandbox_project_allow_network_does_not_reset_global_enabled() {
-    // When global config sets [sandbox] enabled = true and the project config
-    // sets [sandbox] allow_network = true, the per-field merge must keep
-    // enabled = true from the global layer.
+    // When global config sets [sandbox] enabled = true and allow_network = true
+    // (a trusted opt-in), and the project config sets a different sandbox field
+    // (required = true, a tightening), the per-field merge must keep enabled =
+    // true and allow_network = true from the global layer. `allow_network` is a
+    // weakening direction, so it can only be opted in globally — a project
+    // cannot enable it over a denied base (see ADR-013).
     let workspace = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -12,12 +15,12 @@ fn sandbox_project_allow_network_does_not_reset_global_enabled() {
 
     fs::write(
         global_dir.join(GLOBAL_CONFIG_FILE),
-        "[sandbox]\nenabled = true\n",
+        "[sandbox]\nenabled = true\nallow_network = true\n",
     )
     .unwrap();
     fs::write(
         workspace.path().join(PROJECT_CONFIG_FILE),
-        "[sandbox]\nallow_network = true\n",
+        "[sandbox]\nrequired = true\n",
     )
     .unwrap();
 
@@ -25,11 +28,15 @@ fn sandbox_project_allow_network_does_not_reset_global_enabled() {
 
     assert!(
         config.sandbox.enabled,
-        "global sandbox.enabled must survive project overlay that only sets allow_network"
+        "global sandbox.enabled must survive a project overlay that only sets required"
     );
     assert!(
         config.sandbox.allow_network,
-        "project sandbox.allow_network must be set"
+        "global sandbox.allow_network (trusted opt-in) must survive a project overlay"
+    );
+    assert!(
+        config.sandbox.required,
+        "project sandbox.required tightening must be kept by the ratchet"
     );
 }
 
@@ -293,8 +300,10 @@ fn project_sandbox_required_can_tighten_default_false_to_true() {
 
 #[test]
 fn global_mode_and_snapshot_used_when_project_omits_them() {
-    // Global sets mode and auto_snapshot_docker; project sets only auto_snapshot_git.
-    // The global values must survive into the final config.
+    // Global sets mode and auto_snapshot_docker; the project omits them. The
+    // global values must survive into the final config. (The project file is
+    // present but empty, exercising the project layer without overriding the
+    // global snapshot flags.)
     let workspace = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -305,17 +314,12 @@ fn global_mode_and_snapshot_used_when_project_omits_them() {
         "mode = \"Strict\"\nauto_snapshot_docker = false\n",
     )
     .unwrap();
-    fs::write(
-        workspace.path().join(PROJECT_CONFIG_FILE),
-        "auto_snapshot_git = false\n",
-    )
-    .unwrap();
+    fs::write(workspace.path().join(PROJECT_CONFIG_FILE), "\n").unwrap();
 
     let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
 
     assert_eq!(config.mode, Mode::Strict); // from global
     assert!(!config.auto_snapshot_docker); // from global
-    assert!(!config.auto_snapshot_git); // from project
 }
 
 #[test]
@@ -483,32 +487,6 @@ expires_at = "2030-01-01T00:00:00Z"
 }
 
 #[test]
-fn project_false_wins_over_global_true_for_bool_scalar() {
-    // When both files set the same bool field, the project value must win
-    // even when it is `false` (so it can't be confused with "not set").
-    let workspace = TempDir::new().unwrap();
-    let home = TempDir::new().unwrap();
-    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
-    fs::create_dir_all(&global_dir).unwrap();
-
-    fs::write(
-        global_dir.join(GLOBAL_CONFIG_FILE),
-        "auto_snapshot_git = true\nauto_snapshot_docker = true\n",
-    )
-    .unwrap();
-    fs::write(
-        workspace.path().join(PROJECT_CONFIG_FILE),
-        "auto_snapshot_git = false\nauto_snapshot_docker = false\n",
-    )
-    .unwrap();
-
-    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-
-    assert!(!config.auto_snapshot_git);
-    assert!(!config.auto_snapshot_docker);
-}
-
-#[test]
 fn no_home_dir_loads_project_config_only() {
     // When HOME is unavailable there is no global config to look for; the
     // project config and built-in defaults must still be applied correctly.
@@ -522,7 +500,11 @@ fn no_home_dir_loads_project_config_only() {
     let config = AegisConfig::load_for(workspace.path(), None).unwrap();
 
     assert_eq!(config.mode, Mode::Protect);
-    assert!(!config.auto_snapshot_git);
+    // auto_snapshot_git defaults to true; the project's `false` is a weakening
+    // attempt that the C3 ratchet ignores (no global layer to override), so the
+    // stricter default survives. `mode = "Audit"` being ratcheted back to
+    // `Protect` above already proves the project file was loaded.
+    assert!(config.auto_snapshot_git);
     assert!(!config.auto_snapshot_docker); // default is false (opt-in)
     assert!(config.allowlist.is_empty());
 }

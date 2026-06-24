@@ -6,6 +6,7 @@ use serde::Deserialize;
 use crate::error::ConfigError;
 
 use super::migration::migrate_deprecated_allowlist_in_file;
+use super::ratchet::{ratchet_bool_loosen, ratchet_bool_tighten};
 use super::serde_helpers::{deserialize_allowlist_rules, deserialize_optional_config_version};
 use super::{
     AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy,
@@ -43,20 +44,36 @@ impl PartialSandboxSettings {
         base: SandboxSettings,
         source_layer: ConfigSourceLayer,
     ) -> SandboxSettings {
-        let requested_required = self.required.unwrap_or(base.required);
         SandboxSettings {
-            enabled: self.enabled.unwrap_or(base.enabled),
-            required: match source_layer {
-                ConfigSourceLayer::Project => base.required || requested_required,
-                ConfigSourceLayer::Global => requested_required,
+            enabled: ratchet_bool_tighten(base.enabled, self.enabled, source_layer),
+            required: ratchet_bool_tighten(base.required, self.required, source_layer),
+            allow_write: match source_layer {
+                ConfigSourceLayer::Global => self.allow_write.unwrap_or(base.allow_write),
+                // Project cannot expand the writable surface; keep the trusted base.
+                ConfigSourceLayer::Project => base.allow_write,
             },
-            allow_write: self.allow_write.unwrap_or(base.allow_write),
-            allow_network: self.allow_network.unwrap_or(base.allow_network),
+            allow_network: ratchet_bool_loosen(
+                base.allow_network,
+                self.allow_network,
+                source_layer,
+            ),
         }
     }
 
     pub(super) fn required(&self) -> Option<bool> {
         self.required
+    }
+
+    pub(super) fn enabled(&self) -> Option<bool> {
+        self.enabled
+    }
+
+    pub(super) fn allow_network(&self) -> Option<bool> {
+        self.allow_network
+    }
+
+    pub(super) fn allow_write(&self) -> Option<Vec<PathBuf>> {
+        self.allow_write.clone()
     }
 }
 
@@ -126,23 +143,19 @@ impl PartialConfig {
         Ok(config)
     }
 
-    pub(super) fn mode(&self) -> Option<Mode> {
-        self.mode
-    }
-
-    pub(super) fn allowlist_override_level(&self) -> Option<AllowlistOverrideLevel> {
-        self.allowlist_override_level
-    }
-
-    pub(super) fn snapshot_policy(&self) -> Option<SnapshotPolicy> {
-        self.snapshot_policy
-    }
-
-    pub(super) fn ci_policy(&self) -> Option<CiPolicy> {
-        self.ci_policy
-    }
-
     pub(super) fn sandbox_required(&self) -> Option<bool> {
         self.sandbox.required()
+    }
+
+    pub(super) fn sandbox_enabled(&self) -> Option<bool> {
+        self.sandbox.enabled()
+    }
+
+    pub(super) fn sandbox_allow_network(&self) -> Option<bool> {
+        self.sandbox.allow_network()
+    }
+
+    pub(super) fn sandbox_allow_write(&self) -> Option<Vec<PathBuf>> {
+        self.sandbox.allow_write()
     }
 }

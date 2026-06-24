@@ -149,7 +149,7 @@ pub fn validate_config_layers(current_dir: &Path, home_dir: Option<&Path>) -> Va
                     push_unique_issue(
                         &mut report.warnings,
                         ValidationIssue {
-                            code: warning.code,
+                            code: "project_security_ratchet",
                             message: format!(
                                 "project config attempted to weaken `{}` from {} to {}; keeping {}",
                                 warning.field, warning.kept, warning.requested, warning.kept

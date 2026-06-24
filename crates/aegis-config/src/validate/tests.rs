@@ -1,6 +1,9 @@
 use std::fs;
 
-use super::{ConfigSourceMap, PROJECT_CONFIG_FILE, validate_config, validate_config_layers};
+use super::{
+    ConfigSourceMap, GLOBAL_CONFIG_DIR, GLOBAL_CONFIG_FILE, PROJECT_CONFIG_FILE, validate_config,
+    validate_config_layers,
+};
 use crate::error::ConfigError;
 use crate::{AegisConfig, AllowlistRule};
 use tempfile::TempDir;
@@ -357,6 +360,210 @@ required = true
             .iter()
             .all(|issue| issue.code != "project_security_ratchet"),
         "unexpected ratchet warnings: {:#?}",
+        report.warnings
+    );
+}
+
+// ── C3 ratchet expansion: warning coverage for neighboring fields ──────
+// These tests pin the `project_security_ratchet` warnings that must fire when
+// a project config attempts to weaken a security-critical sibling field that
+// is currently last-wins (sandbox.enabled, auto_snapshot_*, allow_network,
+// allow_write). The effective-value ratchet is asserted in model::tests::merge;
+// here we assert the validation report surfaces an advisory warning too.
+
+#[test]
+fn validate_warns_when_project_disables_globally_enabled_sandbox() {
+    // F1: project `sandbox.enabled = false` over global `enabled = true`
+    // defeats the inherited sandbox entirely and must emit a ratchet warning.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[sandbox]\nenabled = true\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nenabled = false\n",
+    )
+    .unwrap();
+
+    let report = validate_config_layers(workspace.path(), Some(home.path()));
+
+    assert!(
+        report.valid,
+        "config must remain valid; ratchet weakening is advisory, got errors: {:#?}",
+        report.errors
+    );
+    assert!(
+        report.errors.is_empty(),
+        "expected no hard errors, got {:#?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.code == "project_security_ratchet" && w.message.contains("sandbox.enabled")),
+        "expected ratchet warning for sandbox.enabled, got {:#?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn validate_warns_when_project_disables_globally_enabled_snapshot_flag() {
+    // F2: project `auto_snapshot_git = false` over global `true` disables git
+    // snapshots under Selective policy and must emit a ratchet warning.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "auto_snapshot_git = true\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "auto_snapshot_git = false\n",
+    )
+    .unwrap();
+
+    let report = validate_config_layers(workspace.path(), Some(home.path()));
+
+    assert!(
+        report.valid,
+        "config must remain valid; ratchet weakening is advisory, got errors: {:#?}",
+        report.errors
+    );
+    assert!(
+        report.warnings.iter().any(
+            |w| w.code == "project_security_ratchet" && w.message.contains("auto_snapshot_git")
+        ),
+        "expected ratchet warning for auto_snapshot_git, got {:#?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn validate_warns_when_project_enables_network_over_global_deny() {
+    // F3: project `allow_network = true` over global `false` weakens the jail
+    // (network is the weaker direction) and must emit a ratchet warning.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[sandbox]\nenabled = true\nallow_network = false\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nallow_network = true\n",
+    )
+    .unwrap();
+
+    let report = validate_config_layers(workspace.path(), Some(home.path()));
+
+    assert!(
+        report.valid,
+        "config must remain valid; ratchet weakening is advisory, got errors: {:#?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.code == "project_security_ratchet" && w.message.contains("allow_network")),
+        "expected ratchet warning for allow_network, got {:#?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn validate_warns_when_project_expands_allow_write_over_global_base() {
+    // F3: project adds `/etc` to the writable set beyond the global base
+    // `/opt/data` — more paths is weaker and must emit a ratchet warning.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[sandbox]\nenabled = true\nallow_write = [\"/opt/data\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nallow_write = [\"/opt/data\", \"/etc\"]\n",
+    )
+    .unwrap();
+
+    let report = validate_config_layers(workspace.path(), Some(home.path()));
+
+    assert!(
+        report.valid,
+        "config must remain valid; ratchet weakening is advisory, got errors: {:#?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.code == "project_security_ratchet" && w.message.contains("allow_write")),
+        "expected ratchet warning for allow_write, got {:#?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn validate_warns_when_project_relaxes_globally_required_sandbox() {
+    // F8 coverage gap: all current ratchet tests use an empty home dir so
+    // `base.sandbox.required` is always false. This test sets a NON-empty
+    // global config with `required = true` and a project `required = false`,
+    // exercising the `base.required == true && requested == false` branch.
+    // Current code already emits this warning (kept = true || false = true,
+    // kept != requested), so this is a GUARD test — it must stay green after
+    // the ratchet expansion lands.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[sandbox]\nrequired = true\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nrequired = false\n",
+    )
+    .unwrap();
+
+    let report = validate_config_layers(workspace.path(), Some(home.path()));
+
+    assert!(
+        report.valid,
+        "config must remain valid; ratchet weakening is advisory, got errors: {:#?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.code == "project_security_ratchet"
+                && w.message.contains("sandbox.required")
+                && w.message.contains("true")
+                && w.message.contains("false")),
+        "expected ratchet warning for sandbox.required (true kept, false requested), got {:#?}",
         report.warnings
     );
 }
