@@ -64,6 +64,18 @@ fn init_git_repo(path: &Path) {
         .unwrap();
 }
 
+/// Write a global user config (`~/.config/aegis/config.toml`) with the given
+/// contents.
+///
+/// The project layer can no longer weaken `allowlist_override_level` (C3
+/// security ratchet). Tests needing a permissive override must set it in the
+/// trusted global config.
+fn write_global_config(home: &Path, contents: &str) {
+    let global_dir = home.join(".config/aegis");
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(global_dir.join("config.toml"), contents).unwrap();
+}
+
 fn commit_file(path: &Path, name: &str, contents: &str) {
     fs::write(path.join(name), contents).unwrap();
     Command::new("git")
@@ -133,11 +145,11 @@ fn git_snapshot_and_rollback_work_from_repo_subdirectory() {
     fs::write(workspace.path().join("tracked.txt"), "subdir change\n").unwrap();
     let subdir_cwd = subdir.canonicalize().unwrap();
 
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         subdir.join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]
@@ -213,11 +225,11 @@ fn git_snapshot_and_rollback_work_from_git_worktree() {
     let worktree_cwd = worktree.path().canonicalize().unwrap();
 
     fs::write(worktree.path().join("tracked.txt"), "worktree change\n").unwrap();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         worktree.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]
@@ -284,11 +296,11 @@ fn rollback_conflict_reports_manual_recovery_commands_and_preserves_stash() {
     commit_file(workspace.path(), "tracked.txt", "original\n");
     fs::write(workspace.path().join("tracked.txt"), "stashed change\n").unwrap();
     let workspace_cwd = workspace.path().canonicalize().unwrap();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 auto_snapshot_git = true
 auto_snapshot_docker = false
 [[allow]]

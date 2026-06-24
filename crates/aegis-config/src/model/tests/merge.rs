@@ -136,7 +136,7 @@ fn defaults_work_without_any_config_file() {
 }
 
 #[test]
-fn project_config_overrides_global_scalars_and_vecs_are_merged() {
+fn project_config_cannot_weaken_global_mode_but_still_merges_vectors() {
     let workspace = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -186,8 +186,8 @@ description = "Project build dir removal"
 
     let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
 
-    // project wins for mode
-    assert_eq!(config.mode, Mode::Audit);
+    // project cannot weaken global mode; Strict is kept.
+    assert_eq!(config.mode, Mode::Strict);
     // global wins for auto_snapshot_git (project didn't set it)
     assert!(!config.auto_snapshot_git);
     // allowlists are merged: global first, then project
@@ -197,6 +197,96 @@ description = "Project build dir removal"
     assert_eq!(config.custom_patterns.len(), 2);
     assert_eq!(config.custom_patterns[0].id, "GLB-001");
     assert_eq!(config.custom_patterns[1].id, "PRJ-001");
+}
+
+#[test]
+fn project_mode_can_tighten_global_protect_to_strict() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(global_dir.join(GLOBAL_CONFIG_FILE), "mode = \"Protect\"\n").unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "mode = \"Strict\"\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(config.mode, Mode::Strict);
+}
+
+#[test]
+fn project_mode_cannot_weaken_default_protect_to_audit() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "mode = \"Audit\"\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(config.mode, Mode::Protect);
+}
+
+#[test]
+fn project_ci_policy_cannot_weaken_default_block_to_allow() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "ci_policy = \"Allow\"\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(config.ci_policy, CiPolicy::Block);
+}
+
+#[test]
+fn project_sandbox_required_cannot_weaken_global_required_true() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[sandbox]\nrequired = true\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nrequired = false\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert!(config.sandbox.required);
+}
+
+#[test]
+fn project_sandbox_required_can_tighten_default_false_to_true() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[sandbox]\nrequired = true\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert!(config.sandbox.required);
 }
 
 // --- partial override cases ---
@@ -431,7 +521,7 @@ fn no_home_dir_loads_project_config_only() {
 
     let config = AegisConfig::load_for(workspace.path(), None).unwrap();
 
-    assert_eq!(config.mode, Mode::Audit);
+    assert_eq!(config.mode, Mode::Protect);
     assert!(!config.auto_snapshot_git);
     assert!(!config.auto_snapshot_docker); // default is false (opt-in)
     assert!(config.allowlist.is_empty());
@@ -511,7 +601,7 @@ fn init_template_uses_array_of_tables_for_allowlist() {
 }
 
 #[test]
-fn allowlist_override_level_project_value_overrides_global() {
+fn project_allowlist_override_level_uses_most_restrictive_value() {
     let workspace = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -529,8 +619,28 @@ fn allowlist_override_level_project_value_overrides_global() {
     .unwrap();
 
     let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
     assert_eq!(
         config.allowlist_override_level,
-        AllowlistOverrideLevel::Danger
+        AllowlistOverrideLevel::Never
+    );
+}
+
+#[test]
+fn project_allowlist_override_level_can_tighten_warn_to_never() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "allowlist_override_level = \"Never\"\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(
+        config.allowlist_override_level,
+        AllowlistOverrideLevel::Never
     );
 }

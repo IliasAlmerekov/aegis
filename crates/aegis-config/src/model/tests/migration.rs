@@ -90,7 +90,7 @@ auto_snapshot_docker = false
 }
 
 #[test]
-fn snapshot_policy_merges_from_overlay() {
+fn project_snapshot_policy_cannot_weaken_global_full_to_none() {
     let workspace = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
     let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
@@ -108,8 +108,24 @@ fn snapshot_policy_merges_from_overlay() {
     .unwrap();
 
     let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
-    // Project layer overrides global.
-    assert_eq!(config.snapshot_policy, SnapshotPolicy::None);
+
+    assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
+}
+
+#[test]
+fn project_snapshot_policy_can_tighten_default_selective_to_full() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "snapshot_policy = \"Full\"\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(config.snapshot_policy, SnapshotPolicy::Full);
 }
 
 #[test]

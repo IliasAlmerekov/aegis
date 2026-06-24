@@ -98,6 +98,18 @@ fn read_audit_entries(home: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Write a global user config (`~/.config/aegis/config.toml`) with the given
+/// contents.
+///
+/// The project layer can no longer weaken `allowlist_override_level` (C3
+/// security ratchet). Tests needing a permissive override must set it in the
+/// trusted global config.
+fn write_global_config(home: &Path, contents: &str) {
+    let global_dir = home.join(".config/aegis");
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(global_dir.join("config.toml"), contents).unwrap();
+}
+
 #[test]
 fn sqlite_snapshot_rollback_restores_database_file_through_aegis_cli() {
     require_sqlite3!();
@@ -123,11 +135,11 @@ sqlite3 "$AEGIS_TEST_SQLITE_DB" "INSERT INTO items(name) VALUES ('after');"
     );
 
     let workspace_cwd = workspace.path().canonicalize().unwrap();
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 auto_snapshot_postgres = false

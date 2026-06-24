@@ -463,11 +463,11 @@ printf '%s\n' "$*" >> "$AEGIS_TEST_GIT_LOG"
 exit 0
 "#,
     );
+    write_global_config(home.path(), "ci_policy = \"Allow\"\n");
     fs::write(
         workspace.path().join(".aegis.toml"),
         r#"
 mode = "Strict"
-ci_policy = "Allow"
 auto_snapshot_git = false
 auto_snapshot_docker = false
 "#,

@@ -8,9 +8,9 @@ use crate::error::ConfigError;
 use super::migration::migrate_deprecated_allowlist_in_file;
 use super::serde_helpers::{deserialize_allowlist_rules, deserialize_optional_config_version};
 use super::{
-    AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy, DockerScope,
-    Mode, MysqlSnapshotConfig, PolicyRule, PostgresSnapshotConfig, SandboxSettings, SnapshotPolicy,
-    SupabaseSnapshotConfig, UserPattern,
+    AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy,
+    ConfigSourceLayer, DockerScope, Mode, MysqlSnapshotConfig, PolicyRule, PostgresSnapshotConfig,
+    SandboxSettings, SnapshotPolicy, SupabaseSnapshotConfig, UserPattern,
 };
 
 type Result<T> = std::result::Result<T, ConfigError>;
@@ -38,13 +38,25 @@ pub(super) struct PartialSandboxSettings {
 }
 
 impl PartialSandboxSettings {
-    pub(super) fn merge_into(self, base: SandboxSettings) -> SandboxSettings {
+    pub(super) fn merge_into(
+        self,
+        base: SandboxSettings,
+        source_layer: ConfigSourceLayer,
+    ) -> SandboxSettings {
+        let requested_required = self.required.unwrap_or(base.required);
         SandboxSettings {
             enabled: self.enabled.unwrap_or(base.enabled),
-            required: self.required.unwrap_or(base.required),
+            required: match source_layer {
+                ConfigSourceLayer::Project => base.required || requested_required,
+                ConfigSourceLayer::Global => requested_required,
+            },
             allow_write: self.allow_write.unwrap_or(base.allow_write),
             allow_network: self.allow_network.unwrap_or(base.allow_network),
         }
+    }
+
+    pub(super) fn required(&self) -> Option<bool> {
+        self.required
     }
 }
 
@@ -112,5 +124,25 @@ impl PartialConfig {
         }
 
         Ok(config)
+    }
+
+    pub(super) fn mode(&self) -> Option<Mode> {
+        self.mode
+    }
+
+    pub(super) fn allowlist_override_level(&self) -> Option<AllowlistOverrideLevel> {
+        self.allowlist_override_level
+    }
+
+    pub(super) fn snapshot_policy(&self) -> Option<SnapshotPolicy> {
+        self.snapshot_policy
+    }
+
+    pub(super) fn ci_policy(&self) -> Option<CiPolicy> {
+        self.ci_policy
+    }
+
+    pub(super) fn sandbox_required(&self) -> Option<bool> {
+        self.sandbox.required()
     }
 }

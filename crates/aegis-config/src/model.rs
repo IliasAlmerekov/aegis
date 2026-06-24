@@ -56,6 +56,116 @@ pub const CURRENT_CONFIG_VERSION: u32 = 1;
 
 type Result<T> = std::result::Result<T, ConfigError>;
 
+fn merge_project_mode(base: Mode, overlay: Option<Mode>, layer: ConfigSourceLayer) -> Mode {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_mode(base, requested),
+    }
+}
+
+fn most_restrictive_mode(left: Mode, right: Mode) -> Mode {
+    if mode_rank(right) >= mode_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn mode_rank(mode: Mode) -> u8 {
+    match mode {
+        Mode::Audit => 0,
+        Mode::Protect => 1,
+        Mode::Strict => 2,
+    }
+}
+
+fn merge_project_allowlist_override_level(
+    base: AllowlistOverrideLevel,
+    overlay: Option<AllowlistOverrideLevel>,
+    layer: ConfigSourceLayer,
+) -> AllowlistOverrideLevel {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_allowlist_override_level(base, requested),
+    }
+}
+
+fn most_restrictive_allowlist_override_level(
+    left: AllowlistOverrideLevel,
+    right: AllowlistOverrideLevel,
+) -> AllowlistOverrideLevel {
+    if allowlist_override_level_rank(right) >= allowlist_override_level_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn allowlist_override_level_rank(level: AllowlistOverrideLevel) -> u8 {
+    match level {
+        AllowlistOverrideLevel::Danger => 0,
+        AllowlistOverrideLevel::Warn => 1,
+        AllowlistOverrideLevel::Never => 2,
+    }
+}
+
+fn merge_project_ci_policy(
+    base: CiPolicy,
+    overlay: Option<CiPolicy>,
+    layer: ConfigSourceLayer,
+) -> CiPolicy {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_ci_policy(base, requested),
+    }
+}
+
+fn most_restrictive_ci_policy(left: CiPolicy, right: CiPolicy) -> CiPolicy {
+    if ci_policy_rank(right) >= ci_policy_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn ci_policy_rank(policy: CiPolicy) -> u8 {
+    match policy {
+        CiPolicy::Allow => 0,
+        CiPolicy::Block => 1,
+    }
+}
+
+fn merge_project_snapshot_policy(
+    base: SnapshotPolicy,
+    overlay: Option<SnapshotPolicy>,
+    layer: ConfigSourceLayer,
+) -> SnapshotPolicy {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_snapshot_policy(base, requested),
+    }
+}
+
+fn most_restrictive_snapshot_policy(left: SnapshotPolicy, right: SnapshotPolicy) -> SnapshotPolicy {
+    if snapshot_policy_rank(right) >= snapshot_policy_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn snapshot_policy_rank(policy: SnapshotPolicy) -> u8 {
+    match policy {
+        SnapshotPolicy::None => 0,
+        SnapshotPolicy::Selective => 1,
+        SnapshotPolicy::Full => 2,
+    }
+}
+
 /// A resolved config file path together with the layer it represents.
 #[derive(Debug, Clone)]
 pub struct ConfigLayerPath {
@@ -63,6 +173,16 @@ pub struct ConfigLayerPath {
     pub source_layer: ConfigSourceLayer,
     /// Absolute path to the config file for this layer.
     pub path: PathBuf,
+}
+
+/// A project-local config value attempted to weaken a security-critical setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SecurityRatchetWarning {
+    pub(crate) code: &'static str,
+    pub(crate) field: &'static str,
+    pub(crate) requested: String,
+    pub(crate) kept: String,
+    pub(crate) location: String,
 }
 
 /// Sandbox configuration — controls whether commands run inside a bwrap sandbox.
@@ -94,7 +214,9 @@ pub struct PruneConfig {
 /// Top-level Aegis runtime configuration.
 ///
 /// Loaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)
-/// → `.aegis.toml` (project). Later layers override scalar fields; `allow`/`block`
+/// → `.aegis.toml` (project). Later layers override ordinary scalar fields, while
+/// project-local security-critical fields are ratcheted so they can only tighten;
+/// `allow`/`block`
 /// rules are concatenated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -350,7 +472,7 @@ impl AegisConfig {
 
         Self {
             config_version: overlay.config_version.unwrap_or(base.config_version),
-            mode: overlay.mode.unwrap_or(base.mode),
+            mode: merge_project_mode(base.mode, overlay.mode, allowlist_layer),
             custom_patterns,
             custom_pattern_layers,
             allowlist,
@@ -367,10 +489,16 @@ impl AegisConfig {
             } else {
                 base.audit_retention_files_source
             },
-            allowlist_override_level: overlay
-                .allowlist_override_level
-                .unwrap_or(base.allowlist_override_level),
-            snapshot_policy: overlay.snapshot_policy.unwrap_or(base.snapshot_policy),
+            allowlist_override_level: merge_project_allowlist_override_level(
+                base.allowlist_override_level,
+                overlay.allowlist_override_level,
+                allowlist_layer,
+            ),
+            snapshot_policy: merge_project_snapshot_policy(
+                base.snapshot_policy,
+                overlay.snapshot_policy,
+                allowlist_layer,
+            ),
             auto_snapshot_git: overlay.auto_snapshot_git.unwrap_or(base.auto_snapshot_git),
             auto_snapshot_docker: overlay
                 .auto_snapshot_docker
@@ -394,7 +522,7 @@ impl AegisConfig {
                 .sqlite_snapshot_path
                 .unwrap_or(base.sqlite_snapshot_path),
             docker_scope: overlay.docker_scope.unwrap_or(base.docker_scope),
-            ci_policy: overlay.ci_policy.unwrap_or(base.ci_policy),
+            ci_policy: merge_project_ci_policy(base.ci_policy, overlay.ci_policy, allowlist_layer),
             rules: {
                 let mut r = base.rules;
                 r.extend(overlay.rules);
@@ -422,7 +550,7 @@ impl AegisConfig {
                     .integrity_mode
                     .unwrap_or(base.audit.integrity_mode),
             },
-            sandbox: overlay.sandbox.merge_into(base.sandbox),
+            sandbox: overlay.sandbox.merge_into(base.sandbox, allowlist_layer),
             prune: PruneConfig {
                 enabled: overlay.prune.enabled.unwrap_or(base.prune.enabled),
                 max_count_per_provider: overlay
@@ -526,6 +654,90 @@ impl AegisConfig {
                 LayeredBlocklistRule { rule, source_layer }
             })
             .collect()
+    }
+
+    /// Compare a project layer's requested values against the current base
+    /// config and report any security-critical weakening attempts that the
+    /// ratchet will ignore during merge.
+    pub(crate) fn project_security_ratchet_warnings(
+        base: &Self,
+        layer: &ConfigLayerPath,
+    ) -> Result<Vec<SecurityRatchetWarning>> {
+        if layer.source_layer != ConfigSourceLayer::Project {
+            return Ok(Vec::new());
+        }
+
+        let overlay = PartialConfig::from_path(&layer.path)?;
+        let mut warnings = Vec::new();
+        let location = layer.path.to_string_lossy().into_owned();
+
+        if let Some(requested) = overlay.mode() {
+            let kept = most_restrictive_mode(base.mode, requested);
+            if kept != requested {
+                warnings.push(SecurityRatchetWarning {
+                    code: "project_security_ratchet",
+                    field: "mode",
+                    requested: format!("{requested:?}"),
+                    kept: format!("{kept:?}"),
+                    location: location.clone(),
+                });
+            }
+        }
+
+        if let Some(requested) = overlay.allowlist_override_level() {
+            let kept =
+                most_restrictive_allowlist_override_level(base.allowlist_override_level, requested);
+            if kept != requested {
+                warnings.push(SecurityRatchetWarning {
+                    code: "project_security_ratchet",
+                    field: "allowlist_override_level",
+                    requested: format!("{requested:?}"),
+                    kept: format!("{kept:?}"),
+                    location: location.clone(),
+                });
+            }
+        }
+
+        if let Some(requested) = overlay.snapshot_policy() {
+            let kept = most_restrictive_snapshot_policy(base.snapshot_policy, requested);
+            if kept != requested {
+                warnings.push(SecurityRatchetWarning {
+                    code: "project_security_ratchet",
+                    field: "snapshot_policy",
+                    requested: format!("{requested:?}"),
+                    kept: format!("{kept:?}"),
+                    location: location.clone(),
+                });
+            }
+        }
+
+        if let Some(requested) = overlay.ci_policy() {
+            let kept = most_restrictive_ci_policy(base.ci_policy, requested);
+            if kept != requested {
+                warnings.push(SecurityRatchetWarning {
+                    code: "project_security_ratchet",
+                    field: "ci_policy",
+                    requested: format!("{requested:?}"),
+                    kept: format!("{kept:?}"),
+                    location: location.clone(),
+                });
+            }
+        }
+
+        if let Some(requested) = overlay.sandbox_required() {
+            let kept = base.sandbox.required || requested;
+            if kept != requested {
+                warnings.push(SecurityRatchetWarning {
+                    code: "project_security_ratchet",
+                    field: "sandbox.required",
+                    requested: requested.to_string(),
+                    kept: kept.to_string(),
+                    location,
+                });
+            }
+        }
+
+        Ok(warnings)
     }
 }
 

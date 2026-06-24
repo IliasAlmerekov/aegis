@@ -99,6 +99,18 @@ fn canonical_test_path(path: &Path) -> PathBuf {
         .unwrap_or_else(|err| panic!("failed to canonicalize test path {}: {err}", path.display()))
 }
 
+/// Write a global user config (`~/.config/aegis/config.toml`) with the given
+/// contents.
+///
+/// The project layer can no longer weaken `allowlist_override_level` (C3
+/// security ratchet). Tests needing a permissive override must set it in the
+/// trusted global config.
+fn write_global_config(home: &Path, contents: &str) {
+    let global_dir = home.join(".config/aegis");
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(global_dir.join("config.toml"), contents).unwrap();
+}
+
 fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output {
     let mut child = Command::new(aegis_bin())
         .arg("watch")
@@ -222,11 +234,11 @@ fn test_watch_mode_approved_danger_command_records_snapshots_before_exec() {
     init_git_repo(cwd.path());
     let cwd_path = canonical_test_path(cwd.path());
 
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         cwd_path.join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "rm -rf /tmp/aegis-watch-approved"
 cwd = "{}"
@@ -378,11 +390,11 @@ fn test_watch_mode_approved_danger_command_child_observes_snapshot_before_exec()
     let marker = cwd_path.join("marker.txt");
     fs::write(&marker, "present\n").unwrap();
 
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         cwd_path.join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "rm -rf /tmp/aegis-watch-before-exec*"
 cwd = "{}"
@@ -478,11 +490,11 @@ fn test_shell_approved_danger_command_child_observes_snapshot_before_exec() {
     let marker = cwd_path.join("marker.txt");
     fs::write(&marker, "present\n").unwrap();
 
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         cwd_path.join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "rm -rf /tmp/aegis-shell-before-exec*"
 cwd = "{}"
@@ -577,11 +589,11 @@ fn test_sandboxed_approved_danger_command_records_snapshots_before_exec() {
         return;
     }
 
+    write_global_config(home.path(), "allowlist_override_level = \"Danger\"\n");
     fs::write(
         cwd_path.join(".aegis.toml"),
         format!(
             r#"
-allowlist_override_level = "Danger"
 [[allow]]
 pattern = "rm -rf /tmp/aegis-sandbox-before-exec*"
 cwd = "{}"
