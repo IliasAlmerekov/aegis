@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use aho_corasick::AhoCorasick;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use crate::error::ScannerError;
 #[cfg(test)]
 use crate::nested::MAX_NESTED_SCAN_DEPTH;
-use crate::patterns::{Pattern, PatternSet};
+use crate::patterns::{Pattern, PatternSet, PatternSource};
 
 pub use crate::patterns::{PatternToken, PrefixRule};
 pub use assessment::{Assessment, DecisionSource, MatchResult};
@@ -68,6 +68,36 @@ pub struct Scanner {
 }
 
 impl Scanner {
+    /// Compile a single pattern's regex, enabling case-insensitive mode for
+    /// built-in patterns only. Custom user patterns retain their authored case
+    /// semantics.
+    ///
+    /// # Case-folding invariant with `quick_scan`
+    ///
+    /// `quick_scan` (the Aho-Corasick gate) is built with `ascii_case_insensitive`
+    /// (see `try_new`), while built-in regexes here use Unicode `case_insensitive`.
+    /// The gate contract requires `quick_scan` to fire for *every* command any
+    /// regex can match — i.e. the gate must be a superset of regex matches, never
+    /// a subset. This currently holds because every built-in keyword is an ASCII
+    /// program/token, and for ASCII letters ASCII-CI and Unicode-CI fold
+    /// identically, so the gate detects every case variant the regex would match.
+    ///
+    /// If a non-ASCII keyword is ever introduced, the gate (ASCII-CI) could miss a
+    /// Unicode-cased variant the regex (Unicode-CI) matches — a false-negative
+    /// `Safe`. Preserving the invariant then requires the gate's case folding to
+    /// cover at least what the regex's does (e.g. make the Aho-Corasick build
+    /// Unicode-case-insensitive too), or constrain such keywords to ASCII.
+    fn compile_regex(pattern: &Pattern) -> Result<Regex, ScannerError> {
+        let mut builder = RegexBuilder::new(pattern.pattern.as_ref());
+        if pattern.source == PatternSource::Builtin {
+            builder.case_insensitive(true);
+        }
+        builder.build().map_err(|e| ScannerError::InvalidPattern {
+            id: pattern.id.to_string(),
+            reason: format!("invalid regex: {e}"),
+        })
+    }
+
     /// Build a [`Scanner`] from a compiled [`PatternSet`].
     ///
     /// The Aho-Corasick automaton is constructed once here; subsequent calls to
@@ -88,10 +118,7 @@ impl Scanner {
         for p in effective_patterns {
             // Compile each regex once. Invalid regex (e.g. from a user pattern) is
             // a typed error, not a panic.
-            let rx = Regex::new(&p.pattern).map_err(|e| ScannerError::InvalidPattern {
-                id: p.id.to_string(),
-                reason: format!("invalid regex: {e}"),
-            })?;
+            let rx = Self::compile_regex(p)?;
             let entry = (Arc::clone(p), rx);
 
             // Build AC keyword set.
