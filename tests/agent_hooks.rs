@@ -129,6 +129,16 @@ fn run_codex_pre_tool_use(home: &Path, command: &str) -> Output {
     )
 }
 
+fn run_claude_code_hook(home: &Path, command: &str) -> Output {
+    let input = serde_json::json!({ "tool_input": { "command": command } }).to_string();
+    run_script(
+        "hooks/claude-code.sh",
+        home,
+        &[],
+        Some(input.as_str()),
+    )
+}
+
 fn json_contains_command(json: &Value, section: &str, command: &str) -> bool {
     json["hooks"][section].as_array().is_some_and(|entries| {
         entries.iter().any(|entry| {
@@ -254,6 +264,36 @@ fn claude_code_is_noop_when_disabled_outside_ci() {
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn claude_code_hook_rewrites_unwrapped_bash_command() {
+    // The Claude PreToolUse shim must delegate to `aegis hook` (via AEGIS_BIN)
+    // and emit the transparent allow+updatedInput rewrite, identical to Codex.
+    // The legacy jq-based script checked `command -v aegis` on PATH and emitted
+    // a stderr warning instead of JSON when aegis was not on PATH, so this test
+    // is red against the legacy script and green against the jq-free shim.
+    let home = TempDir::new().unwrap();
+    let output = run_claude_code_hook(home.path(), "git status");
+    assert!(
+        output.status.success(),
+        "claude hook must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "allow");
+    assert_eq!(
+        json["hookSpecificOutput"]["updatedInput"]["command"],
+        "aegis --command 'git status'"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "claude hook must stay quiet: stderr=\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
