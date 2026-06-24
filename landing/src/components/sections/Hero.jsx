@@ -80,12 +80,12 @@ export function Hero() {
           <div className="mt-8 flex w-full min-w-0 max-w-full items-start gap-3 rounded border border-[#3e4a3c] px-4 py-2.5 text-left" style={{ backgroundColor: '#0d1210' }}>
             <span className="font-mono text-xs leading-relaxed text-[#677d64]">$</span>
             <code className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-[#7fee64]">
-              curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
+              npm i -g @iliasalmerekov/aegis
             </code>
             <button
               className="ml-1 shrink-0 rounded p-1 text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] cursor-pointer"
               aria-label="Copy install command"
-              onClick={() => navigator.clipboard?.writeText('curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh')}
+              onClick={() => navigator.clipboard?.writeText('npm i -g @iliasalmerekov/aegis')}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
