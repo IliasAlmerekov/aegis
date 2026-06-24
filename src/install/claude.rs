@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
@@ -103,62 +104,103 @@ fn apply_installation(settings: &mut Value, hook_command: &str) -> Result<Instal
         .as_array_mut()
         .ok_or_else(|| "settings.hooks.PreToolUse must be a JSON array".to_string())?;
 
-    if pre_tool_use_contains_bash_aegis_hook(pre_tool_use, hook_command)? {
+    // Prune-then-add: remove every aegis-managed legacy Bash registration (the
+    // bare `aegis hook`, the legacy `aegis-rewrite.sh` file, and any stale
+    // `aegis-pre-tool-use.sh` at a different absolute path) while preserving the
+    // canonical entry and any unrelated user hooks.
+    let (pruned_any, canonical_present) =
+        prune_aegis_managed_bash_hooks(pre_tool_use, hook_command)?;
+
+    // Idempotent only when the canonical entry was already the sole aegis-managed
+    // hook and nothing was pruned. Any pruning or a missing canonical entry means
+    // the settings changed (or must change), so we report `Installed` and write.
+    if canonical_present && !pruned_any {
         return Ok(InstallOutcome::AlreadyPresent);
     }
-
-    pre_tool_use.push(serde_json::json!({
-        "matcher": "Bash",
-        "hooks": [
-            {
-                "type": "command",
-                "command": hook_command
-            }
-        ]
-    }));
+    if !canonical_present {
+        pre_tool_use.push(serde_json::json!({
+            "matcher": "Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command
+                }
+            ]
+        }));
+    }
 
     Ok(InstallOutcome::Installed)
 }
 
-fn pre_tool_use_contains_bash_aegis_hook(
-    entries: &[Value],
-    expected_command: &str,
-) -> Result<bool, String> {
-    let mut found = false;
+/// A Bash hook command that Aegis owns and may migrate away on install. The
+/// predicate matches by **basename** for the file-backed forms so a moved or
+/// renamed home directory still migrates; the bare two-token `aegis hook`
+/// command is matched as a whole string (it is not a path). A user hook that
+/// merely contains the substring `aegis` but is none of these is preserved.
+fn is_aegis_managed_bash_command(command: &str) -> bool {
+    if command == "aegis hook" {
+        return true;
+    }
+    let Some(basename) = Path::new(command).file_name().and_then(OsStr::to_str) else {
+        return false;
+    };
+    basename == "aegis-rewrite.sh" || basename == "aegis-pre-tool-use.sh"
+}
 
-    for entry in entries {
-        let entry = entry
-            .as_object()
+/// Walk `PreToolUse`, and for each `matcher == "Bash"` entry drop hook objects
+/// whose command is aegis-managed **except** the canonical `hook_command`. Drop
+/// entries emptied by pruning. Returns `(pruned_any, canonical_present)`.
+///
+/// Malformed entries/hooks fail closed with the same typed errors as the
+/// historical validation, so the existing malformed-input tests still hold.
+fn prune_aegis_managed_bash_hooks(
+    entries: &mut Vec<Value>,
+    canonical_command: &str,
+) -> Result<(bool, bool), String> {
+    let mut pruned_any = false;
+    let mut canonical_present = false;
+    let mut drop_indices: Vec<usize> = Vec::new();
+
+    for (idx, entry) in entries.iter_mut().enumerate() {
+        let entry_obj = entry
+            .as_object_mut()
             .ok_or_else(|| "settings.hooks.PreToolUse entries must contain objects".to_string())?;
-        let matcher = entry
-            .get("matcher")
-            .ok_or_else(|| "settings.hooks.PreToolUse entries must contain matcher".to_string())?
-            .as_str()
-            .ok_or_else(|| {
-                "settings.hooks.PreToolUse entry matcher must be a string".to_string()
-            })?;
+        // Scope the matcher borrow so it ends before the mutable `hooks` borrow.
+        let matcher_is_bash = {
+            let matcher = entry_obj
+                .get("matcher")
+                .ok_or_else(|| {
+                    "settings.hooks.PreToolUse entries must contain matcher".to_string()
+                })?
+                .as_str()
+                .ok_or_else(|| {
+                    "settings.hooks.PreToolUse entry matcher must be a string".to_string()
+                })?;
+            matcher == "Bash"
+        };
 
-        if matcher != "Bash" {
+        if !matcher_is_bash {
             continue;
         }
 
-        let hooks = entry
-            .get("hooks")
+        let hooks = entry_obj
+            .get_mut("hooks")
             .ok_or_else(|| {
                 "settings.hooks.PreToolUse matching Bash entry must contain hooks".to_string()
             })?
-            .as_array()
+            .as_array_mut()
             .ok_or_else(|| {
                 "settings.hooks.PreToolUse matching Bash entry hooks must be an array".to_string()
             })?;
 
-        for hook in hooks {
-            let hook = hook.as_object().ok_or_else(|| {
+        // Validate every hook shape before pruning so malformed hooks fail
+        // closed exactly as the historical validation did.
+        for hook in hooks.iter() {
+            let hook_obj = hook.as_object().ok_or_else(|| {
                 "settings.hooks.PreToolUse matching Bash entry hooks must contain objects"
                     .to_string()
             })?;
-
-            let hook_type = hook
+            hook_obj
                 .get("type")
                 .ok_or_else(|| {
                     "settings.hooks.PreToolUse matching Bash hook must contain type".to_string()
@@ -167,7 +209,7 @@ fn pre_tool_use_contains_bash_aegis_hook(
                 .ok_or_else(|| {
                     "settings.hooks.PreToolUse matching Bash hook type must be a string".to_string()
                 })?;
-            let hook_command = hook
+            hook_obj
                 .get("command")
                 .ok_or_else(|| {
                     "settings.hooks.PreToolUse matching Bash hook must contain command".to_string()
@@ -177,14 +219,45 @@ fn pre_tool_use_contains_bash_aegis_hook(
                     "settings.hooks.PreToolUse matching Bash hook command must be a string"
                         .to_string()
                 })?;
+        }
 
-            if hook_type == "command" && hook_command == expected_command {
-                found = true;
+        let before = hooks.len();
+        let mut found_canonical = false;
+        hooks.retain(|hook| {
+            let Some(command) = hook
+                .as_object()
+                .and_then(|h| h.get("command"))
+                .and_then(|c| c.as_str())
+            else {
+                return true;
+            };
+            if command == canonical_command {
+                found_canonical = true;
+                return true;
             }
+            // Keep user hooks; drop only aegis-managed legacy commands.
+            !is_aegis_managed_bash_command(command)
+        });
+
+        if hooks.len() < before {
+            pruned_any = true;
+        }
+        if found_canonical {
+            canonical_present = true;
+        }
+        // Drop the entry only if pruning emptied a previously non-empty entry,
+        // so an already-empty user entry is left untouched.
+        if before > 0 && hooks.is_empty() {
+            drop_indices.push(idx);
         }
     }
 
-    Ok(found)
+    // Remove emptied entries in reverse index order to keep indices valid.
+    for idx in drop_indices.into_iter().rev() {
+        entries.remove(idx);
+    }
+
+    Ok((pruned_any, canonical_present))
 }
 
 #[cfg(test)]
@@ -236,11 +309,7 @@ mod tests {
             !content.contains("__AEGIS_BIN__"),
             "placeholder must be substituted in the materialized shim"
         );
-        let mode = fs::metadata(&shim)
-            .expect("stat shim")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = fs::metadata(&shim).expect("stat shim").permissions().mode() & 0o777;
         assert_eq!(mode, 0o755, "materialized shim must be executable");
     }
 
@@ -260,8 +329,7 @@ mod tests {
             .as_str()
             .expect("command string");
         assert_ne!(
-            command,
-            "aegis hook",
+            command, "aegis hook",
             "must not register the PATH-dependent bare command"
         );
         let expected_shim = settings_dir.join("hooks").join("aegis-pre-tool-use.sh");
@@ -521,6 +589,185 @@ mod tests {
                     ]
                 }
             })
+        );
+    }
+
+    /// True when any PreToolUse entry (any matcher) has a hook with the given
+    /// command. Used by the migration tests to assert legacy commands are gone.
+    fn any_hook_command(entries: &Value, command: &str) -> bool {
+        entries.as_array().is_some_and(|arr| {
+            arr.iter().any(|entry| {
+                entry["hooks"]
+                    .as_array()
+                    .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
+            })
+        })
+    }
+
+    /// Count PreToolUse Bash entries that own the canonical aegis hook command.
+    fn aegis_entry_count(entries: &Value, command: &str) -> usize {
+        entries
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter(|entry| {
+                        entry["matcher"] == "Bash"
+                            && entry["hooks"].as_array().is_some_and(|hooks| {
+                                hooks.iter().any(|hook| hook["command"] == command)
+                            })
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn claude_install_migrates_from_bare_aegis_hook() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "aegis hook" }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let outcome = apply_installation(&mut settings, TEST_HOOK_COMMAND).expect("install");
+        assert!(matches!(outcome, InstallOutcome::Installed));
+
+        let pre_tool_use = &settings["hooks"]["PreToolUse"];
+        assert_eq!(
+            aegis_entry_count(pre_tool_use, TEST_HOOK_COMMAND),
+            1,
+            "exactly one aegis-managed Bash entry must remain"
+        );
+        assert!(
+            !any_hook_command(pre_tool_use, "aegis hook"),
+            "legacy bare `aegis hook` registration must be migrated away"
+        );
+    }
+
+    #[test]
+    fn claude_install_migrates_from_legacy_rewrite_script() {
+        let legacy = "/home/u/.claude/hooks/aegis-rewrite.sh";
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": legacy }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        apply_installation(&mut settings, TEST_HOOK_COMMAND).expect("install");
+
+        let pre_tool_use = &settings["hooks"]["PreToolUse"];
+        assert_eq!(
+            aegis_entry_count(pre_tool_use, TEST_HOOK_COMMAND),
+            1,
+            "the canonical absolute shim must be registered"
+        );
+        assert!(
+            !any_hook_command(pre_tool_use, legacy),
+            "legacy aegis-rewrite.sh registration must be migrated away"
+        );
+    }
+
+    #[test]
+    fn claude_install_preserves_unrelated_user_bash_hook() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "echo keep" }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        apply_installation(&mut settings, TEST_HOOK_COMMAND).expect("install");
+
+        let pre_tool_use = &settings["hooks"]["PreToolUse"];
+        assert!(
+            any_hook_command(pre_tool_use, "echo keep"),
+            "unrelated user Bash hook must be preserved"
+        );
+        assert_eq!(
+            aegis_entry_count(pre_tool_use, TEST_HOOK_COMMAND),
+            1,
+            "exactly one aegis-managed Bash entry must be present"
+        );
+    }
+
+    #[test]
+    fn claude_install_is_idempotent_after_migration() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "aegis hook" }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let first = apply_installation(&mut settings, TEST_HOOK_COMMAND).expect("first install");
+        assert!(matches!(first, InstallOutcome::Installed));
+
+        let second = apply_installation(&mut settings, TEST_HOOK_COMMAND).expect("second install");
+        assert!(
+            matches!(second, InstallOutcome::AlreadyPresent),
+            "reinstall after migration must be idempotent"
+        );
+
+        let pre_tool_use = &settings["hooks"]["PreToolUse"];
+        assert_eq!(
+            aegis_entry_count(pre_tool_use, TEST_HOOK_COMMAND),
+            1,
+            "no duplicate aegis entries after reinstall"
+        );
+    }
+
+    #[test]
+    fn claude_install_preserves_user_hook_that_merely_mentions_aegis() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "aegis-lint --check" }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        apply_installation(&mut settings, TEST_HOOK_COMMAND).expect("install");
+
+        let pre_tool_use = &settings["hooks"]["PreToolUse"];
+        assert!(
+            any_hook_command(pre_tool_use, "aegis-lint --check"),
+            "a user hook that merely mentions aegis (basename not managed) must be preserved"
+        );
+        assert_eq!(
+            aegis_entry_count(pre_tool_use, TEST_HOOK_COMMAND),
+            1,
+            "exactly one aegis-managed Bash entry must be present"
         );
     }
 }
