@@ -131,12 +131,7 @@ fn run_codex_pre_tool_use(home: &Path, command: &str) -> Output {
 
 fn run_claude_code_hook(home: &Path, command: &str) -> Output {
     let input = serde_json::json!({ "tool_input": { "command": command } }).to_string();
-    run_script(
-        "hooks/claude-code.sh",
-        home,
-        &[],
-        Some(input.as_str()),
-    )
+    run_script("hooks/claude-code.sh", home, &[], Some(input.as_str()))
 }
 
 fn json_contains_command(json: &Value, section: &str, command: &str) -> bool {
@@ -303,10 +298,31 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
     let rc_file = home.path().join(".bashrc");
     fs::write(&rc_file, "export FOO=bar\n").unwrap();
 
+    // Seed unrelated user content in Claude settings.json so we can assert it
+    // survives uninstall alongside the aegis migration/prune.
+    let claude_settings = home.path().join(".claude").join("settings.json");
+    fs::write(
+        &claude_settings,
+        serde_json::json!({
+            "theme": "dark",
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            { "type": "command", "command": "echo user-keep" }
+                        ]
+                    }
+                ]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
     let install_output = run_script("agent-setup.sh", home.path(), &["--all"], None);
     assert!(install_output.status.success());
 
-    let claude_settings = home.path().join(".claude").join("settings.json");
     let codex_hooks = home.path().join(".codex").join("hooks.json");
     let session_hook = home
         .path()
@@ -328,13 +344,20 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
     assert!(codex_hooks.exists());
     assert!(session_hook.exists());
     assert!(ptu_hook.exists());
-    assert!(claude_shim.exists(), "Claude shim must be materialized by install");
+    assert!(
+        claude_shim.exists(),
+        "Claude shim must be materialized by install"
+    );
 
     let claude_json = read_json(&claude_settings);
     let claude_shim_command = claude_shim.display().to_string();
     assert!(
         json_contains_command(&claude_json, "PreToolUse", &claude_shim_command),
         "Claude settings.json must register the absolute shim path before uninstall"
+    );
+    assert!(
+        json_contains_command(&claude_json, "PreToolUse", "echo user-keep"),
+        "Claude install must preserve unrelated user Bash hooks"
     );
     assert!(
         !json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
@@ -365,11 +388,27 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
 
     assert!(!session_hook.exists());
     assert!(!ptu_hook.exists());
+    assert!(
+        !claude_shim.exists(),
+        "uninstall must remove the absolute Claude hook shim"
+    );
 
     let claude_json = read_json(&claude_settings);
     assert!(
+        !json_contains_command(&claude_json, "PreToolUse", &claude_shim_command),
+        "Claude settings.json must not retain the absolute shim registration"
+    );
+    assert!(
         !json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
-        "Claude settings.json must not retain the binary-first aegis hook registration"
+        "Claude settings.json must not retain the legacy bare aegis hook registration"
+    );
+    assert!(
+        json_contains_command(&claude_json, "PreToolUse", "echo user-keep"),
+        "uninstall must preserve unrelated user Bash hooks"
+    );
+    assert_eq!(
+        claude_json["theme"], "dark",
+        "uninstall must preserve unrelated top-level user settings"
     );
 
     let codex_session_command = session_hook.display().to_string();
