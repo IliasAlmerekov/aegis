@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Security
+
+- Project-local `.aegis.toml` can no longer weaken security-critical config fields inherited from defaults/global config; project attempts to set audit-only mode, broader allowlist overrides, weaker CI policy, disabled snapshots, or non-required sandboxing are ratcheted to the stricter value and reported by `aegis config validate` (ADR-013).
+
 ## [0.5.9] - 2026-06-24
 
 ### Security
