@@ -38,7 +38,7 @@ export function Hero() {
           <div className="mb-5 flex items-center gap-2 rounded-full border border-[#3e4a3c] px-3 py-1.5" style={{ backgroundColor: '#1a2018' }}>
             <span className="h-1.5 w-1.5 rounded-full bg-[#7fee64]" aria-hidden="true" />
             <span className="font-mono text-xs font-medium tracking-widest text-[#677d64] uppercase">
-              Open Source · Rust · v0.5.8
+              Open Source · Rust · v0.5.9
             </span>
           </div>
 

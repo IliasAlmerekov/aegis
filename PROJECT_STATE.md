@@ -8,7 +8,7 @@
 
 ## Current version
 
-`0.5.8` — pre-1.0, targeting `1.0.0`
+`0.5.9` — pre-1.0, targeting `1.0.0` (released from `feat/shell-security`: ADR-011 npm/setup-shell + Codex hook rewrite, ADR-012 Claude absolute shim, C2 `$IFS` bypass fix)
 
 ## Active branch
 

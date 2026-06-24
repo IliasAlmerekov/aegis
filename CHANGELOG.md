@@ -11,6 +11,8 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-06-24
+
 ### Security
 
 - Claude Code interception no longer depends on `aegis` being on the hook-exec PATH: `aegis install-hooks --claude-code` (and `--all`) now materializes an absolute, jq-free shim at `~/.claude/hooks/aegis-pre-tool-use.sh` and registers its absolute path in `settings.json`, at parity with the Codex hook (ADR-012).
