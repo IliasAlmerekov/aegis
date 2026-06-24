@@ -4,6 +4,13 @@ set -eu
 BINDIR="${AEGIS_BINDIR:-/usr/local/bin}"
 SHELL_RC_OVERRIDE="${AEGIS_SHELL_RC:-}"
 
+# Strip a single trailing slash from HOME so the string-built hook paths below
+# (e.g. "${HOME}/.claude/hooks/aegis-pre-tool-use.sh") match the absolute path the
+# Rust installer registers via std::path::absolute / Path::join, which never
+# emits a doubled separator. Keep "/" intact so a root HOME still works.
+HOME="${HOME%/}"
+[ -n "${HOME}" ] || HOME="/"
+
 BEGIN_MARKER="# >>> aegis shell setup >>>"
 END_MARKER="# <<< aegis shell setup <<<"
 

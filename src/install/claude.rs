@@ -80,7 +80,8 @@ fn run_install_at_path(settings_path: &Path) -> Result<InstallOutcome, String> {
 
 /// Materialize the Claude PreToolUse hook with `__AEGIS_BIN__` replaced by an
 /// absolute, shell-quoted path to the Aegis binary. Mirrors the Codex renderer
-/// so both shims stay byte-identical except for the header comment.
+/// so both shims stay behaviorally identical; only agent-specific comments
+/// differ (see ADR-012 consequences).
 fn render_claude_pre_tool_use_hook() -> String {
     CLAUDE_PRE_TOOL_USE_HOOK_SH.replace("__AEGIS_BIN__", &shell_quote(&resolved_aegis_bin()))
 }

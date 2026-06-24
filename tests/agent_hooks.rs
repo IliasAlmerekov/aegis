@@ -427,6 +427,72 @@ fn uninstall_prunes_claude_and_codex_hook_registrations() {
 }
 
 #[test]
+fn claude_install_migrates_legacy_aegis_hook_registration_to_absolute_shim() {
+    // End-to-end migration seam through the public binary surface: seed a real
+    // legacy bare `aegis hook` Bash registration alongside an unrelated user hook,
+    // run `aegis install-hooks --claude-code`, and assert the legacy command is
+    // migrated to the absolute shim, the shim is materialized on disk, and the
+    // user hook survives. The JSON-only `apply_installation` unit tests cover the
+    // prune logic with a fake command; this closes the seam between that logic
+    // and a real filesystem install.
+    let home = TempDir::new().unwrap();
+    prepare_agent_dirs(home.path(), true, false);
+    let claude_settings = home.path().join(".claude").join("settings.json");
+    fs::write(
+        &claude_settings,
+        serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{ "type": "command", "command": "aegis hook" }]
+                    },
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{ "type": "command", "command": "echo user-keep" }]
+                    }
+                ]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let install_output = run_script("agent-setup.sh", home.path(), &["--claude-code"], None);
+    assert!(
+        install_output.status.success(),
+        "claude install must succeed: stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&install_output.stdout),
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+
+    let claude_shim = home
+        .path()
+        .join(".claude")
+        .join("hooks")
+        .join("aegis-pre-tool-use.sh");
+    assert!(
+        claude_shim.exists(),
+        "absolute shim must be materialized on disk"
+    );
+
+    let claude_json = read_json(&claude_settings);
+    let shim_command = claude_shim.display().to_string();
+    assert!(
+        json_contains_command(&claude_json, "PreToolUse", &shim_command),
+        "claude settings must register the absolute shim path; settings=\n{claude_json}"
+    );
+    assert!(
+        !json_contains_command(&claude_json, "PreToolUse", "aegis hook"),
+        "legacy bare `aegis hook` registration must be migrated away; settings=\n{claude_json}"
+    );
+    assert!(
+        json_contains_command(&claude_json, "PreToolUse", "echo user-keep"),
+        "unrelated user hook must survive the migration; settings=\n{claude_json}"
+    );
+}
+
+#[test]
 fn codex_agent_setup_installs_hooks_and_is_idempotent() {
     let home = TempDir::new().unwrap();
     prepare_agent_dirs(home.path(), false, true);

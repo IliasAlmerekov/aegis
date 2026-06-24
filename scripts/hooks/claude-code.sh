@@ -4,9 +4,11 @@
 # through aegis by delegating to the Rust `aegis hook` rewrite. No jq/python3
 # required. Installed to: ~/.claude/hooks/aegis-pre-tool-use.sh
 #
-# This shim is intentionally byte-identical in behavior to
-# scripts/hooks/codex-pre-tool-use.sh (only the header comment differs). A
-# unified templated script is a tracked follow-up (see ADR-012 consequences).
+# This shim is intentionally behaviorally identical to
+# scripts/hooks/codex-pre-tool-use.sh; only agent-specific comments differ (the
+# two files cross-reference each other by name, so they are not byte-identical
+# until a unified templated script lands). A unified template is a tracked
+# follow-up (see ADR-012 consequences).
 
 set -u
 

@@ -65,9 +65,13 @@ jq-free. The active fragility was the PATH dependency of the bare command.
 - Claude Code interception is PATH-independent and jq-free, at parity with
   Codex; both fail closed on malformed hook input and on non-canonical `aegis`
   wrappers.
-- The two hook shims (`codex-pre-tool-use.sh`, `claude-code.sh`) are now
-  byte-identical except for the header comment. Unifying them into one templated
-  script is a tracked follow-up, kept out of this change to limit blast radius.
+- The two hook shims (`codex-pre-tool-use.sh`, `claude-code.sh`) are
+  behaviorally identical; only agent-specific comments differ (each
+  cross-references the other by name, so the bodies are not byte-identical
+  until a unified templated script lands). The trailing newline is reconciled
+  so both files end with a single `\n`, matching POSIX text-file convention.
+  Unifying them into one templated script is a tracked follow-up, kept out of
+  this change to limit blast radius.
 - Uninstall still prunes only the global `~/.claude` path; project-local Claude
   installs remain out of uninstall's scope (documented in
   `docs/troubleshooting.md`).
