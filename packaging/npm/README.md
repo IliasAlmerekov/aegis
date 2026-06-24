@@ -22,6 +22,10 @@ If no agent directory exists yet, install one of the agents and then run:
 aegis install-hooks --all
 ```
 
+Claude Code and Codex command execution is protected through these `PreToolUse`
+hooks, not through `setup-shell` — those agents ignore a non-bash/zsh `$SHELL`
+in their Bash tool, so only the hook intercepts their commands.
+
 To opt in to shell-proxy mode for tools that launch commands through `$SHELL -c`:
 
 ```bash

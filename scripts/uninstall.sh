@@ -4,6 +4,13 @@ set -eu
 BINDIR="${AEGIS_BINDIR:-/usr/local/bin}"
 SHELL_RC_OVERRIDE="${AEGIS_SHELL_RC:-}"
 
+# Strip a single trailing slash from HOME so the string-built hook paths below
+# (e.g. "${HOME}/.claude/hooks/aegis-pre-tool-use.sh") match the absolute path the
+# Rust installer registers via std::path::absolute / Path::join, which never
+# emits a doubled separator. Keep "/" intact so a root HOME still works.
+HOME="${HOME%/}"
+[ -n "${HOME}" ] || HOME="/"
+
 BEGIN_MARKER="# >>> aegis shell setup >>>"
 END_MARKER="# <<< aegis shell setup <<<"
 
@@ -171,10 +178,12 @@ main() {
     remove_shell_setup "${rc_file}"
     remove_binary
     remove_hook_payload "${HOME}/.claude/hooks/aegis-rewrite.sh"
+    remove_hook_payload "${HOME}/.claude/hooks/aegis-pre-tool-use.sh"
     remove_hook_payload "${HOME}/.codex/hooks/aegis-session-start.sh"
     remove_hook_payload "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"
     remove_hook_payload "${HOME}/.aegis/lib/toggle-state.sh"
     prune_hook_registration "${HOME}/.claude/settings.json" "PreToolUse" "${HOME}/.claude/hooks/aegis-rewrite.sh"
+    prune_hook_registration "${HOME}/.claude/settings.json" "PreToolUse" "${HOME}/.claude/hooks/aegis-pre-tool-use.sh"
     prune_hook_registration "${HOME}/.claude/settings.json" "PreToolUse" "aegis hook"
     prune_hook_registration "${HOME}/.codex/hooks.json" "SessionStart" "${HOME}/.codex/hooks/aegis-session-start.sh"
     prune_hook_registration "${HOME}/.codex/hooks.json" "PreToolUse" "${HOME}/.codex/hooks/aegis-pre-tool-use.sh"

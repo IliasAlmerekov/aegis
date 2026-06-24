@@ -41,28 +41,71 @@
 
 ## What was done last session (2026-06-24)
 
-- Fixed review follow-up for ADR-011 hook/setup-shell work:
-  - Corrected the malformed raw string in `hook_rejects_malformed_json_input`, restoring the separate `hook_rejects_non_object_tool_input` fail-closed test.
-  - Centralized production POSIX shell quoting in `src/install/mod.rs` and reused it from setup-shell, Codex hook rendering, and hook wrapper canonicalization.
-- Implemented the `2026-06-24-npm-setup-shell-codex-hooks-root-cause.md` plan (ADR-011):
-  - `setup-shell` now accepts scoped npm `@` paths; managed rc block uses POSIX single-quote escaping (`export SHELL='...'`) instead of double quotes, and validation split into `validate_real_shell_path` / `validate_aegis_binary_path` so errors name the failing path (RC1, RC2).
-  - Codex `SessionStart` hook emits `additionalContext` (was the invalid `context`), fixing the invalid-session-start-JSON error (RC3).
-  - Codex `PreToolUse` hook converted from a jq/python3 deny shim to a thin shim that delegates to the Rust `aegis hook` transparent rewrite (allow + `updatedInput`); removed jq/python3 dependency (RC2, RC4).
-  - `aegis hook` rewrite now fails closed on non-canonical `aegis …` commands and passes canonical wrappers through; added `is_canonical_aegis_wrapper`/`decode_single_quoted`.
-  - Codex pre-tool-use script embeds a shell-quoted absolute Aegis binary path (`__AEGIS_BIN__` substituted at install time).
-  - npm postinstall best-effort `install-hooks --all` when `~/.claude`/`~/.codex` exist (`AEGIS_NPM_SKIP_HOOKS=1` opt-out); never creates dirs, never fails install.
-  - Added ADR-011 and updated the ADR index, CHANGELOG, and docs.
-- Verification: `cargo build` clean, `cargo fmt --check` clean, `cargo clippy -- -D warnings` clean, full `cargo test` 519 passed, `cargo audit` clean with existing allowed warnings, and `cargo deny check` clean.
+- Implemented the `2026-06-24-claude-code-hook-shim-migration.md` plan (ADR-012),
+  bringing the Claude Code hook to PATH-independent parity with Codex across 8
+  TDD phases (red-test → green → gate → commit each):
+  - Phase 1: lifted `write_executable`, `resolved_aegis_bin`, and
+    `combine_outcomes` into `src/install/mod.rs` as shared `pub(crate)` helpers;
+    dropped the duplicate `temporary_settings_path`/`write_executable` in
+    `codex.rs`.
+  - Phase 2: rewrote `scripts/hooks/claude-code.sh` from the legacy jq-based
+    `aegis-rewrite.sh` script into a jq-free shim (`aegis-hook-version: 2`) that
+    `exec`s the Rust `aegis hook`, byte-identical to the Codex shim except the
+    header.
+  - Phase 3: `aegis install-hooks --claude-code` (and `--all`) now materializes
+    `~/.claude/hooks/aegis-pre-tool-use.sh` (0755, `__AEGIS_BIN__` substituted)
+    and registers its absolute path in `settings.json` `PreToolUse`/`Bash`.
+  - Phase 4: `apply_installation` is now prune-then-add — migrates away every
+    aegis-managed legacy Bash registration (`aegis hook`, `aegis-rewrite.sh`,
+    stale shim paths) by basename while preserving unrelated user hooks;
+    idempotent reinstall.
+  - Phase 5: `scripts/uninstall.sh` removes the new shim and prunes its
+    absolute-path registration, alongside the legacy cleanup.
+  - Phase 6: shared `aegis hook` deny output now emits a top-level `reason`
+    mirroring `permissionDecisionReason` for Claude/Codex cross-compat.
+  - Phase 7: ADR-012, ADR index, README/npm README, `docs/troubleshooting.md`,
+    CHANGELOG, and PROJECT_STATE updated.
+- Verification: `cargo test` green (install:: + agent_hooks), `cargo clippy
+  -- -D warnings` clean, `cargo fmt --check` clean.
+- Post-ADR-012 review reconciliation (commit `851c65e`):
+  - `scripts/hooks/claude-code.sh` now ends with a trailing `\n` (POSIX
+    convention) and its self-comment / ADR-012 consequence / the
+    `render_claude_pre_tool_use_hook` doc comment were corrected from
+    "byte-identical except header" to "behaviorally identical; only
+    agent-specific comments differ" (the two shims cross-reference each
+    other by name, so they are not byte-identical).
+  - `scripts/uninstall.sh` normalizes a trailing slash on `$HOME` up front
+    (guarding root `/`) so the string-built prune paths match the absolute
+    path `std::path::absolute`/`Path::join` registers.
+  - `tests/agent_hooks.rs::claude_install_migrates_legacy_aegis_hook_registration_to_absolute_shim`
+    closes the migration seam end-to-end through the public
+    `aegis install-hooks --claude-code` surface (seed a real legacy
+    `aegis hook` → assert migration to the absolute shim + user-hook
+    preservation).
+  - Verification: 532 tests pass, file-size budget green (claude.rs 774,
+    agent_hooks.rs 796), `cargo audit`/`cargo deny check` clean.
+
+### Previous session (2026-06-24)
+
+- Closed P0 release blocker C2 (`$IFS` obfuscation bypass):
+  - `split_tokens` in `crates/aegis-parser/src/tokenizer.rs` now treats unquoted literal `$IFS` / `${IFS}` as shell word-separators via a new `ifs_marker_len` helper. The bare `$IFS` form matches only at an identifier boundary (so `$IFSHOME` stays intact); the braced `${IFS}` form is self-delimited by its closing brace. The helper clones the `Chars` iterator for lookahead (no extra allocation) and never panics.
+  - The fix flows through `Parser::parse` and `logical_segments` into the scanner's direct, nested-shell (`bash -c` / `sh -c`), heredoc, and process-substitution scan paths without any scanner-side special-casing.
+  - Quoted (`'$IFS'`, `"$IFS"`), escaped (`\$IFS`), partial (`$IF`, `${IFS`), and non-IFS variable forms (`$PATH`) remain opaque — confirmed by negative tests. No full variable expansion was introduced.
+  - Tests added: tokenizer positive/negative cases (`tokenizer_tests.rs::ifs_obfuscation`), parser normalized-form cases (`parsing_tests.rs::parse_normalizes_*`), and scanner regressions for PS-006, FS-002, FS-003, FS-004, FS-006 incl. nested/heredoc/process-sub (`edge_cases.rs`).
+- Verification: `cargo fmt --check` clean, `cargo clippy -- -D warnings` clean, full `cargo test` 519 passed, perf test `ten_thousand_safe_commands_under_25ms` green, `cargo audit` clean with the existing allowed `paste`/starlark advisory warning, `cargo deny check` clean.
 
 ### Deferred from this session
-- Claude's registered hook command stays `aegis hook` (PATH-based); absolute-path migration is entangled with `scripts/uninstall.sh` literal `aegis hook` pruning (documented in ADR-011).
 - Phase 9 `aegis doctor hooks` diagnostics not implemented (explicit follow-up in the plan).
+- Unifying the two byte-identical hook shims into one templated script (tracked in ADR-012 consequences).
+
+### Resolved this session
+- Claude's registered hook command no longer stays the PATH-based bare `aegis hook`; the absolute-shim migration (deferred under ADR-011) is complete — see ADR-012.
 
 ---
 
 ## Open decisions / blockers
 
-- Remaining P0 release blockers from the security review: `$IFS` obfuscation bypass (C2) and project-local config weakening to audit-only (C3)
+- Remaining P0 release blocker from the security review: project-local config weakening to audit-only (C3). C2 (`$IFS` obfuscation bypass) is now closed.
 - CI ARM cross-compilation (`aarch64-unknown-linux-musl`) pending
 - Sandbox tests on `ubuntu-latest` / `macos-latest` with real Docker/SQLite pending
 - Hot path p99 < 2 ms not yet confirmed by criterion run on current workspace

@@ -11,14 +11,25 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Security
+
+- Claude Code interception no longer depends on `aegis` being on the hook-exec PATH: `aegis install-hooks --claude-code` (and `--all`) now materializes an absolute, jq-free shim at `~/.claude/hooks/aegis-pre-tool-use.sh` and registers its absolute path in `settings.json`, at parity with the Codex hook (ADR-012).
+
 ### Fixed
 
+- `aegis install-hooks --claude-code` now migrates away every aegis-managed legacy Bash registration — the bare `aegis hook` command and the legacy `aegis-rewrite.sh` file — to the absolute shim while preserving unrelated user hooks (including commands that merely mention `aegis`); reinstall is idempotent (ADR-012).
+- The shared `aegis hook` deny response now emits a top-level `reason` mirroring `hookSpecificOutput.permissionDecisionReason`, so the deny message is visible in both Claude Code (top-level `reason`) and Codex (`permissionDecisionReason`) (ADR-012).
+- `scripts/uninstall.sh` now removes the absolute Claude hook shim and prunes its `PreToolUse` `Bash` registration, alongside the existing legacy `aegis hook` / `aegis-rewrite.sh` cleanup (ADR-012).
+- `scripts/uninstall.sh` normalizes a trailing slash on `$HOME` before building prune paths so they match the absolute path the Rust installer registers via `std::path::absolute` / `Path::join` (which never emits a doubled separator); root `/` is preserved (ADR-012).
+- `scripts/hooks/claude-code.sh` now ends with a trailing newline (POSIX text-file convention), and the ADR-012 "byte-identical except header" wording was corrected to "behaviorally identical; only agent-specific comments differ" since the two shims cross-reference each other by name (ADR-012).
+- Closed the C2 `$IFS` command-obfuscation bypass by normalizing unquoted literal `$IFS` / `${IFS}` as shell separators during tokenization, so destructive forms such as `rm$IFS-rf$IFS/`, `rm${IFS}-rf${IFS}/`, and `dd${IFS}of=/dev/sda` classify correctly across direct, nested-shell, heredoc, and process-substitution paths; quoted, escaped, and non-IFS variable forms stay opaque.
 - Restored fail-closed hook test coverage for non-object `tool_input` payloads and centralized production POSIX shell quoting for setup-shell/Codex hook generation (ADR-011).
 - `aegis setup-shell` now accepts scoped npm install paths (e.g. `@iliasalmerekov/aegis`); paths are POSIX single-quote escaped in the managed rc block instead of rejected, and errors name whether the real shell path or the Aegis binary path was invalid (ADR-011).
 - Codex `SessionStart` hook now emits guidance under `additionalContext` instead of the invalid `context` field, fixing `hook returned invalid session start JSON output` (ADR-011).
 
 ### Changed
 
+- The Claude Code `PreToolUse` hook is now a jq-free shim that `exec`s the Rust `aegis hook` (byte-identical to the Codex shim except for its header), replacing the legacy jq-based `aegis-rewrite.sh` script; `install::mod` now shares `write_executable`, `resolved_aegis_bin`, and `combine_outcomes` between the Claude and Codex installers instead of duplicating them (ADR-012).
 - Codex `PreToolUse` hook now transparently rewrites unwrapped Bash commands through `aegis --command` (`permissionDecision: "allow"` + `updatedInput`) by delegating to the Rust `aegis hook`, instead of denying and relying on the model to retry. This removes the `jq`/`python3` runtime dependency from the Codex hook (ADR-011).
 - The Rust `aegis hook` rewrite now fails closed on commands that begin with the bare `aegis` word but are not a canonical `aegis --command '<...>'` wrapper, and passes canonical wrappers through untouched (ADR-011).
 - Installed Codex pre-tool-use hook embeds a shell-quoted absolute Aegis binary path so it works under a minimal hook-exec PATH; an explicit `AEGIS_BIN` still overrides it (ADR-011).

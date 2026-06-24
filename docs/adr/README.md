@@ -75,6 +75,7 @@ the core classification / approval pipeline when enforcement is active.
 | ADR-008 | Installer is global-first and rejects removed mode controls | [`adr-008-installer-is-global-first-and-rejects-removed-mode-controls.md`](adr-008-installer-is-global-first-and-rejects-removed-mode-controls.md) |
 | ADR-010 | Full shell evaluation and deferred execution remain non-goals | [`adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md`](adr-010-full-shell-evaluation-and-deferred-execution-remain-non-goals.md) |
 | ADR-011 | Agent hooks rewrite transparently in Rust; setup-shell escapes paths | [`adr-011-hooks-rewrite-transparently-in-rust-and-setup-shell-escapes.md`](adr-011-hooks-rewrite-transparently-in-rust-and-setup-shell-escapes.md) |
+| ADR-012 | Claude Code hook uses an absolute shim, at parity with Codex | [`adr-012-claude-hook-uses-absolute-shim.md`](adr-012-claude-hook-uses-absolute-shim.md) |
 
 `ADR-009` is intentionally absent from the active set; numbering is preserved
 as-is so historical references do not drift.

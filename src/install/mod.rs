@@ -22,6 +22,55 @@ pub(crate) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+/// Resolve the absolute path of the currently running Aegis binary, falling
+/// back to a bare `aegis` PATH lookup if the executable path is unavailable.
+/// Shared by the Codex and Claude installers so both register a PATH-
+/// independent hook command.
+pub(crate) fn resolved_aegis_bin() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "aegis".to_string())
+}
+
+/// True when the on-disk executable already matches `expected_content` and is
+/// installed with the canonical `0755` mode. Used by `write_executable` to
+/// short-circuit idempotent reinstalls.
+fn executable_content_is_current(existing: &str, mode: u32, expected_content: &str) -> bool {
+    existing == expected_content && mode & 0o777 == 0o755
+}
+
+/// Materialize an executable file at `path` with `content` and mode `0755`,
+/// atomic via a temp file in the same directory. Returns `AlreadyPresent` when
+/// the existing file already matches byte-for-byte and has the right mode, so
+/// reinstalls are idempotent and never touch a correct file. Shared by the
+/// Codex and Claude installers for their hook shims.
+pub(crate) fn write_executable(path: &Path, content: &str) -> Result<InstallOutcome, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    match fs::read_to_string(path) {
+        Ok(existing) => {
+            let metadata = fs::metadata(path)
+                .map_err(|err| format!("failed to stat {}: {err}", path.display()))?;
+            if executable_content_is_current(&existing, metadata.permissions().mode(), content) {
+                return Ok(InstallOutcome::AlreadyPresent);
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("failed to read {}: {err}", path.display())),
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", path.display()))?;
+    let tmp = temporary_settings_path(parent);
+    fs::write(&tmp, content).map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("failed to chmod {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("failed to install {}: {e}", path.display()))?;
+    Ok(InstallOutcome::Installed)
+}
+
 /// Install aegis hooks for the selected agent targets.
 pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
     let mut exit = 0;
@@ -131,6 +180,20 @@ pub(crate) fn agent_dir_exists(agent_dir: &Path) -> Result<bool, String> {
     ))
 }
 
+/// Combine two install outcomes into one: `Installed` wins over `Skipped`/`
+/// AlreadyPresent`, `Skipped` wins over `AlreadyPresent`. Shared by the Codex
+/// and Claude installers to fold the shim-materialize outcome together with
+/// the settings-registration outcome.
+pub(crate) fn combine_outcomes(lhs: InstallOutcome, rhs: InstallOutcome) -> InstallOutcome {
+    if matches!(lhs, InstallOutcome::Installed) || matches!(rhs, InstallOutcome::Installed) {
+        InstallOutcome::Installed
+    } else if matches!(lhs, InstallOutcome::Skipped) || matches!(rhs, InstallOutcome::Skipped) {
+        InstallOutcome::Skipped
+    } else {
+        InstallOutcome::AlreadyPresent
+    }
+}
+
 pub(crate) fn load_settings(path: &Path) -> Result<Value, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
@@ -236,9 +299,47 @@ pub(crate) fn settings_path_local(cwd: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn resolved_aegis_bin_is_non_empty() {
+        // The resolved binary path must always yield a non-empty command string
+        // (falling back to the bare `aegis` name when current_exe is unavailable)
+        // so the rendered hook template always substitutes a real value.
+        let bin = resolved_aegis_bin();
+        assert!(!bin.is_empty(), "resolved aegis bin must never be empty");
+    }
+
+    #[test]
+    fn write_executable_normalizes_mode_to_0755() {
+        let dir = TempDir::new().expect("temp dir");
+        let hook_path = dir.path().join("hook.sh");
+        // Seed a file with outdated content and a non-canonical mode.
+        fs::write(&hook_path, "#!/bin/sh\nold\n").expect("write hook");
+        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o644))
+            .expect("set permissions");
+
+        let outcome = write_executable(&hook_path, "#!/bin/sh\nnew\n").expect("install");
+
+        assert_eq!(
+            outcome,
+            InstallOutcome::Installed,
+            "mismatched content must be rewritten"
+        );
+        let mode = fs::metadata(&hook_path)
+            .expect("stat hook")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o755, "installed hook must normalize to 0755");
+
+        // A second run with matching content + correct mode is idempotent.
+        let again = write_executable(&hook_path, "#!/bin/sh\nnew\n").expect("reinstall");
+        assert_eq!(again, InstallOutcome::AlreadyPresent);
+    }
 
     #[test]
     fn install_settings_path_uses_local_cwd_by_default() {

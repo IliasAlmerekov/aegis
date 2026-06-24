@@ -481,3 +481,87 @@ fn prefix_rule_git_branch_normal_delete_not_flagged() {
         "'git branch --delete old' must be Safe (not force delete)"
     );
 }
+
+// ── C2: `$IFS` obfuscation bypass regressions ─────────────────────────────
+//
+// Unquoted literal `$IFS` / `${IFS}` separators must not hide destructive
+// commands. These cover the exact `TASKS.md` C2 examples plus nested shell,
+// heredoc, process substitution, and additional destructive pattern families.
+
+fn assert_command_matches_pattern(cmd: &str, expected_risk: RiskLevel, expected_id: &str) {
+    let s = scanner();
+    let assessment = s.assess(cmd);
+
+    assert_eq!(
+        assessment.risk, expected_risk,
+        "command {cmd:?}: got {:?}, expected {expected_risk:?}",
+        assessment.risk,
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == expected_id),
+        "command {cmd:?}: expected pattern {expected_id}, matched {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn scanner_blocks_rm_rf_root_obfuscated_with_dollar_ifs() {
+    assert_command_matches_pattern("rm$IFS-rf$IFS/", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn scanner_blocks_rm_rf_root_obfuscated_with_braced_ifs() {
+    assert_command_matches_pattern("rm${IFS}-rf${IFS}/", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn scanner_flags_dd_block_device_obfuscated_with_braced_ifs() {
+    assert_command_matches_pattern("dd${IFS}of=/dev/sda", RiskLevel::Danger, "FS-003");
+}
+
+#[test]
+fn scanner_blocks_ifs_obfuscation_inside_bash_c() {
+    assert_command_matches_pattern("bash -c 'rm$IFS-rf$IFS/'", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn scanner_blocks_ifs_obfuscation_inside_sh_c() {
+    assert_command_matches_pattern("sh -c 'rm${IFS}-rf${IFS}/'", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn scanner_blocks_ifs_obfuscation_inside_expanding_heredoc() {
+    let cmd = "bash <<EOF\nrm$IFS-rf$IFS/\nEOF";
+    assert_command_matches_pattern(cmd, RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn scanner_blocks_ifs_obfuscation_inside_process_substitution() {
+    assert_command_matches_pattern("cat <(rm$IFS-rf$IFS/)", RiskLevel::Block, "PS-006");
+}
+
+#[test]
+fn scanner_flags_ifs_obfuscated_find_delete() {
+    assert_command_matches_pattern("find$IFS/$IFS-delete", RiskLevel::Danger, "FS-002");
+}
+
+#[test]
+fn scanner_flags_ifs_obfuscated_shred() {
+    assert_command_matches_pattern(
+        "shred${IFS}-u${IFS}secrets.txt",
+        RiskLevel::Danger,
+        "FS-004",
+    );
+}
+
+#[test]
+fn scanner_blocks_ifs_obfuscated_mkfs() {
+    assert_command_matches_pattern("mkfs.ext4${IFS}/dev/sdb1", RiskLevel::Block, "FS-006");
+}

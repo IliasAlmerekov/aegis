@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# aegis-hook-version: 1
-# Claude Code PreToolUse hook — rewrites Bash tool commands through aegis.
-# Installed to: ~/.claude/hooks/aegis-rewrite.sh
-# Requires: jq, aegis
+# aegis-hook-version: 2
+# Claude Code PreToolUse hook — transparently rewrites unwrapped Bash commands
+# through aegis by delegating to the Rust `aegis hook` rewrite. No jq/python3
+# required. Installed to: ~/.claude/hooks/aegis-pre-tool-use.sh
+#
+# This shim is intentionally behaviorally identical to
+# scripts/hooks/codex-pre-tool-use.sh; only agent-specific comments differ (the
+# two files cross-reference each other by name, so they are not byte-identical
+# until a unified templated script lands). A unified template is a tracked
+# follow-up (see ADR-012 consequences).
 
 set -u
 
@@ -61,50 +67,12 @@ if ! aegis_enforcement_enabled; then
   exit 0
 fi
 
-if ! command -v jq >/dev/null 2>&1; then
-  echo "[aegis] WARNING: jq not installed. Hook cannot rewrite commands." >&2
-  exit 0
+# Delegate JSON parsing and the allow+updatedInput rewrite to the Rust binary so
+# behavior is identical to the Codex PreToolUse hook and does not depend on jq
+# or python3 being installed. AEGIS_BIN is templated to an absolute, shell-quoted
+# path at install time so the hook works even when the hook-exec PATH is minimal;
+# an explicit AEGIS_BIN in the environment still wins (used by tests).
+if [ -z "${AEGIS_BIN:-}" ]; then
+  AEGIS_BIN=__AEGIS_BIN__
 fi
-
-if ! command -v aegis >/dev/null 2>&1; then
-  echo "[aegis] WARNING: aegis not in PATH. Hook disabled." >&2
-  exit 0
-fi
-
-input_json=$(cat)
-
-if [ -z "$input_json" ]; then
-  exit 0
-fi
-
-command_value=$(printf '%s' "$input_json" | jq -r '.tool_input.command // empty' 2>/dev/null) || {
-  echo "[aegis] WARNING: malformed JSON input. Hook cannot rewrite commands." >&2
-  exit 0
-}
-
-if [ -z "$command_value" ]; then
-  exit 0
-fi
-
-case "$command_value" in
-  aegis\ *)
-    exit 0
-    ;;
-esac
-
-quoted_command=$(printf '%s' "$command_value" | jq -Rrs @sh)
-rewritten_command="aegis --command ${quoted_command}"
-
-original_input=$(printf '%s' "$input_json" | jq -c '.tool_input')
-updated_input=$(printf '%s' "$original_input" | jq --arg command "$rewritten_command" '.command = $command')
-
-jq -n \
-  --argjson updatedInput "$updated_input" \
-  '{
-    "hookSpecificOutput": {
-      "hookEventName": "PreToolUse",
-      "permissionDecision": "allow",
-      "permissionDecisionReason": "Aegis intercept",
-      "updatedInput": $updatedInput
-    }
-  }'
+exec "${AEGIS_BIN}" hook

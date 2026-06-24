@@ -1,13 +1,13 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
 use serde_json::Value;
 
 use super::{
-    AgentInstallResult, InstallOutcome, agent_dir_exists, shell_quote, write_settings_atomically,
+    AgentInstallResult, InstallOutcome, agent_dir_exists, combine_outcomes, resolved_aegis_bin,
+    shell_quote, temporary_settings_path, write_executable, write_settings_atomically,
 };
 
 const CODEX_PRE_TOOL_USE_HOOK_SH: &str = include_str!("../../scripts/hooks/codex-pre-tool-use.sh");
@@ -60,47 +60,12 @@ fn materialize_codex_hooks(codex_dir: &Path) -> Result<InstallOutcome, String> {
     Ok(combine_outcomes(ptu_outcome, session_outcome))
 }
 
-/// Resolve the absolute path of the currently running Aegis binary, falling
-/// back to a bare `aegis` PATH lookup if the executable path is unavailable.
-fn resolved_aegis_bin() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.to_str().map(str::to_owned))
-        .unwrap_or_else(|| "aegis".to_string())
-}
-
 /// Materialize the Codex PreToolUse hook with `__AEGIS_BIN__` replaced by an
 /// absolute, shell-quoted path to the Aegis binary. This keeps the hook working
 /// when Codex runs it with a minimal PATH; an explicit `AEGIS_BIN` in the
 /// environment still overrides the templated default.
 fn render_pre_tool_use_hook() -> String {
     CODEX_PRE_TOOL_USE_HOOK_SH.replace("__AEGIS_BIN__", &shell_quote(&resolved_aegis_bin()))
-}
-
-fn write_executable(path: &Path, content: &str) -> Result<InstallOutcome, String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    match fs::read_to_string(path) {
-        Ok(existing) => {
-            let metadata = fs::metadata(path)
-                .map_err(|err| format!("failed to stat {}: {err}", path.display()))?;
-            if executable_content_is_current(&existing, metadata.permissions().mode(), content) {
-                return Ok(InstallOutcome::AlreadyPresent);
-            }
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(format!("failed to read {}: {err}", path.display())),
-    }
-
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{} has no parent", path.display()))?;
-    let tmp = temporary_settings_path(parent);
-    fs::write(&tmp, content).map_err(|e| format!("failed to write {}: {e}", tmp.display()))?;
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("failed to chmod {}: {e}", tmp.display()))?;
-    fs::rename(&tmp, path).map_err(|e| format!("failed to install {}: {e}", path.display()))?;
-    Ok(InstallOutcome::Installed)
 }
 
 fn apply_codex_hooks_json(
@@ -257,10 +222,6 @@ fn write_toml_atomically(path: &Path, value: &toml::Value) -> Result<(), String>
     Ok(())
 }
 
-fn executable_content_is_current(existing: &str, mode: u32, expected_content: &str) -> bool {
-    existing == expected_content && mode & 0o777 == 0o755
-}
-
 fn codex_hook_present(
     entries: &[Value],
     matcher: &str,
@@ -313,26 +274,6 @@ fn codex_hook_present(
     }
 
     Ok(found)
-}
-
-fn combine_outcomes(lhs: InstallOutcome, rhs: InstallOutcome) -> InstallOutcome {
-    if matches!(lhs, InstallOutcome::Installed) || matches!(rhs, InstallOutcome::Installed) {
-        InstallOutcome::Installed
-    } else if matches!(lhs, InstallOutcome::Skipped) || matches!(rhs, InstallOutcome::Skipped) {
-        InstallOutcome::Skipped
-    } else {
-        InstallOutcome::AlreadyPresent
-    }
-}
-
-fn temporary_settings_path(parent: &Path) -> PathBuf {
-    let pid = std::process::id();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-
-    parent.join(format!(".settings.json.aegis-{pid}-{nanos}.tmp"))
 }
 
 #[cfg(test)]

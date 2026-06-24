@@ -376,3 +376,93 @@ fn eval_payload_with_env_prefix() {
     let payloads = extract_eval_payloads(r#"FOO=bar eval "$DEPLOY_CMD""#);
     assert_eq!(payloads, vec![r#"$DEPLOY_CMD"#]);
 }
+
+// ── C2: literal `$IFS` / `${IFS}` obfuscation ─────────────────────────────
+//
+// Unquoted literal `$IFS` and `${IFS}` expand to shell word-separators, so a
+// destructive command split by them must tokenize like the whitespace form.
+// Quoted, escaped, and non-IFS variable forms must remain untouched.
+mod ifs_obfuscation {
+    use super::*;
+
+    #[test]
+    fn split_tokens_treats_unquoted_dollar_ifs_as_separator() {
+        assert_eq!(split_tokens("rm$IFS-rf$IFS/"), vec!["rm", "-rf", "/"]);
+    }
+
+    #[test]
+    fn split_tokens_treats_unquoted_braced_ifs_as_separator() {
+        assert_eq!(split_tokens("rm${IFS}-rf${IFS}/"), vec!["rm", "-rf", "/"]);
+    }
+
+    #[test]
+    fn split_tokens_treats_ifs_between_program_and_argument_as_separator() {
+        assert_eq!(
+            split_tokens("dd${IFS}of=/dev/sda"),
+            vec!["dd", "of=/dev/sda"]
+        );
+    }
+
+    #[test]
+    fn split_tokens_treats_leading_dollar_ifs_without_emitting_empty_token() {
+        assert_eq!(split_tokens("$IFS-rf"), vec!["-rf"]);
+    }
+
+    #[test]
+    fn split_tokens_treats_trailing_dollar_ifs_without_emitting_empty_token() {
+        assert_eq!(split_tokens("rm$IFS"), vec!["rm"]);
+    }
+
+    #[test]
+    fn split_tokens_collapses_repeated_dollar_ifs_runs() {
+        assert_eq!(split_tokens("rm$IFS$IFS-rf"), vec!["rm", "-rf"]);
+    }
+
+    #[test]
+    fn split_tokens_does_not_split_escaped_dollar_ifs() {
+        assert_eq!(split_tokens(r"echo \$IFS"), vec!["echo", "$IFS"]);
+    }
+
+    #[test]
+    fn split_tokens_does_not_split_single_quoted_dollar_ifs() {
+        assert_eq!(split_tokens("echo '$IFS'"), vec!["echo", "$IFS"]);
+    }
+
+    #[test]
+    fn split_tokens_does_not_split_double_quoted_dollar_ifs() {
+        assert_eq!(split_tokens("echo \"$IFS\""), vec!["echo", "$IFS"]);
+    }
+
+    #[test]
+    fn split_tokens_does_not_split_non_ifs_variables() {
+        assert_eq!(split_tokens("echo$PATH/test"), vec!["echo$PATH/test"]);
+    }
+
+    #[test]
+    fn split_tokens_ignores_partial_ifs_prefixes() {
+        assert_eq!(split_tokens("echo$IF"), vec!["echo$IF"]);
+    }
+
+    #[test]
+    fn split_tokens_ignores_partial_braced_ifs() {
+        assert_eq!(split_tokens("echo${IFS"), vec!["echo${IFS"]);
+    }
+
+    #[test]
+    fn split_tokens_does_not_split_ifs_prefixed_identifier() {
+        // `$IFSHOME` references a different variable, not `$IFS`.
+        assert_eq!(split_tokens("echo$IFSHOME"), vec!["echo$IFSHOME"]);
+    }
+
+    #[test]
+    fn split_tokens_does_not_split_ifs_prefixed_by_digit() {
+        // `$IFS2` is the identifier `IFS2`, so the digit extends the name.
+        assert_eq!(split_tokens("echo$IFS2"), vec!["echo$IFS2"]);
+    }
+
+    #[test]
+    fn split_tokens_splits_bare_ifs_before_punctuation() {
+        // A `.` ends the variable name, so `$IFS` is a separator before `.txt`.
+        assert_eq!(split_tokens("cat$IFS.txt"), vec!["cat", ".txt"]);
+    }
+}
