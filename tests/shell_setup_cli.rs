@@ -47,8 +47,8 @@ fn setup_shell_writes_zsh_managed_block() {
     );
     let rc = fs::read_to_string(&rc_file).expect("read rc file");
     assert!(rc.contains("# >>> aegis shell setup >>>"));
-    assert!(rc.contains("export AEGIS_REAL_SHELL=\"/bin/zsh\""));
-    assert!(rc.contains("export SHELL=\"/usr/local/bin/aegis\""));
+    assert!(rc.contains("export AEGIS_REAL_SHELL='/bin/zsh'"));
+    assert!(rc.contains("export SHELL='/usr/local/bin/aegis'"));
 }
 
 #[test]
@@ -193,11 +193,14 @@ fn setup_shell_fails_closed_when_shell_is_symlink_to_aegis_binary() {
     );
 }
 
-// `--aegis-bin` is interpolated raw into `export SHELL="..."`. A payload with
-// quotes/semicolons must be rejected before any rc file is written, otherwise
-// the generated startup file contains injected shell commands.
+// `--aegis-bin` is interpolated into `export SHELL='...'`. A payload with
+// quotes/semicolons must be made inert by POSIX single-quote escaping rather
+// than rejected — the value is written verbatim inside single quotes, so the
+// embedded `"; export EVIL=1; #` cannot start a new statement. This is the
+// robust replacement for the old reject-on-unsafe-chars approach, which also
+// blocked legitimate scoped npm paths.
 #[test]
-fn setup_shell_rejects_shell_injection_via_aegis_bin() {
+fn setup_shell_escapes_injection_payload_in_aegis_bin() {
     let temp = tempfile::TempDir::new().expect("temp dir");
     let rc_file = temp.path().join(".zshrc");
 
@@ -215,15 +218,89 @@ fn setup_shell_rejects_shell_injection_via_aegis_bin() {
     );
 
     assert!(
+        output.status.success(),
+        "setup must safely escape injection payloads in --aegis-bin: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rc = fs::read_to_string(&rc_file).expect("read rc file");
+    assert!(
+        rc.contains("export SHELL='/tmp/aegis\"; export EVIL=1; #'"),
+        "payload must be single-quoted verbatim, got: {rc}"
+    );
+    // The injected assignment must not appear as its own statement.
+    assert!(
+        !rc.contains("\nexport EVIL=1"),
+        "injected statement must not escape the single-quoted value: {rc}"
+    );
+}
+
+// The reported root cause: a scoped npm install path contains `@`, which the
+// old strict validator rejected with `real shell path contains unsafe
+// characters`. The scoped binary path must now be accepted and written
+// verbatim inside single quotes.
+#[test]
+fn setup_shell_accepts_scoped_npm_aegis_binary_path() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let rc_file = temp.path().join(".zshrc");
+    let scoped = temp
+        .path()
+        .join("node_modules/@iliasalmerekov/aegis/vendor/aegis");
+
+    let output = run_setup_shell(
+        &[
+            "--shell",
+            "/bin/zsh",
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            scoped.to_str().expect("utf8 scoped path"),
+        ],
+        temp.path(),
+        &[],
+    );
+
+    assert!(
+        output.status.success(),
+        "scoped npm path must be accepted: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rc = fs::read_to_string(&rc_file).expect("read rc file");
+    assert!(
+        rc.contains(&format!("export SHELL='{}'", scoped.display())),
+        "scoped npm path must round-trip inside single quotes, got: {rc}"
+    );
+}
+
+// When the aegis binary path is the invalid one, the error must name the aegis
+// binary path, not the real shell path — the old shared validator always said
+// "real shell path", which misdirected debugging of npm installs.
+#[test]
+fn setup_shell_reports_aegis_binary_path_when_aegis_bin_is_invalid() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let rc_file = temp.path().join(".zshrc");
+
+    let output = run_setup_shell(
+        &[
+            "--shell",
+            "/bin/zsh",
+            "--rc-file",
+            rc_file.to_str().expect("utf8 rc path"),
+            "--aegis-bin",
+            "/tmp/aegis\u{7f}bad",
+        ],
+        temp.path(),
+        &[],
+    );
+
+    assert!(
         !output.status.success(),
-        "setup must reject shell-injection payloads in --aegis-bin"
+        "control characters in --aegis-bin must be rejected"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("unsafe characters"),
-        "expected unsafe-characters error, got: {stderr}"
+        stderr.contains("aegis binary path"),
+        "error must name the aegis binary path, got: {stderr}"
     );
-    // The rc file must not be created when validation fails.
     assert!(
         !rc_file.exists(),
         "rc file must not be written when --aegis-bin validation fails"

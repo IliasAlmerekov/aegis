@@ -11,16 +11,35 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored fail-closed hook test coverage for non-object `tool_input` payloads and centralized production POSIX shell quoting for setup-shell/Codex hook generation (ADR-011).
+- `aegis setup-shell` now accepts scoped npm install paths (e.g. `@iliasalmerekov/aegis`); paths are POSIX single-quote escaped in the managed rc block instead of rejected, and errors name whether the real shell path or the Aegis binary path was invalid (ADR-011).
+- Codex `SessionStart` hook now emits guidance under `additionalContext` instead of the invalid `context` field, fixing `hook returned invalid session start JSON output` (ADR-011).
+
 ### Changed
+
+- Codex `PreToolUse` hook now transparently rewrites unwrapped Bash commands through `aegis --command` (`permissionDecision: "allow"` + `updatedInput`) by delegating to the Rust `aegis hook`, instead of denying and relying on the model to retry. This removes the `jq`/`python3` runtime dependency from the Codex hook (ADR-011).
+- The Rust `aegis hook` rewrite now fails closed on commands that begin with the bare `aegis` word but are not a canonical `aegis --command '<...>'` wrapper, and passes canonical wrappers through untouched (ADR-011).
+- Installed Codex pre-tool-use hook embeds a shell-quoted absolute Aegis binary path so it works under a minimal hook-exec PATH; an explicit `AEGIS_BIN` still overrides it (ADR-011).
+
+### Added
+
+- npm postinstall best-effort agent hook setup: runs `aegis install-hooks --all` when `~/.claude` or `~/.codex` already exists, prints next steps otherwise, never creates agent directories, and never fails the npm install (opt out with `AEGIS_NPM_SKIP_HOOKS=1`) (ADR-011).
+
+### Changed
+
 - Simplified `README.md` to a minimal public contract (What / Why / Install / How it works) with a visible threat-model link and an honest heuristic-not-a-sandbox statement (M6 docs gate).
 - Aligned landing page copy with the current install flow while keeping the existing design (3D shield and section layout unchanged): installer/Homebrew/npm/Cargo, `aegis setup-shell` opt-in, `v0.5.8`, and honest audit wording (append-only; tamper-evident when hash-chain integrity is enabled) replacing the prior overclaim (M6).
 - Prepare release metadata for v0.5.8 after the v0.5.7 release build hit the stale `ldd` static-link verification path (M3.2).
 
 ### Removed
+
 - Non-production landing source artifacts not used by the runtime: `landing/pencil.pen`, `landing/DESIGN.md`, `landing/tokens.json`, and unused image assets (`landing/images/Hitem3d-1781772057946.glb`, `landing/images/generated-1781681175337.png`) (M6).
 - `test_q` stray compiled ELF binary from the repo root (M6).
 
 ### Added
+
 - `aegis setup-shell` — explicit opt-in command for shell hook installation (ADR-009)
 - Supply-chain gates: `cargo audit` + `cargo deny check` both green in CI (M5.4)
 - npm wrapper package with native binary download per platform (M3.4)
@@ -32,6 +51,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - Snapshot/rollback integration tests in CI (M5.3)
 
 ### Fixed
+
 - Fixed C1 uppercase scanner bypass by compiling built-in regex patterns case-insensitively while preserving custom regex case sensitivity.
 - Render the README hero GIF through standard Markdown image syntax so GitHub treats it like other animated demos (M6 docs gate).
 - Ignore `/test_q` at the repo root so the stray compiled ELF cannot be re-committed (M6).
@@ -42,6 +62,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - Keep npm package contents minimal
 
 ### Security
+
 - `setup-shell` rejects symlink loops and prevents injection into shell rc files
 
 ---
@@ -98,7 +119,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 - **Keyword scanner regression test hardening**: the `keywords.rs` source-slice
   helper used by the hot-path regression test now stops at the actual `mod
-  tests` boundary instead of relying on a naive split. This keeps literal
+tests` boundary instead of relying on a naive split. This keeps literal
   `chars.next().unwrap()` strings inside test-only helpers from causing false
   positives against production-code assertions.
 - **Release metadata bumped to 0.5.1**: `Cargo.toml` and `Cargo.lock` now track

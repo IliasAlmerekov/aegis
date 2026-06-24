@@ -67,6 +67,9 @@ npm i -g @iliasalmerekov/aegis
 
 Homebrew installs the binary only. npm and Cargo install the binary only too;
 none of them run the global shell installer or edit your shell startup files.
+npm does perform best-effort agent-hook setup (`aegis install-hooks --all`) when
+a Claude Code or Codex config directory already exists — set
+`AEGIS_NPM_SKIP_HOOKS=1` to opt out.
 
 To opt in to shell-proxy mode after installing with a package manager, run:
 

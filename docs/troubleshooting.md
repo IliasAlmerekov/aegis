@@ -115,6 +115,63 @@ agent directory does not exist yet.
 1. Export the real shell explicitly: `export AEGIS_REAL_SHELL=$(command -v bash)` (or `zsh`).
 2. Re-run installer with `AEGIS_REAL_SHELL` set.
 
+## Agent hooks (Claude Code / Codex)
+
+### `error: real shell path contains unsafe characters` after npm install
+
+**Why:** Older Aegis versions validated `setup-shell` paths with a strict
+allow-list that rejected the `@` in a scoped npm install path
+(`.../node_modules/@iliasalmerekov/aegis/vendor/aegis`). The error always blamed
+the "real shell path" even when the Aegis binary path was the offender.
+
+**Fix:**
+
+1. Upgrade Aegis: current versions single-quote escape the path instead of
+   rejecting it, and name whether the real shell path or the Aegis binary path
+   was invalid.
+2. If you cannot upgrade, pass an explicit binary path without `@`, e.g.
+   `aegis setup-shell --aegis-bin "$(command -v aegis)"` after symlinking the
+   binary to a plain path.
+
+### Codex: `hook returned invalid session start JSON output`
+
+**Why:** Older Codex `SessionStart` hooks emitted guidance under `context`;
+Codex expects `additionalContext`.
+
+**Fix:**
+
+1. Re-run `aegis install-hooks --codex` (or `--all`) to refresh the hook scripts.
+2. Confirm `~/.codex/hooks/aegis-session-start.sh` emits
+   `hookSpecificOutput.additionalContext`.
+
+### Hooks installed but commands are not intercepted
+
+**Why:** Codex requires hooks to be enabled and trusted. The registration can be
+present in `~/.codex/hooks.json` while the feature is disabled or the hook is
+untrusted.
+
+**Fix:**
+
+1. Confirm `~/.codex/config.toml` has `[features] hooks = true`.
+2. Review and trust hooks inside Codex with `/hooks`.
+3. For Claude Code, confirm `~/.claude/settings.json` has a `PreToolUse` `Bash`
+   hook running `aegis hook`.
+4. Verify the rewrite end to end:
+   `printf '{"tool_input":{"command":"git status"}}' | aegis hook` should print a
+   `permissionDecision: "allow"` response whose `updatedInput.command` is
+   `aegis --command 'git status'`.
+
+### Older Codex hook fails with missing `jq` or `python3`
+
+**Why:** Earlier Codex hook scripts shelled out to `jq`/`python3` to parse and
+deny commands.
+
+**Fix:**
+
+1. Re-run `aegis install-hooks --codex` to install the current shim, which
+   delegates parsing and the transparent rewrite to the `aegis` binary and needs
+   neither `jq` nor `python3`.
+
 ## Audit integrity verification
 
 ### `aegis audit --verify-integrity` fails
