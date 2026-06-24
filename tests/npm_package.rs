@@ -192,6 +192,33 @@ fn npm_installer_should_follow_github_release_redirects() {
 }
 
 #[test]
+fn npm_installer_should_best_effort_install_agent_hooks_without_failing_install() {
+    let installer = repo_file("packaging/npm/scripts/install.js");
+
+    assert!(
+        installer.contains("install-hooks") && installer.contains("--all"),
+        "npm postinstall should attempt best-effort agent hook installation"
+    );
+    assert!(
+        installer.contains(".claude") && installer.contains(".codex"),
+        "npm postinstall must gate hook setup on existing agent directories"
+    );
+    assert!(
+        installer.contains("AEGIS_NPM_SKIP_HOOKS"),
+        "npm postinstall must support a deterministic opt-out for tests"
+    );
+    assert!(
+        installer.contains("If you install Claude Code or Codex later, run:"),
+        "npm postinstall must print actionable next steps when no agent dir exists"
+    );
+    // Best-effort: never create agent dirs and never crash the install.
+    assert!(
+        !installer.contains("mkdirSync(claudeDir") && !installer.contains("mkdirSync(codexDir"),
+        "npm postinstall must not create agent directories just to install hooks"
+    );
+}
+
+#[test]
 fn npm_installer_should_print_shell_setup_next_steps() {
     let installer = repo_file("packaging/npm/scripts/install.js");
 

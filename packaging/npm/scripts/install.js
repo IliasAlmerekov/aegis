@@ -3,7 +3,9 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const https = require("node:https");
+const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const packageRoot = path.join(__dirname, "..");
 const vendorDir = path.join(packageRoot, "vendor");
@@ -39,6 +41,48 @@ function printNextSteps() {
   console.log("");
   console.log("Undo shell-proxy setup:");
   console.log("  aegis setup-shell --remove");
+}
+
+// Best-effort agent hook setup. Only runs `aegis install-hooks --all` when a
+// supported agent config directory already exists; never creates one. Failures
+// here must not fail the npm install — the binary is already in place and the
+// user can run `aegis install-hooks --all` manually. Set AEGIS_NPM_SKIP_HOOKS=1
+// to opt out (used by deterministic packaging tests).
+function maybeInstallAgentHooks() {
+  if (process.env.AEGIS_NPM_SKIP_HOOKS === "1") {
+    return;
+  }
+
+  const home = os.homedir();
+  if (!home) {
+    return;
+  }
+
+  const claudeDir = path.join(home, ".claude");
+  const codexDir = path.join(home, ".codex");
+  const hasAgentDir = fs.existsSync(claudeDir) || fs.existsSync(codexDir);
+
+  if (!hasAgentDir) {
+    console.log("");
+    console.log("If you install Claude Code or Codex later, run:");
+    console.log("  aegis install-hooks --all");
+    return;
+  }
+
+  try {
+    const result = spawnSync(binaryPath, ["install-hooks", "--all"], {
+      stdio: "inherit"
+    });
+    if (result.error) {
+      console.log("");
+      console.log("Could not auto-install agent hooks; run manually with:");
+      console.log("  aegis install-hooks --all");
+    }
+  } catch (_error) {
+    console.log("");
+    console.log("Could not auto-install agent hooks; run manually with:");
+    console.log("  aegis install-hooks --all");
+  }
 }
 
 function readChecksums() {
@@ -128,6 +172,7 @@ async function main() {
   if (process.env.AEGIS_NPM_SKIP_DOWNLOAD === "1") {
     fs.writeFileSync(binaryPath, "#!/bin/sh\nprintf 'aegis test binary\\n'\n", { mode: 0o755 });
     printNextSteps();
+    maybeInstallAgentHooks();
     return;
   }
 
@@ -143,6 +188,7 @@ async function main() {
   fs.renameSync(tmpPath, binaryPath);
   fs.chmodSync(binaryPath, 0o755);
   printNextSteps();
+  maybeInstallAgentHooks();
 }
 
 main().catch(error => {

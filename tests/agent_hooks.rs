@@ -140,22 +140,23 @@ fn json_contains_command(json: &Value, section: &str, command: &str) -> bool {
 }
 
 #[test]
-fn codex_pre_tool_use_denies_when_helper_is_missing_in_normal_mode() {
+fn codex_pre_tool_use_rewrites_when_helper_is_missing_in_normal_mode() {
     let home = TempDir::new().unwrap();
     let output = run_codex_pre_tool_use(home.path(), "echo hi");
     assert!(output.status.success());
 
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(json["hookSpecificOutput"]["hookEventName"], "PreToolUse");
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "allow");
     assert_eq!(
-        json["hookSpecificOutput"]["permissionDecisionReason"],
-        "Run through aegis: aegis --command 'echo hi'"
+        json["hookSpecificOutput"]["updatedInput"]["command"],
+        "aegis --command 'echo hi'"
     );
     assert!(output.stderr.is_empty());
 }
 
 #[test]
-fn codex_pre_tool_use_denies_when_helper_is_missing_but_ci_override_is_forced() {
+fn codex_pre_tool_use_rewrites_when_helper_is_missing_but_ci_override_is_forced() {
     let home = TempDir::new().unwrap();
     fs::create_dir_all(home.path().join(".aegis")).unwrap();
     fs::write(
@@ -175,7 +176,11 @@ fn codex_pre_tool_use_denies_when_helper_is_missing_but_ci_override_is_forced() 
 
     assert!(output.status.success());
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "allow");
+    assert_eq!(
+        json["hookSpecificOutput"]["updatedInput"]["command"],
+        "aegis --command 'echo hi'"
+    );
     assert!(output.stderr.is_empty());
 }
 
@@ -403,7 +408,7 @@ fn codex_agent_setup_installs_hooks_and_is_idempotent() {
 }
 
 #[test]
-fn codex_session_start_emits_strong_aegis_context() {
+fn codex_session_start_emits_additional_context() {
     let home = TempDir::new().unwrap();
     prepare_agent_dirs(home.path(), false, true);
     let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
@@ -420,9 +425,15 @@ fn codex_session_start_emits_strong_aegis_context() {
 
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["hookSpecificOutput"]["hookEventName"], "SessionStart");
-    let context = json["hookSpecificOutput"]["context"]
+    // Codex expects SessionStart context under `additionalContext`; the legacy
+    // `context` field was the invalid-output root cause and must be gone.
+    assert!(
+        json["hookSpecificOutput"].get("context").is_none(),
+        "legacy `context` field must be absent"
+    );
+    let context = json["hookSpecificOutput"]["additionalContext"]
         .as_str()
-        .expect("session-start context must be a string");
+        .expect("session-start additionalContext must be a string");
     assert!(
         context.contains("IMPORTANT: All Bash tool commands must be routed through aegis."),
         "session-start guidance must preserve the command-routing requirement"
@@ -432,8 +443,8 @@ fn codex_session_start_emits_strong_aegis_context() {
         "session-start guidance must preserve the canonical aegis wrapper"
     );
     assert!(
-        context.contains("blocked by the PreToolUse hook"),
-        "session-start guidance must preserve the pre-tool-use enforcement note"
+        context.contains("transparently rewrites"),
+        "session-start guidance must describe transparent PreToolUse rewriting"
     );
     assert!(
         context.contains("do not suggest bypassing the guardrail"),
@@ -450,34 +461,34 @@ fn codex_session_start_emits_strong_aegis_context() {
 }
 
 #[test]
-fn codex_pre_tool_use_denies_git_stash_clear_with_aegis_prompt_and_allows_wrapped_commands() {
+fn codex_pre_tool_use_rewrites_git_stash_clear_and_passes_through_wrapped_commands() {
     let home = TempDir::new().unwrap();
     prepare_agent_dirs(home.path(), false, true);
     let install_output = run_script("agent-setup.sh", home.path(), &["--codex"], None);
     assert!(install_output.status.success());
 
-    let deny_output = run_codex_pre_tool_use(home.path(), "git stash clear");
-    assert!(deny_output.status.success());
+    let rewrite_output = run_codex_pre_tool_use(home.path(), "git stash clear");
+    assert!(rewrite_output.status.success());
     assert!(
-        deny_output.stderr.is_empty(),
+        rewrite_output.stderr.is_empty(),
         "pre-tool-use hook must stay quiet: stdout=\n{}\nstderr=\n{}",
-        String::from_utf8_lossy(&deny_output.stdout),
-        String::from_utf8_lossy(&deny_output.stderr)
+        String::from_utf8_lossy(&rewrite_output.stdout),
+        String::from_utf8_lossy(&rewrite_output.stderr)
     );
 
-    let deny_json: Value = serde_json::from_slice(&deny_output.stdout).unwrap();
+    let rewrite_json: Value = serde_json::from_slice(&rewrite_output.stdout).unwrap();
     assert_eq!(
-        deny_json["hookSpecificOutput"]["hookEventName"],
+        rewrite_json["hookSpecificOutput"]["hookEventName"],
         "PreToolUse"
     );
     assert_eq!(
-        deny_json["hookSpecificOutput"]["permissionDecision"],
-        "deny"
+        rewrite_json["hookSpecificOutput"]["permissionDecision"],
+        "allow"
     );
     assert_eq!(
-        deny_json["hookSpecificOutput"]["permissionDecisionReason"],
-        "Run through aegis: aegis --command 'git stash clear'",
-        "Aegis must give a clean, command-specific rerun reason for git stash clear"
+        rewrite_json["hookSpecificOutput"]["updatedInput"]["command"],
+        "aegis --command 'git stash clear'",
+        "Aegis must transparently rewrite the command through the wrapper"
     );
 
     let allow_output = run_codex_pre_tool_use(home.path(), "aegis --command 'git stash clear'");
@@ -489,7 +500,7 @@ fn codex_pre_tool_use_denies_git_stash_clear_with_aegis_prompt_and_allows_wrappe
     );
     assert!(
         allow_output.stdout.is_empty(),
-        "exact aegis-wrapped commands must be allowed without a deny response"
+        "canonical aegis-wrapped commands must pass through without a rewrite response"
     );
     assert!(allow_output.stderr.is_empty());
 }
@@ -514,9 +525,12 @@ fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quote
         );
         let json: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
-        assert_eq!(
-            json["hookSpecificOutput"]["permissionDecisionReason"],
-            "Run through aegis: invalid aegis wrapper syntax"
+        assert!(
+            json["hookSpecificOutput"]["permissionDecisionReason"]
+                .as_str()
+                .unwrap()
+                .contains("invalid aegis wrapper syntax"),
+            "malformed wrapper must be denied with a clear reason"
         );
     }
 
@@ -530,13 +544,13 @@ fn codex_pre_tool_use_rejects_malformed_aegis_wrappers_and_allows_embedded_quote
     );
     assert!(
         allow_output.stdout.is_empty(),
-        "valid embedded-quote wrapper must not produce deny output"
+        "valid embedded-quote wrapper must pass through without a rewrite response"
     );
     assert!(allow_output.stderr.is_empty());
 }
 
 #[test]
-fn codex_pre_tool_use_still_denies_when_disabled_file_exists_but_ci_override_is_forced() {
+fn codex_pre_tool_use_still_rewrites_when_disabled_file_exists_but_ci_override_is_forced() {
     let home = TempDir::new().unwrap();
     prepare_agent_dirs(home.path(), false, true);
     fs::create_dir_all(home.path().join(".aegis")).unwrap();
@@ -566,7 +580,11 @@ fn codex_pre_tool_use_still_denies_when_disabled_file_exists_but_ci_override_is_
 
     assert!(output.status.success());
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "deny");
+    assert_eq!(json["hookSpecificOutput"]["permissionDecision"], "allow");
+    assert_eq!(
+        json["hookSpecificOutput"]["updatedInput"]["command"],
+        "aegis --command 'echo hi'"
+    );
 }
 
 #[test]

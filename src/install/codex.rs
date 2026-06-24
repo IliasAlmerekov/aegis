@@ -6,7 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-use super::{AgentInstallResult, InstallOutcome, agent_dir_exists, write_settings_atomically};
+use super::{
+    AgentInstallResult, InstallOutcome, agent_dir_exists, shell_quote, write_settings_atomically,
+};
 
 const CODEX_PRE_TOOL_USE_HOOK_SH: &str = include_str!("../../scripts/hooks/codex-pre-tool-use.sh");
 const CODEX_SESSION_START_HOOK_SH: &str =
@@ -48,7 +50,7 @@ fn materialize_codex_hooks(codex_dir: &Path) -> Result<InstallOutcome, String> {
 
     let ptu_outcome = write_executable(
         &hooks_dir.join("aegis-pre-tool-use.sh"),
-        CODEX_PRE_TOOL_USE_HOOK_SH,
+        &render_pre_tool_use_hook(),
     )?;
     let session_outcome = write_executable(
         &hooks_dir.join("aegis-session-start.sh"),
@@ -56,6 +58,23 @@ fn materialize_codex_hooks(codex_dir: &Path) -> Result<InstallOutcome, String> {
     )?;
 
     Ok(combine_outcomes(ptu_outcome, session_outcome))
+}
+
+/// Resolve the absolute path of the currently running Aegis binary, falling
+/// back to a bare `aegis` PATH lookup if the executable path is unavailable.
+fn resolved_aegis_bin() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| path.to_str().map(str::to_owned))
+        .unwrap_or_else(|| "aegis".to_string())
+}
+
+/// Materialize the Codex PreToolUse hook with `__AEGIS_BIN__` replaced by an
+/// absolute, shell-quoted path to the Aegis binary. This keeps the hook working
+/// when Codex runs it with a minimal PATH; an explicit `AEGIS_BIN` in the
+/// environment still overrides the templated default.
+fn render_pre_tool_use_hook() -> String {
+    CODEX_PRE_TOOL_USE_HOOK_SH.replace("__AEGIS_BIN__", &shell_quote(&resolved_aegis_bin()))
 }
 
 fn write_executable(path: &Path, content: &str) -> Result<InstallOutcome, String> {
@@ -448,6 +467,25 @@ mod tests {
 
         assert!(matches!(outcome, InstallOutcome::Skipped));
         assert!(!codex_dir.join("hooks.json").exists());
+    }
+
+    #[test]
+    fn render_pre_tool_use_hook_substitutes_absolute_binary_path() {
+        let rendered = render_pre_tool_use_hook();
+
+        assert!(
+            !rendered.contains("__AEGIS_BIN__"),
+            "placeholder must be substituted at install time"
+        );
+        let expected = format!("AEGIS_BIN={}", shell_quote(&resolved_aegis_bin()));
+        assert!(
+            rendered.contains(&expected),
+            "rendered hook must assign the shell-quoted absolute aegis path, got:\n{rendered}"
+        );
+        // The transparent-rewrite hook must not reintroduce jq/python3 parsing.
+        assert!(!rendered.contains("python3 -"));
+        assert!(!rendered.contains("jq -"));
+        assert!(rendered.contains("exec \"${AEGIS_BIN}\" hook"));
     }
 
     #[test]

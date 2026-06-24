@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use super::shell_quote;
+
 const BEGIN_MARKER: &str = "# >>> aegis shell setup >>>";
 const END_MARKER: &str = "# <<< aegis shell setup <<<";
 
@@ -47,7 +49,7 @@ fn run_setup_shell_inner(args: &crate::SetupShellArgs) -> Result<String, String>
         );
     }
 
-    validate_shell_path(&real_shell)?;
+    validate_real_shell_path(&real_shell)?;
 
     let rc_file = resolve_rc_file(&home, &real_shell, args.rc_file.as_deref())?;
 
@@ -60,12 +62,14 @@ fn run_setup_shell_inner(args: &crate::SetupShellArgs) -> Result<String, String>
         ));
     }
 
-    // `aegis_bin` is interpolated raw into `export SHELL="..."` in the managed
-    // block, so it must pass the same strict path validation as the real shell.
-    // Without this, `--aegis-bin '/tmp/aegis"; export EVIL=1; #'` would write
-    // command-injection straight into the user's startup file. `--remove` does
-    // not write `aegis_bin`, so it is intentionally not validated there.
-    validate_shell_path(&aegis_bin)?;
+    // `aegis_bin` is interpolated into `export SHELL='...'` in the managed
+    // block. Package-manager installs legitimately produce paths the real shell
+    // would never use — most importantly scoped npm packages such as
+    // `.../node_modules/@iliasalmerekov/aegis/vendor/aegis`, whose `@` the old
+    // shared validator rejected (the root cause of the reported
+    // `error: real shell path contains unsafe characters`). `--remove` does not
+    // write `aegis_bin`, so it is intentionally not validated there.
+    validate_aegis_binary_path(&aegis_bin)?;
 
     install_shell_setup_file(&rc_file, &real_shell, &aegis_bin)?;
     Ok(format!(
@@ -107,9 +111,9 @@ fn detect_real_shell(aegis_bin: &Path) -> Result<PathBuf, String> {
 
 fn managed_block(real_shell: &Path, aegis_bin: &Path) -> String {
     format!(
-        "{BEGIN_MARKER}\nexport AEGIS_REAL_SHELL=\"{}\"\nexport SHELL=\"{}\"\n{END_MARKER}\n",
-        real_shell.display(),
-        aegis_bin.display()
+        "{BEGIN_MARKER}\nexport AEGIS_REAL_SHELL={}\nexport SHELL={}\n{END_MARKER}\n",
+        shell_quote(&real_shell.to_string_lossy()),
+        shell_quote(&aegis_bin.to_string_lossy())
     )
 }
 
@@ -135,18 +139,30 @@ fn remove_managed_block(input: &str) -> String {
     output
 }
 
-fn validate_shell_path(path: &Path) -> Result<(), String> {
+/// Reject path content that cannot be safely written into a generated shell rc
+/// file. Empty paths are nonsensical, and ASCII/Unicode control characters
+/// (newline, carriage return, NUL, …) would break the single line the managed
+/// block emits — a newline in particular could smuggle a second statement past
+/// the single-quote escaping. Everything else is made injection-safe by
+/// `shell_quote`, so legitimate package-manager paths (spaces, `@` for scoped
+/// npm packages, `+`, …) are accepted rather than rejected.
+fn validate_path_chars(path: &Path, label: &str) -> Result<(), String> {
     let value = path.to_string_lossy();
     if value.is_empty() {
-        return Err("real shell path cannot be empty".to_string());
+        return Err(format!("{label} cannot be empty"));
     }
-    if value
-        .chars()
-        .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '/' | '+' | '-')))
-    {
-        return Err("real shell path contains unsafe characters".to_string());
+    if value.chars().any(char::is_control) {
+        return Err(format!("{label} contains unsafe control characters"));
     }
     Ok(())
+}
+
+fn validate_real_shell_path(path: &Path) -> Result<(), String> {
+    validate_path_chars(path, "real shell path")
+}
+
+fn validate_aegis_binary_path(path: &Path) -> Result<(), String> {
+    validate_path_chars(path, "aegis binary path")
 }
 
 fn resolve_rc_file(
@@ -241,13 +257,39 @@ mod tests {
 
         assert_eq!(
             block,
-            "# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL=\"/bin/zsh\"\nexport SHELL=\"/usr/local/bin/aegis\"\n# <<< aegis shell setup <<<\n"
+            "# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL='/bin/zsh'\nexport SHELL='/usr/local/bin/aegis'\n# <<< aegis shell setup <<<\n"
         );
+    }
+
+    // A scoped npm install path contains `@` and would have been rejected by
+    // the old strict allowlist. Single-quote escaping makes it safe, and the
+    // managed block must round-trip it verbatim inside single quotes.
+    #[test]
+    fn managed_block_single_quotes_scoped_npm_aegis_binary_path() {
+        let scoped = "/home/u/.npm/node_modules/@iliasalmerekov/aegis/vendor/aegis";
+        let block = managed_block(Path::new("/bin/zsh"), Path::new(scoped));
+
+        assert!(block.contains(&format!("export SHELL='{scoped}'")));
+    }
+
+    // A quote-sensitive payload must be made inert by single-quote escaping
+    // rather than executed. The embedded double quote, semicolon, and `#` all
+    // live inside single quotes, so the value is a literal path assignment.
+    #[test]
+    fn shell_quote_neutralizes_injection_payload() {
+        let quoted = shell_quote("/tmp/aegis\"; export EVIL=1; #");
+
+        assert_eq!(quoted, "'/tmp/aegis\"; export EVIL=1; #'");
+    }
+
+    #[test]
+    fn shell_quote_escapes_embedded_single_quotes() {
+        assert_eq!(shell_quote("foo'bar"), "'foo'\\''bar'");
     }
 
     #[test]
     fn remove_managed_block_keeps_user_content() {
-        let input = "export PATH=\"$HOME/bin:$PATH\"\n# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL=\"/bin/zsh\"\nexport SHELL=\"/usr/local/bin/aegis\"\n# <<< aegis shell setup <<<\nalias ll='ls -la'\n";
+        let input = "export PATH=\"$HOME/bin:$PATH\"\n# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL='/bin/zsh'\nexport SHELL='/usr/local/bin/aegis'\n# <<< aegis shell setup <<<\nalias ll='ls -la'\n";
 
         let cleaned = remove_managed_block(input);
 
@@ -259,7 +301,7 @@ mod tests {
 
     #[test]
     fn install_managed_block_is_idempotent() {
-        let original = "export PATH=\"$HOME/bin:$PATH\"\n# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL=\"/bin/bash\"\nexport SHELL=\"/old/aegis\"\n# <<< aegis shell setup <<<\n";
+        let original = "export PATH=\"$HOME/bin:$PATH\"\n# >>> aegis shell setup >>>\nexport AEGIS_REAL_SHELL='/bin/bash'\nexport SHELL='/old/aegis'\n# <<< aegis shell setup <<<\n";
         let cleaned = remove_managed_block(original);
         let updated = format!(
             "{}{}",
@@ -268,26 +310,36 @@ mod tests {
         );
 
         assert_eq!(updated.matches(BEGIN_MARKER).count(), 1);
-        assert!(updated.contains("export AEGIS_REAL_SHELL=\"/bin/zsh\""));
-        assert!(updated.contains("export SHELL=\"/usr/local/bin/aegis\""));
+        assert!(updated.contains("export AEGIS_REAL_SHELL='/bin/zsh'"));
+        assert!(updated.contains("export SHELL='/usr/local/bin/aegis'"));
         assert!(!updated.contains("/old/aegis"));
     }
 
     #[test]
-    fn validate_shell_path_rejects_newline_injection() {
-        let err = validate_shell_path(Path::new("/bin/zsh\nexport EVIL=1")).unwrap_err();
+    fn validate_real_shell_path_rejects_newline_injection() {
+        let err = validate_real_shell_path(Path::new("/bin/zsh\nexport EVIL=1")).unwrap_err();
 
-        assert!(err.contains("unsafe characters"));
+        assert!(err.contains("control characters"));
+        assert!(err.contains("real shell path"));
     }
 
-    // The same validator must guard --aegis-bin, which is interpolated raw into
-    // `export SHELL="..."`. Quotes, semicolons, spaces, and `#` would otherwise
-    // allow command injection in the generated rc file.
+    // A scoped npm binary path (`@`) is legitimate and must be accepted; the
+    // old shared validator rejected it, which was the reported root cause.
     #[test]
-    fn validate_shell_path_rejects_quote_semicolon_injection_payload() {
-        let err = validate_shell_path(Path::new("/tmp/aegis\"; export EVIL=1; #")).unwrap_err();
+    fn validate_aegis_binary_path_accepts_scoped_npm_path() {
+        let scoped = Path::new("/home/u/.npm/node_modules/@iliasalmerekov/aegis/vendor/aegis");
 
-        assert!(err.contains("unsafe characters"));
+        assert!(validate_aegis_binary_path(scoped).is_ok());
+    }
+
+    // When the aegis binary path is the offending one, the error must name the
+    // aegis binary path, not the real shell path.
+    #[test]
+    fn validate_aegis_binary_path_names_aegis_binary_on_control_char() {
+        let err = validate_aegis_binary_path(Path::new("/tmp/aegis\nexport EVIL=1")).unwrap_err();
+
+        assert!(err.contains("aegis binary path"));
+        assert!(!err.contains("real shell path"));
     }
 
     #[test]

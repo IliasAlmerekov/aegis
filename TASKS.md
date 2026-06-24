@@ -1,296 +1,316 @@
-# TASKS — Path to Aegis 1.0
+# TASKS — Reviewer Security Findings Blocking Aegis 1.0
 
-Work breakdown derived from `PRD.md` (1.0 approved spec, 2026-06-15) cross-checked
-against the current implementation (`v0.5.6`) and `ROADMAP.md`.
+> Source: ultra-deep security audit report from reviewer, dated 2026-06-23.
+> Branch: `feat/shell-security` · version path: `0.5.8` → `1.0.0`.
+>
+> Method summary: 7 parallel adversarial agents across critical surfaces plus
+> independent verification of key findings against real `assess()`, policy engine,
+> and git state.
 
-**Scope of this document:** only the work that remains to satisfy the PRD. Phases
-0–4 of `ROADMAP.md` (foundation, scanner, persistence, module architecture,
-multi-crate workspace) and most of Phase 5–6 are already shipped and are **not**
-re-listed here except where the PRD adds new requirements.
+## Release verdict
 
-**Process:** every task runs through `/implement` (red → green → review, max 3
-iterations). All shell commands are prefixed with `rtk`. Any change to
-`scanner`/`parser` is benchmarked with `rtk cargo criterion`. Run
-`/verification-loop` before each PR. Conventional commits, no `Co-Authored-By`.
+**Do not ship to production.** The core product promise — "a dangerous command
+will not execute without confirmation" — is currently bypassable in at least five
+trivial ways that require no preparation. Several bypasses were reproduced against
+the real scanner.
 
-**Legend:** `[ ]` open · `[~]` partial/needs verification · `[x]` done
-
----
-
-## Already shipped (context only — do not redo)
-
-- [x] Phase 0 — Foundation Repair (async correctness, audit hard-errors, dead code, config hardening, MSRV 1.80)
-- [x] Phase 1 — Scanner modernization (tokenizer, `MultiMap<program, PrefixRule>`, `Alts`, `justification`, examples)
-- [x] Phase 2 — Decision persistence (`[[allow]]` / `[[block]]`, dedup, legacy `allowlist` migration)
-- [x] Phase 3 — Module architecture (≤800 LoC split, typed `AuditEntry`, JSON schema)
-- [x] Phase 4 — Multi-crate workspace (11 crates, DAG enforced by `tests/architecture_boundaries.rs`)
-- [x] §5.2 Typed TOML DSL — `[[rules]]` with `Alts`, `when` (`WhenClause`), `justification`, examples; wired via `evaluate_policy_rules`; load-time validation
-- [x] §5.2 Starlark DSL (`policy.star`, `prefix_rule`, `on_command`) — opt-in, compiled at startup
-- [x] §5.5/§6 Sandbox — bubblewrap + Landlock (Linux), Seatbelt (macOS); `[sandbox]` config
-- [x] §5.5 Sandbox bypass is an audit event (`sandbox_status`, `WARN`, `required = true` hard block) — v0.5.6
+The architectural core is still sound: intrinsic `Block` is unbreakable and policy
+precedence is strong. The blockers are coverage and normalization gaps, not a
+fundamental design failure. They are fixable with targeted work.
 
 ---
 
-## Milestone M1 — Snapshot lifecycle & rollback UX (PRD §5.4)
+## Important local-machine context
 
-Closes the open PRD decisions on snapshot management. No `Snapshot` subcommand
-group exists today (`main.rs` only has `Rollback`); these tasks introduce it.
-
-- [x] **M1.1 — `aegis snapshot list`**
-  Enumerate recorded snapshots with `snapshot_id`, provider name, and recorded
-  time. Resolves the opaque `cwd+hash` id discoverability gap.
-  - Added a `Snapshot` subcommand group with `list` (`prune` follows in M1.2).
-  - Source of truth is the **audit log** — the same one `aegis rollback` resolves
-    against (`src/rollback.rs`). No `SnapshotPlugin` trait change was needed. Pure
-    `format_snapshot_listing` in `src/cli_commands.rs` (mirrors `format_audit_entries`);
-    deduped by `snapshot_id` keeping the **latest** occurrence so the row matches
-    the entry rollback would target, newest-recorded first.
-  - The log is append-only, so a listed id is *recorded*, not a recoverability
-    guarantee (the backing stash/image/dump may be gone or pruned). Output is
-    labelled "Recorded snapshots" accordingly; live existence checks would need
-    per-provider listing (deferred — overlaps with M1.2 prune).
-  - _Done when (met):_ `aegis snapshot list` prints every recorded snapshot
-    (provider + recorded time + id, tab-bearing git ids preserved verbatim) and
-    exits 0 with a friendly message on an empty log. Covered by unit tests in
-    `cli_commands.rs` and integration tests in `tests/snapshot_list.rs`.
-
-- [x] **M1.2 — Retention policy + `aegis snapshot prune`**
-  - Added `[prune]` config with `enabled`, `max_count_per_provider`, and
-    `max_age_days`; wired into `AegisConfig` defaults, merge, and schema.
-  - Implemented `SnapshotPlugin::delete` for all six providers (git stashes,
-    Docker images, SQLite/PostgreSQL/MySQL/Supabase dumps), treating missing
-    artifacts as idempotent successes and backend failures as
-    `SnapshotError::DeleteFailed`.
-  - Implemented `aegis snapshot prune --yes`/`--dry-run`, retention policy via
-    `RetentionPolicy`/`PrunableRecord`/`Clock`, and append-only `Decision::Pruned`
-    audit entries.
-  - Pruned ids are hidden from `aegis snapshot list`; `aegis rollback` rejects
-    pruned ids before calling a provider.
-  - Delete failures are surfaced as `AegisError::PrunePartialFailure` (non-zero
-    exit) instead of being swallowed.
-  - _Done when (met):_ prune respects the configured bound and preserves ids
-    that pass either the per-provider count rule or the global age rule;
-    regression tests cover idempotent delete, retention edge cases, CLI dry-run,
-    rollback rejection of pruned ids, and delete-failure exit behavior.
-
-- [x] **M1.3 — Snapshot ordering & trigger scope**
-  Codified "snapshot is taken **only on `Allow`/`AutoApproved`**, **before** the
-  (optionally sandboxed) execution, never for `Block` or `Denied`."
-  - Verified the current flow in `shell_flow.rs` / `watch/runner.rs` matches the
-    invariant and added explicit comments documenting the ordering.
-  - Added `test_shell_approved_danger_command_child_observes_snapshot_before_exec`
-    proving the shell wrapper creates a snapshot before the child runs.
-  - Added `test_sandboxed_approved_danger_command_records_snapshots_before_exec`
-    (Unix-only, gated by backend availability) proving a sandboxed `Danger`
-    command records a snapshot and `sandbox_status = active` before execution.
-  - Existing tests already cover `Denied`/`Blocked` recording no snapshots.
-  - _Done when (met):_ integration tests prove a snapshot exists before a
-    sandboxed `Danger` command runs, and no snapshot is taken for a `Block`ed
-    command.
+1. **Aegis is currently disabled on this machine.** `~/.aegis/disabled` exists
+   (`aegis off`). In this mode every command executes directly without scanning.
+   During review, one test agent really executed destructive
+   `git reset --hard HEAD~5` commands. The repository survived: the agent restored
+   it to `84879eb`, the tree was clean, and no commits were lost. Commit
+   `1ea55c8` (`chore: replace aegis gif`) above that is an operator commit by
+   Ilias Almerekov, not damage.
+2. **Rejected false alarm:** `export CI=1` does **not** auto-approve dangerous
+   commands. Code review and re-checking show the default `ci_policy = Block`
+   makes Aegis stricter (`Danger` → `Block`, exit 3). Do not track this as a
+   vulnerability.
 
 ---
 
-## Milestone M2 — Audit log concurrency (PRD §5.6) — ✅ done
+## P0 — Critical release blockers
 
-- [x] **M2.1 — Advisory file lock (`flock`) on append**
-  Serialize audit appends so parallel Aegis processes (multiple agent sessions)
-  cannot interleave entries and break the SHA-256 hash chain.
-  - The lock itself was already implemented: `AuditLock::exclusive` in
-    `crates/aegis-audit/src/logger/writer.rs` wraps `std::fs::File::lock()`
-    (stable since Rust 1.89) around the whole append critical section
-    (read prev-hash → compute hash → write → flush), held for a single append
-    only and released on `Drop`. Reads use a separate `acquire_shared_lock`, so
-    the safe hot path never locks. Write/lock failures stay hard errors.
-  - _Done when (met):_ `tests/audit_concurrency.rs` now asserts that after
-    concurrent threads **and** parallel processes append, the log passes
-    `aegis audit --verify-integrity` (exit 0 / `Verified`) — proving the
-    SHA-256 chain stays intact with no interleaved/torn lines.
+### [x] C1 — Uppercase bypasses all regex patterns
 
----
+- **Risk:** Critical.
+- **Status:** confirmed on real `assess()`.
+- **Evidence:** `RM -RF /` → `Safe` while lowercase `rm -rf /` → `Block`.
+  Similar uppercase variants of `DD if=/dev/zero of=/dev/sda`,
+  `MKFS.ext4 /dev/sda`, `SHRED`, `FIND / -delete`, `CHMOD 777 ...` also return
+  `Safe`.
+- **Root cause:** `scanner/mod.rs:141-144` builds Aho-Corasick with
+  `ascii_case_insensitive(true)`, so the fast pass hits. Regexes from
+  `patterns.toml` are compiled without `(?i)` / case-insensitive mode
+  (`scanner/mod.rs:91`), so the verification pass silently misses and falls
+  through to `Safe`.
+- **Fix:** compile all built-in regexes with `RegexBuilder::case_insensitive(true)`
+  or add `(?i)` consistently. Add regression tests for uppercase variants of each
+  `Danger` / `Block` pattern.
+- **Resolution:** built-in regex patterns are compiled case-insensitively, with regression tests for uppercase destructive commands and custom-pattern case sensitivity.
 
-## Milestone M3 — Distribution channels (PRD §7, DoD §10)
+### [ ] C2 — `$IFS` obfuscation bypasses most patterns
 
-The largest remaining gap. Today only `ci.yml` + `release.yml` exist; no
-installer, Homebrew formula, or npm wrapper is present.
+- **Risk:** Critical.
+- **Status:** confirmed.
+- **Evidence:** `rm$IFS-rf$IFS/` → `Safe`; `rm${IFS}-rf${IFS}/` → `Safe`;
+  `dd${IFS}of=/dev/sda` → `Safe`. In a real shell, `$IFS` is whitespace, so these
+  execute as destructive commands. The bypass composes through `bash -c`, heredoc,
+  and process substitution.
+- **Root cause:** `tokenizer.rs` keeps `rm$IFS-rf$IFS/` as a single token; the
+  normalized command has no spaces, so regexes do not match. `$IFS` is a
+  deterministic shell word-splitting primitive, not an unknown variable.
+- **Fix:** treat literal `$IFS` and `${IFS}` as separators in tokenization or
+  normalization. This is cheap and does not require full variable expansion.
 
-- [x] **M3.1 — `curl | sh` convenience installer**
-  Global-first install script that downloads the platform binary and **verifies
-  the `.sha256` checksum before writing** the binary.
-  - Live-network integration test added in `tests/installer_flow.rs`, gated by
-    `AEGIS_TEST_LIVE_INSTALL=1`. It downloads the latest GitHub Release asset for
-    the host platform, verifies the SHA-256 sidecar, installs into a temporary
-    `BINDIR`, and asserts `aegis --version` succeeds.
-  - Dedicated CI job `live-installer` runs the test on `ubuntu-latest` and
-    `macos-latest`.
-  - `docs/release-readiness.md` and `docs/ci.md` mention the live installer
-    validation.
-  - _Done when (met):_ documented in README; tested end-to-end against a real release
-    artifact; checksum mismatch aborts the install.
+### [ ] C3 — Project-local `.aegis.toml` can weaken Aegis to audit-only
 
-- [x] **M3.2 — Static musl release targets**
-  PRD §6 requires a statically portable binary (no C build step). `release.yml`
-  previously built `x86_64-unknown-linux-gnu` (native) and
-  `aarch64-unknown-linux-gnu` (cross).
-  - Switched Linux release targets to `x86_64-unknown-linux-musl` and
-    `aarch64-unknown-linux-musl`; both Linux targets now build through `cross`
-    (`use_cross: true`) for a uniform matrix that avoids runner-specific musl
-    linker setup.
-  - Added a `Verify static Linux binary` step (gated on
-    `contains(matrix.target, 'unknown-linux-musl')`) between `Rename binary` and
-    `Generate SHA256 checksum`; it runs `file` + `readelf` and fails the job
-    (`exit 1`) if the artifact has a dynamic interpreter (`PT_INTERP`) or shared
-    library dependencies (`DT_NEEDED`), so static linkage is enforced before
-    checksum generation and upload.
-  - Installer-facing asset names (`aegis-linux-x86_64`, `aegis-linux-aarch64`)
-    and macOS targets are unchanged; `.sha256` sidecars still generated for every
-    artifact.
-  - Regression contract in `tests/release_workflow.rs` (4 cases) asserts the musl
-    matrix, absence of GNU targets, stable asset names, and the static-verification
-    step — fails on the old GNU workflow, passes on the new one.
-  - _Done when:_ release artifacts are static; `aarch64-unknown-linux-musl` cross
-    job is green in CI (DoD §10). Local gates (`fmt --check`, `clippy -D warnings`,
-    `cargo test`) pass; authoritative cross-build verification runs in the release
-    workflow job (local `cross`/musl tooling may be unavailable — recorded as an
-    environment limitation, not worked around with added deps).
+- **Risk:** Critical.
+- **Status:** confirmed via live `config show` / `config validate` and merge code
+  review (`model.rs:353`, `overlay.mode.unwrap_or(base.mode)`).
+- **Attack config:** a repository entered by an AI agent can include:
 
-- [x] **M3.3 — Homebrew formula/tap**
-  - _Done when (accepted):_ formula published to the tap and smoke-tested on
-    Linux x64 with clean retap, `brew audit`, `brew install`, `brew test`, and
-    direct `aegis --version` evidence for v0.5.6. macOS smoke is an operator
-    follow-up; the macOS asset path is covered by the same published formula and
-    release checksum contract. See `docs/release-readiness.md` → "Homebrew tap
-    validation".
+  ```toml
+  mode = "Audit"
+  allowlist_override_level = "Danger"
+  snapshot_policy = "None"
+  ```
 
-- [x] **M3.4 — npm wrapper package**
-  Wrapper that downloads/installs the correct platform binary for the `npm i -g`
-  audience.
-  - _Done when (accepted):_ `@iliasalmerekov/aegis@0.5.6` is published to the
-    npm registry and `npm install -g --prefix /tmp/aegis-npm-registry
-    @iliasalmerekov/aegis` installs the Linux x64 binary; direct
-    `/tmp/aegis-npm-registry/bin/aegis --version` prints `aegis 0.5.6`. macOS
-    smoke is an operator follow-up; the package metadata and checksum contract
-    include macOS arm64/x64 assets. See `docs/release-readiness.md` → "npm
-    wrapper validation".
+  Result: `engine.rs:45` auto-approves all non-intrinsic-`Block` `Warn`/`Danger`
+  commands without prompt and without snapshot. `config validate` reports the
+  config as valid with no warning.
 
-- [x] **M3.5 — GitHub Releases with `.sha256` sidecars**
-  Already partially present in `release.yml`.
-  - _Done when (met):_ real tag `v0.5.6` produced prebuilt binaries for all
-    supported targets, each with a `.sha256` sidecar. Verified by
-    `tests/release_assets_live.rs`; evidence recorded in
-    `docs/release-readiness.md`.
+- **Root cause:** layered config merge is pure "last layer wins" for
+  security-critical scalar fields; the project layer is applied last.
+- **Fix:** add a restrictive ratchet. Project config may only tighten:
+  - `mode` only toward `Strict`
+  - `allowlist_override_level`, `ci_policy`, `snapshot_policy`, and
+    `sandbox.required` use most-restrictive global/project semantics
+  - minimum fallback: loud `config validate` warning for weakening attempts
+- **Positive note:** intrinsic `Block` remains unbreakable even under this config.
 
 ---
 
-## Milestone M4 — Platform scope reconciliation (PRD §8, §11)
+## P1 — High severity
 
-The PRD drops **native Windows** (WSL2-only); `ROADMAP.md` Phase 0.5 / 6.3 still
-reference native Windows CI and Job Objects. Align the repo with the PRD.
+### [ ] H1 — Single `&` command segmentation gap
 
-- [x] **M4.1 — Remove native-Windows scope**
-  - Removed the native `windows-latest` CI job from the 1.0 matrix.
-  - Removed native Windows Job Object sandbox dispatch/code from
-    `aegis-sandbox`; native Windows now routes to unsupported sandbox behavior,
-    while WSL2 continues to use the Linux implementation.
-  - Native Windows shell execution fails explicitly with WSL2 guidance instead
-    of falling through to `PowerShell`/`cmd.exe` semantics.
-  - Docs and regression tests keep WSL2-as-Linux separate from native Windows.
-  - _Done when (met):_ CI matrix matches PRD §8 (Linux x86_64/aarch64, macOS
-    arm64/x86_64; Windows covered transitively via WSL2/Linux); no doc claims
-    native PowerShell/cmd support.
+- **Problem:** command segmentation handles major operators but review found a
+  gap around single `&` background separators.
+- **Status:** reviewer finding.
+- **File:** `segmentation.rs:156-165`.
+- **Fix:** segment on standalone `&` consistently with other shell control
+  operators and add regression tests.
 
----
+### [ ] H2 — SQL inside `psql -c` / `mysql -e` is not scanned
 
-## Milestone M5 — Code-quality & NFR gates (PRD §6)
+- **Problem:** `psql -c 'DROP TABLE users'` → `Safe` while bare
+  `DROP TABLE users` → `Danger`.
+- **Status:** confirmed by reviewer.
+- **File:** `nested_shells.rs:39-45`.
+- **Fix:** recursively scan SQL passed to `psql -c` / `mysql -e`, or remove overly
+  strict prefix anchoring from destructive SQL rules so embedded `DROP` is caught.
 
-- [x] **M5.1 — Enforce the 800-LoC file-size budget across the workspace**
-  The original wording targeted only `aegis-sandbox/src/lib.rs` (2071 LoC); that
-  sandbox split was already completed into `linux.rs` / `macos.rs` / `windows.rs`
-  / `support.rs` / `unsupported.rs` under 800 LoC. The remaining `Done when`
-  contract is broader — "no file in the workspace exceeds 800 LoC; tests still
-  pass" — so this task closed the rest of the budget with mechanical, no-behavior
-  extractions: split `crates/aegis-config/src/model.rs` into `model/{template,
-  partial,serde_helpers,migration,tests}`; split `crates/aegis-snapshot/src/
-  lib.rs` into `{registry,retention,clock,testing,paths}`; split `crates/
-  aegis-snapshot/src/supabase/runtime.rs` into `runtime/{mod,manifest_io,
-  manifest_state,rollback,tests}` preserving atomic manifest writes, rollback
-  eligibility, snapshot-ID encoding, and test-only write-failure injection; and
-  split the `tests/full_pipeline.rs` and `tests/installer_flow.rs` integration
-  suites into focused files under `tests/support/`.
-  - A regression test `tests/file_size_budget.rs` now enforces the 800-LoC budget
-    so M5.1 cannot silently regress.
-  - _Done when:_ no file in the workspace exceeds 800 LoC; tests still pass. ✅
+### [ ] H3 — Pattern database has dangerous gaps
 
-- [x] **M5.2 — Fuzz corpus ≥ 100 000 iterations per target in CI**
-  Targets: `parser::parse`, `scanner::assess`, heredoc unwrapping (PRD §6, DoD).
-  - Added committed corpora for parser, scanner, and heredoc fuzz targets under
-    `fuzz/corpus/`.
-  - CI runs `parser`, `scanner`, and `heredoc` with `-runs=100000` and
-    `-max_len=65536` in the `fuzz` job.
-  - `tests/fuzz_ci.rs` prevents regressions in target declarations, corpus
-    presence, and CI iteration counts.
-  - _Done when (met):_ CI runs each fuzz target at ≥ 100k iterations; corpus
-    committed.
+- **Problem:** the following currently classify as `Safe`: `wipefs -a /dev/sda`,
+  `aws s3 rb --force`, `aws s3 sync --delete`, `gsutil rm -r`, appending keys to
+  `~/.ssh/authorized_keys`, truncating shell rc files such as `> ~/.bashrc`, and
+  `unlink`.
+- **Status:** agent-confirmed.
+- **Files:** `patterns.toml`, `builtins_a.rs`.
+- **Fix:** extend built-in patterns and run through the eval harness.
 
-- [x] **M5.3 — Snapshot/rollback integration tests in CI**
-  Run against **real** Docker / SQLite daemons (DoD §10).
-  - Added a dedicated `snapshot-rollback-live` CI job on `ubuntu-latest`.
-  - Docker coverage runs the existing real-daemon lifecycle test
-    `tests/docker_integration.rs::snapshot_rollback_reverts_filesystem_change`
-    with `AEGIS_DOCKER_TESTS=1` after pulling `alpine`.
-  - SQLite coverage runs
-    `tests/snapshot_rollback_live.rs::sqlite_snapshot_rollback_restores_database_file_through_aegis_cli`
-    with `AEGIS_SQLITE_SNAPSHOT_TESTS=1` after installing the real `sqlite3`
-    CLI. The test exercises the Aegis CLI end-to-end: snapshot before command
-    execution, SQLite mutation, rollback by audit snapshot id, and rollback
-    audit logging.
-  - `tests/snapshot_rollback_ci.rs` prevents the CI job, env gates, or targeted
-    commands from silently regressing.
-  - _Done when (met):_ CI job exercises snapshot+rollback against live Docker/SQLite.
+### [ ] H4 — `claude-code.sh` hook fails open
 
-- [x] **M5.4 — Supply-chain gates green**
-  `rtk cargo audit` and `rtk cargo deny check` both exit 0 with no errors and no
-  warnings in CI (default-feature build).
-  - Evidence recorded 2026-06-23: `cargo audit` exits 0 (4 unmaintained warnings
-    in the full Cargo.lock, all via the optional `starlark-policy` feature —
-    outside the default build); `cargo deny check` exits 0, fully warning-clean.
-  - CI updated to run `cargo deny check` (full check including advisories).
-  - `aegis-starlark` is opt-in behind `--features starlark-policy`; default
-    build is advisory-clean. If `~/.aegis/policy.star` exists in a default build,
-    `RuntimeContext::new` returns an error (fail-closed).
+- **Problem:** when `jq` or `aegis` is missing, or JSON is invalid, the Claude hook
+  exits 0, allowing the command to pass without scanning. The Codex hook already
+  denies in these cases. This violates ADR-007.
+- **Status:** confirmed by reviewer.
+- **File:** `scripts/hooks/claude-code.sh:64-77`.
+- **Fix:** emit a deny result on missing dependencies / invalid JSON, matching the
+  Codex hook behavior.
+
+### [ ] H5 — Audit hash chain is not true tamper-evidence
+
+- **Problem:** the audit hash chain is not keyed and has no external anchor. Anyone
+  who can write `audit.jsonl` can rewrite entries and recompute a valid chain;
+  truncation from the end and complete reset are not detected. Public
+  "tamper-evident" wording is misleading: this is an integrity/corruption check,
+  not adversarial tamper-evidence.
+- **Status:** agent-confirmed via tests.
+- **File:** `logger/integrity.rs:90-133`.
+- **Fix:** add HMAC/external anchoring, or change public wording to
+  "integrity/corruption check".
+
+### [ ] H6 — Snapshot store lacks containment checks
+
+- **Problem:** `validate_snapshot_path` checks absolute paths and rejects `..`, but
+  does not prove the path is contained inside `~/.aegis/snapshots`. This creates an
+  arbitrary overwrite/delete primitive. Today it is partially mitigated because
+  `snapshot_id` comes from the audit log, not directly from CLI input.
+- **Status:** agent-confirmed.
+- **Files:** `sqlite.rs:99-115`, `postgres/mod.rs:249`.
+- **Fix:** add containment validation, using `supabase/runtime/rollback.rs` as a
+  reference pattern.
+
+### [ ] H7 — Database dumps, snapshots, and audit files are too permissive
+
+- **Problem:** DB dumps and snapshot directories are created world-readable
+  (`0644` / `0755`) without explicit mode; audit log is similar and follows
+  symlinks. Dumps can contain full database contents and credentials.
+- **Status:** agent-confirmed.
+- **Files:** `postgres/mod.rs:91-110`, `audit/writer.rs:236`.
+- **Fix:** directories `0700`, files `0600`, and avoid symlink following for audit
+  writes (for example `O_NOFOLLOW` where available).
 
 ---
 
-## Milestone M6 — Release Readiness 1.0 (PRD §10 Definition of Done)
+## P2 — Medium severity
 
-Final checklist; many items depend on M1–M5.
+### [ ] M1 — Sandbox degradation is too quiet
 
-- [x] README and docs accurately describe all features through Phase 6.
-- [x] Threat model and known limitations visible **on the README** (link to
-      `docs/threat-model.md`).
-- [ ] `curl | sh` installer documented and tested (← M3.1).
-- [ ] Homebrew formula/tap published and tested (← M3.3).
-- [ ] npm wrapper published and installs the correct platform binary (← M3.4).
-- [ ] Release workflow exercised on a real tag; artifacts include `.sha256`
-      sidecars (← M3.5).
-- [ ] CI includes ARM cross-compilation (`aarch64-unknown-linux-musl`) (← M3.2).
-- [ ] Sandbox tested on `ubuntu-latest` and `macos-latest`; a command writing
-      outside allowed paths is killed; audit records profile/status per execution.
-- [ ] Snapshot/rollback integration tests run in CI against real Docker/SQLite
-      (← M5.3).
-- [x] Fuzz corpus in CI at ≥ 100 000 iterations per target (← M5.2).
-- [x] `cargo audit` and `cargo deny check` both pass with zero findings (← M5.4).
-- [ ] Hot path < 2 ms (p99) confirmed by `cargo criterion`; no regression.
-- [ ] Zero false negatives on `tests/fixtures/security_bypass_corpus.toml`.
-- [ ] CHANGELOG.md updated for the 1.0 release.
+- **Problem:** when sandboxing is configured but unavailable and `required = false`
+  (default), execution silently degrades to unsandboxed. Warning is only
+  `tracing::warn`; without a subscriber the user may not see it. Profiles also
+  allow broad `file-read*` / `process*`, so this is a write/network guard, not a
+  confidentiality boundary.
+- **Files:** `sandbox/lib.rs`, `linux.rs`, `profiles/*.sbpl`.
+- **Fix:** make `required = true` the default or always print a loud stderr
+  warning; narrow read permissions and document the confidentiality boundary.
+
+### [ ] M2 — User/custom regexes lack size limits
+
+- **Problem:** `Regex::new` without `size_limit` lets project config patterns
+  inflate memory/CPU during compilation on the hot path, creating a DoS vector.
+- **Files:** `scanner/mod.rs:91`, `allowlist/compile.rs`.
+- **Fix:** use `RegexBuilder::size_limit` / `dfa_size_limit` and cap pattern
+  length.
+
+### [ ] M3 — In-band kill-switch and wrapper bypass
+
+- **Problem:** `aegis off` is itself treated as safe and creates
+  `~/.aegis/disabled`, fully bypassing Aegis. Hook `is_already_wrapped` skips any
+  command starting with `aegis`, so an agent can prefix commands to bypass the
+  wrapper.
+- **Files:** `shell_wrapper.rs:37-41`, `install/hook.rs:72`.
+- **Fix:** gate and audit `aegis off`; narrow `is_already_wrapped` to the exact
+  supported `aegis --command ...` form.
+
+### [ ] M4 — Hook panics can fail open
+
+- **Problem:** `run_hook` lacks `catch_unwind`; a panic can produce no deny JSON,
+  and consumers may allow the tool call.
+- **File:** `install/hook.rs`.
+- **Fix:** wrap hook execution in `catch_unwind` and emit deny on panic.
+
+### [ ] M5 — Additional point pattern gaps
+
+- **Problem:** missing or weak coverage for `chmod -R 000 /`, `TRUNCATE users;`
+  without `TABLE`, `docker volume rm`, and `npm publish`.
+- **Fix:** extend rules and add regression tests.
+
+### [ ] M6 — Project config can disable recovery
+
+- **Problem:** same merge issue as C3 lets project config set
+  `snapshot_policy = "None"` and `sandbox.required = false`.
+- **Fix:** covered by C3 restrictive merge ratchet.
+
+### [ ] M7 — Latent structural fail-open around shell audit readiness
+
+- **Problem:** `append_shell_audit` returns `Ok(())` on `SetupFailure`, and
+  `execute_with_snapshots` executes after a "successful" audit. Today this appears
+  unreachable by construction, but the invariant is fragile.
+- **File:** `shell_flow.rs:165-235`.
+- **Fix:** make execution type-safe on an explicit `Ready` state.
 
 ---
 
-## Suggested ordering
+## P3 — Low / informational
 
-1. ~~**M2** (audit flock)~~ — ✅ done; lock was already implemented, done-when now proven by `tests/audit_concurrency.rs`.
-2. **M1** (snapshot lifecycle/UX) — self-contained feature work; **next up**, start with M1.1 (`aegis snapshot list`).
-3. ~~**M5.1** (800-LoC file-size budget)~~ — ✅ done; sandbox split plus config/snapshot/integration-test extractions complete, enforced by `tests/file_size_budget.rs`.
-4. ~~**M4** (platform reconciliation)~~ — ✅ done; native Windows scope removed, WSL2 documented as Linux.
-5. **M3** (distribution) — largest effort; can parallelize formula/npm/installer.
-6. **M5.2–M5.4** (CI gates) — fold into the release-hardening push.
-7. **M6** (DoD sign-off) — final gate before tagging 1.0.
+- [ ] SQLite snapshot TOCTOU: `exists()` + `copy` instead of `create_new`.
+- [ ] Backslash-newline tokenization edge cases.
+- [ ] `stdout_renderer` final `_ => Approve` arm is future fail-open for new risk
+      variants; currently unreachable.
+- [ ] Sandbox status TOCTOU.
+- [ ] `current_dir()` failure can snapshot against `.`.
+- [ ] `cargo audit` reports 4 unmaintained advisories
+      (`atomic-polyfill`, `derivative`, `fxhash`, `paste`) only under opt-in
+      `--features starlark-policy`; not default build and no CVE.
+
+---
+
+## Confirmed strengths
+
+- Intrinsic `Block` is unbreakable: checked first in `engine.rs:22`, before
+  allowlist/rules/mode. Covered by `block_risk_is_never_bypassable` tests.
+- `CI=1` is not a bypass; default `ci_policy = Block` makes behavior stricter.
+- Policy precedence is correct: blocklist > allowlist; allowlist override is gated
+  by risk; allowlist glob `*` maps to `[^;&|]+` and does not cross `;`, `&&`, or
+  `|`.
+- Starlark is constrained: `max_tick_count = 100k`, heap 10MiB, callstack 500;
+  opt-in; path only global `~/.aegis/policy.star`; fail-closed.
+- `unsafe` is limited to documented libc syscalls for Landlock plus
+  edition-mandated `env::set_var` in tests; no transmute/FFI problems found.
+- No command-input panics found; parser uses `Vec<char>` and guarded logic;
+  `$SHELL` proxy is fail-closed on panic.
+- Installer has strict path validation, JSON/TOML serializers, atomic writes; amend
+  escapes TOML.
+- `cargo deny check` is green.
+- Audit-log newline injection is not exploitable because `serde` escapes it.
+
+---
+
+## Fix plan by priority
+
+### Sprint 1 — required before release: core bypass closure
+
+1. [ ] C1 — `RegexBuilder::case_insensitive(true)` for built-in patterns plus
+       uppercase regression tests.
+2. [ ] C2 — normalize `$IFS` / `${IFS}` as separators in tokenizer or
+       normalization plus fixtures.
+3. [ ] C3 / M6 — restrictive merge ratchet for security fields:
+       `mode`, `*_override_level`, `ci_policy`, `snapshot_policy`,
+       `sandbox.required`; warn on weakening in `config validate`.
+4. [ ] H1 — segment on standalone `&`.
+5. [ ] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
+       anchors.
+6. [ ] H4 — make `claude-code.sh` deny on missing `jq` / `aegis` / invalid JSON.
+
+### Sprint 2 — required before release: defense in depth
+
+7. [ ] H3 / M5 — expand pattern database for `wipefs`, S3 delete flows, `gsutil`,
+       `~/.ssh`, shell rc truncation, `unlink`, `chmod 000`, `TRUNCATE`,
+       `docker volume rm`, and `npm publish`; run eval harness.
+8. [ ] H6 / H7 — add snapshot path containment checks; create snapshot directories
+       as `0700`, dumps/logs as `0600`; avoid following audit-log symlinks.
+9. [ ] M1 — default `sandbox.required = true` or unconditional stderr warning on
+       degradation.
+10. [ ] M2 — add regex size limits.
+11. [ ] M4 — add `catch_unwind` in `run_hook` and emit deny.
+
+### Sprint 3 — honesty and resilience
+
+12. [ ] H5 — add HMAC/external anchor for audit chain, or change public wording
+        from "tamper-evident" to "integrity/corruption check".
+13. [ ] M3 — gate/audit `aegis off`; narrow `is_already_wrapped`.
+14. [ ] M7 + P3 — type-safe audit readiness, fail-closed renderer fallback,
+        SQLite `create_new`, and sandbox confidentiality documentation.
+
+---
+
+## Cross-cutting conclusion
+
+Aegis' foundation is correctly designed: unbreakable `Block`, precedence rules,
+and fail-closed behavior around errors, panics, and toggle I/O are strong. The
+current release blocker is scanner input normalization and coverage: case,
+`$IFS`, `&`, and nested SQL false-negatives are unacceptable for a security tool.
+The open 1.0 gate for "zero false-negatives" is factually not met. Sprint 1 must
+block release.

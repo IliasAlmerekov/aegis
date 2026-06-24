@@ -16,6 +16,12 @@ use serde_json::{Map, Value};
 pub(crate) use hook::run_hook;
 pub(crate) use shell::run_setup_shell;
 
+/// POSIX single-quote a value for safe interpolation into generated shell
+/// snippets or wrapper commands.
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Install aegis hooks for the selected agent targets.
 pub(crate) fn run_install(args: &super::InstallArgs) -> i32 {
     let mut exit = 0;

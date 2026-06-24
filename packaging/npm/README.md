@@ -10,11 +10,23 @@ The package downloads the correct Aegis GitHub Release binary for the current
 Linux/macOS x64/arm64 host during `postinstall`, verifies SHA256, and exposes
 the `aegis` command.
 
-NPM installs the binary only. It does not edit `.bashrc`, `.zshrc`, Codex
-configuration, or Claude configuration. After installation, run
-`aegis install-hooks --all` if you want supported agent hooks, or run
-`aegis setup-shell` to opt in to shell-proxy mode for tools that launch commands
-through `$SHELL -c`.
+NPM installs the binary and never edits `.bashrc` or `.zshrc`. As a
+convenience, `postinstall` performs **best-effort** agent-hook setup: if a
+`~/.claude` or `~/.codex` directory already exists, it runs
+`aegis install-hooks --all`. It never creates those directories, and a hook-setup
+failure never fails the npm install. Set `AEGIS_NPM_SKIP_HOOKS=1` to opt out.
+
+If no agent directory exists yet, install one of the agents and then run:
+
+```bash
+aegis install-hooks --all
+```
+
+To opt in to shell-proxy mode for tools that launch commands through `$SHELL -c`:
+
+```bash
+aegis setup-shell
+```
 
 To undo shell-proxy setup later:
 
