@@ -216,9 +216,23 @@ fn install_script_auto_installs_claude_hooks_via_installed_binary() {
         "installer should show Claude hook setup output from the installed binary; stdout=\n{stdout}"
     );
     let claude_settings = fs::read_to_string(home.join(".claude").join("settings.json")).unwrap();
+    // After ADR-012 the Claude hook registration points at an absolute,
+    // PATH-independent shim, not the bare `aegis hook` subcommand.
+    let claude_shim = home
+        .join(".claude")
+        .join("hooks")
+        .join("aegis-pre-tool-use.sh");
     assert!(
-        claude_settings.contains("\"command\": \"aegis hook\""),
-        "Claude settings should point at the aegis hook subcommand; settings.json=\n{claude_settings}"
+        claude_settings.contains(&claude_shim.display().to_string()),
+        "Claude settings should point at the absolute pre-tool-use shim; settings.json=\n{claude_settings}"
+    );
+    assert!(
+        !claude_settings.contains("\"command\": \"aegis hook\""),
+        "Claude settings should not retain the legacy bare `aegis hook` command; settings.json=\n{claude_settings}"
+    );
+    assert!(
+        claude_shim.exists(),
+        "the absolute Claude pre-tool-use shim should be materialized on disk"
     );
     assert!(
         !home.join(".codex").join("hooks.json").exists(),
