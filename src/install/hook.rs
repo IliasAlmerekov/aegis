@@ -104,6 +104,12 @@ fn hook_response_value(input: &str) -> HookOutcome {
 
 fn hook_deny_output(reason: String) -> Value {
     serde_json::json!({
+        // Claude reads the top-level `reason` for the deny message while Codex
+        // reads `hookSpecificOutput.permissionDecisionReason`. Emit both so the
+        // deny reason is visible in either agent. The structured
+        // `permissionDecision` form is intentional — a top-level legacy
+        // `decision` field is deliberately NOT emitted.
+        "reason": reason.clone(),
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
@@ -294,5 +300,29 @@ mod tests {
         assert!(!is_canonical_aegis_wrapper("aegis --command "));
         assert!(!is_canonical_aegis_wrapper("aegis --command 'unterminated"));
         assert!(!is_canonical_aegis_wrapper("aegis --command 'a' extra"));
+    }
+
+    #[test]
+    fn deny_output_includes_top_level_reason_for_claude() {
+        // Claude reads the top-level `reason` for the deny message; Codex reads
+        // `hookSpecificOutput.permissionDecisionReason`. Both must carry the
+        // reason so the deny is explained in either agent.
+        let output = hook_deny_output("nope".to_string());
+
+        assert_eq!(
+            output["reason"], "nope",
+            "top-level reason must mirror the deny reason"
+        );
+        assert_eq!(output["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            output["hookSpecificOutput"]["permissionDecisionReason"],
+            "nope"
+        );
+        // The structured permissionDecision form is intentional; do not also emit
+        // a top-level legacy `decision` field.
+        assert!(
+            output.get("decision").is_none(),
+            "top-level `decision` must not be emitted"
+        );
     }
 }
