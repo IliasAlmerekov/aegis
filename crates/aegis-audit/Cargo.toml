@@ -1,6 +1,6 @@
 [package]
 name = "aegis-audit"
-version = "0.5.8"
+version = "0.5.9"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,10 +10,10 @@ documentation = "https://docs.rs/aegis-audit"
 description = "Append-only JSONL audit log with optional hash-chain integrity for Aegis."
 
 [dependencies]
-aegis-types = { version = "0.5.8", path = "../aegis-types" }
-aegis-scanner = { version = "0.5.8", path = "../aegis-scanner" }
-aegis-config = { version = "0.5.8", path = "../aegis-config" }
-aegis-explanation = { version = "0.5.8", path = "../aegis-explanation" }
+aegis-types = { version = "0.5.9", path = "../aegis-types" }
+aegis-scanner = { version = "0.5.9", path = "../aegis-scanner" }
+aegis-config = { version = "0.5.9", path = "../aegis-config" }
+aegis-explanation = { version = "0.5.9", path = "../aegis-explanation" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
@@ -23,5 +23,5 @@ thiserror = "1"
 
 [dev-dependencies]
 tempfile = "3"
-aegis-policy = { version = "0.5.8", path = "../aegis-policy" }
-aegis-scanner = { version = "0.5.8", path = "../aegis-scanner" }
+aegis-policy = { version = "0.5.9", path = "../aegis-policy" }
+aegis-scanner = { version = "0.5.9", path = "../aegis-scanner" }
