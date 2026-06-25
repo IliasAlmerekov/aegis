@@ -2,7 +2,8 @@
 
 # Aegis — Codex project baseline
 # Codex rules for this repository live in:
-# - .codex/AGENTS.md
+# - .codex/AGENTS.md — loaded via model_instructions_file below
+# - CLAUDE.md (repo root) — shared conventions
 # - .codex/agents/{red-tester,green-tester,reviewer}.toml
 
 approval_policy = "on-request"
@@ -10,6 +11,8 @@ sandbox_mode = "workspace-write"
 web_search = "live"
 
 # Use project-local codex instructions.
+# Path is resolved relative to this config file's directory (.codex/), so the
+# bare filename avoids the doubled .codex/.codex/ lookup path.
 model_instructions_file = "AGENTS.md"
 
 [features]

@@ -1,0 +1,184 @@
+# Aegis
+
+A `$SHELL` proxy that intercepts AI-agent commands and requires human confirmation
+before destructive operations. This file is the **domain glossary** — the ubiquitous
+language for the project. It is the single source of truth that humans, AI agents, and
+the code itself (type names, fields, config keys, audit fields) must all use for the
+same concept. It is maintained by the `domain-modeling` skill and contains no
+implementation details. Keep definitions tight and opinionated.
+
+## Command
+
+**Parsed command**:
+The canonical token-level representation the scanner consumes (`ParsedCommand`). Carries
+`program`, `argv`, the `normalized` form, extracted `inline_scripts`, and the original
+`raw` string. Every scanner stage works on this, never on the raw string.
+_Avoid_: tokenized command, command struct
+
+**Normalized command**:
+The de-quoted, space-joined token sequence (`ParsedCommand.normalized`) — the scanner's
+primary match target, free of shell quoting and escape noise.
+_Avoid_: cleaned command, sanitized command
+
+**Inline script**:
+A script body extracted from an interpreter invocation (`python -c`, `node -e`),
+scanned in its own right so risky code hidden behind an interpreter flag is still caught.
+_Avoid_: embedded script, subcommand
+
+**Indirect execution**:
+Running commands through an interpreter or another layer (inline scripts, piping into a
+shell) rather than invoking the program directly. `Strict` mode blocks it.
+_Avoid_: nested execution, eval
+
+## Scanner
+
+**Assessment**:
+The result of scanning one command — a `RiskLevel` plus the patterns it matched and
+the parsed command.
+_Avoid_: result, verdict, scan output
+
+**RiskLevel**:
+The severity a command is classified as, ordered by escalation: `Safe`, `Warn`,
+`Danger`, `Block`. The order is semantic — never reorder it.
+_Avoid_: severity level, threat level
+
+**Intrinsic Block**:
+A hard-coded, unbypassable `Block` decision checked before allowlist, rules, and mode.
+The product's core guarantee that certain commands never execute.
+_Avoid_: hard block, force block
+
+**Pattern**:
+A regex-based detection rule (built-in or user-defined) matched against the
+normalized command string; matches **anywhere** in the string.
+_Avoid_: rule, signature (reserve "rule" for prefix rules)
+
+**Token-prefix rule**:
+A detection rule keyed on a command's first program token (e.g. `git`, `docker`) and
+matched against the token sequence — distinct from a regex `Pattern`. Git, Database,
+Cloud, Docker, and some Process rules are token-prefix rules.
+_Avoid_: prefix pattern, first-token rule
+
+**Quick scan**:
+The fast first pass — an Aho-Corasick multi-pattern scan with no allocations, on the
+< 2ms hot path. Never uses regex.
+_Avoid_: prefilter, fast match
+
+**Full scan**:
+The verification pass that runs regex `Pattern`s and token-prefix rules after the
+quick scan flags a candidate.
+_Avoid_: deep scan, second pass
+
+**Category**:
+The domain a detection rule belongs to: `Filesystem`, `Git`, `Database`, `Cloud`,
+`Docker`, `Process`, `Package`.
+
+**Match**:
+One pattern hit (`MatchResult`) — the `Pattern` that fired, the text fragment that
+triggered it, and the highlight span in the original command.
+_Avoid_: hit, finding
+
+**Decision source**:
+What produced an assessment (`DecisionSource`): `BuiltinPattern`, `CustomPattern`, or
+`Fallback` (nothing matched → assessed `Safe`). Distinct from the final `Decision`.
+_Avoid_: origin, cause
+
+## Policy
+
+**Mode**:
+The top-level posture: `Protect` (default — prompt on `Warn`/`Danger`), `Audit`
+(non-blocking, log only), `Strict` (block non-safe and indirect execution).
+_Avoid_: level, profile
+
+**Allowlist / Blocklist**:
+User-configured exceptions. Blocklist always wins over allowlist; an allowlist entry
+only downgrades up to `allowlist_override_level`.
+_Avoid_: whitelist, blacklist
+
+**Override level**:
+The ceiling an allowlist entry may downgrade to (`AllowlistOverrideLevel`): `Warn`
+(default), `Danger`, or `Never`. Above the ceiling, the allowlist does not auto-approve.
+_Avoid_: allow ceiling, max downgrade
+
+**Policy rule**:
+A typed `[[rules]]` entry in config whose outcome is a `PolicyRuleDecision` — `Allow`,
+`Prompt`, or `Block`. This `Block` is a *rule outcome*, distinct from the `Block`
+`RiskLevel` and from a blocklist entry.
+_Avoid_: custom rule (reserve "rule" wording for prefix rules / Patterns)
+
+**CI policy**:
+What Aegis does in a detected CI environment (default `Block`, since no TTY exists to
+prompt). Distinct from `Mode`.
+_Avoid_: CI mode
+
+**Snapshot policy**:
+When snapshot plugins run (`SnapshotPolicy`): `None`, `Selective` (honour per-plugin
+flags — default), or `Full` (run every registered plugin). Distinct from `Mode` and
+`CI policy`.
+_Avoid_: backup policy
+
+## Decision & Execution
+
+**Decision**:
+The recorded outcome of the interception flow: `Approved`, `Denied`, `AutoApproved`,
+`Blocked`, `Pruned`. The final human-or-auto verdict the audit log stores — distinct
+from the scanner's `Assessment`.
+_Avoid_: result, outcome, verdict (those belong to the scanner stage)
+
+**Toggle**:
+The global on/off switch checked at command boundaries; when off, Aegis passes commands
+through unguarded (ADR-005).
+_Avoid_: enable flag, kill switch
+
+**Sandbox**:
+An OS-level confinement profile optionally applied to an approved command before it
+executes. A best-effort guardrail add-on, not a security boundary.
+_Avoid_: jail, container
+
+**Sandbox status**:
+Whether confinement was applied (`SandboxStatus`), recorded in every audit entry:
+`Active`, `Unavailable`, `NotConfigured`.
+_Avoid_: sandbox state
+
+**Sandbox bypass**:
+The audited event where a sandbox was configured but could not be applied, so the
+command ran unconfined (`SandboxStatus::Unavailable`).
+_Avoid_: sandbox failure, escape
+
+## Snapshot & Audit
+
+**Snapshot**:
+A best-effort pre-execution capture (e.g. `git stash`) taken before an approved
+`Danger` command, so the action can be rolled back. Best-effort, not a guarantee.
+_Avoid_: backup, checkpoint
+
+**Snapshot plugin**:
+A per-backend snapshotter (`git`, `docker`, `postgres`, `mysql`, `supabase`, `sqlite`)
+that knows how to capture and restore state for its domain. Each successful run yields a
+`SnapshotRecord` (`plugin` + opaque `snapshot_id`).
+_Avoid_: snapshotter, driver, backend
+
+**Rollback**:
+Restoring a previously taken `Snapshot` by its `snapshot_id`.
+_Avoid_: undo, revert
+
+**Audit log**:
+The append-only JSONL record at `~/.aegis/audit.jsonl`. One `AuditEntry` per line;
+never rewritten. The format is part of the public contract.
+_Avoid_: history, journal
+
+**AuditEntry**:
+One JSONL line in the audit log — the structured record of a single intercepted command,
+its `Decision`, and its `Sandbox status`.
+_Avoid_: log line, event
+
+## Surfaces
+
+**Wrapper / `$SHELL` proxy**:
+The aegis binary acting as the user's `$SHELL`, intercepting commands launched via
+`$SHELL -c`. The shell-level surface, distinct from a per-agent `Hook`.
+_Avoid_: shim (reserve "shim"/"hook" for per-agent routing)
+
+**Hook**:
+A per-agent shim (`claude-code.sh`, the Codex hook) that routes a tool call through
+Aegis. Must fail **closed** (deny) on missing dependencies or invalid input.
+_Avoid_: wrapper, plugin (reserve "wrapper" for the shell `$SHELL` proxy itself)
