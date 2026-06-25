@@ -10,3 +10,4 @@ use super::*;
 include!("ratchet/c3_a.rs");
 include!("ratchet/c3_b.rs");
 include!("ratchet/bugs.rs");
+include!("ratchet/c3_residual.rs");

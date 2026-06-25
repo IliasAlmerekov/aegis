@@ -101,8 +101,13 @@ _Avoid_: allow ceiling, max downgrade
 
 **Policy rule**:
 A typed `[[rules]]` entry in config whose outcome is a `PolicyRuleDecision` — `Allow`,
-`Prompt`, or `Block`. This `Block` is a *rule outcome*, distinct from the `Block`
-`RiskLevel` and from a blocklist entry.
+`Prompt`, or `Block`. A rule `Allow` auto-approves the command ahead of `Mode` and with
+no `allowlist_override_level` ceiling — unlike an `[[allow]]` allowlist entry, which is
+capped by the override level. Because that makes a project-layer `Allow` a silent
+auto-approve of a `Warn`/`Danger` command, project-layer `[[rules]] Allow` is untrusted:
+the ratchet drops it and `config validate` warns (ADR-013); a project that needs an
+auto-approve must declare it in global config. This `Block` is a *rule outcome*, distinct
+from the `Block` `RiskLevel` and from a blocklist entry.
 _Avoid_: custom rule (reserve "rule" wording for prefix rules / Patterns)
 
 **CI policy**:

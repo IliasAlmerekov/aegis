@@ -167,12 +167,46 @@ fn snapshot_policy_rank(policy: SnapshotPolicy) -> u8 {
     }
 }
 
+fn merge_project_integrity_mode(
+    base: AuditIntegrityMode,
+    overlay: Option<AuditIntegrityMode>,
+    layer: ConfigSourceLayer,
+) -> AuditIntegrityMode {
+    let requested = overlay.unwrap_or(base);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => most_restrictive_integrity_mode(base, requested),
+    }
+}
+
+/// Stricter of two `AuditIntegrityMode` values (`ChainSha256` wins over `Off`).
+/// Shared by the merge path and the warning collector so the reported `kept`
+/// value always matches the effective merged value.
+fn most_restrictive_integrity_mode(
+    left: AuditIntegrityMode,
+    right: AuditIntegrityMode,
+) -> AuditIntegrityMode {
+    if integrity_mode_rank(right) >= integrity_mode_rank(left) {
+        right
+    } else {
+        left
+    }
+}
+
+fn integrity_mode_rank(mode: AuditIntegrityMode) -> u8 {
+    match mode {
+        AuditIntegrityMode::Off => 0,
+        AuditIntegrityMode::ChainSha256 => 1,
+    }
+}
+
 // The ratchet helpers live in `model::ratchet`; `merge_layer` below and the
 // `partial` submodule both call them so the merge path and the warning
 // collector share one definition of the effective `kept` value.
 use ratchet::{
-    provider_enabled_in_base, ratchet_bool_tighten, ratchet_docker_scope, ratchet_mysql_snapshot,
-    ratchet_postgres_snapshot, ratchet_sqlite_path, ratchet_supabase_snapshot,
+    is_untrusted_allow, provider_enabled_in_base, ratchet_bool_tighten, ratchet_docker_scope,
+    ratchet_mysql_snapshot, ratchet_postgres_snapshot, ratchet_sqlite_path,
+    ratchet_supabase_snapshot,
 };
 
 /// A resolved config file path together with the layer it represents.
@@ -576,8 +610,23 @@ impl AegisConfig {
             docker_scope,
             ci_policy: merge_project_ci_policy(base.ci_policy, overlay.ci_policy, allowlist_layer),
             rules: {
+                // C3-residual Fix-1: a project layer may not auto-approve via
+                // `[[rules]] decision = "Allow"` (project may only tighten via
+                // Prompt/Block). Drop project-layer Allow entries at merge and
+                // surface them via the ratchet warning collector (which uses the
+                // SAME `is_untrusted_allow` predicate). Global is trusted — all
+                // overlay rules are extended (last-wins, including Allow).
                 let mut r = base.rules;
-                r.extend(overlay.rules);
+                if allowlist_layer == ConfigSourceLayer::Project {
+                    r.extend(
+                        overlay
+                            .rules
+                            .into_iter()
+                            .filter(|rule| !is_untrusted_allow(rule)),
+                    );
+                } else {
+                    r.extend(overlay.rules);
+                }
                 r
             },
             audit: AuditConfig {
@@ -597,10 +646,11 @@ impl AegisConfig {
                     .audit
                     .compress_rotated
                     .unwrap_or(base.audit.compress_rotated),
-                integrity_mode: overlay
-                    .audit
-                    .integrity_mode
-                    .unwrap_or(base.audit.integrity_mode),
+                integrity_mode: merge_project_integrity_mode(
+                    base.audit.integrity_mode,
+                    overlay.audit.integrity_mode,
+                    allowlist_layer,
+                ),
             },
             sandbox: overlay.sandbox.merge_into(base.sandbox, allowlist_layer),
             prune: PruneConfig {

@@ -65,7 +65,19 @@ fn effective_decision(rule: &PolicyRule, is_compound: bool) -> PolicyRuleDecisio
 
 #[cfg(test)]
 mod tests {
-    use aegis_config::{PolicyPatternToken, PolicyRule, PolicyRuleDecision, WhenClause};
+    use aegis_config::{
+        AegisConfig, PolicyPatternToken, PolicyRule, PolicyRuleDecision, WhenClause,
+    };
+    use aegis_parser::Parser as CommandParser;
+    use aegis_policy::{
+        ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyBlocklistResult,
+        PolicyCiState, PolicyConfigFlags, PolicyDecision, PolicyExecutionContext, PolicyInput,
+        PolicyRationale, evaluate_policy,
+    };
+    use aegis_scanner::Assessment;
+    use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, RiskLevel, SnapshotPolicy};
+    use std::fs;
+    use tempfile::TempDir;
 
     use super::evaluate_policy_rules;
 
@@ -225,5 +237,244 @@ mod tests {
         // The quoted message should be handled as one token by the quote-aware parser.
         let result = evaluate_policy_rules(&rules, r#"git commit -m "feat: add feature""#);
         assert!(result.matched);
+    }
+
+    // ── C3-residual Fix-1 regression: project [[rules]] Allow must NOT
+    // auto-approve a Danger command under Mode::Protect ───────────────────
+    // A project-layer `[[rules]] decision = "allow"` matching a Danger command
+    // must be DROPPED at the config merge, so the rule does not match and the
+    // engine falls through to `Prompt` (NOT `AutoApprove`). Currently the
+    // project Allow is concatenated into `config.rules`, so `evaluate_policy_rules`
+    // returns `matched = true` with `Allow` and the engine auto-approves — RED.
+
+    fn danger_assessment(cmd: &str) -> Assessment {
+        Assessment {
+            risk: RiskLevel::Danger,
+            matched: Vec::new(),
+            highlight_ranges: Vec::new(),
+            command: CommandParser::parse(cmd),
+        }
+    }
+
+    #[test]
+    fn project_rules_allow_does_not_autoapprove_danger_under_protect() {
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(".config/aegis");
+        fs::create_dir_all(&global_dir).unwrap();
+
+        // Base (global): Protect mode, no rules.
+        fs::write(global_dir.join("config.toml"), "mode = \"Protect\"\n").unwrap();
+        // Project layer attempts to auto-approve `terraform ...` via a rule.
+        fs::write(
+            workspace.path().join(".aegis.toml"),
+            "[[rules]]\npattern = [\"terraform\"]\ndecision = \"allow\"\n",
+        )
+        .unwrap();
+
+        let config =
+            AegisConfig::load_for(workspace.path(), Some(home.path())).expect("config must load");
+
+        // The project Allow rule must have been dropped at merge — it must NOT
+        // match the danger command.
+        let rules_result =
+            evaluate_policy_rules(&config.rules, "terraform destroy -target=module.prod.api");
+        assert!(
+            !rules_result.matched,
+            "project-layer [[rules]] Allow must be dropped so it does not match; \
+             got rules_result = {:?} (merged rules = {:?})",
+            rules_result, config.rules,
+        );
+
+        // And consequently the engine must Prompt (NOT auto-approve) for the
+        // Danger command under Mode::Protect.
+        let assessment = danger_assessment("terraform destroy -target=module.prod.api");
+        let decision: PolicyDecision = evaluate_policy(PolicyInput {
+            assessment: &assessment,
+            mode: Mode::Protect,
+            ci_state: PolicyCiState { detected: false },
+            allowlist: PolicyAllowlistResult { matched: false },
+            blocklist: PolicyBlocklistResult { matched: false },
+            config_flags: PolicyConfigFlags {
+                ci_policy: CiPolicy::Allow,
+                allowlist_override_level: AllowlistOverrideLevel::Never,
+                snapshot_policy: SnapshotPolicy::None,
+            },
+            execution_context: PolicyExecutionContext {
+                transport: ExecutionTransport::Shell,
+                applicable_snapshot_plugins: &[],
+            },
+            rules: rules_result,
+        });
+
+        assert_eq!(
+            decision.decision,
+            PolicyAction::Prompt,
+            "a dropped project Allow must leave a Danger command prompting under Protect; \
+             got decision = {:?}",
+            decision,
+        );
+        assert_ne!(
+            decision.decision,
+            PolicyAction::AutoApprove,
+            "project [[rules]] Allow must NOT auto-approve a Danger command; got decision = {:?}",
+            decision,
+        );
+        assert_eq!(decision.rationale, PolicyRationale::RequiresConfirmation);
+    }
+
+    // ── C3-residual Fix-1 bypass (iteration 2): a project-layer `[[rules]]`
+    // entry with `decision = "prompt"` but `when.then = "allow"` is a same-class
+    // auto-approve bypass. At runtime `effective_decision` returns `when.then =
+    // Allow` when the env condition matches, silently auto-approving a Danger
+    // command. The rule must be DROPPED at the config merge so it never reaches
+    // `effective_decision`; the engine must Prompt (NOT AutoApprove) under
+    // Mode::Protect. RED until `is_untrusted_allow` flags `when.then == Allow`.
+
+    #[test]
+    fn project_rules_prompt_with_when_then_allow_does_not_autoapprove_danger_under_protect() {
+        // Unique env var so this test is deterministic regardless of the host.
+        // SAFETY: test-only, single-threaded in this test context.
+        unsafe { std::env::set_var("AEGIS_TEST_C3_RESIDUAL_WHEN", "match") };
+
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(".config/aegis");
+        fs::create_dir_all(&global_dir).unwrap();
+
+        // Base (global): Protect mode, no rules.
+        fs::write(global_dir.join("config.toml"), "mode = \"Protect\"\n").unwrap();
+        // Project layer attempts to auto-approve `terraform ...` via a rule
+        // whose top-level `decision = "prompt"` passes the current
+        // `is_untrusted_allow` check, but whose `when.then = "allow"` resolves
+        // to Allow when the env condition matches.
+        fs::write(
+            workspace.path().join(".aegis.toml"),
+            "[[rules]]\n\
+             pattern = [\"terraform\"]\n\
+             decision = \"prompt\"\n\
+             when = { env = \"AEGIS_TEST_C3_RESIDUAL_WHEN\", value = \"match\", then = \"allow\" }\n",
+        )
+        .unwrap();
+
+        let config =
+            AegisConfig::load_for(workspace.path(), Some(home.path())).expect("config must load");
+
+        // The project rule must have been dropped at merge — it must NOT match
+        // the danger command. Currently it survives, so `evaluate_policy_rules`
+        // returns `matched = true` with `Allow` (env matches → `when.then`).
+        let rules_result =
+            evaluate_policy_rules(&config.rules, "terraform destroy -target=module.prod.api");
+        assert!(
+            !rules_result.matched,
+            "project-layer [[rules]] prompt+when.then=allow must be dropped so it does not match; \
+             got rules_result = {:?} (merged rules = {:?})",
+            rules_result, config.rules,
+        );
+
+        // And consequently the engine must Prompt (NOT auto-approve) for the
+        // Danger command under Mode::Protect.
+        let assessment = danger_assessment("terraform destroy -target=module.prod.api");
+        let decision: PolicyDecision = evaluate_policy(PolicyInput {
+            assessment: &assessment,
+            mode: Mode::Protect,
+            ci_state: PolicyCiState { detected: false },
+            allowlist: PolicyAllowlistResult { matched: false },
+            blocklist: PolicyBlocklistResult { matched: false },
+            config_flags: PolicyConfigFlags {
+                ci_policy: CiPolicy::Allow,
+                allowlist_override_level: AllowlistOverrideLevel::Never,
+                snapshot_policy: SnapshotPolicy::None,
+            },
+            execution_context: PolicyExecutionContext {
+                transport: ExecutionTransport::Shell,
+                applicable_snapshot_plugins: &[],
+            },
+            rules: rules_result,
+        });
+
+        assert_eq!(
+            decision.decision,
+            PolicyAction::Prompt,
+            "a dropped project prompt+when.then=allow must leave a Danger command prompting \
+             under Protect; got decision = {:?}",
+            decision,
+        );
+        assert_ne!(
+            decision.decision,
+            PolicyAction::AutoApprove,
+            "project [[rules]] prompt+when.then=allow must NOT auto-approve a Danger command; \
+             got decision = {:?}",
+            decision,
+        );
+
+        // SAFETY: test-only cleanup.
+        unsafe { std::env::remove_var("AEGIS_TEST_C3_RESIDUAL_WHEN") };
+    }
+
+    #[test]
+    fn global_rules_allow_still_autoapproves_under_protect() {
+        // C3-residual Fix-1 case 4 (engine parity): a GLOBAL-layer
+        // `[[rules]] decision = "allow"` is honored and STILL auto-approves (the
+        // ratchet only drops PROJECT-layer Allow rules). This guards against an
+        // over-broad fix that would also drop global Allow rules.
+        let workspace = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let global_dir = home.path().join(".config/aegis");
+        fs::create_dir_all(&global_dir).unwrap();
+
+        fs::write(
+            global_dir.join("config.toml"),
+            "[[rules]]\npattern = [\"terraform\"]\ndecision = \"allow\"\n",
+        )
+        .unwrap();
+        // No project file — only the global layer is in play.
+
+        let config =
+            AegisConfig::load_for(workspace.path(), Some(home.path())).expect("config must load");
+
+        assert_eq!(
+            config.rules.len(),
+            1,
+            "global [[rules]] Allow must be present in merged rules; got {:?}",
+            config.rules,
+        );
+        assert_eq!(config.rules[0].decision, PolicyRuleDecision::Allow);
+
+        let rules_result =
+            evaluate_policy_rules(&config.rules, "terraform destroy -target=module.prod.api");
+        assert!(
+            rules_result.matched,
+            "global [[rules]] Allow must still match; got {:?}",
+            rules_result,
+        );
+        assert_eq!(rules_result.decision, Some(PolicyRuleDecision::Allow));
+
+        let assessment = danger_assessment("terraform destroy -target=module.prod.api");
+        let decision: PolicyDecision = evaluate_policy(PolicyInput {
+            assessment: &assessment,
+            mode: Mode::Protect,
+            ci_state: PolicyCiState { detected: false },
+            allowlist: PolicyAllowlistResult { matched: false },
+            blocklist: PolicyBlocklistResult { matched: false },
+            config_flags: PolicyConfigFlags {
+                ci_policy: CiPolicy::Allow,
+                allowlist_override_level: AllowlistOverrideLevel::Never,
+                snapshot_policy: SnapshotPolicy::None,
+            },
+            execution_context: PolicyExecutionContext {
+                transport: ExecutionTransport::Shell,
+                applicable_snapshot_plugins: &[],
+            },
+            rules: rules_result,
+        });
+
+        assert_eq!(
+            decision.decision,
+            PolicyAction::AutoApprove,
+            "global [[rules]] Allow must still auto-approve; got decision = {:?}",
+            decision,
+        );
+        assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
     }
 }

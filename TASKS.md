@@ -86,7 +86,7 @@ fundamental design failure. They are fixable with targeted work.
   normalized-form tests, and scanner regressions across PS-006, FS-002, FS-003,
   FS-004, and FS-006.
 
-### [ ] C3 — Project-local `.aegis.toml` can weaken Aegis to audit-only
+### [x] C3 — Project-local `.aegis.toml` can weaken Aegis to audit-only
 
 - **Risk:** Critical.
 - **Status:** confirmed via live `config show` / `config validate` and merge code
@@ -111,6 +111,66 @@ fundamental design failure. They are fixable with targeted work.
     `sandbox.required` use most-restrictive global/project semantics
   - minimum fallback: loud `config validate` warning for weakening attempts
 - **Positive note:** intrinsic `Block` remains unbreakable even under this config.
+- **Resolution:** scalar ratchet landed (ADR-013): `mode`, `allowlist_override_level`,
+  `ci_policy`, `snapshot_policy`, `sandbox.enabled`/`required`/`allow_network`/
+  `allow_write`, the six `auto_snapshot_*`, and provider-target config
+  (`sqlite_snapshot_path`, `postgres`/`mysql`/`supabase` `database`, `docker_scope`)
+  can only tighten at the project layer; weakening is ignored + warned by
+  `aegis config validate`. The documented attack config is defeated under defaults.
+
+### [x] C3-residual — Project `[[rules]] Allow` + `audit.integrity_mode` still last-wins
+
+- **Risk:** Critical (same class as C3).
+- **Status:** resolved.
+- **Status:** confirmed via code review during the C3 grilling session (2026-06-25).
+- **Root cause:** two security-critical paths were left out of the ADR-013 ratchet:
+  - `[[rules]]` entries are merged by **concatenation** with no ratchet on
+    `decision` and **no per-rule provenance** (`rules_layers` is absent — only
+    `allowlist`/`blocklist`/`custom_patterns` carry layer provenance;
+    `runtime/context.rs:139` flattens `config.rules` into one `Vec`). A
+    `PolicyRuleDecision::Allow` auto-approves a `Warn`/`Danger` command **before**
+    `Mode` and with **no `allowlist_override_level` ceiling**
+    (`engine.rs:28-43`) — unlike an `[[allow]]` entry, which is capped. So a
+    repository can add `[[rules]] pattern=[...] decision="Allow"` and silently
+    auto-approve e.g. `git reset --hard` with no prompt, defeating the
+    `allowlist_override_level` ratchet. `validate_policy_rules` imposes no
+    risk-level cap on `Allow`.
+  - `audit.integrity_mode` is pure last-layer-wins (`model.rs:600-603`): a project
+    can set `[audit] integrity_mode="Off"` and silently disable the audit
+    integrity chain.
+- **Fix (sanctioned 2026-06-25, ADR-013 amended):**
+  - **Drop + warn** project-layer `[[rules]]` `decision = "Allow"` (project may
+    still add `Prompt`/`Block` tightening rules). Surface as a
+    `project_security_ratchet` warning in `config validate`. Global stays
+    last-wins. A project needing an auto-approve must declare the rule in global
+    config.
+  - **Ratchet** `audit.integrity_mode` so a project cannot weaken it to `Off`;
+    keep the stricter of base/requested + warn.
+  - Add `rules_layers` provenance (mirror `allowlist_layers`) so the merge and
+    warning paths can identify project-layer `Allow` rules, OR filter at merge
+    time — pick whichever keeps merge==warning parity with the existing helpers.
+  - Regression: project `[[rules]] Allow` on a `Danger` command is dropped + warned
+    (command still prompts under `Protect`); global `[[rules]] Allow` still
+    honors; project `audit.integrity_mode="Off"` ratcheted + warned.
+- **Note:** intrinsic `Block` is unaffected (checked first in `engine.rs:22`,
+  before rules).
+- **Resolution:** the ADR-013 ratchet now covers both residual paths. A
+  project-layer `[[rules]]` entry whose effective decision is `Allow` — either
+  a top-level `decision = "allow"` OR a `decision = "prompt"`/`"block"` rule
+  with `when.then = "allow"` (resolved at runtime by `effective_decision`,
+  which reads only `rule.decision` and `rule.when.then`; both `PolicyRule` and
+  `WhenClause` are `#[serde(deny_unknown_fields)]`, so no other `Allow` source
+  exists) — is DROPPED at merge and surfaced as a `project_security_ratchet`
+  warning. The merge filter and the warning loop share the single
+  `is_untrusted_allow` predicate (`ratchet.rs`), so merge==warning parity holds
+  automatically; global `[[rules]]` stays last-wins (unfiltered); project
+  `Prompt`/`Block` rules (incl. `when.then = "prompt"`/`"block"`) still
+  tighten. `audit.integrity_mode` is ratcheted via the shared
+  `most_restrictive_integrity_mode` helper (stricter of base/requested under
+  Project; `ChainSha256` > `Off`); global stays last-wins. Regression tests in
+  `crates/aegis-config/src/model/tests/ratchet/c3_residual.rs` (config-layer)
+  and `src/planning/policy_rules.rs` (engine: dropped project Allow leaves a
+  `Danger` command prompting under `Protect`, not auto-approved).
 
 ### [ ] C4 — Token-prefix rules are anchored to the first token; any prefix bypasses them
 
@@ -411,9 +471,10 @@ fundamental design failure. They are fixable with targeted work.
        uppercase regression tests.
 2. [x] C2 — normalize `$IFS` / `${IFS}` as separators in tokenizer or
        normalization plus fixtures.
-3. [ ] C3 / M6 — restrictive merge ratchet for security fields:
+3. [x] C3 / M6 — restrictive merge ratchet for security fields:
        `mode`, `*_override_level`, `ci_policy`, `snapshot_policy`,
-       `sandbox.required`; warn on weakening in `config validate`.
+       `sandbox.required`; warn on weakening in `config validate`. C3-residual
+       (project `[[rules]] Allow` + `audit.integrity_mode`) also closed.
 4. [ ] C4 — normalize the prefix-rule lookup key: basename of `tokens[0]` + strip
        launcher/wrapper prefixes (`rtk`, `sudo`, `env`, `command`, …); cover
        RTK-wrapped and absolute-path forms for every token-prefix family.
