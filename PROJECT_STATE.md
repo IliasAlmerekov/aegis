@@ -16,7 +16,7 @@
 
 ## Last updated
 
-2026-06-24
+2026-06-25
 
 ---
 
@@ -39,7 +39,55 @@
 
 ---
 
-## What was done last session (2026-06-24)
+## What was done last session (2026-06-25)
+
+- Closed C3 reviewer follow-ups (C3-01…C3-04) via `/implement` TDD pipeline
+  (red → green → review, APPROVED iteration 1):
+  - **C3-01 (HIGH)**: ratcheted provider target config (`sqlite_snapshot_path`,
+    `postgres_snapshot`/`mysql_snapshot`/`supabase_snapshot` `database`, `docker_scope`)
+    so a project layer can no longer empty/narrow an ENABLED provider into a silent
+    no-op (the sibling-field equivalent of the auto_snapshot_* bypass). Ratchet is
+    conditional on `provider_enabled_in_base = snapshot_policy == Full ||
+    auto_snapshot_<provider>` (mirrors `SnapshotRegistry::from_runtime_config` Full
+    materialization). `docker_scope` ratchets on breadth rank
+    (`All`=2 > `Names`-non-empty/`Labeled`=1 > `Names`-empty=0): project may broaden,
+    not narrow. Repointing to another non-empty target stays allowed.
+  - **C3-02 (MEDIUM)**: `sandbox.allow_write` now supports project-side tightening via
+    intersection `base ∩ requested` (base order preserved); expansion (paths outside
+    base) dropped + warned. Merge and warning share one `ratchet_allow_write` helper.
+  - **C3-03 (MEDIUM)**: added `#[serde(deny_unknown_fields)]` to both
+    `PartialSandboxSettings` and the direct `SandboxSettings`, so misspelled sandbox
+    fields fail closed at parse time.
+  - **C3-04 (LOW)**: replaced the vacuous `auto_snapshot_git` tightening test (git
+    defaults `true`) with a table-driven test over all six `auto_snapshot_*` flags.
+  - Invariant preserved: merge and `project_security_ratchet_warnings` call identical
+    typed helpers with identical `provider_enabled_in_base`, so `aegis config validate`
+    reports the effective merged value. Global layer stays last-wins for all ratcheted
+    fields. F10/F11 (project `[[rules]] decision="allow"`; `[audit] integrity_mode="Off"`)
+    confirmed out-of-scope and untouched.
+  - Verification: `cargo test` 533 passed, `cargo fmt --check` clean, `cargo clippy
+    -- -D warnings` clean. Test helpers extracted to `model/tests/ratchet_helpers.rs`
+    to keep `ratchet.rs` under the 800-line file-size budget.
+- Second C3 review pass (9.0/10 → APPROVED, iteration 1) closed 4 follow-ups:
+  - **bugs-01 (MEDIUM)**: tightened `ratchet_docker_scope` from rank-only to a
+    structural `docker_scope_narrows` predicate — a project can no longer drop
+    base-protected containers via intra-rank moves (Names→disjoint Names, Names
+    pattern-subset, `Labeled`↔`Names` cross-mode, `Labeled` label change).
+    Project may only keep-or-broaden (`All` broadest; `Names`→`Names` with overlay
+    patterns ⊇ base = broaden-allowed).
+  - **bugs-02 (LOW)**: `provider_enabled_in_base` now gates on
+    `snapshot_policy != None`; merge routes all five providers through the same
+    helper (was inline `provider_full || flag`) so merge==warning holds under `None`.
+  - **regressions-01 (LOW)**: `sandbox.allow_write` warning now gates on genuine
+    expansion (`requested ∖ base`), not Debug-string inequality — reordered-equal
+    subsets no longer spuriously warn.
+  - **tests-01 (LOW)**: backfilled mysql/supabase repoint + docker same-rank guard
+    tests; `tests/ratchet.rs` split into `include!` fragments (`ratchet/{c3_a,c3_b,bugs}.rs`)
+    to keep every file under the 800-line budget without altering test bodies.
+  - Verification: `cargo test` 533 passed, `cargo fmt --check` clean, `cargo clippy
+    -- -D warnings` clean, `file_size_budget` green.
+
+### Previous session (2026-06-24)
 
 - Closed P0 release blocker C3 (project-local config weakening):
   - project `.aegis.toml` can only tighten security-critical fields: `mode`,
