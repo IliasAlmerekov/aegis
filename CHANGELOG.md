@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Security
+
+- Closed the C3-residual project-config weakening paths (ADR-013): a project-layer `[[rules]]` entry whose effective decision is `Allow` — either a top-level `decision = "allow"` or a `decision = "prompt"`/`"block"` rule with `when.then = "allow"` (resolved at runtime by `effective_decision`) — is now DROPPED at merge and surfaced as a `project_security_ratchet` warning by `aegis config validate`. Unlike an `[[allow]]` entry (capped by `allowlist_override_level`), a `[[rules]] Allow` auto-approves a `Warn`/`Danger` command before `Mode` with no ceiling, so a repository could otherwise silently auto-approve a `Danger` command. The project layer may still tighten via `Prompt`/`Block`; global `[[rules]]` stays last-wins. `audit.integrity_mode` is now ratcheted so a project cannot weaken `ChainSha256` to `Off` (stricter of base/requested wins, warned); global stays last-wins. The merge and warning paths share the same `is_untrusted_allow` predicate and `most_restrictive_integrity_mode` helper, so the reported `kept` value matches the effective merged value.
+
 ### Fixed
 
 - Codex project configuration and agent prompts now reference `.codex/AGENTS.md` after moving the Codex instruction file out of the repository root.

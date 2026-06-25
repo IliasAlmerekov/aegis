@@ -175,11 +175,20 @@ fn verify_integrity_rejects_legacy_log_without_chain_data() {
     // Simulate a legacy log written with integrity_mode = "Off" (no chain
     // hashes). Verification must fail — not silently pass — so that an
     // operator restoring from backup can detect an unchained log.
+    //
+    // `integrity_mode = "Off"` is declared in the GLOBAL config layer, not the
+    // project `.aegis.toml`: the C3-residual ratchet (ADR-013) forbids a project
+    // from weakening `ChainSha256` to `Off`, so the project layer can no longer
+    // produce an unchained log. The global layer is trusted and last-wins, so it
+    // still can — which is exactly the posture an operator intentionally
+    // disabling integrity would use.
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
+    let global_dir = home.path().join(".config/aegis");
+    fs::create_dir_all(&global_dir).unwrap();
     fs::write(
-        workspace.path().join(".aegis.toml"),
+        global_dir.join("config.toml"),
         r#"
 [audit]
 integrity_mode = "Off"

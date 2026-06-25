@@ -12,9 +12,10 @@ use std::path::PathBuf;
 
 use super::partial::PartialConfig;
 use super::{
-    ConfigLayerPath, DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SnapshotPolicy,
-    SupabaseSnapshotConfig, most_restrictive_allowlist_override_level, most_restrictive_ci_policy,
-    most_restrictive_mode, most_restrictive_snapshot_policy,
+    ConfigLayerPath, DockerScope, MysqlSnapshotConfig, PolicyRule, PolicyRuleDecision,
+    PostgresSnapshotConfig, SnapshotPolicy, SupabaseSnapshotConfig,
+    most_restrictive_allowlist_override_level, most_restrictive_ci_policy,
+    most_restrictive_integrity_mode, most_restrictive_mode, most_restrictive_snapshot_policy,
 };
 use crate::allowlist::ConfigSourceLayer;
 use crate::error::ConfigError;
@@ -261,6 +262,27 @@ pub(super) fn ratchet_docker_scope(
     }
 }
 
+/// Predicate identifying a project-layer `[[rules]]` entry that attempts to
+/// auto-approve (`decision = "Allow"`). Such entries are DROPPED at the project
+/// merge (the project layer may only tighten via Prompt/Block, never auto-approve)
+/// and surfaced as a ratchet warning. The merge path (`merge_layer` in
+/// `model.rs`) and the warning collector below BOTH call this predicate so the
+/// reported `kept` value ("dropped") always matches what the merge actually did.
+/// Global-layer Allow entries are NOT filtered (global is trusted, last-wins).
+pub(super) fn is_untrusted_allow(rule: &PolicyRule) -> bool {
+    // A project-layer rule is an untrusted auto-approve if EITHER its top-level
+    // `decision = "Allow"` OR its `when.then = "Allow"` — at runtime
+    // `effective_decision` returns `when.then` when the env condition matches,
+    // so a `decision = "prompt"` (or `"block"`) rule with `when.then = "allow"`
+    // would silently auto-approve. Flag both shapes so the merge drops them and
+    // the warning loop surfaces them (same predicate ⇒ parity preserved).
+    rule.decision == PolicyRuleDecision::Allow
+        || rule
+            .when
+            .as_ref()
+            .is_some_and(|w| w.then == PolicyRuleDecision::Allow)
+}
+
 /// Whether a built-in snapshot provider is enabled in `base`. Under
 /// `SnapshotPolicy::None` the registry materializes NO providers, so nothing
 /// is ratcheted. Under `SnapshotPolicy::Full` the registry materializes every
@@ -325,6 +347,21 @@ impl super::AegisConfig {
             push_ratchet_warning(
                 &mut warnings,
                 "mode",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
+        }
+
+        // C3-residual Fix-2: `audit.integrity_mode` is ratcheted (stricter of
+        // base/requested wins under the Project layer). Mirrors the `mode`
+        // branch above — `push_ratchet_warning` only fires when `kept != requested`
+        // so tightening and equal-value requests do NOT warn.
+        if let Some(requested) = overlay.audit.integrity_mode {
+            let kept = most_restrictive_integrity_mode(base.audit.integrity_mode, requested);
+            push_ratchet_warning(
+                &mut warnings,
+                "audit.integrity_mode",
                 format!("{requested:?}"),
                 format!("{kept:?}"),
                 &location,
@@ -563,6 +600,24 @@ impl super::AegisConfig {
                 format!("{kept:?}"),
                 &location,
             );
+        }
+
+        // C3-residual Fix-1: each project-layer `[[rules]] decision = "Allow"`
+        // is DROPPED at the merge (the project may not auto-approve via rules).
+        // Uses the SAME `is_untrusted_allow` predicate as the merge path so the
+        // warning fires iff a rule was actually dropped. `kept = "dropped"`
+        // always differs from the requested representation, so every dropped
+        // Allow surfaces a warning.
+        for rule in &overlay.rules {
+            if is_untrusted_allow(rule) {
+                push_ratchet_warning(
+                    &mut warnings,
+                    "rules",
+                    format!("Allow({:?})", rule.pattern),
+                    "dropped".to_string(),
+                    &location,
+                );
+            }
         }
 
         Ok(warnings)

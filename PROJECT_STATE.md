@@ -41,6 +41,52 @@
 
 ## What was done last session (2026-06-25)
 
+- **C3-residual closed** via `/implement` TDD pipeline (red → green → review,
+  2 iterations; iteration-1 review surfaced a `when.then = "allow"` bypass,
+  iteration-2 closed it, APPROVED):
+  - **Fix 1 — project `[[rules]] Allow` dropped + warned.** A project-layer
+    `[[rules]]` entry whose effective decision is `Allow` — either a top-level
+    `decision = "allow"` OR a `decision = "prompt"`/`"block"` rule with
+    `when.then = "allow"` (resolved at runtime by `effective_decision`, which
+    reads only `rule.decision` + `rule.when.then`; both `PolicyRule` and
+    `WhenClause` are `#[serde(deny_unknown_fields)]`, so no other `Allow`
+    source) — is DROPPED at merge and surfaced as a `project_security_ratchet`
+    warning. Unlike `[[allow]]` (capped by `allowlist_override_level`), a
+    `[[rules]] Allow` auto-approves before `Mode` with no ceiling. The merge
+    filter (`model.rs::merge_layer`, Project-only) and the warning loop
+    (`ratchet.rs::project_security_ratchet_warnings`) share the single
+    `is_untrusted_allow` predicate → merge==warning parity automatically. Global
+    `[[rules]]` unfiltered (last-wins); project `Prompt`/`Block` (incl.
+    `when.then = "prompt"`/`"block"`) still tighten.
+  - **Fix 2 — `audit.integrity_mode` ratcheted.** `most_restrictive_integrity_mode`
+    + `merge_project_integrity_mode` (shared by merge + warning); stricter of
+    base/requested under Project (`ChainSha256` > `Off`), warned; global
+    last-wins.
+  - **Test unblock:** `tests/audit_integrity.rs::verify_integrity_rejects_legacy_log_without_chain_data`
+    moved its `integrity_mode = "Off"` from the project `.aegis.toml` (now
+    ratcheted, can't weaken the default `ChainSha256`) to the GLOBAL
+    `$HOME/.config/aegis/config.toml` (trusted, last-wins) — preserving the
+    test's intent (reject an unchained legacy log) without weakening the ratchet.
+  - Regression tests in `crates/aegis-config/src/model/tests/ratchet/c3_residual.rs`
+    (config-layer) and `src/planning/policy_rules.rs` (engine: dropped project
+    Allow leaves a `Danger` command prompting under `Protect`).
+  - Verification: `cargo test` 536 passed, `cargo fmt --check` clean,
+    `cargo clippy -- -D warnings` clean, `file_size_budget` green, `cargo audit`
+    clean (4 pre-existing allowed unmaintained advisories under opt-in starlark
+    feature only).
+- **C3 grilling session** (alignment, no code yet): verified the ADR-013 scalar
+  ratchet defeats the documented attack config under defaults, but found a
+  same-class residual — project-layer `[[rules]] decision="Allow"` is merged by
+  concatenation with no ratchet and no per-rule provenance, and `engine.rs:28-43`
+  honors it before `Mode` with no `allowlist_override_level` ceiling (unlike
+  `[[allow]]`), so a repo can silently auto-approve a non-`Block` `Danger`.
+  Secondary: `audit.integrity_mode` is last-layer-wins (project can set `Off`).
+  Sanctioned fixes: **drop + warn** project `[[rules]] Allow` (project may still
+  add `Prompt`/`Block`); **ratchet** `audit.integrity_mode`. Sharpened
+  `CONTEXT.md` "Policy rule" with the auto-approve invariant; amended ADR-013
+  (Decision + Consequences) to extend the ratcheted set; tracked as `C3-residual`
+  in TASKS.md; flipped C3 to `[x]`. Memory `project-config-ratchet` updated.
+  Next: agent writes plan + slices into iterations → `/implement`.
 - Closed C3 reviewer follow-ups (C3-01…C3-04) via `/implement` TDD pipeline
   (red → green → review, APPROVED iteration 1):
   - **C3-01 (HIGH)**: ratcheted provider target config (`sqlite_snapshot_path`,
