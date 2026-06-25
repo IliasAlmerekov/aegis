@@ -2,10 +2,10 @@
 
 ## Agent Configuration
 
-Before starting any non-trivial task, read `.claude/AGENTS.md` — it defines the lead
-orchestrator identity, the `/implement` TDD pipeline (red-tester → green-tester →
-reviewer, max 3 iterations), the sub-agent registry, and global constraints that apply
-to all agents working in this repository.
+Before starting any non-trivial task, review the orchestration setup: the `/implement`
+TDD pipeline (red-tester → green-tester → reviewer, max 3 iterations) is defined in
+`.claude/commands/implement.md`, the sub-agent registry lives in `.claude/agents/`, and
+the global constraints that apply to all agents are in this file and `CONVENTION.md`.
 
 Use `/implement <task description>` to start any feature or bug fix work.
 
@@ -17,6 +17,22 @@ Use `/implement <task description>` to start any feature or bug fix work.
 code style, architecture, security invariants, dependency rules, testing requirements,
 and release gates. When `CONVENTION.md` conflicts with any other document, use the
 precedence order defined within it (security invariants → CI-enforced rules → CONVENTION.md → contributor guidance).
+
+---
+
+## Ubiquitous Language
+
+**`CONTEXT.md` (repo root) is the project's domain glossary — the single source of truth
+for terminology shared by humans, agents, and code.** Before naming a type, field,
+config key, audit field, or before describing a concept in a PR or commit, use the exact
+canonical term from `CONTEXT.md` and avoid the words listed under each term's `_Avoid_`.
+
+- When a task introduces or sharpens a domain term, update `CONTEXT.md` in the same
+  change (via the `domain-modeling` skill). Do not batch glossary updates.
+- If a requirement uses a word that conflicts with the glossary (e.g. "block" — the
+  `RiskLevel`, a blocklist entry, or a `PolicyRuleDecision`?), resolve the ambiguity
+  against `CONTEXT.md` before writing code.
+- `CONTEXT.md` holds glossary entries only — no implementation details, specs, or notes.
 
 ---
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-testing": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "skillPath": "skills/rust-testing/SKILL.md",
+      "computedHash": "3551c73595f019475f5cba4c7a2ff22f3019e0b3f09916dd4774b0472ab385aa"
+    }
+  }
+}

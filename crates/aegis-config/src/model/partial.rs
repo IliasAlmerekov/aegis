@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::error::ConfigError;
 
 use super::migration::migrate_deprecated_allowlist_in_file;
-use super::ratchet::{ratchet_bool_loosen, ratchet_bool_tighten};
+use super::ratchet::{ratchet_allow_write, ratchet_bool_loosen, ratchet_bool_tighten};
 use super::serde_helpers::{deserialize_allowlist_rules, deserialize_optional_config_version};
 use super::{
     AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy,
@@ -30,7 +30,7 @@ pub(super) struct PartialPruneConfig {
 /// Allows individual sandbox fields to be set per-layer without resetting
 /// fields that were not mentioned in a later layer.
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub(super) struct PartialSandboxSettings {
     enabled: Option<bool>,
     required: Option<bool>,
@@ -47,11 +47,11 @@ impl PartialSandboxSettings {
         SandboxSettings {
             enabled: ratchet_bool_tighten(base.enabled, self.enabled, source_layer),
             required: ratchet_bool_tighten(base.required, self.required, source_layer),
-            allow_write: match source_layer {
-                ConfigSourceLayer::Global => self.allow_write.unwrap_or(base.allow_write),
-                // Project cannot expand the writable surface; keep the trusted base.
-                ConfigSourceLayer::Project => base.allow_write,
-            },
+            allow_write: ratchet_allow_write(
+                &base.allow_write,
+                self.allow_write.as_ref(),
+                source_layer,
+            ),
             allow_network: ratchet_bool_loosen(
                 base.allow_network,
                 self.allow_network,

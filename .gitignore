@@ -2,6 +2,8 @@
 /test_q
 .env
 *.log
+.kiro/
+.agents/
 .claude/
 .codex/
 .worktrees/
