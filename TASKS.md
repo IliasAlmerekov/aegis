@@ -6,6 +6,13 @@
 > Method summary: 7 parallel adversarial agents across critical surfaces plus
 > independent verification of key findings against real `assess()`, policy engine,
 > and git state.
+>
+> **Second source (appended 2026-06-24):** manual crash-test of the released
+> `aegis 0.5.9`. Dangerous commands from `PROMPTS.md` were fed one-by-one as
+> top-level `Bash` calls so the aegis hook assessed each independently; reactions
+> were observed on an isolated git-backed stand (fully reversible). This run
+> surfaced the C4 token-prefix anchoring bypass below and confirmed several
+> pattern-coverage gaps.
 
 ## Release verdict
 
@@ -105,6 +112,59 @@ fundamental design failure. They are fixable with targeted work.
   - minimum fallback: loud `config validate` warning for weakening attempts
 - **Positive note:** intrinsic `Block` remains unbreakable even under this config.
 
+### [ ] C4 — Token-prefix rules are anchored to the first token; any prefix bypasses them
+
+- **Risk:** Critical.
+- **Status:** crash-test confirmed (destructively proven) + root-caused in code.
+- **Evidence (commands that really executed in 0.5.9):**
+
+  | Command                       | Why it passed                              |
+  | ----------------------------- | ------------------------------------------ |
+  | `/usr/bin/git reset --hard`   | absolute path → first token is not `git`   |
+  | `cd dir && git reset --hard`  | `git` is not the first token of the line   |
+  | `rtk git push` (force push)   | RTK wrapper prefix → first token is `rtk`  |
+  | `rtk git stash clear`         | RTK wrapper prefix                         |
+  | `rtk git branch -D`           | RTK wrapper prefix                         |
+  | `rtk psql … DROP TABLE`       | RTK wrapper prefix (see also H2)           |
+
+  For contrast, the regex-based families (`rm`, `shred`, `chmod`, `docker …`)
+  matched correctly even with a prefix: `/usr/bin/rm -rf` and `echo …; rm -rf`
+  were both blocked. So the asymmetry is real: **regex patterns match anywhere in
+  the normalized string, token-prefix rules only match at the first token.**
+- **Destructive proof:** a prefixed `git reset --hard` in a throwaway repo erased an
+  uncommitted line (`PRECIOUS UNCOMMITTED WORK`) — Aegis stayed silent and the
+  command executed.
+- **Root cause:** GIT-001..008, DB-001/2/6/7/8, CL-*, DK-*, PS-001/2/5 were migrated
+  from regex patterns to **token-prefix rules** (`builtin_prefix_rules()` in
+  `crates/aegis-scanner/src/patterns.rs`). `Scanner::prefix_scan`
+  (`crates/aegis-scanner/src/scanner/mod.rs:240-266`) looks the rule up by the
+  literal `tokens[0]` of each scan target — there is **no basename normalization**
+  (so `/usr/bin/git` ≠ `git`) and **no skipping of launcher/wrapper prefixes**
+  (`rtk`, `sudo`, `env`, `command`, `nice`, `xargs`, …, so `rtk git` ≠ `git`).
+  Compound forms (`cd dir && git …`, `true; git …`) only get caught if
+  segmentation happens to expose `git` as a segment's first token; in practice it
+  does not (related to H1's segmentation gaps). The regex families were left in
+  `patterns.toml` and still match by substring, which is why they survive prefixes.
+  - The RTK-wrapper case is the most dangerous in practice: this environment's RTK
+    hook auto-rewrites `git push` / `git branch` / `git stash` / `psql` to
+    `rtk <cmd>`, so these destructive operations are unprotected during normal
+    work with no attacker effort at all.
+- **Fix:**
+  1. Normalize the lookup key before `prefix_scan`: take the **basename** of
+     `tokens[0]` (strip directory components) so `/usr/bin/git` resolves to `git`.
+  2. **Strip known launcher/wrapper prefixes** (`rtk`, `sudo`, `env`, `command`,
+     `nice`, `nohup`, `time`, `xargs`, `doas`, …) and re-resolve the real program
+     token before lookup — handle chained wrappers (`sudo env … git`).
+  3. Ensure compound/segmented commands expose the inner program as a segment
+     first token (couple this with the H1 segmentation fix) so `cd … && git …`
+     and `… ; git …` are evaluated.
+  4. Add explicit regression coverage for RTK-wrapped forms (`rtk git push`,
+     `rtk psql …`) and absolute-path / `sudo` / `env` prefixes for every
+     token-prefix family, not just git.
+- **Note:** this is a structural regression introduced by the regex→token-prefix
+  migration. The migrated families (git/db/cloud/docker/process) are all affected,
+  not just git; the same `tokens[0]` literal lookup gates them all.
+
 ---
 
 ## P1 — High severity
@@ -180,6 +240,27 @@ fundamental design failure. They are fixable with targeted work.
 - **Fix:** directories `0700`, files `0600`, and avoid symlink following for audit
   writes (for example `O_NOFOLLOW` where available).
 
+### [ ] H8 — Git token-prefix rules miss `git push --force`, `git stash clear`, `git branch -D`
+
+- **Problem:** even with the *first token* correctly `git` (no prefix), several
+  destructive git subcommands were not flagged in the crash-test:
+  - `git push --force` → executed. Note `crates/aegis-scanner/src/scanner/tests/edge_cases.rs:375`
+    **explicitly asserts** `["git", "push", "--force"]` must NOT match the prefix
+    rules — this is a deliberate decision that needs revisiting, not just a missing
+    pattern. A force-push is irreversible history destruction on the remote.
+  - `git stash clear` → executed (drops all stashed work, unrecoverable).
+  - `git branch -D <branch>` → executed (force-deletes an unmerged branch).
+- **Status:** crash-test confirmed.
+- **Files:** `crates/aegis-scanner/src/patterns.rs` (`builtin_prefix_rules()` —
+  GIT-001..008), `crates/aegis-scanner/src/scanner/tests/edge_cases.rs:375`.
+- **Fix:** add token-prefix rules for `git push --force` / `--force-with-lease` /
+  `-f`, `git stash clear` (and `git stash drop`), and `git branch -D` / `-D`
+  combined `-d --force`; decide and document the intended risk level for force-push
+  (likely `Danger`), and update/replace the edge-case test that currently locks in
+  the pass-through. Run through the eval harness alongside H3/M5.
+- **Depends on / amplified by C4:** until C4 lands, every one of these is *also*
+  reachable via `rtk git …` / path prefix regardless of pattern coverage.
+
 ---
 
 ## P2 — Medium severity
@@ -240,6 +321,46 @@ fundamental design failure. They are fixable with targeted work.
 - **File:** `shell_flow.rs:165-235`.
 - **Fix:** make execution type-safe on an explicit `Ready` state.
 
+### [ ] M8 — Snapshot does not recover the dangerous command's effect on committed/clean files
+
+- **Problem:** the snapshot promised as the "rollback the dangerous action" safety
+  net is a `git stash push --include-untracked`, which captures only *uncommitted*
+  changes + untracked files present at snapshot time. A `Danger` command that
+  deletes **committed/clean** files (e.g. `rm -rf scripts` on tracked files) runs
+  after the stash, so its deletion is never in the snapshot — `aegis rollback`
+  restores the stashed delta but does **not** undo the deletion. Outside a git
+  repo, `GitPlugin` is not applicable so no snapshot is taken at all. Net effect:
+  the headline "delete → rollback" promise does not hold for the most common case.
+- **Status:** agent-confirmed via live test — approved `rm -rf scripts` in a git
+  repo; the resulting stash contained only the untracked `scratch.txt`, not the
+  deleted (committed) `scripts/`; recovery required `git restore`, not
+  `aegis rollback`.
+- **Files:** `crates/aegis-snapshot/src/git.rs:67-99` (`git stash push` only
+  captures the working-tree delta), `is_applicable` (git repo only),
+  `src/shell_flow.rs:343` (snapshot taken on `Danger` approve).
+- **Fix:** either back the snapshot with a real copy of the targeted paths so
+  deletions of committed/clean and out-of-repo data are recoverable, or narrow the
+  feature's promise in docs/UX to "preserves uncommitted work at snapshot time"
+  and surface clearly when no snapshot is possible (non-git cwd).
+
+### [ ] M9 — `aegis rollback` is unusable from `aegis snapshot list` output
+
+- **Problem:** the git `snapshot_id` is the composite `"<cwd>\t<hash>"`
+  (`SEP = '\t'`). `aegis snapshot list` renders it as `<path>␉<hash>`, which looks
+  like two columns; `aegis rollback <SNAPSHOT_ID>` takes a single argument, so the
+  bare hash is "not found in the audit log" and `path<space>hash` is rejected as
+  two arguments. There is no practical way for a user to copy the tab-bearing id
+  from the listing into a working `rollback` invocation — the recovery CLI is
+  effectively non-functional.
+- **Status:** agent-confirmed via live test.
+- **Files:** `crates/aegis-snapshot/src/git.rs:20` (`SEP = '\t'`), `:97`
+  (`snapshot_id = format!("{}{SEP}{hash}", cwd.display())`), `:108`/`:179`
+  (`split_once(SEP)` on rollback), `src/rollback.rs` (single-arg `<SNAPSHOT_ID>`).
+- **Fix:** make the id round-trip-safe — store the repo path as a separate audit
+  field and use the bare hash as the id (or have `rollback` resolve a bare hash
+  against the audit log), and/or have `snapshot list` print a ready-to-paste
+  `aegis rollback '<exact-id>'` line.
+
 ---
 
 ## P3 — Low / informational
@@ -293,10 +414,15 @@ fundamental design failure. They are fixable with targeted work.
 3. [ ] C3 / M6 — restrictive merge ratchet for security fields:
        `mode`, `*_override_level`, `ci_policy`, `snapshot_policy`,
        `sandbox.required`; warn on weakening in `config validate`.
-4. [ ] H1 — segment on standalone `&`.
-5. [ ] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
+4. [ ] C4 — normalize the prefix-rule lookup key: basename of `tokens[0]` + strip
+       launcher/wrapper prefixes (`rtk`, `sudo`, `env`, `command`, …); cover
+       RTK-wrapped and absolute-path forms for every token-prefix family.
+5. [ ] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).
+6. [ ] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
        anchors.
-6. [ ] H4 — make `claude-code.sh` deny on missing `jq` / `aegis` / invalid JSON.
+7. [ ] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
+       revisit the edge-case test that whitelists force-push.
+8. [ ] H4 — make `claude-code.sh` deny on missing `jq` / `aegis` / invalid JSON.
 
 ### Sprint 2 — required before release: defense in depth
 
@@ -325,6 +451,9 @@ fundamental design failure. They are fixable with targeted work.
 Aegis' foundation is correctly designed: unbreakable `Block`, precedence rules,
 and fail-closed behavior around errors, panics, and toggle I/O are strong. The
 current release blocker is scanner input normalization and coverage: case,
-`$IFS`, `&`, and nested SQL false-negatives are unacceptable for a security tool.
-The open 1.0 gate for "zero false-negatives" is factually not met. Sprint 1 must
-block release.
+`$IFS`, `&`, nested SQL, and — newly found in the 0.5.9 crash-test — the
+token-prefix anchoring bypass (C4), where any path/launcher/wrapper prefix
+(`/usr/bin/git`, `rtk git`, `sudo git`, `cd … && git`) defeats the migrated
+git/db/cloud/docker/process rules. These false-negatives are unacceptable for a
+security tool. The open 1.0 gate for "zero false-negatives" is factually not met.
+Sprint 1 must block release.
