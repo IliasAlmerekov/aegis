@@ -4,16 +4,21 @@
 //!
 //! The merge path (`merge_layer` / `PartialSandboxSettings::merge_into`) and
 //! the warning collector (`AegisConfig::project_security_ratchet_warnings`)
-//! call the SAME helpers (`ratchet_bool_tighten` / `ratchet_bool_loosen`) so
-//! the reported `kept` value always matches what the merge actually does.
+//! call the SAME helpers (`ratchet_bool_tighten` / `ratchet_bool_loosen` /
+//! `ratchet_*` provider-target helpers / `ratchet_allow_write`) so the
+//! reported `kept` value always matches what the merge actually does.
+
+use std::path::PathBuf;
 
 use super::partial::PartialConfig;
 use super::{
-    ConfigLayerPath, most_restrictive_allowlist_override_level, most_restrictive_ci_policy,
+    ConfigLayerPath, DockerScope, MysqlSnapshotConfig, PostgresSnapshotConfig, SnapshotPolicy,
+    SupabaseSnapshotConfig, most_restrictive_allowlist_override_level, most_restrictive_ci_policy,
     most_restrictive_mode, most_restrictive_snapshot_policy,
 };
 use crate::allowlist::ConfigSourceLayer;
 use crate::error::ConfigError;
+use crate::snapshot::DockerScopeMode;
 
 type Result<T> = std::result::Result<T, ConfigError>;
 
@@ -45,6 +50,229 @@ pub(super) fn ratchet_bool_loosen(
         ConfigSourceLayer::Global => requested,
         ConfigSourceLayer::Project => base && requested,
     }
+}
+
+/// Ratchet `sandbox.allow_write` (a `Vec<PathBuf>` — more entries = weaker).
+///
+/// - Global layer: last-wins (`overlay` replaces `base` when present).
+/// - Project layer: keep the intersection (`base` filtered to entries present
+///   in `overlay`, preserving base order). This honors project tightening to a
+///   subset (including the empty set) while preventing any expansion beyond the
+///   trusted base.
+pub(super) fn ratchet_allow_write(
+    base: &[PathBuf],
+    overlay: Option<&Vec<PathBuf>>,
+    layer: ConfigSourceLayer,
+) -> Vec<PathBuf> {
+    match layer {
+        ConfigSourceLayer::Global => overlay.cloned().unwrap_or_else(|| base.to_vec()),
+        ConfigSourceLayer::Project => match overlay {
+            None => base.to_vec(),
+            Some(requested) => base
+                .iter()
+                .filter(|path| requested.contains(path))
+                .cloned()
+                .collect(),
+        },
+    }
+}
+
+/// Core ratchet for a provider's target config (`sqlite_snapshot_path`,
+/// `postgres_snapshot`, `mysql_snapshot`, `supabase_snapshot`). Under the
+/// Project layer, when the provider is ENABLED in the trusted base AND the
+/// base target itself is enabled (non-no-op), a project overlay that would
+/// disable/empty the target is rejected (keep base). Repointing to another
+/// enabled (non-empty) target is permitted. Global stays last-wins.
+///
+/// `base_target_enabled` / `overlay_target_enabled` encode the per-provider
+/// "target is a no-op" predicate (empty database / empty path).
+fn ratchet_provider_target<T: Clone>(
+    base: &T,
+    overlay: Option<&T>,
+    layer: ConfigSourceLayer,
+    provider_enabled_in_base: bool,
+    base_target_enabled: bool,
+    overlay_target_enabled: impl Fn(&T) -> bool,
+) -> T {
+    match layer {
+        ConfigSourceLayer::Global => overlay.cloned().unwrap_or_else(|| base.clone()),
+        ConfigSourceLayer::Project => {
+            // If the base did not enable the provider there is nothing to
+            // protect — the project may enable + configure its own provider.
+            // If the base target is itself a no-op there is equally nothing
+            // to protect.
+            if !provider_enabled_in_base || !base_target_enabled {
+                return overlay.cloned().unwrap_or_else(|| base.clone());
+            }
+            match overlay {
+                None => base.clone(),
+                Some(o) if !overlay_target_enabled(o) => base.clone(),
+                Some(o) => o.clone(),
+            }
+        }
+    }
+}
+
+/// Ratchet the SQLite snapshot path. Target enabled = non-empty path.
+pub(super) fn ratchet_sqlite_path(
+    base: &String,
+    overlay: Option<&String>,
+    layer: ConfigSourceLayer,
+    provider_enabled_in_base: bool,
+) -> String {
+    ratchet_provider_target(
+        base,
+        overlay,
+        layer,
+        provider_enabled_in_base,
+        !base.is_empty(),
+        |o| !o.is_empty(),
+    )
+}
+
+/// Ratchet the PostgreSQL snapshot config. Target enabled = non-empty
+/// `database`.
+pub(super) fn ratchet_postgres_snapshot(
+    base: &PostgresSnapshotConfig,
+    overlay: Option<&PostgresSnapshotConfig>,
+    layer: ConfigSourceLayer,
+    provider_enabled_in_base: bool,
+) -> PostgresSnapshotConfig {
+    ratchet_provider_target(
+        base,
+        overlay,
+        layer,
+        provider_enabled_in_base,
+        !base.database.is_empty(),
+        |o| !o.database.is_empty(),
+    )
+}
+
+/// Ratchet the MySQL snapshot config. Target enabled = non-empty `database`.
+pub(super) fn ratchet_mysql_snapshot(
+    base: &MysqlSnapshotConfig,
+    overlay: Option<&MysqlSnapshotConfig>,
+    layer: ConfigSourceLayer,
+    provider_enabled_in_base: bool,
+) -> MysqlSnapshotConfig {
+    ratchet_provider_target(
+        base,
+        overlay,
+        layer,
+        provider_enabled_in_base,
+        !base.database.is_empty(),
+        |o| !o.database.is_empty(),
+    )
+}
+
+/// Ratchet the Supabase snapshot config. Target enabled = non-empty
+/// `db.database`.
+pub(super) fn ratchet_supabase_snapshot(
+    base: &SupabaseSnapshotConfig,
+    overlay: Option<&SupabaseSnapshotConfig>,
+    layer: ConfigSourceLayer,
+    provider_enabled_in_base: bool,
+) -> SupabaseSnapshotConfig {
+    ratchet_provider_target(
+        base,
+        overlay,
+        layer,
+        provider_enabled_in_base,
+        !base.db.database.is_empty(),
+        |o| !o.db.database.is_empty(),
+    )
+}
+
+/// Docker breadth rank (higher = broader): `All` = 2; `Labeled` = 1; `Names`
+/// with non-empty `name_patterns` = 1; `Names` with empty `name_patterns` = 0
+/// (no-op). Used only to detect a no-op base/overlay (rank 0) — structural
+/// narrowing is decided by [`docker_scope_narrows`].
+fn docker_breadth_rank(scope: &DockerScope) -> u8 {
+    match scope.mode {
+        DockerScopeMode::All => 2,
+        DockerScopeMode::Labeled => 1,
+        DockerScopeMode::Names => {
+            if scope.name_patterns.is_empty() {
+                0
+            } else {
+                1
+            }
+        }
+    }
+}
+
+/// True iff every pattern in `base` is present (as a literal string) in
+/// `overlay` — i.e. `overlay` is a literal-string superset of `base`.
+fn patterns_superset(overlay: &[String], base: &[String]) -> bool {
+    base.iter().all(|p| overlay.contains(p))
+}
+
+/// Whether `overlay` narrows or is incomparable with `base`'s eligible-container
+/// set (so the project must not win). `base` is assumed non-no-op (caller guards
+/// via [`docker_breadth_rank`]).
+///
+/// Semantics: only keep-or-broaden moves are permitted.
+/// - `All` is the broadest mode; anything else narrows from `All`.
+/// - `Labeled` ↔ `Labeled` with the SAME label is a keep (no narrowing);
+///   a different label is incomparable.
+/// - `Names` → `Names` is a broaden/keep iff every base pattern is present in
+///   the overlay (overlay is a literal-string superset).
+/// - Any cross-mode switch between `Labeled` and `Names` is incomparable.
+fn docker_scope_narrows(base: &DockerScope, overlay: &DockerScope) -> bool {
+    use DockerScopeMode::*;
+    match (base.mode, overlay.mode) {
+        (All, All) => false, // identical effective (label/patterns unused)
+        (All, _) => true,    // narrowing from broadest
+        (Labeled, All) => false,
+        (Labeled, Labeled) => base.label != overlay.label, // different label = incomparable
+        (Labeled, Names) => true,                          // incomparable mode switch
+        (Names, All) => false,
+        (Names, Labeled) => true, // incomparable mode switch
+        (Names, Names) => !patterns_superset(&overlay.name_patterns, &base.name_patterns),
+    }
+}
+
+/// Ratchet the Docker snapshot scope. Under the Project layer, when the docker
+/// provider is ENABLED in the trusted base AND the base scope is not a no-op
+/// (rank 0), a project overlay that NARROWS or is INCOMPARABLE with the base
+/// eligible-container set is rejected (keep base + warn). Only keep-or-broaden
+/// moves are permitted: `All` is the broadest; `Labeled` ↔ `Labeled` with the
+/// same label is a keep; `Names` → `Names` whose overlay patterns are a
+/// literal-string superset of the base patterns is a broaden/keep. Global stays
+/// last-wins.
+pub(super) fn ratchet_docker_scope(
+    base: &DockerScope,
+    overlay: Option<&DockerScope>,
+    layer: ConfigSourceLayer,
+    provider_enabled_in_base: bool,
+) -> DockerScope {
+    match layer {
+        ConfigSourceLayer::Global => overlay.cloned().unwrap_or_else(|| base.clone()),
+        ConfigSourceLayer::Project => {
+            if !provider_enabled_in_base || docker_breadth_rank(base) == 0 {
+                return overlay.cloned().unwrap_or_else(|| base.clone());
+            }
+            match overlay {
+                None => base.clone(),
+                Some(o) if docker_scope_narrows(base, o) => base.clone(),
+                Some(o) => o.clone(),
+            }
+        }
+    }
+}
+
+/// Whether a built-in snapshot provider is enabled in `base`. Under
+/// `SnapshotPolicy::None` the registry materializes NO providers, so nothing
+/// is ratcheted. Under `SnapshotPolicy::Full` the registry materializes every
+/// built-in provider regardless of the per-plugin flags, so `Full` counts as
+/// every provider enabled. Under `SnapshotPolicy::Selective` only providers
+/// whose `auto_snapshot_*` flag is set are enabled.
+pub(super) fn provider_enabled_in_base(
+    base: &super::AegisConfig,
+    auto_snapshot_flag: bool,
+) -> bool {
+    base.snapshot_policy != SnapshotPolicy::None
+        && (base.snapshot_policy == SnapshotPolicy::Full || auto_snapshot_flag)
 }
 
 /// A project-local config value attempted to weaken a security-critical setting.
@@ -183,18 +411,25 @@ impl super::AegisConfig {
         }
 
         if let Some(requested) = overlay.sandbox_allow_write() {
-            let kept = base.sandbox.allow_write.clone();
+            let kept = ratchet_allow_write(
+                &base.sandbox.allow_write,
+                Some(&requested),
+                ConfigSourceLayer::Project,
+            );
+            // Gate on genuine expansion (some requested path is outside the
+            // trusted base) rather than `kept != requested` Debug-string
+            // inequality, so a reordered-but-equal subset does not spuriously
+            // warn.
             let weakened = requested
                 .iter()
-                .any(|path| !base.sandbox.allow_write.contains(path));
+                .any(|p| !base.sandbox.allow_write.contains(p));
             if weakened {
-                push_ratchet_warning(
-                    &mut warnings,
-                    "sandbox.allow_write",
-                    format!("{requested:?}"),
-                    format!("{kept:?}"),
-                    &location,
-                );
+                warnings.push(SecurityRatchetWarning {
+                    field: "sandbox.allow_write",
+                    requested: format!("{requested:?}"),
+                    kept: format!("{kept:?}"),
+                    location: location.clone(),
+                });
             }
         }
 
@@ -241,6 +476,93 @@ impl super::AegisConfig {
                     &location,
                 );
             }
+        }
+
+        // C3-01: provider target config ratchet. Each helper is called with the
+        // SAME arguments the merge uses, so `kept` here matches the merged value.
+        if let Some(requested) = overlay.sqlite_snapshot_path.as_ref() {
+            let enabled = provider_enabled_in_base(base, base.auto_snapshot_sqlite);
+            let kept = ratchet_sqlite_path(
+                &base.sqlite_snapshot_path,
+                Some(requested),
+                ConfigSourceLayer::Project,
+                enabled,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "sqlite_snapshot_path",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
+        }
+
+        if let Some(requested) = overlay.postgres_snapshot.as_ref() {
+            let enabled = provider_enabled_in_base(base, base.auto_snapshot_postgres);
+            let kept = ratchet_postgres_snapshot(
+                &base.postgres_snapshot,
+                Some(requested),
+                ConfigSourceLayer::Project,
+                enabled,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "postgres_snapshot",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
+        }
+
+        if let Some(requested) = overlay.mysql_snapshot.as_ref() {
+            let enabled = provider_enabled_in_base(base, base.auto_snapshot_mysql);
+            let kept = ratchet_mysql_snapshot(
+                &base.mysql_snapshot,
+                Some(requested),
+                ConfigSourceLayer::Project,
+                enabled,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "mysql_snapshot",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
+        }
+
+        if let Some(requested) = overlay.supabase_snapshot.as_ref() {
+            let enabled = provider_enabled_in_base(base, base.auto_snapshot_supabase);
+            let kept = ratchet_supabase_snapshot(
+                &base.supabase_snapshot,
+                Some(requested),
+                ConfigSourceLayer::Project,
+                enabled,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "supabase_snapshot",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
+        }
+
+        if let Some(requested) = overlay.docker_scope.as_ref() {
+            let enabled = provider_enabled_in_base(base, base.auto_snapshot_docker);
+            let kept = ratchet_docker_scope(
+                &base.docker_scope,
+                Some(requested),
+                ConfigSourceLayer::Project,
+                enabled,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "docker_scope",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
         }
 
         Ok(warnings)

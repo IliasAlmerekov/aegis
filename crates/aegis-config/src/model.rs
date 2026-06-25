@@ -170,7 +170,10 @@ fn snapshot_policy_rank(policy: SnapshotPolicy) -> u8 {
 // The ratchet helpers live in `model::ratchet`; `merge_layer` below and the
 // `partial` submodule both call them so the merge path and the warning
 // collector share one definition of the effective `kept` value.
-use ratchet::ratchet_bool_tighten;
+use ratchet::{
+    provider_enabled_in_base, ratchet_bool_tighten, ratchet_docker_scope, ratchet_mysql_snapshot,
+    ratchet_postgres_snapshot, ratchet_sqlite_path, ratchet_supabase_snapshot,
+};
 
 /// A resolved config file path together with the layer it represents.
 #[derive(Debug, Clone)]
@@ -183,7 +186,7 @@ pub struct ConfigLayerPath {
 
 /// Sandbox configuration — controls whether commands run inside a bwrap sandbox.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SandboxSettings {
     /// Enable the sandbox layer.
     pub enabled: bool,
@@ -449,6 +452,19 @@ impl AegisConfig {
     fn merge_layer(base: Self, overlay: PartialConfig, allowlist_layer: ConfigSourceLayer) -> Self {
         let ratchet_tighten =
             |base_val, overlay_val| ratchet_bool_tighten(base_val, overlay_val, allowlist_layer);
+
+        // C3-01: provider target config ratchet. Compute the per-provider
+        // `provider_enabled_in_base` predicates BEFORE any field moves out of
+        // `base`, and route them through the SAME helper the warning collector
+        // uses so the merge and warning stay in lock-step (notably under
+        // `SnapshotPolicy::None`, where no provider is ever materialized and the
+        // ratchet must not fire).
+        let postgres_enabled = provider_enabled_in_base(&base, base.auto_snapshot_postgres);
+        let mysql_enabled = provider_enabled_in_base(&base, base.auto_snapshot_mysql);
+        let supabase_enabled = provider_enabled_in_base(&base, base.auto_snapshot_supabase);
+        let sqlite_enabled = provider_enabled_in_base(&base, base.auto_snapshot_sqlite);
+        let docker_enabled = provider_enabled_in_base(&base, base.auto_snapshot_docker);
+
         let mut custom_patterns = base.custom_patterns;
         let custom_pattern_count = overlay.custom_patterns.len();
         custom_patterns.extend(overlay.custom_patterns);
@@ -469,6 +485,39 @@ impl AegisConfig {
 
         let mut blocklist_layers = base.blocklist_layers;
         blocklist_layers.extend(std::iter::repeat_n(allowlist_layer, blocklist_count));
+
+        // C3-01: provider target config ratchet. The `*_enabled` predicates
+        // above were computed before any field moved out of `base`.
+        let postgres_snapshot = ratchet_postgres_snapshot(
+            &base.postgres_snapshot,
+            overlay.postgres_snapshot.as_ref(),
+            allowlist_layer,
+            postgres_enabled,
+        );
+        let mysql_snapshot = ratchet_mysql_snapshot(
+            &base.mysql_snapshot,
+            overlay.mysql_snapshot.as_ref(),
+            allowlist_layer,
+            mysql_enabled,
+        );
+        let supabase_snapshot = ratchet_supabase_snapshot(
+            &base.supabase_snapshot,
+            overlay.supabase_snapshot.as_ref(),
+            allowlist_layer,
+            supabase_enabled,
+        );
+        let sqlite_snapshot_path = ratchet_sqlite_path(
+            &base.sqlite_snapshot_path,
+            overlay.sqlite_snapshot_path.as_ref(),
+            allowlist_layer,
+            sqlite_enabled,
+        );
+        let docker_scope = ratchet_docker_scope(
+            &base.docker_scope,
+            overlay.docker_scope.as_ref(),
+            allowlist_layer,
+            docker_enabled,
+        );
 
         Self {
             config_version: overlay.config_version.unwrap_or(base.config_version),
@@ -508,25 +557,23 @@ impl AegisConfig {
                 base.auto_snapshot_postgres,
                 overlay.auto_snapshot_postgres,
             ),
-            postgres_snapshot: overlay.postgres_snapshot.unwrap_or(base.postgres_snapshot),
+            postgres_snapshot,
             auto_snapshot_mysql: ratchet_tighten(
                 base.auto_snapshot_mysql,
                 overlay.auto_snapshot_mysql,
             ),
-            mysql_snapshot: overlay.mysql_snapshot.unwrap_or(base.mysql_snapshot),
+            mysql_snapshot,
             auto_snapshot_supabase: ratchet_tighten(
                 base.auto_snapshot_supabase,
                 overlay.auto_snapshot_supabase,
             ),
-            supabase_snapshot: overlay.supabase_snapshot.unwrap_or(base.supabase_snapshot),
+            supabase_snapshot,
             auto_snapshot_sqlite: ratchet_tighten(
                 base.auto_snapshot_sqlite,
                 overlay.auto_snapshot_sqlite,
             ),
-            sqlite_snapshot_path: overlay
-                .sqlite_snapshot_path
-                .unwrap_or(base.sqlite_snapshot_path),
-            docker_scope: overlay.docker_scope.unwrap_or(base.docker_scope),
+            sqlite_snapshot_path,
+            docker_scope,
             ci_policy: merge_project_ci_policy(base.ci_policy, overlay.ci_policy, allowlist_layer),
             rules: {
                 let mut r = base.rules;
