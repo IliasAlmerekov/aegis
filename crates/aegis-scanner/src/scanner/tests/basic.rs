@@ -352,6 +352,50 @@ fn assess_token_prefix_rules_through_absolute_paths_and_launchers() {
     }
 }
 
+// H2: destructive SQL is delivered embedded in a db-cli invocation
+// (`psql -c '…'`, `mysql -e '…'`, `--command=`, `--execute`, RTK-wrapped, and
+// `;`-compound statements), where the SQL verb is never the leading program
+// token. The destructive-SQL rules match the normalized command anywhere
+// (ADR-015), so embedded `DROP`/`ALTER … DROP COLUMN` is still caught.
+#[test]
+fn assess_detects_destructive_sql_embedded_in_db_cli_invocations() {
+    let cases = [
+        ("psql -c 'DROP TABLE users'", RiskLevel::Danger, "DB-001"),
+        ("mysql -e 'DROP DATABASE app'", RiskLevel::Danger, "DB-002"),
+        (
+            "psql --command='DROP SCHEMA public CASCADE'",
+            RiskLevel::Danger,
+            "DB-007",
+        ),
+        (
+            "mysql --execute 'DROP TABLE t'",
+            RiskLevel::Danger,
+            "DB-001",
+        ),
+        (
+            "rtk psql -c 'DROP TABLE users'",
+            RiskLevel::Danger,
+            "DB-001",
+        ),
+        (
+            "psql -c 'SELECT 1; DROP TABLE users'",
+            RiskLevel::Danger,
+            "DB-001",
+        ),
+        (
+            "psql -c 'ALTER TABLE users DROP COLUMN email'",
+            RiskLevel::Warn,
+            "DB-008",
+        ),
+        // anti-regression: bare SQL must stay Danger after the regex migration.
+        ("DROP TABLE users;", RiskLevel::Danger, "DB-001"),
+    ];
+
+    for (cmd, expected_risk, expected_id) in cases {
+        assert_assessment_matches_pattern(cmd, expected_risk, expected_id);
+    }
+}
+
 #[test]
 fn assess_flags_uppercase_curl_pipe_bash() {
     assert_assessment_matches_pattern(

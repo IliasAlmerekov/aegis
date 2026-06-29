@@ -635,3 +635,135 @@ fn scanner_flags_ifs_obfuscated_shred() {
 fn scanner_blocks_ifs_obfuscated_mkfs() {
     assert_command_matches_pattern("mkfs.ext4${IFS}/dev/sdb1", RiskLevel::Block, "FS-006");
 }
+
+// ── H2: destructive-SQL narrowness guards ─────────────────────────────────
+//
+// The match-anywhere destructive-SQL rules (ADR-015) are `\b`-anchored with a
+// mandatory `\s+` between the verb and its object, so they stay narrow: an
+// identifier that merely contains the word (`drop_table_log`) and an uncovered
+// statement (`DROP INDEX`) must not raise Danger.
+#[test]
+fn destructive_sql_does_not_match_identifier_containing_drop_table() {
+    let s = scanner();
+    let assessment = s.assess("psql -c 'SELECT * FROM drop_table_log'");
+    assert!(
+        assessment.risk < RiskLevel::Danger,
+        "'drop_table_log' identifier must not raise Danger (got {:?}): {:?}",
+        assessment.risk,
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn destructive_sql_does_not_match_uncovered_drop_index() {
+    let s = scanner();
+    let assessment = s.assess("psql -c 'DROP INDEX idx'");
+    assert!(
+        assessment.risk < RiskLevel::Danger,
+        "'DROP INDEX' is intentionally uncovered and must not raise Danger \
+         (got {:?}): {:?}",
+        assessment.risk,
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
+// bugs-01 (lead review of H2): DB-008 must still fire when the table identifier
+// contains spaces — either a quoted identifier delivered via `psql -c`
+// (`"my table"` survives normalization) or a bare double-quoted identifier whose
+// shell quotes are stripped to `my table`. The old PatternToken::Any prefix rule
+// matched the single de-quoted token; the regex must preserve that superset
+// guarantee (ADR-015) rather than regress on spaced identifiers.
+#[test]
+fn destructive_sql_alter_drop_column_matches_spaced_table_identifier() {
+    let s = scanner();
+    for cmd in [
+        // bare: shell-quotes stripped → `ALTER TABLE my table DROP COLUMN x`
+        "ALTER TABLE \"my table\" DROP COLUMN x",
+        // psql delivery: inner double-quotes survive as a literal identifier
+        "psql -c 'ALTER TABLE \"my table\" DROP COLUMN email'",
+    ] {
+        let assessment = s.assess(cmd);
+        assert_eq!(
+            assessment.risk,
+            RiskLevel::Warn,
+            "DB-008 must fire for spaced table identifier {cmd:?} (got {:?})",
+            assessment.risk
+        );
+        assert!(
+            assessment
+                .matched
+                .iter()
+                .any(|m| m.pattern.id.as_ref() == "DB-008"),
+            "expected DB-008 for {cmd:?}, got {:?}",
+            assessment
+                .matched
+                .iter()
+                .map(|m| m.pattern.id.as_ref())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+// bugs-02 (lead review of H2): heredoc and stdin-pipe delivery are claimed
+// covered by ADR-015 but were untested. They reach the scanner through distinct
+// code paths (heredoc-body extraction / piped-segment scanning) from the
+// `-c`/`-e` logical-segment path the other H2 tests exercise. These guard those
+// vectors so a regression in heredoc/stdin handling cannot silently uncover
+// destructive SQL. No source change is expected — they should already pass.
+#[test]
+fn destructive_sql_detected_via_heredoc_body() {
+    let s = scanner();
+    let cmd = "psql <<EOF\nDROP TABLE users;\nEOF";
+    let assessment = s.assess(cmd);
+    assert_eq!(
+        assessment.risk,
+        RiskLevel::Danger,
+        "DROP TABLE in a psql heredoc body must reach Danger (got {:?})",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "DB-001"),
+        "expected DB-001 for heredoc DROP TABLE, got {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn destructive_sql_detected_via_stdin_pipe_into_psql() {
+    let s = scanner();
+    let cmd = "echo 'DROP TABLE users' | psql";
+    let assessment = s.assess(cmd);
+    assert_eq!(
+        assessment.risk,
+        RiskLevel::Danger,
+        "DROP TABLE piped into psql must reach Danger (got {:?})",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "DB-001"),
+        "expected DB-001 for stdin-piped DROP TABLE, got {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}

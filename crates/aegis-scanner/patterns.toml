@@ -108,10 +108,32 @@ justification = "/etc contains critical system configuration. Moving files out o
 
 # ─── Database ────────────────────────────────────────────────────────────────
 #
-# DB-001, DB-002, DB-006, DB-007, DB-008 are now token-prefix rules
-# defined in builtin_prefix_rules() in crates/aegis-scanner/src/patterns.rs.
-# DB-004 (TRUNCATE TABLE) remains here as a regex pattern.
-# Only regex patterns that require arbitrary gaps or negative lookahead remain here.
+# DB-006 (Redis FLUSHALL/FLUSHDB) is a token-prefix rule defined in
+# builtin_prefix_rules() in crates/aegis-scanner/src/patterns.rs.
+# The destructive-SQL rules below (DB-001/002/007/008) are regex patterns that
+# match the normalized command ANYWHERE: SQL verbs arrive embedded in
+# `psql -c` / `mysql -e` / `--command=` / `--execute` / heredoc / stdin, never
+# as a leading program token, so a token-prefix rule keyed on the effective
+# program would miss them (ADR-015). They are `\b`-anchored with a mandatory
+# `\s+` between verb and object to stay narrow.
+
+[[patterns]]
+id = "DB-001"
+category = "Database"
+risk = "Danger"
+pattern = '\bdrop\s+table\b'
+description = "DROP TABLE — permanently deletes a database table and all its data"
+safe_alt = "Back up the table first: 'CREATE TABLE backup AS SELECT * FROM <table>'"
+justification = "Destroys the table and all data. In most engines this is immediate and irreversible without a backup."
+
+[[patterns]]
+id = "DB-002"
+category = "Database"
+risk = "Danger"
+pattern = '\bdrop\s+database\b'
+description = "DROP DATABASE — permanently destroys an entire database and all its contents"
+safe_alt = "Take a full backup with pg_dump / mysqldump before dropping"
+justification = "Destroys the entire database. This removes all schemas, tables, indexes, and data permanently."
 
 [[patterns]]
 id = "DB-003"
@@ -139,6 +161,24 @@ pattern = '--accept-data-loss'
 description = "--accept-data-loss flag — explicitly acknowledges potential data loss in MongoDB/Atlas operations"
 safe_alt = "Investigate why the flag is needed; prefer replica set elections without data loss"
 justification = "This flag tells the database to proceed even if data loss is expected. It should only be used after understanding exactly what data will be lost and why."
+
+[[patterns]]
+id = "DB-007"
+category = "Database"
+risk = "Danger"
+pattern = '\bdrop\s+schema\b'
+description = "DROP SCHEMA — deletes an entire schema including all objects contained within it"
+safe_alt = "Back up the schema first and verify all dependent objects are accounted for"
+justification = "Removes a schema and every object inside it. Dependencies on those objects will break."
+
+[[patterns]]
+id = "DB-008"
+category = "Database"
+risk = "Warn"
+pattern = '\balter\s+table\s+.+?\s+drop\s+column\b'
+description = "ALTER TABLE DROP COLUMN — removes a column and all its data permanently"
+safe_alt = "Add a NOT NULL DEFAULT before removing to safely migrate dependent queries first"
+justification = "Removes a column and all its data permanently. Dependent views, triggers, and queries will fail."
 
 # ─── Cloud ───────────────────────────────────────────────────────────────────
 #

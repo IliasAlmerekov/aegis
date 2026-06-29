@@ -200,42 +200,12 @@ pub(super) fn rules() -> Vec<PrefixRule> {
             not_match_examples: &["git stash list"],
         },
         // ── Database ───────────────────────────────────────────────────────
-        PrefixRule {
-            id: Cow::Borrowed("DB-001"),
-            category: Category::Database,
-            pattern: vec![s("drop"), s("table")],
-            risk: RiskLevel::Danger,
-            description: Cow::Borrowed(
-                "DROP TABLE — permanently deletes a database table and all its data",
-            ),
-            safe_alt: Some(Cow::Borrowed(
-                "Back up the table first: 'CREATE TABLE backup AS SELECT * FROM <table>'",
-            )),
-            justification: Some(Cow::Borrowed(
-                "Destroys the table and all data. In most engines this is immediate and irreversible without a backup.",
-            )),
-            source: PatternSource::Builtin,
-            match_examples: &["DROP TABLE users;"],
-            not_match_examples: &["SELECT * FROM users;"],
-        },
-        PrefixRule {
-            id: Cow::Borrowed("DB-002"),
-            category: Category::Database,
-            pattern: vec![s("drop"), s("database")],
-            risk: RiskLevel::Danger,
-            description: Cow::Borrowed(
-                "DROP DATABASE — permanently destroys an entire database and all its contents",
-            ),
-            safe_alt: Some(Cow::Borrowed(
-                "Take a full backup with pg_dump / mysqldump before dropping",
-            )),
-            justification: Some(Cow::Borrowed(
-                "Destroys the entire database. This removes all schemas, tables, indexes, and data permanently.",
-            )),
-            source: PatternSource::Builtin,
-            match_examples: &["DROP DATABASE myapp_production;"],
-            not_match_examples: &["CREATE DATABASE myapp_production;"],
-        },
+        // DB-001 (DROP TABLE), DB-002 (DROP DATABASE), DB-007 (DROP SCHEMA), and
+        // DB-008 (ALTER TABLE … DROP COLUMN) are regex patterns in patterns.toml,
+        // not token-prefix rules: their SQL verbs arrive embedded in `psql -c` /
+        // `mysql -e` / heredoc / stdin, never as the leading program token
+        // (ADR-015). Only DB-006 (Redis FLUSHALL/FLUSHDB), whose verb *is* the
+        // command, stays a prefix rule here.
         PrefixRule {
             id: Cow::Borrowed("DB-006"),
             category: Category::Database,
@@ -253,48 +223,6 @@ pub(super) fn rules() -> Vec<PrefixRule> {
             source: PatternSource::Builtin,
             match_examples: &["FLUSHALL"],
             not_match_examples: &["GET mykey"],
-        },
-        PrefixRule {
-            id: Cow::Borrowed("DB-007"),
-            category: Category::Database,
-            pattern: vec![s("drop"), s("schema")],
-            risk: RiskLevel::Danger,
-            description: Cow::Borrowed(
-                "DROP SCHEMA — deletes an entire schema including all objects contained within it",
-            ),
-            safe_alt: Some(Cow::Borrowed(
-                "Back up the schema first and verify all dependent objects are accounted for",
-            )),
-            justification: Some(Cow::Borrowed(
-                "Removes a schema and every object inside it. Dependencies on those objects will break.",
-            )),
-            source: PatternSource::Builtin,
-            match_examples: &["DROP SCHEMA public CASCADE;"],
-            not_match_examples: &["CREATE SCHEMA public;"],
-        },
-        PrefixRule {
-            id: Cow::Borrowed("DB-008"),
-            category: Category::Database,
-            pattern: vec![
-                s("alter"),
-                s("table"),
-                PatternToken::Any,
-                s("drop"),
-                s("column"),
-            ],
-            risk: RiskLevel::Warn,
-            description: Cow::Borrowed(
-                "ALTER TABLE DROP COLUMN — removes a column and all its data permanently",
-            ),
-            safe_alt: Some(Cow::Borrowed(
-                "Add a NOT NULL DEFAULT before removing to safely migrate dependent queries first",
-            )),
-            justification: Some(Cow::Borrowed(
-                "Removes a column and all its data permanently. Dependent views, triggers, and queries will fail.",
-            )),
-            source: PatternSource::Builtin,
-            match_examples: &["ALTER TABLE users DROP COLUMN avatar;"],
-            not_match_examples: &["ALTER TABLE users ADD COLUMN avatar;"],
         },
         // ── Cloud ──────────────────────────────────────────────────────────
         PrefixRule {
