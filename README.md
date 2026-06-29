@@ -94,7 +94,7 @@ Aegis adds a human checkpoint before damage happens. It also keeps an append-onl
 ## How to install
 
 > [!IMPORTANT]
-> **Windows:** install inside WSL2. Native PowerShell and `cmd.exe` are not supported.
+> **Windows:** install inside WSL2. Native PowerShell and `cmd.exe` are not supported — there is no native Windows build.
 
 ### Quick install (recommended)
 
@@ -112,12 +112,16 @@ npm i -g @iliasalmerekov/aegis
 
 Runs `aegis install-hooks --all` automatically when Claude Code or Codex config directories are present. Set `AEGIS_NPM_SKIP_HOOKS=1` to opt out.
 
+npm and Cargo install the binary only; neither runs the global shell installer or edits your shell startup files. Opt in with `aegis setup-shell` (see below).
+
 ### Homebrew
 
 ```bash
 brew tap IliasAlmerekov/aegis
 brew install aegis
 ```
+
+Homebrew installs the binary only — like npm and Cargo, it does not run the global shell installer. Opt in with `aegis setup-shell`.
 
 ### Developer source install
 
@@ -135,11 +139,14 @@ Package manager installs are binary-only. To opt in to shell-proxy mode:
 aegis setup-shell
 ```
 
-Remove with:
+This adds a managed block to `~/.zshrc` or `~/.bashrc` that sets `SHELL` to the
+aegis binary and `AEGIS_REAL_SHELL` to your real shell. Remove it with:
 
 ```bash
 aegis setup-shell --remove
 ```
+
+The convenience installer is **Global**-first: it installs the binary, writes the managed shell block, and sets up Claude Code / Codex hooks when those config directories already exist. The old **Local** project-only and **Binary**-only installer modes have been removed; package-manager installs are binary-only.
 
 ---
 
@@ -171,7 +178,7 @@ aegis install-hooks --all
 Re-run after upgrading to migrate any older `aegis hook` / `aegis-rewrite.sh` registration to the current shim.
 
 > [!TIP]
-> **Other agents:** for tools that respect `$SHELL`, run `aegis setup-shell`. For agents with a `shell` config field, paste the output of `command -v aegis` as its value.
+> **Other agents:** for tools that respect `$SHELL`, run `aegis setup-shell`. For an agent with a `shell` config field, find the `shell` field and set it to the output of `command -v aegis`.
 
 ---
 
@@ -209,7 +216,7 @@ curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/u
 
 | Document | Description |
 |----------|-------------|
-| [Architecture decisions](docs/adr/README.md) | ADR-001 through ADR-014 |
+| [Architecture decisions](docs/adr/README.md) | ADR-001 through ADR-015 |
 | [Threat model](docs/threat-model.md) | Security scope and assumptions |
 | [Config schema](docs/config-schema.md) | `aegis.toml` reference |
 | [Platform support](docs/platform-support.md) | Linux, macOS, WSL2 details |
