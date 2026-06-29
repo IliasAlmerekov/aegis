@@ -30,6 +30,23 @@ Running commands through an interpreter or another layer (inline scripts, piping
 shell) rather than invoking the program directly. `Strict` mode blocks it.
 _Avoid_: nested execution, eval
 
+**Launcher prefix**:
+A leading token that launches another program rather than being the target itself
+(`sudo`, `env`, `nice`, `timeout`, `command`, the site-specific `rtk`, …). Stripped — with
+its options, via a built-in option-arity table — to expose the real program for **detection
+matching only** (never for execution). Built-in launchers are trusted and include
+the local `rtk` execution wrapper. Distinct from the `Wrapper` (`$SHELL` proxy) and
+from a `Hook`.
+_Avoid_: wrapper, command wrapper, exec prefix
+
+**Effective program**:
+The real program token a scan target resolves to after stripping launcher prefixes and
+taking the basename of an absolute path (`/usr/bin/git` → `git`, `sudo rtk git` → `git`).
+Computed per scan target and used as the lookup key for `Token-prefix rule`s and the
+by-program regex index — so prefixes and absolute paths cannot bypass a rule keyed on the
+first token. Distinct from `ParsedCommand.program`, which preserves the raw leading token.
+_Avoid_: real program, resolved command, normalized program
+
 ## Scanner
 
 **Assessment**:
@@ -53,7 +70,7 @@ normalized command string; matches **anywhere** in the string.
 _Avoid_: rule, signature (reserve "rule" for prefix rules)
 
 **Token-prefix rule**:
-A detection rule keyed on a command's first program token (e.g. `git`, `docker`) and
+A detection rule keyed on a command's `Effective program` token (e.g. `git`, `docker`) and
 matched against the token sequence — distinct from a regex `Pattern`. Git, Database,
 Cloud, Docker, and some Process rules are token-prefix rules.
 _Avoid_: prefix pattern, first-token rule

@@ -216,10 +216,14 @@ impl AuditLogger {
             chunk.extend_from_slice(&tail);
             tail = chunk;
 
-            if let Some(line) = tail.split(|byte| *byte == b'\n').rev().find(|line| {
-                !line.is_empty() && !line.iter().all(|byte| byte.is_ascii_whitespace())
-            }) {
-                return self.parse_entry_line(line, path, None);
+            for line in tail.split(|byte| *byte == b'\n').rev() {
+                if line.is_empty() || line.iter().all(|byte| byte.is_ascii_whitespace()) {
+                    continue;
+                }
+                match self.parse_entry_line(line, path, None) {
+                    Ok(Some(entry)) => return Ok(Some(entry)),
+                    Ok(None) | Err(_) => continue,
+                }
             }
 
             if read_start == 0 {

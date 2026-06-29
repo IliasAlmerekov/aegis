@@ -16,7 +16,7 @@
 
 ## Last updated
 
-2026-06-25
+2026-06-28
 
 ---
 
@@ -39,7 +39,33 @@
 
 ---
 
-## What was done last session (2026-06-25)
+## What was done last session (2026-06-28)
+
+- **C4 / ADR-014 closed via TDD**: token-prefix and by-program-indexed detections now
+  resolve an `Effective program` per scan target by stripping built-in launcher
+  prefixes (`rtk`, `sudo`, `env`, `command`, `nice`, `timeout`, etc.) and
+  basename-normalizing absolute program paths. Regression coverage confirms
+  `/usr/bin/git reset --hard`, `rtk git clean -fd`, `sudo /bin/kill -9 1`,
+  `/usr/local/bin/docker volume prune`, `timeout ... terraform destroy`, and
+  `/bin/bash -c ...` hit the expected scanner rules. Review follow-ups added
+  timeout option parsing (`-s`/`--signal`, `-k`/`--kill-after`, etc.), sudo
+  environment-assignment stripping, conservative unknown sudo/env-flag
+  candidates, stacked sudo option handling (`sudo -n -u postgres ...`), and
+  one-pass effective-prefix scanning. Updated ADR-014, TASKS, CONTEXT, and
+  CHANGELOG.
+- Verification: focused RED tests failed before implementation; focused GREEN
+  tests passed for parser/scanner/audit regressions; `cargo fmt --check`,
+  `cargo clippy -- -D warnings`, and full `cargo test` (536 passed) are clean.
+  `cargo audit` is clean except the existing allowed starlark/paste advisories;
+  `cargo deny check` is clean. `scanner_bench`: `1000_safe_commands` unchanged
+  at ~1.88 ms; dangerous/heredoc benchmarks show small local Criterion
+  regressions versus the prior sample but remain sub-ms.
+- **Audit tail availability fix:** `read_last_entry_from_plain_file` now skips a
+  torn/truncated final audit JSONL line and walks back to the previous valid
+  entry, preventing one malformed tail from bricking command interception.
+  Focused regression `read_last_entry_skips_truncated_final_line` passes.
+
+### Previous session (2026-06-25)
 
 - **C3-residual closed** via `/implement` TDD pipeline (red → green → review,
   2 iterations; iteration-1 review surfaced a `when.then = "allow"` bypass,

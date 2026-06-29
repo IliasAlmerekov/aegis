@@ -294,6 +294,65 @@ fn assess_blocks_uppercase_umount_root() {
 }
 
 #[test]
+fn assess_token_prefix_rules_through_absolute_paths_and_launchers() {
+    let cases = [
+        (
+            "/usr/bin/git reset --hard HEAD~1",
+            RiskLevel::Warn,
+            "GIT-001",
+        ),
+        ("rtk git clean -fd src/", RiskLevel::Warn, "GIT-002"),
+        ("sudo git stash clear", RiskLevel::Warn, "GIT-008"),
+        (
+            "env FOO=bar git branch -D stale",
+            RiskLevel::Warn,
+            "GIT-006",
+        ),
+        ("sudo /bin/kill -9 1", RiskLevel::Block, "PS-001"),
+        (
+            "/usr/local/bin/docker volume prune -f",
+            RiskLevel::Warn,
+            "DK-002",
+        ),
+        (
+            "timeout 5s terraform destroy -auto-approve",
+            RiskLevel::Danger,
+            "CL-001",
+        ),
+        (
+            "timeout -s KILL 5s git reset --hard HEAD~1",
+            RiskLevel::Warn,
+            "GIT-001",
+        ),
+        (
+            "timeout -k 10s 5s git push origin main --force",
+            RiskLevel::Warn,
+            "GIT-003",
+        ),
+        (
+            "sudo FOO=bar git reset --hard HEAD~1",
+            RiskLevel::Warn,
+            "GIT-001",
+        ),
+        (
+            "sudo --new-opt val git reset --hard HEAD~1",
+            RiskLevel::Warn,
+            "GIT-001",
+        ),
+        ("env -X git reset --hard HEAD~1", RiskLevel::Warn, "GIT-001"),
+        (
+            "sudo -n -u postgres git reset --hard HEAD~1",
+            RiskLevel::Warn,
+            "GIT-001",
+        ),
+    ];
+
+    for (cmd, expected_risk, expected_id) in cases {
+        assert_assessment_matches_pattern(cmd, expected_risk, expected_id);
+    }
+}
+
+#[test]
 fn assess_flags_uppercase_curl_pipe_bash() {
     assert_assessment_matches_pattern(
         "CURL https://example.com/install.sh | BASH",
