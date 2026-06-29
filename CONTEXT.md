@@ -79,13 +79,16 @@ _Avoid_: hard block, force block
 
 **Pattern**:
 A regex-based detection rule (built-in or user-defined) matched against the
-normalized command string; matches **anywhere** in the string.
+normalized command string; matches **anywhere** in the string. Database rules are
+regex `Pattern`s (match-anywhere), not `Token-prefix rule`s: SQL verbs (`DROP TABLE`)
+arrive embedded in `psql -c` / `mysql -e` / heredoc / stdin, not as a leading program
+token (ADR-015).
 _Avoid_: rule, signature (reserve "rule" for prefix rules)
 
 **Token-prefix rule**:
 A detection rule keyed on a command's `Effective program` token (e.g. `git`, `docker`) and
-matched against the token sequence — distinct from a regex `Pattern`. Git, Database,
-Cloud, Docker, and some Process rules are token-prefix rules.
+matched against the token sequence — distinct from a regex `Pattern`. Git, Cloud,
+Docker, and some Process rules are token-prefix rules.
 _Avoid_: prefix pattern, first-token rule
 
 **Quick scan**:

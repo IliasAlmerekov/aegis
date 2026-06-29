@@ -270,14 +270,30 @@ fundamental design failure. They are fixable with targeted work.
   regression. Verified RED on the pre-fix code, GREEN after. No changes to
   `split_pipeline_segments`, `split_tokens`, dependencies, or lockfile.
 
-### [ ] H2 — SQL inside `psql -c` / `mysql -e` is not scanned
+### [x] H2 — SQL inside `psql -c` / `mysql -e` is not scanned
 
 - **Problem:** `psql -c 'DROP TABLE users'` → `Safe` while bare
   `DROP TABLE users` → `Danger`.
-- **Status:** confirmed by reviewer.
+- **Status:** resolved.
 - **File:** `nested_shells.rs:39-45`.
 - **Fix:** recursively scan SQL passed to `psql -c` / `mysql -e`, or remove overly
   strict prefix anchoring from destructive SQL rules so embedded `DROP` is caught.
+- **Resolution:** `DB-001`/`002`/`007`/`008` reverted from token-prefix rules to
+  match-anywhere regex `Pattern`s in `patterns.toml` (`\bdrop\s+table\b`,
+  `\bdrop\s+database\b`, `\bdrop\s+schema\b`,
+  `\balter\s+table\s+.+?\s+drop\s+column\b`), restoring parity with
+  `DB-003`/`004`/`005` (ADR-015). SQL verbs are arguments, not program tokens, so
+  regex match-anywhere catches them regardless of delivery (`-c`, `-e`,
+  `--command=`, `--execute`, `rtk psql`, heredoc, stdin, `;`-compound). The four
+  `PrefixRule`s were removed from `builtin_prefix_rules()`; `DB-006`
+  (Redis `FLUSHALL`/`FLUSHDB`, verb-is-program) stays a prefix rule. IDs and risk
+  levels unchanged (`DB-008` = `Warn`). Fail-closed: match-anywhere ⊇ first-token
+  match, `Intrinsic Block` untouched. Covered by
+  `assess_detects_destructive_sql_embedded_in_db_cli_invocations` (positive,
+  psql/mysql/rtk/compound delivery) and the `destructive_sql_does_not_*`
+  narrowness guards (`drop_table_log` identifier and uncovered `DROP INDEX` stay
+  below `Danger`). `DB-006` redis gap and `TRUNCATE` without `TABLE` (M5) remain
+  out of scope.
 
 ### [ ] H3 — Pattern database has dangerous gaps
 
@@ -471,6 +487,15 @@ fundamental design failure. They are fixable with targeted work.
 - [ ] `cargo audit` reports 4 unmaintained advisories
       (`atomic-polyfill`, `derivative`, `fxhash`, `paste`) only under opt-in
       `--features starlark-policy`; not default build and no CVE.
+- [ ] H2-followup — destructive-SQL coverage gaps (surfaced in the ADR-015 lead
+      review). The match-anywhere SQL rules do not cover: (a) non-whitespace
+      separators between verb and object — `DROP/**/TABLE users` evades the
+      mandatory `\s+` because PostgreSQL treats `/**/` as whitespace but `\s`
+      does not match `/`; closing it needs a SQL-aware normalizer (ADR-010 rules
+      out a full parser); (b) uncovered destructive verbs `DROP VIEW`,
+      `DROP INDEX`, and the `dropdb <name>` shell client (verb-is-program → a
+      `DB-006`-style prefix-rule candidate). All pre-existing, none regressions.
+      Run additions through the eval harness alongside H3/M5.
 
 ---
 
@@ -511,7 +536,7 @@ fundamental design failure. They are fixable with targeted work.
        launcher/wrapper prefixes (`rtk`, `sudo`, `env`, `command`, …); cover
        RTK-wrapped and absolute-path forms for every token-prefix family.
 5. [x] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).
-6. [ ] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
+6. [x] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
        anchors.
 7. [ ] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
        revisit the edge-case test that whitelists force-push.
