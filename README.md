@@ -1,56 +1,116 @@
+<div align="center">
+
 # Aegis
+
+**Shell safety for AI agents.**  
+Safe commands run instantly. Dangerous ones wait for you.
+
+[![version](https://img.shields.io/badge/version-0.5.9-60A5FA?style=flat-square)](CHANGELOG.md)
+[![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL2-22C55E?style=flat-square)](#how-to-install)
+[![license](https://img.shields.io/badge/license-MIT-A855F7?style=flat-square)](LICENSE)
+[![built with](https://img.shields.io/badge/built%20with-Rust-F59E0B?style=flat-square)](Cargo.toml)
 
 ![How Aegis works: an AI agent's command is screened by Aegis — safe commands run instantly, dangerous ones wait for human approval](src/assets/aegis.gif)
 
-> A small safety layer for AI agents that run shell commands.
+</div>
+
+---
 
 ## What is Aegis?
 
-Aegis is a Rust CLI that sits between an AI agent and your real shell.
-It checks each command before it runs:
+Aegis is a Rust CLI that sits between an AI agent and your real shell. It checks every command before it runs:
 
-- safe commands run immediately
-- risky commands ask for approval
-- catastrophic commands are blocked
+| Level | What happens |
+|-------|-------------|
+| **Safe** | Runs immediately — no delay, no prompt |
+| **Warn** | Pauses and asks for your approval |
+| **Danger** | Takes a best-effort snapshot, then asks |
+| **Block** | Refused outright — no prompt |
 
-Aegis is a heuristic guardrail, not a sandbox or privilege boundary. See
-[`docs/threat-model.md`](docs/threat-model.md) for the full security model.
+> [!NOTE]
+> Aegis is a heuristic guardrail, not a sandbox or privilege boundary.
+> See [`docs/threat-model.md`](docs/threat-model.md) for the full security model.
+
+---
+
+## Before / After
+
+<table>
+<tr>
+<th width="50%">Without Aegis</th>
+<th width="50%">With Aegis</th>
+</tr>
+<tr>
+<td>
+
+```
+$ rm -rf ~/.config
+
+[command runs silently]
+
+$ ls ~/.config
+ls: cannot access '~/.config':
+No such file or directory
+
+# Config gone. No backup.
+```
+
+</td>
+<td>
+
+```
+$ rm -rf ~/.config
+
+⚠ DANGER — FS-001 · Recursive delete
+Command  rm -rf ~/.config
+Risk     Danger
+Pattern  FS-001 — rm with -rf flag
+Snapshot git stash created (a3f9b12)
+
+[A] approve  [D] deny  [i] info
+
+● Denied. Snapshot retained.
+```
+
+</td>
+</tr>
+</table>
+
+---
 
 ## Why Aegis?
 
 AI agents can move fast and run destructive commands by mistake:
 
-- delete files
-- reset repositories
+- delete files and directories
+- reset or rewrite git history
 - drop databases
-- publish or push something dangerous
+- publish or push something unintended
 
-Aegis adds a human checkpoint before that damage happens. It also records
-decisions in an append-only audit log and can take best-effort snapshots for
-some dangerous commands.
+Aegis adds a human checkpoint before damage happens. It also keeps an append-only audit log and can take best-effort snapshots before dangerous commands run.
+
+---
 
 ## How to install
 
-Supported platforms:
+> [!IMPORTANT]
+> **Windows:** install inside WSL2. Native PowerShell and `cmd.exe` are not supported.
 
-- Linux
-- macOS
-- Windows through WSL2
-
-On Windows, install inside WSL2; native Windows shells such as PowerShell and
-`cmd.exe` are not supported.
-
-### Convenience installer
+### Quick install (recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
 ```
 
-Reload your shell, then check:
+Installs the binary, writes a managed block to `~/.zshrc` or `~/.bashrc`, and hooks into Claude Code / Codex when those config directories already exist. Reload your shell afterwards.
+
+### npm
 
 ```bash
-aegis --version
+npm i -g @iliasalmerekov/aegis
 ```
+
+Runs `aegis install-hooks --all` automatically when Claude Code or Codex config directories are present. Set `AEGIS_NPM_SKIP_HOOKS=1` to opt out.
 
 ### Homebrew
 
@@ -59,99 +119,98 @@ brew tap IliasAlmerekov/aegis
 brew install aegis
 ```
 
-### npm
-
-```bash
-npm i -g @iliasalmerekov/aegis
-```
-
-Homebrew installs the binary only. npm and Cargo install the binary only too;
-none of them run the global shell installer or edit your shell startup files.
-npm does perform best-effort agent-hook setup (`aegis install-hooks --all`) when
-a Claude Code or Codex config directory already exists — set
-`AEGIS_NPM_SKIP_HOOKS=1` to opt out.
-
-To opt in to shell-proxy mode after installing with a package manager, run:
-
-```bash
-aegis setup-shell
-```
-
-This adds a managed block to `~/.zshrc` or `~/.bashrc` that sets `SHELL` to the
-aegis binary and `AEGIS_REAL_SHELL` to your real shell. Remove it with:
-
-```bash
-aegis setup-shell --remove
-```
-
-### Install behavior
-
-The convenience installer is **Global**-first: it installs the binary, writes
-the managed shell block, and sets up Claude Code / Codex hooks when those
-config directories already exist. The old **Local** project-only and
-**Binary**-only installer modes have been removed; package-manager installs are
-binary-only.
-
-### Check that it works
-
-```bash
-aegis -c 'rm -rf /tmp/aegis-test'   # should prompt — press n
-aegis -c 'echo hello'               # should run immediately
-```
-
-If `echo hello` runs right away and the risky command prompts, Aegis is working.
-
-### Connect to your AI agent
-
-**Claude Code** and **Codex** are protected through their `PreToolUse` hooks,
-which `aegis install-hooks` registers and keeps pointed at an absolute,
-PATH-independent shim. Re-run `aegis install-hooks --claude-code` (or `--all`)
-after upgrading to migrate any older `aegis hook` / `aegis-rewrite.sh`
-registration to the new shim. These hooks — not `setup-shell` — are what
-intercept those agents' Bash commands, since they ignore a non-bash/zsh
-`$SHELL` in their Bash tool.
-
-`aegis setup-shell` only helps tools that genuinely launch commands via
-`$SHELL -c` (interactive shells, some terminal-based agents). For an agent that
-respects `$SHELL`, run `command -v aegis` to get the absolute path and paste it
-into the agent's `shell` field; otherwise find the `shell` field and set it to
-the aegis path.
-
 ### Developer source install
 
 ```bash
 cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.5.8 aegis
 ```
 
-### Uninstall
+---
+
+### Shell-proxy mode (package manager installs)
+
+Package manager installs are binary-only. To opt in to shell-proxy mode:
+
+```bash
+aegis setup-shell
+```
+
+Remove with:
+
+```bash
+aegis setup-shell --remove
+```
+
+---
+
+### Verify it works
+
+```bash
+aegis --version                         # prints version number
+aegis -c 'echo hello'                   # safe — runs immediately, no prompt
+aegis -c 'rm -rf /tmp/aegis-test'       # danger — interceptor appears, press D to deny
+```
+
+> [!TIP]
+> If `echo hello` runs right away and the risky command prompts — Aegis is working.
+
+---
+
+## Connect to your AI agent
+
+**Claude Code** and **Codex** are protected through `PreToolUse` hooks — not shell-proxy tricks. These hooks intercept Bash commands regardless of `$SHELL`.
+
+```bash
+# Claude Code
+aegis install-hooks --claude-code
+
+# All supported agents at once
+aegis install-hooks --all
+```
+
+Re-run after upgrading to migrate any older `aegis hook` / `aegis-rewrite.sh` registration to the current shim.
+
+> [!TIP]
+> **Other agents:** for tools that respect `$SHELL`, run `aegis setup-shell`. For agents with a `shell` config field, paste the output of `command -v aegis` as its value.
+
+---
+
+## How it works
+
+```
+AI agent command
+      │
+      ▼
+ Aegis parses and classifies it
+      │
+      ├──▶ Safe   ──▶ run immediately
+      ├──▶ Warn   ──▶ ask first
+      ├──▶ Danger ──▶ snapshot if configured, then ask
+      └──▶ Block  ──▶ refuse
+                          │
+                          ▼
+               real shell executes only
+               what you approved
+```
+
+![Aegis command flow](src/assets/howitwork.png)
+
+---
+
+## Uninstall
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
 ```
 
-## How it works
-
-```text
-AI agent command
-      |
-      v
- Aegis parses and classifies it
-      |
-      +--> Safe   -> run
-      +--> Warn   -> ask first
-      +--> Danger -> snapshot if configured, then ask first
-      +--> Block  -> refuse
-      |
-      v
- real shell executes only approved commands
-```
-
-![Aegis command flow](src/assets/howitwork.png)
+---
 
 ## Docs
 
-- [Architecture decisions](docs/adr/README.md)
-- [Threat model](docs/threat-model.md)
-- [Config schema](docs/config-schema.md)
-- [Release readiness](docs/release-readiness.md)
-- [Platform support](docs/platform-support.md)
+| Document | Description |
+|----------|-------------|
+| [Architecture decisions](docs/adr/README.md) | ADR-001 through ADR-014 |
+| [Threat model](docs/threat-model.md) | Security scope and assumptions |
+| [Config schema](docs/config-schema.md) | `aegis.toml` reference |
+| [Platform support](docs/platform-support.md) | Linux, macOS, WSL2 details |
+| [Release readiness](docs/release-readiness.md) | 1.0 gate status |
