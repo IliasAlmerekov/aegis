@@ -217,6 +217,124 @@ fn segments_env_prefix_body_extracted() {
     );
 }
 
+// A standalone background `&` is a command separator, not part of the command.
+#[test]
+fn segments_single_ampersand() {
+    assert_eq!(
+        logical_segments("echo hi & git push --force"),
+        vec!["echo hi", "git push --force"]
+    );
+}
+
+// A chain of background `&` separators splits into one segment each.
+#[test]
+fn segments_ampersand_chain() {
+    assert_eq!(logical_segments("a & b & c"), vec!["a", "b", "c"]);
+}
+
+// `&` is a separator even without surrounding whitespace.
+#[test]
+fn segments_ampersand_no_spaces() {
+    assert_eq!(
+        logical_segments("echo hi&git push"),
+        vec!["echo hi", "git push"]
+    );
+}
+
+// A trailing background `&` does not produce an empty segment.
+#[test]
+fn segments_trailing_ampersand() {
+    assert_eq!(logical_segments("sleep 10 &"), vec!["sleep 10"]);
+}
+
+// `&>` (combined stdout+stderr redirect) is not a separator.
+#[test]
+fn segments_combined_redirect_not_split() {
+    assert_eq!(
+        logical_segments("echo foo &> /dev/null"),
+        vec!["echo foo &> /dev/null"]
+    );
+}
+
+// `&>>` (combined append redirect) is not a separator.
+#[test]
+fn segments_append_redirect_not_split() {
+    assert_eq!(
+        logical_segments("echo foo &>> log"),
+        vec!["echo foo &>> log"]
+    );
+}
+
+// `>&` / `2>&1` (fd duplication) is not a separator.
+#[test]
+fn segments_fd_dup_not_split() {
+    assert_eq!(logical_segments("ls >&2"), vec!["ls >&2"]);
+    assert_eq!(logical_segments("cmd 2>&1"), vec!["cmd 2>&1"]);
+}
+
+// An escaped `\>` is a literal argument char, not a redirect operator, so a
+// following background `&` is still a command separator.
+#[test]
+fn segments_escaped_gt_then_background_split() {
+    assert_eq!(
+        logical_segments(r"echo a\> & git push --force"),
+        vec!["echo a>", "git push --force"]
+    );
+}
+
+// `<&` (input fd duplication) is not a separator — it must stay one segment.
+#[test]
+fn segments_input_fd_dup_not_split() {
+    assert_eq!(logical_segments("cat 0<&3"), vec!["cat 0<&3"]);
+}
+
+// A redirect immediately followed by a background `&` still splits the tail:
+// `cmd 2>&1 & rm -rf /` is two commands, not one.
+#[test]
+fn segments_fd_dup_then_background_split() {
+    assert_eq!(
+        logical_segments("cmd 2>&1 & rm -rf /"),
+        vec!["cmd 2>&1", "rm -rf /"]
+    );
+}
+
+// `&>` with no surrounding spaces is still a combined redirect, not a separator.
+#[test]
+fn segments_combined_redirect_no_spaces_not_split() {
+    assert_eq!(
+        logical_segments("echo foo&>/dev/null"),
+        vec!["echo foo&>/dev/null"]
+    );
+}
+
+// Parity guard: an even run of backslashes (`\\>`) is a literal backslash plus a
+// genuine `>` redirect, so the following `&` is part of `>&` and must NOT split.
+// Pins the `% 2 == 0` (even) branch of `ends_with_redirect_target`; a refactor
+// collapsing the parity check to a plain boolean would re-open the fail-open.
+// Asserts length only — the exact normalized text of this deliberate edge is
+// intentionally not pinned.
+#[test]
+fn segments_double_backslash_redirect_kept() {
+    let segs = logical_segments(r"echo a\\> & cmd");
+    assert_eq!(
+        segs.len(),
+        1,
+        "even backslash run is a real redirect: {segs:?}"
+    );
+}
+
+// Direction guard: an escaped `\<` is a literal argument char, not a `<&` input
+// fd-dup, so the following background `&` is still a command separator. Mirrors
+// the escaped-`>` case on the `<` arm, proving the split exposes a token-prefix
+// command (`git push --force`) that would otherwise be hidden.
+#[test]
+fn segments_escaped_lt_then_background_split() {
+    assert_eq!(
+        logical_segments(r"echo a\< & git push --force"),
+        vec!["echo a<", "git push --force"]
+    );
+}
+
 // ── Bypass-prone command form normalization ───────────────────────────────
 
 // 43. bash -lc: combined login+command flag — inner command extracted
@@ -391,6 +509,32 @@ fn top_level_pipelines_splits_command_groups_but_not_double_pipe() {
             .map(|segment| segment.normalized.as_str())
             .collect::<Vec<_>>(),
         vec!["echo ok", "bash"]
+    );
+}
+
+#[test]
+fn top_level_pipelines_splits_command_groups_on_background_ampersand() {
+    // The pipeline path uses split_top_level_command_groups, the second copy of
+    // the background-`&` discriminator. A standalone `&` between two pipelines
+    // must produce two independent chains.
+    let pipelines = top_level_pipelines("a | b & c | d");
+
+    assert_eq!(pipelines.len(), 2);
+    assert_eq!(
+        pipelines[0]
+            .segments
+            .iter()
+            .map(|segment| segment.normalized.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+    assert_eq!(
+        pipelines[1]
+            .segments
+            .iter()
+            .map(|segment| segment.normalized.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c", "d"]
     );
 }
 

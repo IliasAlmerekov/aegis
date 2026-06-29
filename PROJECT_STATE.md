@@ -16,7 +16,7 @@
 
 ## Last updated
 
-2026-06-28
+2026-06-29
 
 ---
 
@@ -38,6 +38,28 @@
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
 
 ---
+
+## What was done last session (2026-06-29)
+
+- **H1 closed via TDD, then hardened after code review.** Standalone background
+  `&` is now a command separator in both `split_top_level_segments` and
+  `split_top_level_command_groups` (`crates/aegis-parser/src/segmentation.rs`).
+  The background-`&` decision uses a shared `ends_with_redirect_target` helper
+  (single source of truth for both copies): `&` splits unless the next char is
+  `&`/`>` or the preceding char is an **unescaped** redirect target (`>`/`<`).
+  Backslash-parity makes the helper escape-aware. This fixed two review findings:
+  a **fail-open bypass** (`echo a\> & git push --force` previously stayed one
+  segment → effective program `echo` → GIT-003 never fired → `Safe`) and a
+  benign `<&` over-split (`cat 0<&3`). Closes the token-prefix bypass where a
+  background `&` hid a destructive segment; `echo ok & git push --force` now
+  raises GIT-003 (`Warn`) and PIPE-001 fires across a background `&`.
+  Fail-closed in the common case; `Intrinsic Block` and `split_pipeline_segments`
+  untouched; no dependency/lockfile changes.
+- Verification: parser segmentation + redirect-anti-regression + pipeline-path
+  tests and three scanner end-to-end regressions (incl. escaped-`>` and
+  PIPE-001-across-`&`), each RED on the pre-fix code and GREEN after.
+  `cargo fmt --check` clean, `cargo clippy --all-targets -- -D warnings` clean,
+  full `cargo test --workspace` 1346 passed.
 
 ## What was done last session (2026-06-28)
 

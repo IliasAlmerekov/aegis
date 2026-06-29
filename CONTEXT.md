@@ -47,6 +47,19 @@ by-program regex index — so prefixes and absolute paths cannot bypass a rule k
 first token. Distinct from `ParsedCommand.program`, which preserves the raw leading token.
 _Avoid_: real program, resolved command, normalized program
 
+**Logical segment**:
+A scan-oriented command unit produced by `logical_segments` — the raw string cut at
+top-level `Command separator`s and normalized, so each independent command is assessed
+on its own. A scan-time boundary, not an execution unit: fork semantics of a background
+`&` are ignored; it only marks where one command ends.
+_Avoid_: segment, sub-command, command part
+
+**Command separator**:
+A top-level shell control operator that ends one `Logical segment` and starts the next:
+`;`, `&&`, `||`, `|`, newline, and a standalone background `&`. A `&` that is part of a
+redirect (`&>`, `>&`, `2>&1`) is not a separator.
+_Avoid_: delimiter, control operator
+
 ## Scanner
 
 **Assessment**:
