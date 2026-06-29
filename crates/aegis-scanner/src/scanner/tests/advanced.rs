@@ -241,6 +241,8 @@ fn assess_bypass_prone_forms() {
         ("sh -c 'rm -rf /'", RiskLevel::Block),
         // bash -c with a SQL payload
         ("bash -c 'DROP TABLE users;'", RiskLevel::Danger),
+        // absolute shell path must still hit the by-program EXEC-006 rule
+        ("/bin/bash -c 'echo hello'", RiskLevel::Warn),
         // bash -lc: combined login+command flag
         ("bash -lc 'rm -rf /'", RiskLevel::Block),
         // bash -ic: combined interactive+command flag

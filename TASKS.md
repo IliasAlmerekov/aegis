@@ -172,10 +172,12 @@ fundamental design failure. They are fixable with targeted work.
   and `src/planning/policy_rules.rs` (engine: dropped project Allow leaves a
   `Danger` command prompting under `Protect`, not auto-approved).
 
-### [ ] C4 — Token-prefix rules are anchored to the first token; any prefix bypasses them
+### [x] C4 — Token-prefix rules are anchored to the first token; any prefix bypasses them
 
 - **Risk:** Critical.
-- **Status:** crash-test confirmed (destructively proven) + root-caused in code.
+- **Status:** fixed by ADR-014 — token-prefix detection now resolves an `Effective program`
+  per scan target by stripping built-in launcher prefixes and basename-normalizing
+  absolute program paths before prefix-rule and by-program-index matching.
 - **Evidence (commands that really executed in 0.5.9):**
 
   | Command                       | Why it passed                              |
@@ -475,7 +477,7 @@ fundamental design failure. They are fixable with targeted work.
        `mode`, `*_override_level`, `ci_policy`, `snapshot_policy`,
        `sandbox.required`; warn on weakening in `config validate`. C3-residual
        (project `[[rules]] Allow` + `audit.integrity_mode`) also closed.
-4. [ ] C4 — normalize the prefix-rule lookup key: basename of `tokens[0]` + strip
+4. [x] C4 — normalize the prefix-rule lookup key: basename of `tokens[0]` + strip
        launcher/wrapper prefixes (`rtk`, `sudo`, `env`, `command`, …); cover
        RTK-wrapped and absolute-path forms for every token-prefix family.
 5. [ ] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).

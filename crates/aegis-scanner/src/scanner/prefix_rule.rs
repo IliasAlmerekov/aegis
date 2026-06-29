@@ -46,6 +46,7 @@ impl PrefixRule {
     ///
     /// Called at startup in debug builds and tests. A rule that fails its own
     /// examples is treated as a bug and must be fixed before the binary ships.
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn validate_examples(&self) -> Result<(), String> {
         for example in self.match_examples {
             let tokens = aegis_parser::split_tokens(example);

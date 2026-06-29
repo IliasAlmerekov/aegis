@@ -89,9 +89,14 @@ impl Scanner {
         }
 
         for target in &target_report.targets {
+            // Token-prefix scan: parsed tokens, not raw string. Reuse the same
+            // token refs to derive the effective program key for indexed regexes.
+            let tokens = aegis_parser::split_tokens(target);
+            let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
+
             // Derive the program from the target's first token (lowercase) so
             // full_scan can use the by-program index on the fast path.
-            let prog = target.split_whitespace().next().map(str::to_lowercase);
+            let prog = aegis_parser::effective_program(&token_refs).map(str::to_ascii_lowercase);
             for pattern in self.full_scan(target, prog.as_deref()) {
                 if !matched
                     .iter()
@@ -101,10 +106,23 @@ impl Scanner {
                 }
             }
 
-            // Token-prefix scan: parsed tokens, not raw string.
-            let tokens = aegis_parser::split_tokens(target);
-            let token_refs: Vec<&str> = tokens.iter().map(|s| s.as_str()).collect();
-            for result in self.prefix_scan(&token_refs) {
+            let effective_slices = aegis_parser::effective_token_slices(&token_refs);
+            for candidate in &effective_slices {
+                let effective_target = candidate.tokens.join(" ");
+                if effective_target == *target {
+                    continue;
+                }
+                for pattern in self.full_scan(&effective_target, Some(candidate.program)) {
+                    if !matched
+                        .iter()
+                        .any(|existing: &MatchResult| existing.pattern.id == pattern.pattern.id)
+                    {
+                        matched.push(pattern);
+                    }
+                }
+            }
+
+            for result in self.prefix_scan_effective_slices(&effective_slices) {
                 if !matched
                     .iter()
                     .any(|existing: &MatchResult| existing.pattern.id == result.pattern.id)

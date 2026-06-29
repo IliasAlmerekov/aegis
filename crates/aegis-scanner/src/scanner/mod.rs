@@ -256,17 +256,27 @@ impl Scanner {
         if tokens.is_empty() {
             return vec![];
         }
-        let rules = self
-            .prefix_lookup(tokens[0])
-            .map_or(&[] as &[Arc<PrefixRule>], Vec::as_slice);
-        rules
+        let candidates = aegis_parser::effective_token_slices(tokens);
+        self.prefix_scan_effective_slices(&candidates)
+    }
+
+    fn prefix_scan_effective_slices(
+        &self,
+        candidates: &[aegis_parser::EffectiveTokenSlice<'_>],
+    ) -> Vec<MatchResult> {
+        candidates
             .iter()
-            .filter_map(|rule| {
-                if rule.matches_tokens(tokens) {
-                    Some(rule.to_match_result(tokens))
-                } else {
-                    None
-                }
+            .flat_map(|candidate| {
+                self.prefix_lookup(candidate.program)
+                    .map_or(&[] as &[Arc<PrefixRule>], Vec::as_slice)
+                    .iter()
+                    .filter_map(move |rule| {
+                        if rule.matches_tokens(&candidate.tokens) {
+                            Some(rule.to_match_result(&candidate.tokens))
+                        } else {
+                            None
+                        }
+                    })
             })
             .collect()
     }

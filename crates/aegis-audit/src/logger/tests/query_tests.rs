@@ -217,3 +217,21 @@ fn query_last_handles_missing_trailing_newline() {
     assert_eq!(entries[0].as_base().command, "command-1");
     assert_eq!(entries[1].as_base().command, "command-2");
 }
+
+#[test]
+fn read_last_entry_skips_truncated_final_line() {
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    let first = serde_json::to_string(&entry(0, RiskLevel::Safe)).unwrap();
+    let second = serde_json::to_string(&entry(1, RiskLevel::Warn)).unwrap();
+    let contents = format!("{first}\n{second}\n{{\"timestamp\"");
+
+    fs::write(logger.path(), contents).unwrap();
+
+    let last = logger
+        .read_last_entry_from_plain_file(logger.path())
+        .unwrap()
+        .expect("previous valid entry should be returned");
+
+    assert_eq!(last.as_base().command, "command-1");
+}
