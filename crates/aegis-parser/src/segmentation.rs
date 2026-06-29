@@ -157,11 +157,22 @@ pub(super) fn split_top_level_segments(cmd: &str) -> Vec<String> {
                 && !in_double_quote
                 && !in_backticks
                 && paren_depth == 0
-                && command_subst_depth == 0
-                && chars.peek() == Some(&'&') =>
+                && command_subst_depth == 0 =>
             {
-                chars.next();
-                finalize_segment(&mut current, &mut segments);
+                if chars.peek() == Some(&'&') {
+                    // `&&` — logical AND
+                    chars.next();
+                    finalize_segment(&mut current, &mut segments);
+                } else if chars.peek() != Some(&'>') && !ends_with_redirect_target(&current) {
+                    // Standalone background `&` — a command separator.
+                    // Excludes redirect forms `&>` / `&>>` (peek is `>`) and
+                    // unescaped `>&` / `<&` / `2>&1` / `3>&-` (preceding char is
+                    // an unescaped `>` or `<`). An escaped `\>` is a literal arg.
+                    finalize_segment(&mut current, &mut segments);
+                } else {
+                    // Part of a redirect operator — keep as an ordinary char.
+                    current.push(ch);
+                }
             }
             '|' if !in_single_quote
                 && !in_double_quote
@@ -258,11 +269,22 @@ fn split_top_level_command_groups(cmd: &str) -> Vec<String> {
                 && !in_double_quote
                 && !in_backticks
                 && paren_depth == 0
-                && command_subst_depth == 0
-                && chars.peek() == Some(&'&') =>
+                && command_subst_depth == 0 =>
             {
-                chars.next();
-                finalize_segment(&mut current, &mut segments);
+                if chars.peek() == Some(&'&') {
+                    // `&&` — logical AND
+                    chars.next();
+                    finalize_segment(&mut current, &mut segments);
+                } else if chars.peek() != Some(&'>') && !ends_with_redirect_target(&current) {
+                    // Standalone background `&` — a command separator.
+                    // Excludes redirect forms `&>` / `&>>` (peek is `>`) and
+                    // unescaped `>&` / `<&` / `2>&1` / `3>&-` (preceding char is
+                    // an unescaped `>` or `<`). An escaped `\>` is a literal arg.
+                    finalize_segment(&mut current, &mut segments);
+                } else {
+                    // Part of a redirect operator — keep as an ordinary char.
+                    current.push(ch);
+                }
             }
             '|' if !in_single_quote
                 && !in_double_quote
@@ -359,6 +381,26 @@ fn split_pipeline_segments(raw_group: &str) -> Vec<PipelineSegment> {
             normalize_segment(&raw).map(|normalized| PipelineSegment { raw, normalized })
         })
         .collect()
+}
+
+/// Returns `true` when `current` (ignoring trailing whitespace) ends with an
+/// *unescaped* redirect target char (`>` or `<`), meaning a following `&` is
+/// part of a `>&` / `<&` file-descriptor duplication operator (`2>&1`, `3>&-`,
+/// `cat 0<&3`, …) rather than a background command separator.
+///
+/// An escaped `\>` / `\<` is a literal argument character, not a redirect, so
+/// this returns `false` and the `&` is treated as a separator. Escaping is
+/// determined by the parity of the run of backslashes immediately preceding the
+/// redirect char (odd = escaped).
+///
+/// Shared by both `split_top_level_segments` and `split_top_level_command_groups`
+/// so the security-critical background-`&` decision has a single source of truth.
+fn ends_with_redirect_target(current: &str) -> bool {
+    let mut rev = current.trim_end().chars().rev();
+    match rev.next() {
+        Some('>') | Some('<') => rev.take_while(|&c| c == '\\').count() % 2 == 0,
+        _ => false,
+    }
 }
 
 fn finalize_segment(current: &mut String, segments: &mut Vec<String>) {

@@ -231,14 +231,44 @@ fundamental design failure. They are fixable with targeted work.
 
 ## P1 — High severity
 
-### [ ] H1 — Single `&` command segmentation gap
+### [x] H1 — Single `&` command segmentation gap
 
 - **Problem:** command segmentation handles major operators but review found a
   gap around single `&` background separators.
-- **Status:** reviewer finding.
+- **Status:** resolved.
 - **File:** `segmentation.rs:156-165`.
 - **Fix:** segment on standalone `&` consistently with other shell control
   operators and add regression tests.
+- **Resolution:** both `split_top_level_segments` and
+  `split_top_level_command_groups` now treat a standalone background `&` as a
+  command separator via a redirect-aware discriminator. `&` splits only when the
+  next char is not `&` (logical AND, unchanged), not `>` (`&>` / `&>>`), and the
+  preceding char is not an **unescaped** redirect target (`>` or `<`). The
+  preceding-char test is the shared `ends_with_redirect_target` helper — a single
+  source of truth used by both copies — which checks backslash parity so an
+  escaped `\>` / `\<` is treated as a literal argument char (the `&` still
+  splits) while genuine `>&` / `<&` / `2>&1` / `3>&-` / `cat 0<&3` stay one
+  segment. This closed a fail-open bypass found in code review
+  (`echo a\> & git push --force` previously stayed one segment → effective
+  program `echo` → GIT-003 never fired → `Safe`) and a benign `<&` over-split.
+  The change is fail-closed in the common case (adds scan targets, never removes;
+  `Intrinsic Block` untouched) and a narrow heuristic per ADR-010 — not a
+  redirect parser. Covered by parser unit tests (`segments_single_ampersand`,
+  `segments_ampersand_chain`, `segments_ampersand_no_spaces`,
+  `segments_trailing_ampersand`, `segments_escaped_gt_then_background_split`,
+  `segments_input_fd_dup_not_split`, `segments_fd_dup_then_background_split`),
+  redirect anti-regression tests (`segments_combined_redirect_not_split`,
+  `segments_append_redirect_not_split`, `segments_fd_dup_not_split`,
+  `segments_combined_redirect_no_spaces_not_split`), the pipeline-path test
+  `top_level_pipelines_splits_command_groups_on_background_ampersand`, scanner
+  end-to-end regressions `ampersand_does_not_bypass_git_prefix_rule`,
+  `ampersand_escaped_redirect_char_does_not_bypass_git_prefix_rule`, and
+  `ampersand_does_not_bypass_pipeline_rule` (PIPE-001 across `&`), and parity
+  guards `segments_double_backslash_redirect_kept` (even backslash run is a real
+  redirect) and `segments_escaped_lt_then_background_split` (escaped `\<` still
+  splits) that pin the backslash-parity branch against a boolean-collapse
+  regression. Verified RED on the pre-fix code, GREEN after. No changes to
+  `split_pipeline_segments`, `split_tokens`, dependencies, or lockfile.
 
 ### [ ] H2 — SQL inside `psql -c` / `mysql -e` is not scanned
 
@@ -480,7 +510,7 @@ fundamental design failure. They are fixable with targeted work.
 4. [x] C4 — normalize the prefix-rule lookup key: basename of `tokens[0]` + strip
        launcher/wrapper prefixes (`rtk`, `sudo`, `env`, `command`, …); cover
        RTK-wrapped and absolute-path forms for every token-prefix family.
-5. [ ] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).
+5. [x] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).
 6. [ ] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
        anchors.
 7. [ ] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
