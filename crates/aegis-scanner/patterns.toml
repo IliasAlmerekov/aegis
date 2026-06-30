@@ -101,6 +101,47 @@ description = "Moving /etc or its contents — can break system configuration an
 safe_alt = "Copy and modify files under /etc instead of moving them"
 justification = "/etc contains critical system configuration. Moving files out of it can cause boot failures, service crashes, and loss of network or storage configuration."
 
+# FS-013/FS-014 are match-anywhere regexes (not token-prefix rules): the danger
+# is a redirect operator + target path that can appear anywhere in the command
+# (e.g. `echo k >> ~/.ssh/authorized_keys`), never as the leading program token
+# (ADR-015 / FS-009 shape). Each has a clean extractable keyword so the
+# quick-scan gate stays on the keyword path (no has_uncovered regression).
+
+[[patterns]]
+id = "FS-013"
+category = "Filesystem"
+risk = "Danger"
+# Two top-level alternatives, so keyword extraction yields a needle per branch:
+#  1. `>+ … authorized_keys` — redirect form. Leading `>+` (not a literal `>>`)
+#     is deliberate: a literal `>>` would become the Aho-Corasick keyword and
+#     gate on every append redirect. With `>+`, extraction falls through to the
+#     embedded `authorized_keys` literal. Matches `>` (truncate/lockout) and
+#     `>>` (append/backdoor).
+#  2. `tee … authorized_keys` — the canonical no-redirect backdoor idiom
+#     (`echo key | tee -a ~/.ssh/authorized_keys`, often `| sudo tee -a`). The
+#     `(?:-\S+\s+)*` lets flags like `-a` sit between `tee` and the target. This
+#     branch's keyword is `tee` (cf. the existing short `dd`/`rm` needles); it is
+#     redundant in practice because the matched command always also contains
+#     `authorized_keys`.
+pattern = '>+\s*\S*authorized_keys|tee\s+(?:-\S+\s+)*\S*authorized_keys'
+description = "Write into ~/.ssh/authorized_keys (via redirect or tee) — appends an SSH backdoor key or truncates the file, locking you out"
+safe_alt = "Use 'ssh-copy-id' to add a key safely, or edit the file with a reviewed temp copy"
+justification = "Writing to authorized_keys changes who can log in. An append (redirect '>>' or 'tee -a') installs a persistent backdoor; a truncate removes every authorized key and can lock you out of the host."
+
+[[patterns]]
+id = "FS-014"
+category = "Filesystem"
+risk = "Warn"
+# Single-`>` clobber only — an append (`>>`) is recoverable and must NOT fire.
+# The Rust regex crate has no lookbehind, so each single `>` is isolated with
+# the `(^|[^>])>[^>]` guard. The alternation is top-level *per filename* so
+# keyword extraction yields one needle per rc file (every rc file gates);
+# a single inline `(bashrc|zshrc|…)` group would gate on `bashrc` only.
+pattern = '(^|[^>])>[^>]\s*\S*\.bashrc|(^|[^>])>[^>]\s*\S*\.zshrc|(^|[^>])>[^>]\s*\S*\.bash_profile|(^|[^>])>[^>]\s*\S*\.zprofile|(^|[^>])>[^>]\s*\S*\.profile|(^|[^>])>[^>]\s*\S*\.zshenv|(^|[^>])>[^>]\s*\S*\.bash_login'
+description = "Truncating redirect (>) over a shell-rc file — overwrites your shell startup config in one step"
+safe_alt = "Append instead of clobber ('>>'), or back up first: 'cp ~/.bashrc ~/.bashrc.bak'"
+justification = "A single '>' replaces the entire shell-rc file with the redirected content, discarding your existing aliases, exports, and PATH setup. The previous contents are gone unless backed up."
+
 # ─── Git ─────────────────────────────────────────────────────────────────────
 # NOTE: GIT-001..GIT-008 are now defined as token-prefix rules in
 # builtin_prefix_rules() in crates/aegis-scanner/src/patterns.rs.

@@ -28,6 +28,34 @@ fn test_match_result(matched_text: &str, start: usize, end: usize) -> MatchResul
     }
 }
 
+/// Assert that `assess(cmd)` reaches `expected_risk` and that `expected_id` is
+/// among the matched patterns. Shared across the `basic` and `h3_gaps` test
+/// modules (the `edge_cases` module keeps its own `assert_command_matches_pattern`).
+#[cfg(test)]
+fn assert_assessment_matches_pattern(cmd: &str, expected_risk: RiskLevel, expected_id: &str) {
+    let s = scanner();
+    let assessment = s.assess(cmd);
+
+    assert_eq!(
+        assessment.risk, expected_risk,
+        "command {cmd:?}: got {:?}, expected {expected_risk:?}",
+        assessment.risk,
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == expected_id),
+        "command {cmd:?}: expected pattern id {expected_id}, got {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
 mod advanced;
 mod basic;
 mod edge_cases;
+mod h3_gaps;

@@ -295,7 +295,7 @@ fundamental design failure. They are fixable with targeted work.
   below `Danger`). `DB-006` redis gap and `TRUNCATE` without `TABLE` (M5) remain
   out of scope.
 
-### [ ] H3 — Pattern database has dangerous gaps
+### [x] H3 — Pattern database has dangerous gaps
 
 - **Problem:** the following currently classify as `Safe`: `wipefs -a /dev/sda`,
   `aws s3 rb --force`, `aws s3 sync --delete`, `gsutil rm -r`, appending keys to
@@ -304,6 +304,50 @@ fundamental design failure. They are fixable with targeted work.
 - **Status:** agent-confirmed.
 - **Files:** `patterns.toml`, `builtins_a.rs`.
 - **Fix:** extend built-in patterns and run through the eval harness.
+- **Scope (set during 2026-06-29 grill):** add exactly seven rules — FS-011
+  `wipefs … -a` (prefix, Danger), FS-012 `unlink` (prefix, Warn), FS-013
+  `>+ … authorized_keys` (regex, Danger, matches `>`/`>>`), FS-014 shell-rc clobber
+  (regex, Warn, single-`>` only), CL-011 `aws s3 rb --force` (prefix, Danger),
+  CL-012 `aws s3 sync --delete` (prefix, Warn), CL-013 `gsutil … rm … -r` (prefix,
+  Danger). Mechanism split follows ADR-014 (program-led verb → token-prefix) /
+  ADR-015 (embedded signature → match-anywhere regex). No new ADR.
+- **Resolution (2026-06-29):** all seven rules added exactly as scoped —
+  FS-011/FS-012 as the first Filesystem token-prefix rules in `builtins_a.rs`,
+  CL-011/012/013 in its Cloud block, FS-013/FS-014 as match-anywhere regexes in
+  `patterns.toml` (FS-013 keyword anchors on `authorized_keys`, FS-014 uses
+  top-level per-filename alternation with the no-lookbehind `(^|[^>])>[^>]`
+  single-`>` guard). TDD RED→GREEN per slice; covered by `assess_h3_*` positives
+  in `basic.rs` and the `h3_*` narrowness guards in `h3_gaps.rs`. Fail-closed
+  preserved (additive matches only); `validate_examples` green.
+- **Follow-up review remediation (2026-06-30):** addressed the lead-review
+  findings on the H3 diff — (1) **FS-013 wording vs behavior**: added a `tee`
+  branch (`tee\s+(?:-\S+\s+)*\S*authorized_keys`) so the `echo key | tee -a
+  ~/.ssh/authorized_keys` backdoor idiom is caught, and reworded the
+  description/justification to "Write into … (via redirect or tee)"; (2)
+  **bugs-01**: pulled the `aws` pre-service global-flag fix forward — added a
+  leading `any_star()` to CL-005/CL-011/CL-012 so `aws --profile … s3 rm/rb/sync
+  …` is caught; (3) **bugs-04**: added must-fire coverage for all five remaining
+  FS-014 rc files; (4) **simplicity-01**: hoisted `assert_assessment_matches_pattern`
+  into `tests/mod.rs`. The remaining H3-followups below stay deferred.
+
+#### [ ] H3-followups — siblings deferred from the H3 grill
+
+Discovered while scoping H3 (2026-06-29); intentionally **not** in H3:
+
+- **`wipefs` bundled flags:** `wipefs -af` / `-fa /dev/sdX` are missed (prefix
+  `Alts` match flags exactly). Known FN.
+- **[resolved 2026-06-30] `aws` global flags before the service token:**
+  `aws --profile p s3 rb …` bypassed all `CL-*` aws rules. Fixed by a leading
+  `any_star()` on CL-005/CL-011/CL-012 (bugs-01, pulled forward).
+- **[resolved 2026-06-30] `tee` to `authorized_keys`:** `tee` / `tee -a
+  ~/.ssh/authorized_keys` is now caught by the FS-013 `tee` branch (pulled
+  forward to fix the description-vs-behavior defect).
+- **`gcloud storage rm -r`:** the newer CLI replacing `gsutil`; same recursive
+  delete, no rule.
+- **`rsync --delete`:** sibling of `aws s3 sync --delete` (CL-012).
+- **Other device wipers:** `blkdiscard`, `sgdisk --zap-all`, `parted`
+  (`shred`/`dd`/`mkfs` already covered).
+- **`redis-cli FLUSHALL` prefix gap:** previously noted in the H2 plan.
 
 ### [ ] H4 — `claude-code.sh` hook fails open
 
