@@ -88,7 +88,10 @@ _Avoid_: rule, signature (reserve "rule" for prefix rules)
 **Token-prefix rule**:
 A detection rule keyed on a command's `Effective program` token (e.g. `git`, `docker`) and
 matched against the token sequence — distinct from a regex `Pattern`. Git, Cloud,
-Docker, and some Process rules are token-prefix rules.
+Docker, some Process, and some Filesystem rules (`wipefs`, `unlink` — where the
+destructive verb *is* the effective program) are token-prefix rules. A destructive
+operation that arrives embedded mid-command instead (SQL verbs, a redirect to a
+sensitive path) stays a regex `Pattern` (ADR-014/015).
 _Avoid_: prefix pattern, first-token rule
 
 **Quick scan**:

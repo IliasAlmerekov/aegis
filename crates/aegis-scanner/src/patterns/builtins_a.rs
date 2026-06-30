@@ -5,6 +5,54 @@ use aegis_types::RiskLevel;
 use super::{Category, PatternSource, PatternToken, PrefixRule, a, any_star, s};
 pub(super) fn rules() -> Vec<PrefixRule> {
     vec![
+        // ── Filesystem ───────────────────────────────────────────────────
+        // First Filesystem-category token-prefix rules: unlike `rm` (regex
+        // FS-001), `wipefs`/`unlink` have no match-anywhere delivery variety —
+        // the dangerous verb is always the effective program token (ADR-014).
+        PrefixRule {
+            id: Cow::Borrowed("FS-011"),
+            category: Category::Filesystem,
+            // AnyStar lets `-a` follow other flags (e.g. `wipefs -n -a`), an
+            // accepted fail-safe FP. Bundled `-af`/`-fa` are a known FN
+            // follow-up.
+            pattern: vec![s("wipefs"), any_star(), a(&["-a", "--all"])],
+            // Danger, not Block like mkfs (FS-006): wipefs erases filesystem /
+            // partition *signatures* only — the underlying data blocks survive
+            // and are often recoverable, so it is strictly less final than a
+            // format. A prompt + snapshot is the right checkpoint for its
+            // legitimate interactive disk-prep use.
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "wipefs -a — erases all filesystem/partition signatures from a device, making its volumes unmountable",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Back up the partition table first: 'sfdisk -d /dev/sdX > table.bak' and verify the device with 'lsblk'",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Wiping signatures detaches every filesystem on the device at once. Recovery depends on having the partition layout saved; double-check the device path.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &["wipefs -a /dev/sda", "wipefs --all /dev/sdb"],
+            not_match_examples: &["wipefs /dev/sda", "wipefs -n /dev/sda"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("FS-012"),
+            category: Category::Filesystem,
+            pattern: vec![s("unlink")],
+            risk: RiskLevel::Warn,
+            description: Cow::Borrowed(
+                "unlink — removes a single file or link by name with no confirmation or trash",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Move to trash instead: 'trash <file>' or 'mv <file> /tmp/backup-$(date +%s)'",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Deletes the named file immediately with no recovery path. Less destructive than 'rm -rf' but still irreversible.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &["unlink important.txt"],
+            not_match_examples: &["readlink mylink", "ln -s a b"],
+        },
         // ── Git ──────────────────────────────────────────────────────────
         PrefixRule {
             id: Cow::Borrowed("GIT-001"),
@@ -298,8 +346,11 @@ pub(super) fn rules() -> Vec<PrefixRule> {
         PrefixRule {
             id: Cow::Borrowed("CL-005"),
             category: Category::Cloud,
+            // Leading AnyStar admits global flags before the service token
+            // (`aws --profile prod s3 rm …`, `aws --region … s3 rm …`).
             pattern: vec![
                 s("aws"),
+                any_star(),
                 s("s3"),
                 s("rm"),
                 PatternToken::AnyStar,
@@ -424,6 +475,95 @@ pub(super) fn rules() -> Vec<PrefixRule> {
             source: PatternSource::Builtin,
             match_examples: &["kubectl delete namespace staging"],
             not_match_examples: &["kubectl get namespace staging"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("CL-011"),
+            category: Category::Cloud,
+            // Mirrors CL-005. The leading AnyStar admits global flags before the
+            // service token (`aws --profile … s3 rb`, `aws --region … s3 rb`).
+            pattern: vec![
+                s("aws"),
+                any_star(),
+                s("s3"),
+                s("rb"),
+                any_star(),
+                s("--force"),
+            ],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "aws s3 rb --force — deletes an S3 bucket and every object in it, bypassing the non-empty guard",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "List the bucket first: 'aws s3 ls s3://<bucket>' and enable versioning before force-removing",
+            )),
+            justification: Some(Cow::Borrowed(
+                "The --force flag empties and removes the bucket in one step. Deletion is permanent unless versioning is enabled; there is no trash or undo.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "aws s3 rb s3://my-bucket --force",
+                "aws --profile prod s3 rb s3://my-bucket --force",
+            ],
+            not_match_examples: &["aws s3 rb s3://my-bucket"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("CL-012"),
+            category: Category::Cloud,
+            // Leading AnyStar admits global flags before the service token
+            // (`aws --profile … s3 sync`, `aws --region … s3 sync`).
+            pattern: vec![
+                s("aws"),
+                any_star(),
+                s("s3"),
+                s("sync"),
+                any_star(),
+                s("--delete"),
+            ],
+            risk: RiskLevel::Warn,
+            description: Cow::Borrowed(
+                "aws s3 sync --delete — removes destination objects that are absent from the source, deleting remote data",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Dry-run first: 'aws s3 sync … --delete --dryrun' and enable bucket versioning before syncing",
+            )),
+            justification: Some(Cow::Borrowed(
+                "With --delete, files missing from the source are deleted from the destination. A wrong source path can wipe the target; versioning is your only undo.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "aws s3 sync ./dist s3://my-bucket --delete",
+                "aws --region us-east-1 s3 sync ./dist s3://my-bucket --delete",
+            ],
+            not_match_examples: &["aws s3 sync ./dist s3://my-bucket"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("CL-013"),
+            category: Category::Cloud,
+            // Leading AnyStar catches the idiomatic `gsutil -m rm -r gs://b`.
+            pattern: vec![
+                s("gsutil"),
+                any_star(),
+                s("rm"),
+                any_star(),
+                a(&["-r", "-R", "--recursive"]),
+            ],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "gsutil rm -r — recursively deletes all objects under a Cloud Storage prefix (GCS twin of aws s3 rm --recursive)",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "List objects first: 'gsutil ls gs://<bucket>/<prefix>' and enable object versioning before recursive deletes",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Recursive deletion in GCS is fast and permanent unless object versioning is enabled. There is no trash or undo.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "gsutil rm -r gs://my-bucket/data",
+                "gsutil -m rm -r gs://my-bucket/data",
+                "gsutil rm -R gs://my-bucket/data",
+            ],
+            not_match_examples: &["gsutil rm gs://my-bucket/file.txt"],
         },
     ]
 }
