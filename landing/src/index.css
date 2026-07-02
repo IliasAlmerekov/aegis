@@ -46,6 +46,159 @@ h1, h2, h3, h4, h5, h6 {
   font-feature-settings: "ss01" on;
 }
 
+/* ── Terminal frames: patrolling neon scanner ─────────────────────────
+   A phosphor-green light segment orbits the terminal border like a
+   perimeter scan. Conic gradient rotated via a registered @property,
+   masked down to a 1px ring; a blurred twin of the ring provides the
+   neon halo. Browsers without @property get a static frame — fine. */
+
+@property --neon-orbit {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.terminal-neon {
+  position: relative;
+}
+.terminal-neon::before,
+.terminal-neon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  z-index: 2;
+  background: conic-gradient(
+    from var(--neon-orbit),
+    transparent 0%,
+    transparent 72%,
+    rgba(127, 238, 100, 0.12) 82%,
+    rgba(127, 238, 100, 0.55) 91%,
+    var(--color-glow) 96%,
+    var(--color-reactor) 99%,
+    transparent 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: neon-orbit 7s linear infinite;
+  animation-delay: var(--neon-delay, 0s);
+}
+.terminal-neon::after {
+  filter: blur(5px);
+  opacity: 0.6;
+}
+
+@keyframes neon-orbit {
+  to { --neon-orbit: 360deg; }
+}
+
+/* ── Burger: crossed-blades choreography ─────────────────────────────
+   Open: middle line retracts like a sheath, then top/bottom "blades"
+   collapse to a point mid-swing and shoot out into a crossed X —
+   bottom blade lands a beat after the top one. Close: plain fast
+   transition back (no reverse theatrics). */
+
+.burger-blade {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-out;
+}
+.burger-blade--top { transform-origin: 9px 5px; }
+.burger-blade--mid { transform-origin: 16px 9px; }
+.burger-blade--bot { transform-origin: 9px 13px; }
+
+.burger svg { transition: filter 0.3s ease-out; }
+
+.burger.is-open svg {
+  filter: drop-shadow(0 0 4px rgba(127, 238, 100, 0.55));
+}
+.burger.is-open .burger-blade { stroke: var(--color-reactor); }
+.burger.is-open .burger-blade--top {
+  transform: translateY(4px) rotate(45deg);
+  animation: blade-draw-top 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.burger.is-open .burger-blade--mid {
+  transform: scaleX(0);
+  opacity: 0;
+  transition: transform 0.15s cubic-bezier(0.55, 0, 1, 0.45), opacity 0.12s ease-in;
+}
+.burger.is-open .burger-blade--bot {
+  transform: translateY(-4px) rotate(-45deg);
+  animation: blade-draw-bot 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.09s both;
+}
+
+@keyframes blade-draw-top {
+  0%   { transform: none; }
+  38%  { transform: translateY(4px) rotate(45deg) scaleX(0.12); }
+  100% { transform: translateY(4px) rotate(45deg) scaleX(1); }
+}
+@keyframes blade-draw-bot {
+  0%   { transform: none; }
+  38%  { transform: translateY(-4px) rotate(-45deg) scaleX(0.12); }
+  100% { transform: translateY(-4px) rotate(-45deg) scaleX(1); }
+}
+
+/* ── Mobile nav: diagonal slash reveal ────────────────────────────────
+   The panel is uncovered by a 45° cut sweeping from the top-left,
+   chased by a thin phosphor blade edge. Links cascade in after the
+   slash passes. Close: quick fade, no reverse slash. */
+
+.mobile-nav-panel {
+  clip-path: polygon(0 0, 0 0, 0 0);
+  opacity: 0;
+  pointer-events: none;
+  transition: clip-path 0.45s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease-out 0.1s;
+}
+.mobile-nav-panel.is-open {
+  clip-path: polygon(0 0, 200vw 0, 0 200vw);
+  opacity: 1;
+  pointer-events: auto;
+  transition: clip-path 0.45s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.1s ease-out;
+}
+
+.slash-edge {
+  position: absolute;
+  top: -60%;
+  left: 0;
+  width: 2px;
+  height: 220%;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--color-glow) 35%,
+    var(--color-reactor) 65%,
+    transparent
+  );
+}
+.mobile-nav-panel.is-open .slash-edge {
+  animation: slash-sweep 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes slash-sweep {
+  0%   { transform: translateX(-40px) rotate(45deg); opacity: 0.9; }
+  70%  { opacity: 0.9; }
+  100% { transform: translateX(105vw) rotate(45deg); opacity: 0; }
+}
+
+.mobile-nav-link {
+  opacity: 0;
+  transform: translateX(-14px);
+  transition:
+    opacity 0.25s ease-out,
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.15s ease-out;
+}
+.mobile-nav-panel.is-open .mobile-nav-link {
+  opacity: 1;
+  transform: none;
+}
+.mobile-nav-panel.is-open .mobile-nav-link:nth-child(1) { transition-delay: 0.14s; }
+.mobile-nav-panel.is-open .mobile-nav-link:nth-child(2) { transition-delay: 0.21s; }
+.mobile-nav-panel.is-open .mobile-nav-link:nth-child(3) { transition-delay: 0.28s; }
+
 @keyframes scroll-hint {
   0%, 100% { opacity: 0.4; transform: translateX(-50%) translateY(0); }
   55% { opacity: 0.9; transform: translateX(-50%) translateY(5px); }
