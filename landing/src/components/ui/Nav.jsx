@@ -63,36 +63,16 @@ export function Nav() {
 
             {/* Hamburger — mobile only */}
             <button
-              className="flex h-9 w-9 items-center justify-center rounded text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] md:hidden cursor-pointer"
+              className={`burger flex h-9 w-9 items-center justify-center rounded text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] md:hidden cursor-pointer${open ? ' is-open' : ''}`}
               onClick={() => setOpen(o => !o)}
               aria-label={open ? 'Закрыть меню' : 'Открыть меню'}
               aria-expanded={open}
               aria-controls="mobile-nav"
             >
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-                <line
-                  x1="2" y1="5" x2="16" y2="5"
-                  style={{
-                    transformOrigin: '9px 5px',
-                    transform: open ? 'rotate(45deg) translateY(4px)' : 'none',
-                    transition: 'transform 0.2s cubic-bezier(0.4,0,0.2,1)',
-                  }}
-                />
-                <line
-                  x1="2" y1="9" x2="16" y2="9"
-                  style={{
-                    opacity: open ? 0 : 1,
-                    transition: 'opacity 0.15s ease-out',
-                  }}
-                />
-                <line
-                  x1="2" y1="13" x2="16" y2="13"
-                  style={{
-                    transformOrigin: '9px 13px',
-                    transform: open ? 'rotate(-45deg) translateY(-4px)' : 'none',
-                    transition: 'transform 0.2s cubic-bezier(0.4,0,0.2,1)',
-                  }}
-                />
+                <line className="burger-blade burger-blade--top" x1="2" y1="5" x2="16" y2="5" />
+                <line className="burger-blade burger-blade--mid" x1="2" y1="9" x2="16" y2="9" />
+                <line className="burger-blade burger-blade--bot" x1="2" y1="13" x2="16" y2="13" />
               </svg>
             </button>
           </div>
@@ -102,16 +82,11 @@ export function Nav() {
       {/* Mobile nav panel */}
       <div
         id="mobile-nav"
-        className="fixed left-0 right-0 z-40 md:hidden"
-        style={{
-          top: '64px',
-          pointerEvents: open ? 'auto' : 'none',
-          opacity: open ? 1 : 0,
-          transform: open ? 'translateY(0)' : 'translateY(-6px)',
-          transition: 'opacity 0.18s cubic-bezier(0.4,0,0.2,1), transform 0.18s cubic-bezier(0.4,0,0.2,1)',
-        }}
+        className={`mobile-nav-panel fixed left-0 right-0 z-40 overflow-hidden md:hidden${open ? ' is-open' : ''}`}
+        style={{ top: '64px' }}
         aria-hidden={!open}
       >
+        <div className="slash-edge" aria-hidden="true" />
         <div className="border-b border-[#3e4a3c]/60 bg-[#212525]/96 backdrop-blur-md px-6 py-4">
           <nav className="flex flex-col" aria-label="Mobile navigation">
             {NAV_LINKS.map(({ label, href }, i) => (
@@ -119,7 +94,7 @@ export function Nav() {
                 key={label}
                 href={href}
                 onClick={() => setOpen(false)}
-                className="flex items-center justify-between py-3.5 font-body text-sm text-[#aed2a4] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"
+                className="mobile-nav-link flex items-center justify-between py-3.5 font-body text-sm text-[#aed2a4] hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"
                 style={{
                   borderBottom: i < NAV_LINKS.length - 1 ? '1px solid #3e4a3c40' : 'none',
                 }}

@@ -61,6 +61,35 @@ fn h3_unlink_neighbours_stay_safe() {
     }
 }
 
+#[test]
+fn h3_wipefs_short_flags_without_all_flag_do_not_fire_fs011() {
+    let s = scanner();
+    for cmd in [
+        "wipefs -n /dev/sda",
+        "wipefs -f /dev/sda",
+        "wipefs -vn /dev/sda",
+    ] {
+        let assessment = s.assess(cmd);
+        assert!(
+            !assessment
+                .matched
+                .iter()
+                .any(|m| m.pattern.id.as_ref() == "FS-011"),
+            "FS-011 must not fire without -a/--all: {cmd:?} => {:?}",
+            assessment
+                .matched
+                .iter()
+                .map(|m| m.pattern.id.as_ref())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            assessment.risk < RiskLevel::Danger,
+            "{cmd:?} must not reach Danger without -a/--all (got {:?})",
+            assessment.risk
+        );
+    }
+}
+
 // ── Cloud token-prefix narrowness (CL-011 / CL-012 / CL-013) ───────────────
 //
 // Each cloud rule keys on the destructive flag (`--force`/`--delete`/`-r`),
@@ -126,6 +155,127 @@ fn h3_gsutil_rm_single_object_does_not_fire_cl013() {
     assert!(
         assessment.risk < RiskLevel::Danger,
         "'gsutil rm gs://my-bucket/file.txt' (no -r) must not reach Danger (got {:?})",
+        assessment.risk
+    );
+}
+
+// ── H3-followups: cloud storage and rsync narrowness ───────────────────────
+#[test]
+fn h3_followup_gcloud_storage_rm_without_recursive_stays_below_danger() {
+    let s = scanner();
+    let assessment = s.assess("gcloud storage rm gs://my-bucket/file.txt");
+    assert!(
+        !assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "CL-014"),
+        "CL-014 must not fire without recursive flag: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        assessment.risk < RiskLevel::Danger,
+        "single-object gcloud storage rm must stay below Danger (got {:?})",
+        assessment.risk
+    );
+}
+
+#[test]
+fn h3_followup_rsync_without_delete_stays_safe() {
+    let s = scanner();
+    let assessment = s.assess("rsync -av ./dist/ deploy:/srv/site/");
+    assert_eq!(
+        assessment.risk,
+        RiskLevel::Safe,
+        "rsync without delete flags must stay Safe: got {:?} / {:?}",
+        assessment.risk,
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+}
+
+// ── H3-followups: device inspection narrowness ────────────────────────────
+#[test]
+fn h3_followup_device_inspection_commands_stay_safe() {
+    let s = scanner();
+    for cmd in [
+        "parted /dev/sda print",
+        "parted -l",
+        "sgdisk --print /dev/sda",
+    ] {
+        let assessment = s.assess(cmd);
+        assert_eq!(
+            assessment.risk,
+            RiskLevel::Safe,
+            "{cmd:?} must stay Safe: got {:?} / {:?}",
+            assessment.risk,
+            assessment
+                .matched
+                .iter()
+                .map(|m| m.pattern.id.as_ref())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+// ── H3-followups: redis-cli non-flush narrowness ──────────────────────────
+#[test]
+fn h3_followup_redis_cli_non_flush_commands_stay_safe() {
+    let s = scanner();
+    for cmd in [
+        "redis-cli GET mykey",
+        "redis-cli --raw INFO",
+        "redis-cli DBSIZE",
+    ] {
+        let assessment = s.assess(cmd);
+        assert_eq!(
+            assessment.risk,
+            RiskLevel::Safe,
+            "{cmd:?} must stay Safe: got {:?} / {:?}",
+            assessment.risk,
+            assessment
+                .matched
+                .iter()
+                .map(|m| m.pattern.id.as_ref())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+// ── H3-followups: redis-cli DB-006 over-match narrowness ─────────────────
+//
+// `redis-cli GET FLUSHALL` must NOT fire DB-006: here FLUSHALL is a key-name
+// argument to the GET command, not the Redis flush verb. The current any_star
+// pattern causes DB-006 to fire anywhere FLUSHALL/FLUSHDB appears after
+// `redis-cli`, which is an over-match. This test will be RED until the DB-006
+// redis-cli rule is narrowed to only match when FLUSHALL/FLUSHDB is the actual
+// Redis command token (i.e. immediately follows option flags, not another verb).
+#[test]
+fn test_db006_redis_cli_get_flushall_stays_safe() {
+    let s = scanner();
+    let assessment = s.assess("redis-cli GET FLUSHALL");
+    assert!(
+        !assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "DB-006"),
+        "DB-006 must not fire when FLUSHALL is a key argument to GET, not the Redis command: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        assessment.risk,
+        RiskLevel::Safe,
+        "'redis-cli GET FLUSHALL' must stay Safe (FLUSHALL is a key name, not a command): got {:?}",
         assessment.risk
     );
 }

@@ -11,6 +11,18 @@ impl PrefixRule {
     /// `Single`/`Alts`/`Any`/`AnyStar` tokens. The pattern must be a prefix of
     /// `tokens` — extra trailing tokens are allowed. Empty patterns never match.
     pub fn matches_tokens(&self, tokens: &[&str]) -> bool {
+        if self.id.as_ref() == "FS-011" && wipefs_all_flag_present(tokens) {
+            return true;
+        }
+
+        if self.id.as_ref() == "DB-006"
+            && tokens
+                .first()
+                .is_some_and(|t| t.eq_ignore_ascii_case("redis-cli"))
+        {
+            return redis_cli_flush_is_command(tokens);
+        }
+
         aegis_parser::matches_prefix(&self.pattern, tokens)
     }
 
@@ -70,6 +82,91 @@ impl PrefixRule {
         }
         Ok(())
     }
+}
+
+fn wipefs_all_flag_present(tokens: &[&str]) -> bool {
+    if !tokens
+        .first()
+        .is_some_and(|program| program.eq_ignore_ascii_case("wipefs"))
+    {
+        return false;
+    }
+
+    tokens.iter().skip(1).any(|token| {
+        if *token == "--all" {
+            return true;
+        }
+
+        token
+            .strip_prefix('-')
+            .is_some_and(|short_flags| !short_flags.starts_with('-') && short_flags.contains('a'))
+    })
+}
+
+/// redis-cli flags that consume one following value token.
+///
+/// This list covers the most common connection and auth options. Unknown flags
+/// that also take a value would cause a false negative (we'd treat the value as
+/// the Redis command and fail to fire DB-006), but that is the safer direction:
+/// better to miss an edge case than to fire on `redis-cli GET FLUSHALL` where
+/// FLUSHALL is a key argument.
+const REDIS_CLI_FLAGS_WITH_VALUE: &[&str] = &[
+    "-h",
+    "-p",
+    "-a",
+    "-n",
+    "-u",
+    "-s",
+    "-d",
+    "-i",
+    "-r",
+    "--user",
+    "--pass",
+    "--sni",
+    "--cacert",
+    "--cacertdir",
+    "--cert",
+    "--key",
+    "--pipe-timeout",
+    "--connect-timeout",
+    "--cluster",
+];
+
+/// Returns `true` when `tokens` represents a `redis-cli` invocation whose
+/// first non-option token is `FLUSHALL` or `FLUSHDB`.
+///
+/// redis-cli flags (tokens starting with `-`) are skipped; flags in
+/// `REDIS_CLI_FLAGS_WITH_VALUE` also consume the following value token.
+/// The first remaining non-flag token is the Redis command — only when it is
+/// `FLUSHALL` or `FLUSHDB` does the predicate fire.
+///
+/// This prevents `redis-cli GET FLUSHALL` from matching DB-006: `GET` is the
+/// Redis command, and `FLUSHALL` is its key argument.
+fn redis_cli_flush_is_command(tokens: &[&str]) -> bool {
+    debug_assert!(
+        tokens
+            .first()
+            .is_some_and(|t| t.eq_ignore_ascii_case("redis-cli")),
+        "redis_cli_flush_is_command called on non-redis-cli tokens"
+    );
+
+    let mut i = 1; // skip "redis-cli"
+    while i < tokens.len() {
+        let token = tokens[i];
+        if token.starts_with('-') {
+            // It is a flag — skip it.
+            i += 1;
+            // If this flag consumes a value, skip the value too.
+            if REDIS_CLI_FLAGS_WITH_VALUE.contains(&token) {
+                i += 1;
+            }
+        } else {
+            // First non-flag token — this is the Redis command.
+            return token.eq_ignore_ascii_case("FLUSHALL") || token.eq_ignore_ascii_case("FLUSHDB");
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -361,6 +458,35 @@ mod tests {
             rule.validate_examples().is_err(),
             "validate_examples must reject a rule whose match_examples do not actually match"
         );
+    }
+
+    #[test]
+    fn fs011_matches_wipefs_short_flag_bundle_containing_all_flag() {
+        let rule = PrefixRule {
+            id: Cow::Borrowed("FS-011"),
+            category: Category::Filesystem,
+            pattern: vec![
+                single("wipefs"),
+                PatternToken::AnyStar,
+                alts(&["-a", "--all"]),
+            ],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed("test"),
+            safe_alt: None,
+            justification: None,
+            source: PatternSource::Builtin,
+            match_examples: &[],
+            not_match_examples: &[],
+        };
+
+        assert!(rule.matches_tokens(&["wipefs", "-af", "/dev/sda"]));
+        assert!(rule.matches_tokens(&["wipefs", "-fa", "/dev/sda"]));
+        assert!(rule.matches_tokens(&["wipefs", "-fav", "/dev/sda"]));
+        assert!(rule.matches_tokens(&["wipefs", "-av", "/dev/sda"]));
+        assert!(rule.matches_tokens(&["wipefs", "--all", "/dev/sda"]));
+        assert!(!rule.matches_tokens(&["wipefs", "-f", "/dev/sda"]));
+        assert!(!rule.matches_tokens(&["wipefs", "-vn", "/dev/sda"]));
+        assert!(!rule.matches_tokens(&["wipefs", "--almost", "/dev/sda"]));
     }
 
     #[test]
