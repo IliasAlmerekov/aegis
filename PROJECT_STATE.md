@@ -16,7 +16,7 @@
 
 ## Last updated
 
-2026-06-29
+2026-07-02
 
 ---
 
@@ -39,7 +39,30 @@
 
 ---
 
-## What was done last session (2026-06-29)
+## What was done last session (2026-07-02)
+
+- **H3-followups reviewer fixes (iteration 2).** Added `--delete-missing-args` to FS-015
+  rsync delete alt list. Narrowed DB-006 redis-cli rule via a local `redis_cli_flush_is_command`
+  predicate (FS-011 pattern): only fires when `FLUSHALL`/`FLUSHDB` is the first non-option token
+  (the Redis command), preventing `redis-cli GET FLUSHALL` from matching. All 536 workspace tests
+  green, clippy clean, fmt clean.
+- **H3-followups closed via TDD.** Implemented additive scanner hardening for all
+  remaining false negatives: `FS-011` now handles `wipefs` short flag bundles
+  containing `a` via a local `wipefs_all_flag_present` predicate in
+  `prefix_rule.rs`; `FS-015` covers `rsync --delete*`; `FS-016` blocks
+  `blkdiscard`; `FS-017` covers `sgdisk --zap-all`/`-Z`; `FS-018` covers
+  destructive `parted mklabel`/`rm`; `CL-014` covers `gcloud storage rm
+  --recursive`; a second `DB-006` entry covers `redis-cli FLUSHALL`/`FLUSHDB`.
+  No parser/tokenizer/public-API changes. Moved the three new H3-followup positive
+  test functions to `crates/aegis-scanner/src/scanner/tests/h3_followups.rs` to
+  keep `basic.rs` under the 800-line budget. All 536 workspace tests green,
+  `cargo clippy` clean, `cargo fmt --check` clean. Benchmark not required (no
+  hot-path changes).
+- Grilled and planned **H3-followups** scanner hardening. Added `Short flag bundle`
+  to `CONTEXT.md` and wrote the implementation plan in
+  `docs/superpowers/plans/2026-07-02-h3-followups-scanner-hardening.md`.
+
+### Previous session (2026-06-29)
 
 - **H1 closed via TDD, then hardened after code review.** Standalone background
   `&` is now a command separator in both `split_top_level_segments` and

@@ -656,8 +656,13 @@ fn assess_h3_wipefs_unlink_prefix_rules() {
     let cases: &[(&str, RiskLevel, &str)] = &[
         ("wipefs -a /dev/sda", RiskLevel::Danger, "FS-011"),
         ("wipefs --all /dev/sdb", RiskLevel::Danger, "FS-011"),
+        ("wipefs -af /dev/sda", RiskLevel::Danger, "FS-011"),
+        ("wipefs -fa /dev/sda", RiskLevel::Danger, "FS-011"),
+        ("wipefs -fav /dev/sda", RiskLevel::Danger, "FS-011"),
+        ("wipefs -av /dev/sda", RiskLevel::Danger, "FS-011"),
         // launcher strip (ADR-014): sudo is removed before the prefix scan.
         ("sudo wipefs -a /dev/nvme0n1", RiskLevel::Danger, "FS-011"),
+        ("sudo wipefs -fa /dev/nvme0n1", RiskLevel::Danger, "FS-011"),
         ("unlink important.txt", RiskLevel::Warn, "FS-012"),
     ];
     for (cmd, risk, id) in cases {

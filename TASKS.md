@@ -330,24 +330,16 @@ fundamental design failure. They are fixable with targeted work.
   FS-014 rc files; (4) **simplicity-01**: hoisted `assert_assessment_matches_pattern`
   into `tests/mod.rs`. The remaining H3-followups below stay deferred.
 
-#### [ ] H3-followups — siblings deferred from the H3 grill
+#### [x] H3-followups — siblings deferred from the H3 grill
 
-Discovered while scoping H3 (2026-06-29); intentionally **not** in H3:
-
-- **`wipefs` bundled flags:** `wipefs -af` / `-fa /dev/sdX` are missed (prefix
-  `Alts` match flags exactly). Known FN.
-- **[resolved 2026-06-30] `aws` global flags before the service token:**
-  `aws --profile p s3 rb …` bypassed all `CL-*` aws rules. Fixed by a leading
-  `any_star()` on CL-005/CL-011/CL-012 (bugs-01, pulled forward).
-- **[resolved 2026-06-30] `tee` to `authorized_keys`:** `tee` / `tee -a
-  ~/.ssh/authorized_keys` is now caught by the FS-013 `tee` branch (pulled
-  forward to fix the description-vs-behavior defect).
-- **`gcloud storage rm -r`:** the newer CLI replacing `gsutil`; same recursive
-  delete, no rule.
-- **`rsync --delete`:** sibling of `aws s3 sync --delete` (CL-012).
-- **Other device wipers:** `blkdiscard`, `sgdisk --zap-all`, `parted`
-  (`shred`/`dd`/`mkfs` already covered).
-- **`redis-cli FLUSHALL` prefix gap:** previously noted in the H2 plan.
+- **Resolution (2026-07-02):** closed the remaining siblings as additive scanner
+  hardening: `FS-011` now handles `wipefs` short flag bundles containing `a`;
+  `CL-014` covers `gcloud storage rm --recursive`; `FS-015` covers
+  `rsync --delete*`; `FS-016` blocks `blkdiscard`; `FS-017` covers
+  `sgdisk --zap-all`/`-Z`; `FS-018` covers destructive `parted mklabel`/`rm`;
+  `DB-006` now also covers `redis-cli` invocations containing `FLUSHALL` or `FLUSHDB`. Existing resolved
+  H3 review follow-ups (`aws` global flags, `tee` to `authorized_keys`) remain
+  recorded in the H3 remediation note above.
 
 ### [ ] H4 — `claude-code.sh` hook fails open
 

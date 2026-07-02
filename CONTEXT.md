@@ -60,6 +60,12 @@ A top-level shell control operator that ends one `Logical segment` and starts th
 redirect (`&>`, `>&`, `2>&1`) is not a separator.
 _Avoid_: delimiter, control operator
 
+**Short flag bundle**:
+A single shell token that combines multiple one-letter CLI flags (for example `-af` as
+`-a` + `-f`). Aegis treats bundle semantics as command-specific unless a rule explicitly
+models them; exact flag tokens remain the default for `Token-prefix rule`s.
+_Avoid_: combined flags, packed flags
+
 ## Scanner
 
 **Assessment**:

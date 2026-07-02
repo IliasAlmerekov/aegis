@@ -13,8 +13,9 @@ pub(super) fn rules() -> Vec<PrefixRule> {
             id: Cow::Borrowed("FS-011"),
             category: Category::Filesystem,
             // AnyStar lets `-a` follow other flags (e.g. `wipefs -n -a`), an
-            // accepted fail-safe FP. Bundled `-af`/`-fa` are a known FN
-            // follow-up.
+            // accepted fail-safe FP. `FS-011` also has a local matcher-side predicate
+            // for wipefs short flag bundles containing `a` (`-af`, `-fa`, `-fav`);
+            // this is intentionally not a generic prefix-rule feature.
             pattern: vec![s("wipefs"), any_star(), a(&["-a", "--all"])],
             // Danger, not Block like mkfs (FS-006): wipefs erases filesystem /
             // partition *signatures* only — the underlying data blocks survive
@@ -32,8 +33,17 @@ pub(super) fn rules() -> Vec<PrefixRule> {
                 "Wiping signatures detaches every filesystem on the device at once. Recovery depends on having the partition layout saved; double-check the device path.",
             )),
             source: PatternSource::Builtin,
-            match_examples: &["wipefs -a /dev/sda", "wipefs --all /dev/sdb"],
-            not_match_examples: &["wipefs /dev/sda", "wipefs -n /dev/sda"],
+            match_examples: &[
+                "wipefs -a /dev/sda",
+                "wipefs --all /dev/sdb",
+                "wipefs -af /dev/sda",
+                "wipefs -fa /dev/sda",
+            ],
+            not_match_examples: &[
+                "wipefs /dev/sda",
+                "wipefs -n /dev/sda",
+                "wipefs -f /dev/sda",
+            ],
         },
         PrefixRule {
             id: Cow::Borrowed("FS-012"),
@@ -52,6 +62,99 @@ pub(super) fn rules() -> Vec<PrefixRule> {
             source: PatternSource::Builtin,
             match_examples: &["unlink important.txt"],
             not_match_examples: &["readlink mylink", "ln -s a b"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("FS-015"),
+            category: Category::Filesystem,
+            pattern: vec![
+                s("rsync"),
+                any_star(),
+                a(&[
+                    "--delete",
+                    "--delete-before",
+                    "--delete-during",
+                    "--delete-delay",
+                    "--delete-after",
+                    "--delete-excluded",
+                    "--delete-missing-args",
+                ]),
+            ],
+            risk: RiskLevel::Warn,
+            description: Cow::Borrowed(
+                "rsync --delete — removes destination files that are absent from the source",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Dry-run first: 'rsync -n --delete <source> <destination>' and verify the destination path before syncing",
+            )),
+            justification: Some(Cow::Borrowed(
+                "With delete flags, rsync removes files from the destination that are missing from the source. A wrong source or destination path can erase deployed or remote files.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "rsync -av --delete ./dist/ deploy:/srv/site/",
+                "rsync --delete-after ./dist/ deploy:/srv/site/",
+                "rsync --delete-excluded ./dist/ deploy:/srv/site/",
+                "rsync --delete-missing-args --files-from=list ./ dest/",
+            ],
+            not_match_examples: &["rsync -av ./dist/ deploy:/srv/site/"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("FS-016"),
+            category: Category::Filesystem,
+            pattern: vec![s("blkdiscard")],
+            risk: RiskLevel::Block,
+            description: Cow::Borrowed(
+                "blkdiscard — discards all blocks on a block device, effectively wiping stored data",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Verify the target with 'lsblk' and use a dedicated disk-wipe workflow outside Aegis if this is intentional",
+            )),
+            justification: Some(Cow::Borrowed(
+                "blkdiscard can make device data unrecoverable immediately. Aegis treats this as an intrinsic Block-level wipe operation.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &["blkdiscard /dev/sda", "blkdiscard -f /dev/nvme0n1"],
+            not_match_examples: &["lsblk /dev/sda"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("FS-017"),
+            category: Category::Filesystem,
+            pattern: vec![s("sgdisk"), any_star(), a(&["--zap-all", "-Z"])],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "sgdisk --zap-all — destroys GPT and MBR partition table data on a disk",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Back up the partition table first: 'sgdisk --backup=table.gpt /dev/sdX' and verify the device with 'lsblk'",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Zapping partition metadata can make all partitions inaccessible. Recovery depends on having the original layout saved.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &["sgdisk --zap-all /dev/sda", "sgdisk -Z /dev/sda"],
+            not_match_examples: &["sgdisk --print /dev/sda"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("FS-018"),
+            category: Category::Filesystem,
+            pattern: vec![s("parted"), any_star(), a(&["mklabel", "rm"])],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "parted mklabel/rm — rewrites a partition table label or removes a partition",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Print and back up the partition layout first: 'parted /dev/sdX print' and 'sfdisk -d /dev/sdX > table.bak'",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Partition table changes can make data inaccessible immediately. Confirm the target disk and partition number before proceeding.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "parted /dev/sda mklabel gpt",
+                "parted -s /dev/sda mklabel msdos",
+                "parted /dev/sda rm 1",
+            ],
+            not_match_examples: &["parted /dev/sda print", "parted -l"],
         },
         // ── Git ──────────────────────────────────────────────────────────
         PrefixRule {
@@ -271,6 +374,32 @@ pub(super) fn rules() -> Vec<PrefixRule> {
             source: PatternSource::Builtin,
             match_examples: &["FLUSHALL"],
             not_match_examples: &["GET mykey"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("DB-006"),
+            category: Category::Database,
+            pattern: vec![s("redis-cli"), any_star(), a(&["FLUSHALL", "FLUSHDB"])],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "redis-cli FLUSHALL / FLUSHDB — wipes all keys in the cache or selected Redis database",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "Use key-pattern-based deletion: 'SCAN + DEL' to remove only the intended keys",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Wipes Redis keys instantly through redis-cli. Redis has no undo; if persistence backups are missing the data is gone forever.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "redis-cli FLUSHALL",
+                "redis-cli -h cache.local -n 0 FLUSHDB",
+                "redis-cli --raw FLUSHALL ASYNC",
+            ],
+            not_match_examples: &[
+                "redis-cli GET mykey",
+                "redis-cli --raw INFO",
+                "redis-cli GET FLUSHALL",
+            ],
         },
         // ── Cloud ──────────────────────────────────────────────────────────
         PrefixRule {
@@ -564,6 +693,35 @@ pub(super) fn rules() -> Vec<PrefixRule> {
                 "gsutil rm -R gs://my-bucket/data",
             ],
             not_match_examples: &["gsutil rm gs://my-bucket/file.txt"],
+        },
+        PrefixRule {
+            id: Cow::Borrowed("CL-014"),
+            category: Category::Cloud,
+            pattern: vec![
+                s("gcloud"),
+                any_star(),
+                s("storage"),
+                s("rm"),
+                any_star(),
+                a(&["-r", "-R", "--recursive"]),
+            ],
+            risk: RiskLevel::Danger,
+            description: Cow::Borrowed(
+                "gcloud storage rm --recursive — recursively deletes Cloud Storage objects or buckets",
+            ),
+            safe_alt: Some(Cow::Borrowed(
+                "List objects first: 'gcloud storage ls gs://<bucket>/<prefix>' and enable object versioning before recursive deletes",
+            )),
+            justification: Some(Cow::Borrowed(
+                "Recursive Cloud Storage deletion can remove all objects under a prefix and may delete the bucket when aimed at a bucket URL. Versioning is the primary recovery path.",
+            )),
+            source: PatternSource::Builtin,
+            match_examples: &[
+                "gcloud storage rm -r gs://my-bucket/data",
+                "gcloud storage rm --recursive gs://my-bucket",
+                "gcloud --project prod storage rm gs://my-bucket --recursive",
+            ],
+            not_match_examples: &["gcloud storage rm gs://my-bucket/file.txt"],
         },
     ]
 }
