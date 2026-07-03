@@ -1,6 +1,6 @@
 [package]
 name = "aegis-explanation"
-version = "0.5.9"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,7 +10,7 @@ documentation = "https://docs.rs/aegis-explanation"
 description = "Structured explanation types for Aegis decisions. Depends on aegis-types, aegis-policy, and aegis-config."
 
 [dependencies]
-aegis-types = { version = "0.5.9", path = "../aegis-types" }
-aegis-policy = { version = "0.5.9", path = "../aegis-policy" }
-aegis-config = { version = "0.5.9", path = "../aegis-config" }
+aegis-types = { version = "0.6.0", path = "../aegis-types" }
+aegis-policy = { version = "0.6.0", path = "../aegis-policy" }
+aegis-config = { version = "0.6.0", path = "../aegis-config" }
 serde = { version = "1", features = ["derive"] }

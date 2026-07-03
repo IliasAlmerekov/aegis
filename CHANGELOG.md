@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+---
+
+## [0.6.0] — 2026-07-03
+
 ### Security
 
 - Extended FS-015 rsync delete coverage to include `--delete-missing-args` (turns missing-source-args errors into destination-side deletions).

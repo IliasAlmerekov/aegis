@@ -8,7 +8,7 @@
 
 ## Current version
 
-`0.5.9` — pre-1.0, targeting `1.0.0` (released from `feat/shell-security`: ADR-011 npm/setup-shell + Codex hook rewrite, ADR-012 Claude absolute shim, C2 `$IFS` bypass fix)
+`0.6.0` — pre-1.0, targeting `1.0.0` (released from `feat/shell-security`: H2 destructive-SQL match-anywhere, H3-followups scanner hardening, C3-residual project-config ratchet, C4 token-prefix anchoring fix per ADR-014)
 
 ## Active branch
 
@@ -16,7 +16,7 @@
 
 ## Last updated
 
-2026-07-02
+2026-07-03
 
 ---
 
@@ -39,7 +39,23 @@
 
 ---
 
-## What was done last session (2026-07-02)
+## What was done last session (2026-07-03)
+
+- **Release prep v0.6.0.** Bumped workspace + all 12 crate versions and inter-crate
+  deps to `0.6.0` (Cargo.toml, Cargo.lock via `cargo update --workspace`),
+  `packaging/npm/package.json`, README badge + `--tag v0.6.0` install line,
+  `docs/releases/current-line.md`. CHANGELOG: `[Unreleased]` → `[0.6.0] — 2026-07-03`
+  with fresh empty `[Unreleased]`. `cargo check` green. Tag `v0.6.0` to be cut
+  from `feat/shell-security`.
+- **Landing polish.** Burger menu "crossed blades" animation; neon perimeter scan
+  on terminal frames; shield GLB compressed 14.9MB → 242KB (simplify + Draco);
+  live typed terminal scenarios (FeatureSection tabs now drive the terminal);
+  HowItWorks redesigned to "One session, three steps" — single neon terminal
+  playing a continuous install→setup→intercept session with a clickable synced
+  stepper; audit log tail -f animation; page-wide scroll-reveal choreography
+  (`ui/Reveal.jsx`, `ui/LiveTerminal.jsx`). Landing versions updated to v0.6.0.
+
+### Previous session (2026-07-02)
 
 - **H3-followups reviewer fixes (iteration 2).** Added `--delete-missing-args` to FS-015
   rsync delete alt list. Narrowed DB-006 redis-cli rule via a local `redis_cli_flush_is_command`
