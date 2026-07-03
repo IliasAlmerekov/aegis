@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react'
+import { Reveal } from '../ui/Reveal'
 
 const ShieldScene = lazy(() =>
   import('../3d/ShieldScene').then((m) => ({ default: m.ShieldScene }))
@@ -35,27 +36,34 @@ export function Hero() {
         {/* Left column — text */}
         <div className="flex w-full min-w-0 flex-1 flex-col items-center text-center lg:items-start lg:text-left">
           {/* Eyebrow */}
+          <Reveal>
           <div className="mb-5 flex items-center gap-2 rounded-full border border-[#3e4a3c] px-3 py-1.5" style={{ backgroundColor: '#1a2018' }}>
             <span className="h-1.5 w-1.5 rounded-full bg-[#7fee64]" aria-hidden="true" />
             <span className="font-mono text-xs font-medium tracking-widest text-[#677d64] uppercase">
-              Open Source · Rust · v0.5.9
+              Open Source · Rust · v0.6.0
             </span>
           </div>
+          </Reveal>
 
           {/* Headline */}
+          <Reveal delay={80}>
           <h1 className="font-display text-5xl font-medium leading-[1.05] tracking-tight text-[#ddffdc] sm:text-6xl lg:text-[64px]">
             Your AI agent{' '}
             <span className="text-[#7fee64]">asked first.</span>
           </h1>
+          </Reveal>
 
           {/* Subheadline */}
+          <Reveal delay={160}>
           <p className="mt-6 max-w-[480px] font-body text-[17px] leading-relaxed text-[#aed2a4]">
             Aegis sits between your AI assistant and the shell. Dangerous commands —
             deletes, drops, overwrites — pause for your approval. Safe ones pass
             through with minimal overhead.
           </p>
+          </Reveal>
 
           {/* CTAs */}
+          <Reveal delay={240}>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <a
               href="https://github.com/IliasAlmerekov/aegis"
@@ -75,8 +83,10 @@ export function Hero() {
               See how it works
             </a>
           </div>
+          </Reveal>
 
           {/* Install snippet */}
+          <Reveal delay={320} className="w-full max-w-full">
           <div className="mt-8 flex w-full min-w-0 max-w-full items-start gap-3 rounded border border-[#3e4a3c] px-4 py-2.5 text-left" style={{ backgroundColor: '#0d1210' }}>
             <span className="font-mono text-xs leading-relaxed text-[#677d64]">$</span>
             <code className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-[#7fee64]">
@@ -93,6 +103,7 @@ export function Hero() {
               </svg>
             </button>
           </div>
+          </Reveal>
         </div>
 
         {/* Right column — 3D Shield */}

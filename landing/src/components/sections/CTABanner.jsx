@@ -1,9 +1,12 @@
+import { Reveal } from '../ui/Reveal'
+
 export function CTABanner() {
   return (
     <section
       className="mx-auto w-full max-w-[1200px] px-6 py-16"
       aria-label="Call to action"
     >
+      <Reveal>
       <div
         className="relative overflow-hidden rounded-lg px-8 py-14 text-center"
         style={{
@@ -53,6 +56,7 @@ export function CTABanner() {
           </a>
         </div>
       </div>
+      </Reveal>
     </section>
   )
 }

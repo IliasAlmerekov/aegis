@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { TerminalWindow } from '../ui/TerminalWindow'
+import { LiveTerminal } from '../ui/LiveTerminal'
+import { Reveal, useInView } from '../ui/Reveal'
 
 const TABS = [
   {
@@ -22,9 +24,46 @@ const TABS = [
   },
 ]
 
+const SCENARIOS = {
+  intercept: [
+    { k: 'cmd', prompt: 'agent:', text: 'cargo build --release', color: '#ddffdc' },
+    { k: 'out', text: '✓ safe — passed through in 0.4ms', color: '#485346', delay: 420 },
+    { k: 'pause', ms: 900 },
+    { k: 'cmd', prompt: 'agent:', text: 'rm -rf /var/log/nginx', color: '#ddffdc' },
+    {
+      k: 'danger',
+      id: 'FS-001',
+      title: 'Recursive force delete — no recovery path',
+      alt: 'safe alt: mv /var/log/nginx /tmp/backup-$(date +%s)',
+      delay: 500,
+    },
+    { k: 'out', text: 'waiting for your decision…', color: '#677d64', delay: 700 },
+  ],
+  approve: [
+    { k: 'cmd', prompt: 'agent:', text: 'DROP TABLE users;', color: '#ddffdc' },
+    {
+      k: 'danger',
+      id: 'DB-001',
+      title: 'Destructive SQL — table is gone for good',
+      alt: 'safe alt: ALTER TABLE users RENAME TO users_retired',
+      delay: 500,
+    },
+    { k: 'actions', press: 'N', delay: 400 },
+    { k: 'out', text: '✖ denied — logged to audit.jsonl', color: '#677d64', delay: 420 },
+  ],
+  audit: [
+    { k: 'cmd', prompt: '$', text: 'tail -f ~/.aegis/audit.jsonl', color: '#ddffdc' },
+    { k: 'out', text: '{"ts":"09:12:43Z","cmd":"rm -rf /var/log/nginx","decision":"denied","pattern":"FS-001"}', color: '#859085', delay: 600 },
+    { k: 'out', text: '{"ts":"09:13:01Z","cmd":"git reset --hard HEAD~3","decision":"approved","pattern":"GIT-001"}', color: '#7fee64', delay: 900 },
+    { k: 'out', text: '{"ts":"09:15:22Z","cmd":"cargo build --release","decision":"pass"}', color: '#485346', delay: 900 },
+    { k: 'out', text: '{"ts":"09:17:08Z","cmd":"DROP TABLE sessions;","decision":"denied","pattern":"DB-001"}', color: '#859085', delay: 900 },
+  ],
+}
+
 export function FeatureSection() {
   const [active, setActive] = useState('intercept')
   const tab = TABS.find((t) => t.id === active)
+  const [inViewRef, inView] = useInView(0.2)
 
   return (
     <section
@@ -33,95 +72,70 @@ export function FeatureSection() {
       aria-labelledby="why-aegis-heading"
     >
       {/* Eyebrow */}
-      <p className="mb-4 font-mono text-xs font-medium tracking-widest text-[#677d64] uppercase">
-        Why Aegis?
-      </p>
+      <Reveal>
+        <p className="mb-4 font-mono text-xs font-medium tracking-widest text-[#677d64] uppercase">
+          Why Aegis?
+        </p>
+      </Reveal>
 
       <div className="flex flex-col gap-12 lg:flex-row lg:gap-16">
         {/* Left — description */}
         <div className="flex flex-1 flex-col">
-          <h2
-            id="why-aegis-heading"
-            className="font-display text-4xl font-medium leading-tight tracking-tight text-[#ddffdc] lg:text-5xl"
-          >
-            AI agents are powerful.<br />
-            <span className="text-[#7fee64]">They don't ask permission.</span>
-          </h2>
+          <Reveal delay={60}>
+            <h2
+              id="why-aegis-heading"
+              className="font-display text-4xl font-medium leading-tight tracking-tight text-[#ddffdc] lg:text-5xl"
+            >
+              AI agents are powerful.<br />
+              <span className="text-[#7fee64]">They don't ask permission.</span>
+            </h2>
+          </Reveal>
 
           {/* Tabs */}
-          <div className="mt-8 flex gap-0 border-b border-[#3e4a3c]" role="tablist" aria-label="Features">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={active === t.id}
-                aria-controls={`panel-${t.id}`}
-                id={`tab-${t.id}`}
-                onClick={() => setActive(t.id)}
-                className={`px-4 py-2.5 font-mono text-xs tracking-widest transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] ${
-                  active === t.id
-                    ? 'border-b-2 border-[#7fee64] text-[#7fee64]'
-                    : 'text-[#677d64] hover:text-[#ddffdc]'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+          <Reveal delay={140}>
+            <div className="mt-8 flex gap-0 border-b border-[#3e4a3c]" role="tablist" aria-label="Features">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  role="tab"
+                  aria-selected={active === t.id}
+                  aria-controls={`panel-${t.id}`}
+                  id={`tab-${t.id}`}
+                  onClick={() => setActive(t.id)}
+                  className={`px-4 py-2.5 font-mono text-xs tracking-widest transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] ${
+                    active === t.id
+                      ? 'border-b-2 border-[#7fee64] text-[#7fee64]'
+                      : 'text-[#677d64] hover:text-[#ddffdc]'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
 
-          <div
-            id={`panel-${tab.id}`}
-            role="tabpanel"
-            aria-labelledby={`tab-${tab.id}`}
-            className="mt-6"
-          >
-            <h3 className="font-display text-xl font-medium text-[#ddffdc]">
-              {tab.heading}
-            </h3>
-            <p className="mt-3 font-body text-[15px] leading-relaxed text-[#677d64]">
-              {tab.body}
-            </p>
-          </div>
+            <div
+              id={`panel-${tab.id}`}
+              role="tabpanel"
+              aria-labelledby={`tab-${tab.id}`}
+              className="mt-6"
+            >
+              <h3 className="font-display text-xl font-medium text-[#ddffdc]">
+                {tab.heading}
+              </h3>
+              <p className="mt-3 font-body text-[15px] leading-relaxed text-[#677d64]">
+                {tab.body}
+              </p>
+            </div>
+          </Reveal>
         </div>
 
-        {/* Right — Terminal mock */}
-        <div className="flex-1 lg:max-w-[520px]">
-          <TerminalWindow title="aegis — zsh">
-            <div className="space-y-1 font-mono text-sm">
-              <p className="text-[#677d64]">
-                <span className="text-[#7fee64]">$</span> aegis setup-shell
-              </p>
-              <p className="text-[#677d64] text-xs mt-3">
-                agent: rm -rf /var/log/nginx &amp;&amp; systemctl restart nginx
-              </p>
-
-              {/* Warning box */}
-              <div className="mt-4 rounded border border-[#7fee64]/30 p-3" style={{ backgroundColor: '#0f1e0f' }}>
-                <p className="text-xs font-semibold" style={{ color: '#c8f9b6' }}>
-                  ⚠ DANGER — FS-001
-                </p>
-                <p className="mt-1 text-xs text-[#677d64]">
-                  Recursive force delete — no recovery path
-                </p>
-                <p className="mt-1 text-xs text-[#485346]">
-                  safe alt: mv /var/log/nginx /tmp/backup-$(date +%s)
-                </p>
-              </div>
-
-              {/* Action row */}
-              <div className="mt-4 flex items-center gap-4">
-                <button className="rounded px-3 py-1 text-xs font-semibold text-[#000000] cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64]" style={{ backgroundColor: '#7fee64' }}>
-                  y Allow
-                </button>
-                <button className="rounded border border-[#3e4a3c] px-3 py-1 text-xs text-[#677d64] cursor-pointer hover:border-[#677d64] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64]">
-                  N Deny
-                </button>
-                <button className="rounded border border-[#3e4a3c] px-3 py-1 text-xs text-[#677d64] cursor-pointer hover:border-[#677d64] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64]">
-                  ? Details
-                </button>
-              </div>
-            </div>
-          </TerminalWindow>
+        {/* Right — live terminal, scenario follows the active tab */}
+        <div className="flex-1 lg:max-w-[520px]" ref={inViewRef}>
+          <Reveal delay={200}>
+            <TerminalWindow title="aegis — zsh">
+              <LiveTerminal scenario={SCENARIOS[active]} playing={inView} />
+            </TerminalWindow>
+          </Reveal>
         </div>
       </div>
     </section>

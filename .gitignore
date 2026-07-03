@@ -26,3 +26,4 @@ docs/claude-source-borrowings.md
 docs/CODEX-*.md
 docs/tickets/
 packaging/npm/vendor/
+.gstack/

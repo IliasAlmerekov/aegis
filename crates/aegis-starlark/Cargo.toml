@@ -1,6 +1,6 @@
 [package]
 name = "aegis-starlark"
-version = "0.5.9"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,7 +10,7 @@ documentation = "https://docs.rs/aegis-starlark"
 description = "Starlark policy loader for Aegis — loads ~/.aegis/policy.star into PolicyRule vec."
 
 [dependencies]
-aegis-config = { version = "0.5.9", path = "../aegis-config" }
+aegis-config = { version = "0.6.0", path = "../aegis-config" }
 anyhow = "1"
 thiserror = "1"
 starlark = "0.14.2"

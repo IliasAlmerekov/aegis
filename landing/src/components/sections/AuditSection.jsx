@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { TerminalWindow } from '../ui/TerminalWindow'
+import { Reveal, useInView } from '../ui/Reveal'
 
 const ENTRIES = [
   {
@@ -40,6 +42,21 @@ const DECISION_COLOR = {
 }
 
 export function AuditSection() {
+  const [inViewRef, inView] = useInView(0.3)
+  const [count, setCount] = useState(0)
+
+  // tail -f: entries append one by one the first time the log scrolls
+  // into view, then the cursor keeps blinking at the end of the file.
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCount(ENTRIES.length)
+      return
+    }
+    if (!inView || count >= ENTRIES.length) return
+    const t = setTimeout(() => setCount((c) => c + 1), count === 0 ? 350 : 620)
+    return () => clearTimeout(t)
+  }, [inView, count])
+
   return (
     <section
       id="audit-trail"
@@ -48,7 +65,7 @@ export function AuditSection() {
     >
       <div className="flex flex-col gap-12 lg:flex-row lg:items-start lg:gap-16">
         {/* Left */}
-        <div className="flex max-w-[380px] flex-col">
+        <Reveal className="flex max-w-[380px] flex-col">
           <p className="mb-4 font-mono text-xs font-medium tracking-widest text-[#677d64] uppercase">
             Audit Trail
           </p>
@@ -76,14 +93,18 @@ export function AuditSection() {
               <path d="M5 12h14M12 5l7 7-7 7"/>
             </svg>
           </a>
-        </div>
+        </Reveal>
 
-        {/* Right — JSONL terminal */}
-        <div className="flex-1">
+        {/* Right — JSONL terminal, tail -f style */}
+        <div className="flex-1" ref={inViewRef}>
+          <Reveal delay={120}>
           <TerminalWindow title="~/.aegis/audit.jsonl">
-            <div className="space-y-3 font-mono text-xs">
+            <div className="min-h-[340px] space-y-3 font-mono text-xs">
               {ENTRIES.map((e, i) => (
-                <div key={i} className="flex flex-col gap-0.5 border-b border-[#3e4a3c]/40 pb-3 last:border-0 last:pb-0">
+                <div
+                  key={i}
+                  className={`tail-entry${i < count ? ' is-live' : ''} flex flex-col gap-0.5 border-b border-[#3e4a3c]/40 pb-3 last:border-0 last:pb-0`}
+                >
                   <div className="flex items-start gap-2 flex-wrap">
                     <span className="text-[#3e4a3c]">{'{'}</span>
                     <span className="text-[#677d64]">&quot;ts&quot;:</span>
@@ -110,8 +131,10 @@ export function AuditSection() {
                   <span className="text-[#3e4a3c]">{'}'}</span>
                 </div>
               ))}
+              <span className="term-cursor" aria-hidden="true" />
             </div>
           </TerminalWindow>
+          </Reveal>
         </div>
       </div>
     </section>

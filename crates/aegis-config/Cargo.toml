@@ -1,6 +1,6 @@
 [package]
 name = "aegis-config"
-version = "0.5.9"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,8 +10,8 @@ documentation = "https://docs.rs/aegis-config"
 description = "Configuration model, layered loader, validation, JSON schema, and decision-persistence (amend) for Aegis. Depends on aegis-types and aegis-scanner."
 
 [dependencies]
-aegis-types = { version = "0.5.9", path = "../aegis-types" }
-aegis-scanner = { version = "0.5.9", path = "../aegis-scanner" }
+aegis-types = { version = "0.6.0", path = "../aegis-types" }
+aegis-scanner = { version = "0.6.0", path = "../aegis-scanner" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 schemars = "1"

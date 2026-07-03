@@ -1,6 +1,6 @@
 [package]
 name = "aegis"
-version = "0.5.9"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -40,17 +40,17 @@ default = []
 starlark-policy = ["dep:aegis-starlark"]
 
 [dependencies]
-aegis-types = { version = "0.5.9", path = "crates/aegis-types" }
-aegis-parser = { version = "0.5.9", path = "crates/aegis-parser" }
-aegis-scanner = { version = "0.5.9", path = "crates/aegis-scanner" }
-aegis-policy = { version = "0.5.9", path = "crates/aegis-policy" }
-aegis-config = { version = "0.5.9", path = "crates/aegis-config" }
-aegis-explanation = { version = "0.5.9", path = "crates/aegis-explanation" }
-aegis-tui = { version = "0.5.9", path = "crates/aegis-tui" }
-aegis-audit = { version = "0.5.9", path = "crates/aegis-audit" }
-aegis-snapshot = { version = "0.5.9", path = "crates/aegis-snapshot" }
-aegis-starlark = { version = "0.5.9", path = "crates/aegis-starlark", optional = true }
-aegis-sandbox = { version = "0.5.9", path = "crates/aegis-sandbox" }
+aegis-types = { version = "0.6.0", path = "crates/aegis-types" }
+aegis-parser = { version = "0.6.0", path = "crates/aegis-parser" }
+aegis-scanner = { version = "0.6.0", path = "crates/aegis-scanner" }
+aegis-policy = { version = "0.6.0", path = "crates/aegis-policy" }
+aegis-config = { version = "0.6.0", path = "crates/aegis-config" }
+aegis-explanation = { version = "0.6.0", path = "crates/aegis-explanation" }
+aegis-tui = { version = "0.6.0", path = "crates/aegis-tui" }
+aegis-audit = { version = "0.6.0", path = "crates/aegis-audit" }
+aegis-snapshot = { version = "0.6.0", path = "crates/aegis-snapshot" }
+aegis-starlark = { version = "0.6.0", path = "crates/aegis-starlark", optional = true }
+aegis-sandbox = { version = "0.6.0", path = "crates/aegis-sandbox" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "1"
