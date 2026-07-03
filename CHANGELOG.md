@@ -11,6 +11,12 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Changed
+
+- CI: eliminated duplicate push+PR runs on feature branches (`push` trigger now scoped to `main` only) and added a `concurrency` group that cancels superseded runs on non-`main` refs only — pushes to `main` always run to completion so every commit gets a full audit/deny/fuzz pass, and the weekly schedule/`workflow_dispatch` can't race-cancel an in-flight `main` push (or vice versa).
+- CI: split the `build` and `live-installer` jobs into always-on Linux jobs plus gated `build-macos`/`live-installer-macos` jobs that only run on pushes to `main`, PRs targeting `main`, the weekly schedule, and manual dispatch — cuts macOS runner minutes (billed at 10x Linux) on every feature-branch push/PR while keeping macOS coverage before merge to `main`. `release.yml` macOS builds are unaffected.
+- CI: added `timeout-minutes` to the `quality`, `security`, `build`, `build-macos`, `live-installer`, and `live-installer-macos` jobs so a hung runner (macOS in particular) fails fast instead of burning minutes up to GitHub's 360-minute default.
+
 ---
 
 ## [0.6.0] — 2026-07-03

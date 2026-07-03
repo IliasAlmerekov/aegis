@@ -2,12 +2,21 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: ["**"]
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # main must always finish a full run (audit, deny, fuzz) — cancelling it
+  # would let a commit land without ever going green, and would let the
+  # weekly schedule/workflow_dispatch races kill an in-flight main push (or
+  # vice versa). Only cancel superseded runs on non-main refs (feature
+  # branches, PRs).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,6 +29,7 @@ jobs:
   quality:
     name: Quality (fmt, clippy, test)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
@@ -51,6 +61,7 @@ jobs:
   security:
     name: Security (audit, deny)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
@@ -97,11 +108,9 @@ jobs:
         run: cargo deny check
 
   build:
-    name: Release build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Release build (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
@@ -123,8 +132,42 @@ jobs:
       - name: cargo build --release
         run: cargo build --release
 
-      - name: cargo test (macOS only)
-        if: matrix.os == 'macos-latest'
+  # macOS is expensive (10x Linux minutes on GitHub-hosted runners) — only
+  # worth running where a regression would otherwise ship: pushes to main,
+  # PRs targeting main, the weekly schedule, and manual runs. Feature-branch
+  # pushes/PRs stay Linux-only; release.yml still builds real macOS binaries
+  # for every tagged release regardless of this gate.
+  build-macos:
+    name: Release build (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+
+      - name: cargo build --release
+        run: cargo build --release
+
+      - name: cargo test --workspace
         run: cargo test --workspace
 
   performance:
@@ -169,11 +212,40 @@ jobs:
 
 
   live-installer:
-    name: Live installer validation (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Live installer validation (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-live-installer-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-live-installer-
+
+      - name: Run live installer test
+        run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_live_release test_installer_live_github_release_download
+
+  # Same cost/coverage tradeoff as build-macos above.
+  live-installer-macos:
+    name: Live installer validation (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
