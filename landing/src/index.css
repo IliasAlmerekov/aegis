@@ -252,6 +252,68 @@ h1, h2, h3, h4, h5, h6 {
   55% { opacity: 0.9; transform: translateX(-50%) translateY(5px); }
 }
 
+/* Copy-to-clipboard confirmation — checkmark pops in over the icon swap */
+@keyframes copy-icon-pop {
+  0%   { transform: scale(0.4); opacity: 0; }
+  60%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.copy-icon-pop {
+  animation: copy-icon-pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Danger box entrance — a quick shake plus a settling pulse, since this
+   is the one moment in the demo terminal that should read as urgent. */
+@keyframes danger-box-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+@keyframes danger-box-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(127, 238, 100, 0.35); }
+  70%  { box-shadow: 0 0 0 8px rgba(127, 238, 100, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(127, 238, 100, 0); }
+}
+.danger-box-enter {
+  animation:
+    danger-box-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both,
+    danger-box-pulse 1.2s ease-out 0.4s 2;
+}
+
+/* Key-press feedback in the demo terminal's y/N/? action row */
+@keyframes key-press {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+.key-pressed {
+  animation: key-press 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Feature tabs — indicator slides to the active tab instead of snapping,
+   panel content fades in behind it. */
+.tab-indicator {
+  transition:
+    left 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes tab-panel-fade-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: none; }
+}
+.tab-panel-fade {
+  animation: tab-panel-fade-in 0.25s ease-out both;
+}
+
+/* Trust-strip stat cards — subtle hover lift for interactive consistency */
+.trust-card {
+  transition: background-color 0.2s ease-out;
+}
+.trust-card:hover {
+  background-color: #d3ecce;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

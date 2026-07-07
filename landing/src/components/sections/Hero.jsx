@@ -1,11 +1,21 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Reveal } from '../ui/Reveal'
 
 const ShieldScene = lazy(() =>
   import('../3d/ShieldScene').then((m) => ({ default: m.ShieldScene }))
 )
 
+const INSTALL_CMD = 'npm i -g @iliasalmerekov/aegis'
+
 export function Hero() {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard?.writeText(INSTALL_CMD)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1600)
+  }
+
   return (
     <section
       id="hero"
@@ -90,18 +100,25 @@ export function Hero() {
           <div className="mt-8 flex w-full min-w-0 max-w-full items-start gap-3 rounded border border-[#3e4a3c] px-4 py-2.5 text-left" style={{ backgroundColor: '#0d1210' }}>
             <span className="font-mono text-xs leading-relaxed text-[#677d64]">$</span>
             <code className="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed text-[#7fee64]">
-              npm i -g @iliasalmerekov/aegis
+              {INSTALL_CMD}
             </code>
             <button
               className="ml-1 shrink-0 rounded p-1 text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] cursor-pointer"
               aria-label="Copy install command"
-              onClick={() => navigator.clipboard?.writeText('npm i -g @iliasalmerekov/aegis')}
+              onClick={handleCopy}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-              </svg>
+              {copied ? (
+                <svg key="check" className="copy-icon-pop" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#7fee64" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+              ) : (
+                <svg key="copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              )}
             </button>
+            <span className="sr-only" role="status">{copied ? 'Copied to clipboard' : ''}</span>
           </div>
           </Reveal>
         </div>

@@ -4,7 +4,7 @@ export function Footer() {
       <div className="mx-auto flex max-w-[1200px] flex-col items-center justify-between gap-4 px-6 sm:flex-row">
         <div className="flex items-center gap-2">
           <img
-            src="/shield-icon.png"
+            src="/aegis.svg"
             width="22"
             height="22"
             alt=""

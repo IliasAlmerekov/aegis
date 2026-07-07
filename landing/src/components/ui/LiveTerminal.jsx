@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 
 function DangerBox({ id, title, alt }) {
   return (
-    <div className="mt-4 rounded border border-[#7fee64]/30 p-3" style={{ backgroundColor: '#0f1e0f' }}>
+    <div className="danger-box-enter mt-4 rounded border border-[#7fee64]/30 p-3" style={{ backgroundColor: '#0f1e0f' }}>
       <p className="text-xs font-semibold" style={{ color: '#c8f9b6' }}>
         ⚠ DANGER — {id}
       </p>
@@ -33,7 +33,7 @@ function ActionRow({ pressed }) {
       <span
         className={`${base} border transition-colors duration-150 ${
           pressed
-            ? 'border-[#7fee64] text-[#000000] font-semibold'
+            ? 'key-pressed border-[#7fee64] text-[#000000] font-semibold'
             : 'border-[#3e4a3c] text-[#677d64]'
         }`}
         style={pressed ? { backgroundColor: '#7fee64' } : undefined}
