@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Security
+
+- Bumped transitive `crossbeam-epoch` 0.9.18 → 0.9.20 to clear RUSTSEC-2026-0204 (invalid pointer dereference in the `fmt::Pointer` impl for `Atomic`/`Shared`); pulled in via the `starlark` chain (`blake3` → `rayon-core` → `crossbeam-deque`).
+
 ### Added
 
 - Landing: copy-to-clipboard confirmation (checkmark pop-in) on the install snippet button, a number-ticker count-up for the trust-strip stats, a sliding tab indicator with fade-in content on the "Why Aegis" tabs, a shake/pulse entrance and key-press feedback in the live demo terminal, and a hover state on trust-strip cards.
