@@ -543,9 +543,9 @@ fn codex_pre_tool_use_still_rewrites_when_disabled_file_exists_but_ci_override_i
 }
 
 // H4 regression: both hooks must fail CLOSED (deny JSON, exit 0) when AEGIS_BIN
-// points at a non-existent path.  Current behavior: exec fails → exit 127, empty
-// stdout → the agent treats this as a non-blocking error and the original
-// unwrapped command runs unscanned (fail-open).
+// points at a non-existent path.  Pre-fix behavior: exec failed → exit 127, empty
+// stdout → the agent treated this as a non-blocking error and the original
+// unwrapped command ran unscanned (fail-open).
 
 #[test]
 fn test_claude_code_hook_fails_closed_when_aegis_bin_missing() {
