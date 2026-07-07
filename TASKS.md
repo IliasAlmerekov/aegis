@@ -341,15 +341,19 @@ fundamental design failure. They are fixable with targeted work.
   H3 review follow-ups (`aws` global flags, `tee` to `authorized_keys`) remain
   recorded in the H3 remediation note above.
 
-### [ ] H4 — `claude-code.sh` hook fails open
+### [x] H4 — `claude-code.sh` hook fails open
 
 - **Problem:** when `jq` or `aegis` is missing, or JSON is invalid, the Claude hook
   exits 0, allowing the command to pass without scanning. The Codex hook already
   denies in these cases. This violates ADR-007.
-- **Status:** confirmed by reviewer.
-- **File:** `scripts/hooks/claude-code.sh:64-77`.
-- **Fix:** emit a deny result on missing dependencies / invalid JSON, matching the
-  Codex hook behavior.
+- **Status:** closed. Finding as written was stale — the jq fail-open and the
+  Claude/Codex divergence were already fixed in `8dbb61d` (jq-free Rust delegation;
+  `src/install/hook.rs` denies on invalid JSON / missing `tool_input`). The residual
+  fail-open was `exec "${AEGIS_BIN}" hook` exiting 127 with empty stdout when the
+  binary is missing → command ran unscanned. Fixed by a `command -v` guard before
+  `exec` in both hooks that emits a `deny` decision and exits 0 (ADR-007).
+- **File:** `scripts/hooks/claude-code.sh`, `scripts/hooks/codex-pre-tool-use.sh`.
+- **Fix:** shipped — fail-closed guard + regression tests in `tests/agent_hooks.rs`.
 
 ### [ ] H5 — Audit hash chain is not true tamper-evidence
 
@@ -576,7 +580,8 @@ fundamental design failure. They are fixable with targeted work.
        anchors.
 7. [ ] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
        revisit the edge-case test that whitelists force-push.
-8. [ ] H4 — make `claude-code.sh` deny on missing `jq` / `aegis` / invalid JSON.
+8. [x] H4 — hooks fail closed when `aegis` binary is missing (`command -v` guard →
+       deny + exit 0); jq/invalid-JSON cases were already covered by Rust delegation.
 
 ### Sprint 2 — required before release: defense in depth
 
