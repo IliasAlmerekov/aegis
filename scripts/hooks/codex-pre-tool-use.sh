@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aegis-hook-version: 3
+# aegis-hook-version: 4
 # Codex PreToolUse hook — transparently rewrites unwrapped Bash commands through
 # aegis by delegating to the Rust `aegis hook` rewrite. No jq/python3 required.
 # Installed to: ~/.codex/hooks/aegis-pre-tool-use.sh
@@ -68,5 +68,12 @@ fi
 # an explicit AEGIS_BIN in the environment still wins (used by tests).
 if [ -z "${AEGIS_BIN:-}" ]; then
   AEGIS_BIN=__AEGIS_BIN__
+fi
+if ! command -v "${AEGIS_BIN}" >/dev/null 2>&1; then
+  # aegis binary unavailable — fail closed rather than let the command run
+  # unscanned (ADR-007). Emit the same deny shape as `aegis hook` /
+  # hook_deny_output: top-level reason + hookSpecificOutput.deny, exit 0.
+  printf '%s\n' '{"reason":"aegis binary unavailable; refusing to run command unscanned","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"aegis binary unavailable; refusing to run command unscanned"}}'
+  exit 0
 fi
 exec "${AEGIS_BIN}" hook
