@@ -13,6 +13,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail closed when the `aegis` binary is unavailable: a `command -v` guard before `exec` emits a `deny` decision (matching the Rust `hook_deny_output` shape) and exits 0 instead of letting `exec` fail with 127 and pass the command through unscanned (ADR-007, closes H4).
 - Bumped transitive `crossbeam-epoch` 0.9.18 → 0.9.20 to clear RUSTSEC-2026-0204 (invalid pointer dereference in the `fmt::Pointer` impl for `Atomic`/`Shared`); pulled in via the `starlark` chain (`blake3` → `rayon-core` → `crossbeam-deque`).
 
 ### Added

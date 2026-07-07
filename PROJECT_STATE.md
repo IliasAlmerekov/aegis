@@ -16,7 +16,7 @@
 
 ## Last updated
 
-2026-07-03
+2026-07-07
 
 ---
 
@@ -39,7 +39,20 @@
 
 ---
 
-## What was done last session (2026-07-03)
+## What was done last session (2026-07-07)
+
+- **H4 closed via TDD.** Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail
+  closed when the `aegis` binary is unavailable: a `command -v "${AEGIS_BIN}"` guard before
+  `exec` emits a `deny` decision (matching the Rust `hook_deny_output` shape) and exits 0,
+  instead of `exec` failing with 127 and letting the command run unscanned (ADR-007). The
+  original H4 finding (jq fail-open) was already fixed in `8dbb61d`; this closes the residual
+  binary-missing fail-open. Hook versions bumped (claude 2→3, codex 3→4). New regression tests
+  for both scripts in `tests/agent_hooks.rs`; 3 install tests split into `tests/agent_hooks_install.rs`
+  to hold the 800-line budget. 538 tests green, clippy/fmt clean.
+- **Security: RUSTSEC-2026-0204.** Bumped transitive `crossbeam-epoch` 0.9.18 → 0.9.20 (via
+  starlark → blake3 → rayon-core) to clear the `cargo audit` failure blocking push.
+
+### Previous session (2026-07-03)
 
 - **Release prep v0.6.0.** Bumped workspace + all 12 crate versions and inter-crate
   deps to `0.6.0` (Cargo.toml, Cargo.lock via `cargo update --workspace`),
