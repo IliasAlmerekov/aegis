@@ -11,6 +11,19 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Security
+
+- Bumped transitive `crossbeam-epoch` 0.9.18 → 0.9.20 to clear RUSTSEC-2026-0204 (invalid pointer dereference in the `fmt::Pointer` impl for `Atomic`/`Shared`); pulled in via the `starlark` chain (`blake3` → `rayon-core` → `crossbeam-deque`).
+
+### Added
+
+- Landing: copy-to-clipboard confirmation (checkmark pop-in) on the install snippet button, a number-ticker count-up for the trust-strip stats, a sliding tab indicator with fade-in content on the "Why Aegis" tabs, a shake/pulse entrance and key-press feedback in the live demo terminal, and a hover state on trust-strip cards.
+- Landing: `public/aegis.svg` replaces `shield-icon.png` as the nav and footer mark, re-exported with its square background frame removed (flood-filled to alpha transparency from the vectorized source) so only the shield-and-prompt glyph shows against any surrounding background.
+
+### Fixed
+
+- Landing: `NumberTicker` could latch onto a wrong value (e.g. showing `-5%` instead of `100%`) if the trust-strip's `IntersectionObserver` toggled `inView` during a fast scroll — the first `requestAnimationFrame` tick anchored elapsed time to a `performance.now()` call taken before the frame was scheduled, which could yield a negative delta, and the "already played" flag latched on start rather than completion so a cancelled mid-flight animation could never re-run to correct itself.
+
 ### Changed
 
 - CI: eliminated duplicate push+PR runs on feature branches (`push` trigger now scoped to `main` only) and added a `concurrency` group that cancels superseded runs on non-`main` refs only — pushes to `main` always run to completion so every commit gets a full audit/deny/fuzz pass, and the weekly schedule/`workflow_dispatch` can't race-cancel an in-flight `main` push (or vice versa).

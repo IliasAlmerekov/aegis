@@ -1,4 +1,5 @@
-import { Reveal } from '../ui/Reveal'
+import { Reveal, useInView } from '../ui/Reveal'
+import { NumberTicker } from '../ui/NumberTicker'
 
 const STATS = [
   {
@@ -24,6 +25,8 @@ const STATS = [
 ]
 
 export function TrustStrip() {
+  const [gridRef, gridInView] = useInView(0.3)
+
   return (
     <section
       aria-label="Why trust Aegis"
@@ -42,13 +45,14 @@ export function TrustStrip() {
 
         {/* Stats grid */}
         <div
+          ref={gridRef}
           className="grid grid-cols-2 gap-px lg:grid-cols-4"
           style={{ backgroundColor: '#aed2a4' }}
         >
           {STATS.map(({ value, label, detail }, i) => (
             <div
               key={label}
-              className="px-6 py-8 lg:px-8"
+              className="trust-card px-6 py-8 lg:px-8"
               style={{ backgroundColor: '#def0dd' }}
             >
               <Reveal delay={80 + i * 70} className="flex flex-col gap-3">
@@ -56,7 +60,7 @@ export function TrustStrip() {
                   className="font-display text-[44px] font-medium leading-none tracking-tight text-[#000000]"
                   aria-label={value}
                 >
-                  {value}
+                  <NumberTicker value={value} inView={gridInView} />
                 </span>
                 <div className="flex flex-col gap-1.5">
                   <span className="font-mono text-xs font-medium uppercase tracking-widest text-[#677d64]">

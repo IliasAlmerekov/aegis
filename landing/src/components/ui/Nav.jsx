@@ -19,7 +19,7 @@ export function Nav() {
             className="flex items-center gap-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] rounded"
           >
             <img
-              src="/shield-icon.png"
+              src="/aegis.svg"
               width="30"
               height="30"
               alt=""

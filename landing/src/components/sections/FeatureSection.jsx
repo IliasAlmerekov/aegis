@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { TerminalWindow } from '../ui/TerminalWindow'
 import { LiveTerminal } from '../ui/LiveTerminal'
 import { Reveal, useInView } from '../ui/Reveal'
@@ -64,6 +64,13 @@ export function FeatureSection() {
   const [active, setActive] = useState('intercept')
   const tab = TABS.find((t) => t.id === active)
   const [inViewRef, inView] = useInView(0.2)
+  const tabRefs = useRef({})
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+
+  useLayoutEffect(() => {
+    const el = tabRefs.current[active]
+    if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
+  }, [active])
 
   return (
     <section
@@ -93,31 +100,36 @@ export function FeatureSection() {
 
           {/* Tabs */}
           <Reveal delay={140}>
-            <div className="mt-8 flex gap-0 border-b border-[#3e4a3c]" role="tablist" aria-label="Features">
+            <div className="relative mt-8 flex gap-0 border-b border-[#3e4a3c]" role="tablist" aria-label="Features">
               {TABS.map((t) => (
                 <button
                   key={t.id}
+                  ref={(el) => { tabRefs.current[t.id] = el }}
                   role="tab"
                   aria-selected={active === t.id}
                   aria-controls={`panel-${t.id}`}
                   id={`tab-${t.id}`}
                   onClick={() => setActive(t.id)}
                   className={`px-4 py-2.5 font-mono text-xs tracking-widest transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] ${
-                    active === t.id
-                      ? 'border-b-2 border-[#7fee64] text-[#7fee64]'
-                      : 'text-[#677d64] hover:text-[#ddffdc]'
+                    active === t.id ? 'text-[#7fee64]' : 'text-[#677d64] hover:text-[#ddffdc]'
                   }`}
                 >
                   {t.label}
                 </button>
               ))}
+              <span
+                className="tab-indicator absolute bottom-0 h-[2px] bg-[#7fee64]"
+                style={{ left: `${indicator.left}px`, width: `${indicator.width}px` }}
+                aria-hidden="true"
+              />
             </div>
 
             <div
+              key={tab.id}
               id={`panel-${tab.id}`}
               role="tabpanel"
               aria-labelledby={`tab-${tab.id}`}
-              className="mt-6"
+              className="tab-panel-fade mt-6"
             >
               <h3 className="font-display text-xl font-medium text-[#ddffdc]">
                 {tab.heading}
