@@ -29,12 +29,15 @@ jobs:
             asset_name: aegis-linux-aarch64
             use_cross: true
 
+          # Pinned rather than macos-latest (which migrated to macOS 26 on
+          # 2026-06-15, see actions/runner-images#14167) so a runner-image
+          # bump never silently changes what a release is built on.
           - target: x86_64-apple-darwin
-            os: macos-15-intel
+            os: macos-26-intel
             asset_name: aegis-macos-x86_64
 
           - target: aarch64-apple-darwin
-            os: macos-15
+            os: macos-26
             asset_name: aegis-macos-aarch64
 
     steps:

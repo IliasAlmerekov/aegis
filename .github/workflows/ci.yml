@@ -137,8 +137,12 @@ jobs:
   # builds real macOS binaries for every tagged release regardless of this
   # gate.
   build-macos:
-    name: Release build (macos-latest)
-    runs-on: macos-latest
+    name: Release build (macos-26)
+    # Pinned rather than macos-latest (which migrated to macOS 26 on
+    # 2026-06-15, see actions/runner-images#14167) so an OS bump never
+    # silently lands under us — release.yml pins the same way for the
+    # binaries it actually ships. Bump both together when moving on.
+    runs-on: macos-26
     timeout-minutes: 20
     needs: gate
     if: needs.gate.outputs.heavy == 'true'
@@ -212,8 +216,9 @@ jobs:
 
   # Same cost/coverage tradeoff as build-macos above.
   live-installer-macos:
-    name: Live installer validation (macos-latest)
-    runs-on: macos-latest
+    name: Live installer validation (macos-26)
+    # Pinned rather than macos-latest — see build-macos above.
+    runs-on: macos-26
     timeout-minutes: 15
     needs: gate
     if: needs.gate.outputs.heavy == 'true'
