@@ -291,7 +291,10 @@ jobs:
       - name: Install cargo-fuzz if needed
         run: |
           if ! command -v cargo-fuzz >/dev/null 2>&1; then
-            cargo install cargo-fuzz --root ~/.cargo-tools --version ${{ env.CARGO_FUZZ_VERSION }} --locked
+            # No --locked: cargo-fuzz's published Cargo.lock pins rustix 0.36.5,
+            # which fails to build on current nightly (rustc_attrs got stricter).
+            # Letting cargo re-resolve deps picks up a compatible rustix instead.
+            cargo install cargo-fuzz --root ~/.cargo-tools --version ${{ env.CARGO_FUZZ_VERSION }}
           fi
 
       - name: Run parser fuzz
