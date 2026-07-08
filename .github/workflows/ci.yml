@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -24,8 +27,32 @@ env:
   RUST_TOOLCHAIN: 1.94.0
   CARGO_AUDIT_VERSION: 0.22.1
   CARGO_DENY_VERSION: 0.19.0
+  CARGO_FUZZ_VERSION: 0.13.1
 
 jobs:
+  # Single source of truth for the "is this worth a slow/expensive job"
+  # gate, used by every heavy job below (macOS runners, fuzzing, live
+  # network/Docker/SQLite integration tests, benchmark baselines). A
+  # regression in any of them only needs to be caught before it lands on
+  # main (via a PR targeting main), on the weekly schedule, or on a manual
+  # run — not on every push to a feature branch.
+  gate:
+    name: Determine heavy-job gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      heavy: ${{ steps.compute.outputs.heavy }}
+    steps:
+      - name: Compute heavy-job gate
+        id: compute
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" || ( "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.base.ref }}" == "main" ) ]]; then
+            echo "heavy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "heavy=false" >> "$GITHUB_OUTPUT"
+          fi
+
   quality:
     name: Quality (fmt, clippy, test)
     runs-on: ubuntu-latest
@@ -33,21 +60,10 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
         run: cargo fmt --check --all
@@ -65,20 +81,10 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-security-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-security-
+          cache-key-prefix: security-
 
       - name: Cache cargo security tools
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
@@ -114,55 +120,35 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
+          cache-key-prefix: release-
 
       - name: cargo build --release
         run: cargo build --release
 
   # macOS is expensive (10x Linux minutes on GitHub-hosted runners) — only
-  # worth running where a regression would otherwise ship: pushes to main,
-  # PRs targeting main, the weekly schedule, and manual runs. Feature-branch
-  # pushes/PRs stay Linux-only; release.yml still builds real macOS binaries
-  # for every tagged release regardless of this gate.
+  # worth running where a regression would otherwise ship: PRs targeting
+  # main (last chance to catch it before it merges), the weekly schedule,
+  # and manual runs. Deliberately NOT re-run on push to main — the PR that
+  # merged it already ran this job, so re-running on the merge commit is
+  # redundant. Feature-branch pushes/PRs stay Linux-only; release.yml still
+  # builds real macOS binaries for every tagged release regardless of this
+  # gate.
   build-macos:
     name: Release build (macos-latest)
     runs-on: macos-latest
     timeout-minutes: 20
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.ref == 'refs/heads/main' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-release-
+          cache-key-prefix: release-
 
       - name: cargo build --release
         run: cargo build --release
@@ -170,27 +156,22 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # Heavy/slow job (bench + criterion). Full-fidelity run is only needed
+  # before it lands on main or on the weekly schedule — same gate as
+  # build-macos above.
   performance:
     name: Performance baseline (scanner bench)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-perf-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-perf-
+          cache-key-prefix: perf-
 
       - name: cargo bench --bench scanner_bench
         run: cargo bench --bench scanner_bench
@@ -210,28 +191,21 @@ jobs:
             benchmark-report.txt
             target/criterion
 
-
+  # Hits the real GitHub Releases API — only worth the network flakiness
+  # risk and runtime before it lands on main or on the weekly schedule.
   live-installer:
     name: Live installer validation (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-live-installer-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-live-installer-
+          cache-key-prefix: live-installer-
 
       - name: Run live installer test
         run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_live_release test_installer_live_github_release_download
@@ -241,53 +215,34 @@ jobs:
     name: Live installer validation (macos-latest)
     runs-on: macos-latest
     timeout-minutes: 15
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.ref == 'refs/heads/main' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-live-installer-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-live-installer-
+          cache-key-prefix: live-installer-
 
       - name: Run live installer test
         run: AEGIS_TEST_LIVE_INSTALL=1 cargo test --test installer_live_release test_installer_live_github_release_download
 
+  # Spins up real Docker + SQLite fixtures — same cost/coverage tradeoff as
+  # build-macos above.
   snapshot-rollback-live:
     name: Live snapshot/rollback (Docker + SQLite)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-snapshot-rollback-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-snapshot-rollback-
+          cache-key-prefix: snapshot-rollback-
 
       - name: Install SQLite CLI
         run: |
@@ -307,30 +262,40 @@ jobs:
           AEGIS_SQLITE_SNAPSHOT_TESTS: "1"
         run: cargo test --test snapshot_rollback_live sqlite_snapshot_rollback_restores_database_file_through_aegis_cli -- --exact --nocapture
 
+  # 300k total fuzz iterations across three targets — the most expensive
+  # Linux job in this workflow. Same cost/coverage tradeoff as build-macos
+  # above: a regression here only needs to be caught before main or weekly.
   fuzz:
     name: Fuzzing (parser + scanner + heredoc)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
-      - name: Install Rust nightly toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      - uses: ./.github/actions/setup-rust
         with:
           toolchain: nightly
+          cache-key-prefix: fuzz-
 
-      - name: Cache cargo registry
+      - name: Cache cargo-fuzz binary
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-fuzz-
+          path: ~/.cargo-tools
+          key: ${{ runner.os }}-cargo-tools-cargo-fuzz-${{ env.CARGO_FUZZ_VERSION }}
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --force
+      - name: Add cached cargo tools to PATH
+        run: echo "$HOME/.cargo-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-fuzz if needed
+        run: |
+          if ! command -v cargo-fuzz >/dev/null 2>&1; then
+            # No --locked: cargo-fuzz's published Cargo.lock pins rustix 0.36.5,
+            # which fails to build on current nightly (rustc_attrs got stricter).
+            # Letting cargo re-resolve deps picks up a compatible rustix instead.
+            cargo install cargo-fuzz --root ~/.cargo-tools --version ${{ env.CARGO_FUZZ_VERSION }}
+          fi
 
       - name: Run parser fuzz
         run: LSAN_OPTIONS=detect_leaks=0 cargo +nightly fuzz run parser fuzz/corpus/parser -- -runs=100000 -max_len=65536

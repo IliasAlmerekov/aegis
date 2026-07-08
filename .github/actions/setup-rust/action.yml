@@ -1,0 +1,49 @@
+name: "Setup Rust toolchain and cargo cache"
+description: >-
+  Installs a pinned Rust toolchain and restores the cargo registry/target
+  cache. Does not check out the repository — the calling job must run
+  actions/checkout before this action (a local composite action can only be
+  loaded after the repo containing it is already checked out).
+inputs:
+  toolchain:
+    description: "Rust toolchain channel or version to install (e.g. 1.94.0, nightly)"
+    required: true
+  components:
+    description: "Comma-separated rustup components to install (e.g. rustfmt, clippy)"
+    required: false
+    default: ""
+  targets:
+    description: "Comma-separated compilation targets to install"
+    required: false
+    default: ""
+  cache:
+    description: "Whether to restore/save the cargo registry+target cache"
+    required: false
+    default: "true"
+  cache-key-prefix:
+    description: >-
+      Prefix inserted into the cargo cache key to isolate this job's cache
+      from others sharing the same runner OS. Include a trailing dash, e.g.
+      "security-". Leave empty for the default/unprefixed cache.
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master (Add 1.94.1 patch release)
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Cache cargo registry
+      if: inputs.cache == 'true'
+      uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ inputs.cache-key-prefix }}${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-${{ inputs.cache-key-prefix }}
