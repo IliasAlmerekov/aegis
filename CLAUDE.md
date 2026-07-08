@@ -1,13 +1,35 @@
 # CLAUDE.md — Aegis Development Conventions
 
-## Agent Configuration
+## What this project is
 
-Before starting any non-trivial task, review the orchestration setup: the `/implement`
-TDD pipeline (red-tester → green-tester → reviewer, max 3 iterations) is defined in
-`.claude/commands/implement.md`, the sub-agent registry lives in `.claude/agents/`, and
-the global constraints that apply to all agents are in this file and `CONVENTION.md`.
+Aegis is a lightweight Rust CLI that acts as a `$SHELL` proxy for AI coding
+agents (Claude Code, Codex). It intercepts every command an agent tries to
+run, classifies it (`Safe` / `Warn` / `Danger` / `Block`), and requires human
+confirmation before anything destructive executes. It is a heuristic
+guardrail, not a sandbox — see
+`docs/adr/adr-003-aegis-is-a-heuristic-guardrail-not-a-sandbox.md`. It must
+stay fast (< 2 ms on the safe-command hot path), correct, and minimal.
 
-Use `/implement <task description>` to start any feature or bug fix work.
+The binary lives at the workspace root; the actual logic is split across
+focused library crates under `crates/` (parser, scanner, policy engine,
+config, snapshot backends, audit log, TUI). See `ARCHITECTURE.md` for the
+current structural contract and `docs/adr/` for why it looks this way.
+
+Read `PROJECT_STATE.md` at the start of any non-trivial task to see what
+changed last session and what is currently open.
+
+---
+
+## Before writing any code
+
+**Always invoke the `rust-best-practices` skill before writing or reviewing
+Rust code in this repo** (`Skill({skill: "rust-best-practices"})`, backed by
+`~/agents/skills/rust-best-practies/SKILL.md`). It encodes the idiomatic-Rust
+guidance this project expects (ownership/borrowing, error handling, testing
+style). Apply it on top of — never instead of — `CONVENTION.md`, which is
+authoritative for this project's specific architecture, security invariants,
+and release gates. Use the `tdd` skill for red-green-refactor work on
+security-sensitive parser/scanner/policy code.
 
 ---
 
@@ -65,18 +87,31 @@ Use short conventional commits. **Never** add `Co-Authored-By` trailers.
 **At the start of every session:** read `PROJECT_STATE.md` to understand what was done
 before and where the project stands. Do not skip this step on non-trivial tasks.
 
-**After completing any significant change:** update `PROJECT_STATE.md`:
-- Update "Last updated" date.
-- Replace "What was done last session" with a concise summary of what changed this session.
-- Update "Milestone status" rows whose status changed.
-- Update "Open decisions / blockers" if any were resolved or new ones surfaced.
+**After finishing a task — verify, then document.** Do not fill in these files
+before the task is actually done and verified. Order matters:
+
+1. Finish the change.
+2. Verify it: `rtk cargo test --workspace`, `rtk cargo clippy -- -D warnings`,
+   `rtk cargo fmt --check`, plus a benchmark run if the hot path was touched.
+   Only proceed once this is green.
+3. Only then, in the same change, update `PROJECT_STATE.md`:
+   - Update "Last updated" date.
+   - Replace the "Last session" section with a concise summary of what
+     changed and what was verified.
+   - Update "Milestone status" rows whose status changed.
+   - Update "Open decisions / blockers" if any were resolved or new ones surfaced.
+4. And `TASKS.md`: flip the relevant `[ ]` to `[x]` if the task closes a
+   tracked finding.
+
+Never mark a task done in `PROJECT_STATE.md`/`TASKS.md` before verification
+actually passed.
 
 ---
 
 ## Changelog Maintenance
 
-After every feature, fix, or breaking change, prepend an entry under `## [Unreleased]`
-in `CHANGELOG.md`:
+After every feature, fix, or breaking change **that has passed verification**,
+prepend an entry under `## [Unreleased]` in `CHANGELOG.md`:
 
 - Use Keep a Changelog categories: `Added`, `Changed`, `Fixed`, `Removed`, `Security`.
 - One line per change; reference the milestone (e.g. `M5.4`) or ADR (e.g. `ADR-011`)
