@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { TerminalWindow } from '../ui/TerminalWindow'
 import { LiveTerminal } from '../ui/LiveTerminal'
 import { Reveal, useInView } from '../ui/Reveal'
@@ -66,10 +66,20 @@ export function FeatureSection() {
   const [inViewRef, inView] = useInView(0.2)
   const tabRefs = useRef({})
   const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+  // Transition-driven fade instead of a keyframe tied to a remount key —
+  // retargets smoothly if the user clicks through tabs faster than the
+  // fade can finish, instead of snapping back to its 0% state.
+  const [panelVisible, setPanelVisible] = useState(true)
 
   useLayoutEffect(() => {
     const el = tabRefs.current[active]
     if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
+  }, [active])
+
+  useEffect(() => {
+    setPanelVisible(false)
+    const raf = requestAnimationFrame(() => setPanelVisible(true))
+    return () => cancelAnimationFrame(raf)
   }, [active])
 
   return (
@@ -110,7 +120,7 @@ export function FeatureSection() {
                   aria-controls={`panel-${t.id}`}
                   id={`tab-${t.id}`}
                   onClick={() => setActive(t.id)}
-                  className={`px-4 py-2.5 font-mono text-xs tracking-widest transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] ${
+                  className={`tab-button px-4 py-2.5 font-mono text-xs tracking-widest transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] ${
                     active === t.id ? 'text-[#7fee64]' : 'text-[#677d64] hover:text-[#ddffdc]'
                   }`}
                 >
@@ -125,11 +135,10 @@ export function FeatureSection() {
             </div>
 
             <div
-              key={tab.id}
               id={`panel-${tab.id}`}
               role="tabpanel"
               aria-labelledby={`tab-${tab.id}`}
-              className="tab-panel-fade mt-6"
+              className={`tab-panel-fade mt-6${panelVisible ? ' is-visible' : ''}`}
             >
               <h3 className="font-display text-xl font-medium text-[#ddffdc]">
                 {tab.heading}

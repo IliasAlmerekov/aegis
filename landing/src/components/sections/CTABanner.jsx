@@ -41,7 +41,7 @@ export function CTABanner() {
             href="https://github.com/IliasAlmerekov/aegis"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-11 items-center gap-2 rounded px-6 text-sm font-medium text-[#000000] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
+            className="btn-fill inline-flex h-11 items-center gap-2 rounded px-6 text-sm font-medium text-[#000000] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
             style={{ backgroundColor: '#7fee64' }}
             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#c8f9b6'}
             onMouseLeave={e => e.currentTarget.style.backgroundColor = '#7fee64'}
@@ -50,7 +50,7 @@ export function CTABanner() {
           </a>
           <a
             href="#how-it-works"
-            className="inline-flex h-11 items-center gap-2 rounded border border-[#3e4a3c] px-6 text-sm font-medium text-[#ddffdc] transition-colors duration-150 hover:border-[#677d64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
+            className="btn-outline inline-flex h-11 items-center gap-2 rounded border border-[#3e4a3c] px-6 text-sm font-medium text-[#ddffdc] transition-colors duration-150 hover:border-[#677d64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
           >
             Read the docs
           </a>

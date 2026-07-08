@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 const NAV_LINKS = [
   { label: 'Why Aegis', href: '#why-aegis' },
@@ -6,8 +6,23 @@ const NAV_LINKS = [
   { label: 'Audit Trail', href: '#audit-trail' },
 ]
 
+// Longest of the burger/panel transitions, so a rapid double-click can't
+// retrigger the multi-stage blade keyframes mid-flight (they'd snap back
+// to their 0% state instead of reversing smoothly like a transition would).
+const NAV_TOGGLE_LOCK_MS = 500
+
 export function Nav() {
   const [open, setOpen] = useState(false)
+  const toggleLocked = useRef(false)
+
+  const toggleOpen = () => {
+    if (toggleLocked.current) return
+    toggleLocked.current = true
+    setOpen((o) => !o)
+    setTimeout(() => {
+      toggleLocked.current = false
+    }, NAV_TOGGLE_LOCK_MS)
+  }
 
   return (
     <>
@@ -50,7 +65,7 @@ export function Nav() {
               href="https://github.com/IliasAlmerekov/aegis"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex h-9 items-center gap-2 rounded px-4 text-sm font-medium text-[#000000] transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] focus-visible:ring-offset-2 focus-visible:ring-offset-[#212525]"
+              className="btn-fill flex h-9 items-center gap-2 rounded px-4 text-sm font-medium text-[#000000] transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] focus-visible:ring-offset-2 focus-visible:ring-offset-[#212525]"
               style={{ backgroundColor: '#7fee64' }}
               onMouseEnter={e => e.currentTarget.style.backgroundColor = '#c8f9b6'}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = '#7fee64'}
@@ -64,7 +79,7 @@ export function Nav() {
             {/* Hamburger — mobile only */}
             <button
               className={`burger flex h-9 w-9 items-center justify-center rounded text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] md:hidden cursor-pointer${open ? ' is-open' : ''}`}
-              onClick={() => setOpen(o => !o)}
+              onClick={toggleOpen}
               aria-label={open ? 'Закрыть меню' : 'Открыть меню'}
               aria-expanded={open}
               aria-controls="mobile-nav"
@@ -94,13 +109,13 @@ export function Nav() {
                 key={label}
                 href={href}
                 onClick={() => setOpen(false)}
-                className="mobile-nav-link flex items-center justify-between py-3.5 font-body text-sm text-[#aed2a4] hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"
+                className="mobile-nav-link link-arrow-group flex items-center justify-between py-3.5 font-body text-sm text-[#aed2a4] hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"
                 style={{
                   borderBottom: i < NAV_LINKS.length - 1 ? '1px solid #3e4a3c40' : 'none',
                 }}
               >
                 {label}
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#485346" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg className="link-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#485346" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M9 18l6-6-6-6" />
                 </svg>
               </a>
