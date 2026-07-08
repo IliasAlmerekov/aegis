@@ -44,13 +44,14 @@ function AnimatedLights() {
   )
 }
 
-export function ShieldScene() {
+export function ShieldScene({ active = true }) {
   return (
     <Canvas
       camera={{ position: [0, 0, 5], fov: 52 }}
       gl={{ antialias: true, alpha: true }}
       style={{ background: 'transparent' }}
       dpr={[1, 2]}
+      frameloop={active ? 'always' : 'never'}
     >
       <ambientLight intensity={0.05} />
       {/* Muted overhead cone — illuminates the top facets of the shield */}

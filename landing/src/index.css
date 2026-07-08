@@ -170,7 +170,7 @@ h1, h2, h3, h4, h5, h6 {
 .burger.is-open .burger-blade--mid {
   transform: scaleX(0);
   opacity: 0;
-  transition: transform 0.15s cubic-bezier(0.55, 0, 1, 0.45), opacity 0.12s ease-in;
+  transition: transform 0.15s cubic-bezier(0.55, 0, 1, 0.45), opacity 0.12s ease-out;
 }
 .burger.is-open .burger-blade--bot {
   transform: translateY(-4px) rotate(-45deg);
@@ -292,26 +292,85 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Feature tabs — indicator slides to the active tab instead of snapping,
-   panel content fades in behind it. */
+   panel content fades in behind it. A transition (not a keyframe) so rapid
+   tab-clicking retargets smoothly instead of snapping back to 0%. */
 .tab-indicator {
   transition:
     left 0.3s cubic-bezier(0.16, 1, 0.3, 1),
     width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
-@keyframes tab-panel-fade-in {
-  0%   { opacity: 0; transform: translateY(4px); }
-  100% { opacity: 1; transform: none; }
-}
 .tab-panel-fade {
-  animation: tab-panel-fade-in 0.25s ease-out both;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.25s ease-out, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tab-panel-fade.is-visible {
+  opacity: 1;
+  transform: none;
 }
 
-/* Trust-strip stat cards — subtle hover lift for interactive consistency */
-.trust-card {
-  transition: background-color 0.2s ease-out;
+/* Tab buttons — press feedback */
+.tab-button:active {
+  transform: scale(0.97);
 }
-.trust-card:hover {
-  background-color: #d3ecce;
+
+/* Trust-strip stat cards — hover lift for interactive consistency */
+.trust-card {
+  transition: background-color 0.2s ease-out, transform 0.2s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.2s ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .trust-card:hover {
+    background-color: #d3ecce;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+  }
+}
+
+/* Outline buttons (secondary CTAs) — fill + press feedback on top of the
+   existing border-color transition-colors class already on each element. */
+.btn-outline {
+  transition: border-color 0.15s ease-out, background-color 0.15s ease-out, transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn-outline:hover {
+    background-color: rgba(127, 238, 100, 0.06);
+  }
+}
+.btn-outline:active {
+  transform: scale(0.97);
+}
+
+/* Primary (filled) CTAs — press feedback alongside the JS-driven bg swap */
+.btn-fill {
+  transition: transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.btn-fill:active {
+  transform: scale(0.97);
+}
+
+/* Copy button — press feedback */
+.copy-btn:active {
+  transform: scale(0.97);
+}
+
+/* Non-numeric stat values (e.g. "MIT") fade in like their ticking
+   neighbors instead of appearing instantly and unannounced. */
+.stat-static {
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+}
+.stat-static.is-visible {
+  opacity: 1;
+}
+
+/* Audit-section "view log format" link — arrow nudges forward on hover */
+.link-arrow {
+  transition: transform 0.15s ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .link-arrow-group:hover .link-arrow {
+    transform: translateX(3px);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

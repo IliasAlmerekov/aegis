@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
-import { Reveal } from '../ui/Reveal'
+import { Reveal, useInView } from '../ui/Reveal'
 
 const ShieldScene = lazy(() =>
   import('../3d/ShieldScene').then((m) => ({ default: m.ShieldScene }))
@@ -9,6 +9,7 @@ const INSTALL_CMD = 'npm i -g @iliasalmerekov/aegis'
 
 export function Hero() {
   const [copied, setCopied] = useState(false)
+  const [shieldRef, shieldInView] = useInView(0.01)
 
   const handleCopy = () => {
     navigator.clipboard?.writeText(INSTALL_CMD)
@@ -79,7 +80,7 @@ export function Hero() {
               href="https://github.com/IliasAlmerekov/aegis"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-11 items-center gap-2 rounded px-5 text-sm font-semibold text-[#000000] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
+              className="btn-fill inline-flex h-11 items-center gap-2 rounded px-5 text-sm font-semibold text-[#000000] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
               style={{ backgroundColor: '#7fee64' }}
               onMouseEnter={e => e.currentTarget.style.backgroundColor = '#c8f9b6'}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = '#7fee64'}
@@ -88,7 +89,7 @@ export function Hero() {
             </a>
             <a
               href="#how-it-works"
-              className="inline-flex h-11 items-center gap-2 rounded border border-[#3e4a3c] px-5 text-sm font-medium text-[#ddffdc] transition-colors duration-150 hover:border-[#677d64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
+              className="btn-outline inline-flex h-11 items-center gap-2 rounded border border-[#3e4a3c] px-5 text-sm font-medium text-[#ddffdc] transition-colors duration-150 hover:border-[#677d64] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"
             >
               See how it works
             </a>
@@ -103,7 +104,7 @@ export function Hero() {
               {INSTALL_CMD}
             </code>
             <button
-              className="ml-1 shrink-0 rounded p-1 text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] cursor-pointer"
+              className="copy-btn ml-1 shrink-0 rounded p-1 text-[#677d64] transition-colors duration-150 hover:text-[#ddffdc] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] cursor-pointer"
               aria-label="Copy install command"
               onClick={handleCopy}
             >
@@ -124,7 +125,10 @@ export function Hero() {
         </div>
 
         {/* Right column — 3D Shield */}
-        <div className="relative flex h-[420px] w-full max-w-[420px] items-center justify-center lg:h-[560px] lg:max-w-[500px]">
+        <div
+          ref={shieldRef}
+          className="relative flex h-[420px] w-full max-w-[420px] items-center justify-center lg:h-[560px] lg:max-w-[500px]"
+        >
           <Suspense
             fallback={
               <div className="flex h-full w-full items-center justify-center">
@@ -132,7 +136,7 @@ export function Hero() {
               </div>
             }
           >
-            <ShieldScene />
+            <ShieldScene active={shieldInView} />
           </Suspense>
         </div>
       </div>

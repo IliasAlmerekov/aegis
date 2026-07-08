@@ -8,10 +8,15 @@ export function NumberTicker({ value, inView }) {
   const suffix = match ? match[2] : ''
 
   const [display, setDisplay] = useState(target === null ? value : `0${suffix}`)
+  const [staticVisible, setStaticVisible] = useState(false)
   // Only latches once the count-up actually finishes — if a flickering
   // IntersectionObserver cancels playback mid-flight, the next inView
   // still gets a chance to finish the count instead of getting stuck.
   const done = useRef(false)
+
+  useEffect(() => {
+    if (target === null && inView) setStaticVisible(true)
+  }, [target, inView])
 
   useEffect(() => {
     if (target === null || !inView || done.current) return
@@ -44,6 +49,14 @@ export function NumberTicker({ value, inView }) {
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [inView, target, suffix, value])
+
+  if (target === null) {
+    return (
+      <span className={`stat-static${staticVisible ? ' is-visible' : ''}`}>
+        {display}
+      </span>
+    )
+  }
 
   return <span className="tabular-nums">{display}</span>
 }

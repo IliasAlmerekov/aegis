@@ -86,10 +86,10 @@ export function AuditSection() {
             href="https://github.com/IliasAlmerekov/aegis#audit-log"
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-6 inline-flex items-center gap-1.5 font-mono text-sm text-[#7fee64] hover:text-[#c8f9b6] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"
+            className="link-arrow-group mt-6 inline-flex items-center gap-1.5 font-mono text-sm text-[#7fee64] hover:text-[#c8f9b6] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"
           >
             View log format
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg className="link-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M5 12h14M12 5l7 7-7 7"/>
             </svg>
           </a>
