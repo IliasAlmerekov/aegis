@@ -166,6 +166,10 @@ pub struct PolicyDecision {
     pub requires_confirmation: bool,
     /// Whether snapshots should be attempted before execution.
     pub snapshots_required: bool,
+    /// Whether sandbox confinement should be attempted before execution
+    /// (ADR-016). A separate optional stricter tier, distinct from the
+    /// recovery backstop (`snapshots_required`); stays false by default in v1.
+    pub confinement_required: bool,
     /// Whether the allowlist materially changed the outcome.
     pub allowlist_effective: bool,
 }

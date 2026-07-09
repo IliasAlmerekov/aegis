@@ -118,6 +118,7 @@ pub fn make_match_with_text_and_range(
 pub fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) -> Assessment {
     Assessment {
         risk,
+        effect_opaque: false,
         highlight_ranges: sorted_highlight_ranges_for_tests(cmd, &matches),
         matched: matches,
         command: Parser::parse(cmd),

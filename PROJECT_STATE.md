@@ -17,10 +17,63 @@
 
 ## Last updated
 
-2026-07-08
+2026-07-09
 
 ---
 
+## Last session (2026-07-09)
+
+- **H9 / M1 — effect-opaque execution recovery backstop (ADR-016), Iterations
+  1–3 done via TDD.** Iter 1 (model + audit plumbing): direct `effect_opaque:
+  bool` field on `Assessment` (orthogonal to `RiskLevel`), `confinement_required`
+  axis on `PolicyDecision` (false in v1 — reserved for an optional strict
+  tier), `RecoveryDegradation` enum in `aegis-types`, and four backward-compatible
+  optional audit fields (`effect_opaque`, `snapshots_required`,
+  `confinement_required`, `recovery_degradation`) — older JSONL still
+  deserializes. Iter 2 (bounded shape detection): new
+  `crates/aegis-scanner/src/scanner/effect_opaque.rs` detects script-file
+  execution (`sh ./x.sh`, `python3 ./x.py`, `source ./x`, `. ./x`), interpreter
+  stdin (`sh -s`), and pipe-to-shell; inline `-c`/`-e` bodies, package runners,
+  and flag-only interpreters are negative forms. Detection runs before the
+  safe-path early return; an allocation-free `split_whitespace` +
+  `eq_ignore_ascii_case` pre-filter keeps `1000_safe_commands` at 1.96 ms (< 2 ms
+  budget). Iter 3 (policy + snapshot flow): `snapshots_required` now fires for
+  `effect_opaque` under `SnapshotPolicy::{Selective, Full}` with an applicable
+  plugin (no risk raise, no extra prompt); the planning-core plugin-resolution
+  guard (`recovery_backstop_applies`) resolves plugins for effect-opaque
+  commands, and `execute_with_snapshots` is risk-agnostic so the pre-exec
+  snapshot lifecycle works unchanged; project `.aegis.toml` still cannot
+  disable recovery (C3 ratchet — added H9 traceability test). Verified:
+  `cargo test --workspace` = 1397 passed, `clippy -D warnings` clean, `fmt
+  --check` clean, scanner bench 1.96 ms, `cargo audit`/`cargo deny check` ok.
+  **Iter 4 (degradation UX / fail-closed) and Iter 5 (threat-model /
+  config-schema / README docs + TASKS close-out) deferred per scope decision.**
+  ADR-016 written and indexed; `engine.rs` tests extracted to
+  `engine/tests.rs` to hold the 800-LoC budget.
+- **H9 review cycle (Standards/Spec CHANGES REQUESTED) closed via TDD.**
+  (1) Runtime audit construction (`RuntimeContext::build_audit_entry`) now
+  populates `effect_opaque` and `snapshots_required` from the assessment and
+  policy decision instead of the `Some(false)` defaults — a `sh ./cleanup.sh`
+  execution policy required recovery for is no longer logged as backstop-free;
+  `confinement_required` records the v1 reserved-tier state. (2) Inline-flag
+  detection is now position-sensitive (`interpreter_invocation_is_effect_opaque`):
+  `python ./x.py -c` / `bash ./x.sh -c` stay effect-opaque (script file is the
+  payload; a later `-c`/`-e` is a script argument), `python -c "code" ./x.py`
+  stays inline. (3) `Mode::Audit` documented as an intentional observe-only
+  opt-out from ADR-016 recovery (broader than `SnapshotPolicy::None`), with a
+  characterization test. Spec #2 (fail-closed when no snapshot can be created)
+  remains deferred to Iter 4 — docs make the deferral explicit, no fail-closed
+  claim. Spec #4 (README install/FAQ) is out of scope for H9 — the `README.md`
+  modifications on this branch predate the H9 work (landing polish). Verified:
+  `cargo test --workspace` = 1402 passed, `clippy -D warnings` clean, `fmt
+  --check` clean. The review-fix touches only `segment_is_effect_opaque`
+  (gated by the allocation-free `has_potential_shape` pre-filter, which is
+  false for all 10 safe bench templates), so the safe hot path is unchanged;
+  the scanner bench on this WSL2 host read 2.4 ms under load (criterion warned
+  it could not hit its sample target), not a code regression — the < 2 ms
+  budget was established at 1.96 ms for the pre-filter, which this change does
+  not modify.
+- **H9 review cycle round 2 (re-review survivors closed via TDD).** (a) The
 ## Last session (2026-07-07)
 
 - **H4 closed via TDD.** Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail

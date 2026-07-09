@@ -50,6 +50,10 @@ pub fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
         allowlist_pattern: None,
         allowlist_reason: None,
         sandbox_status: SandboxStatus::NotConfigured,
+        effect_opaque: Some(false),
+        snapshots_required: Some(false),
+        confinement_required: Some(false),
+        recovery_degradation: None,
     })
 }
 

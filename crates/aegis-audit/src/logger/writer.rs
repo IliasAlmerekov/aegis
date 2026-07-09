@@ -45,6 +45,15 @@ impl AuditEntry {
             allowlist_pattern,
             allowlist_reason,
             sandbox_status: SandboxStatus::NotConfigured,
+            // Fresh entries explicitly record `false` so that downstream code
+            // does not have to distinguish "not set" from "set to false", the
+            // same convention used for the allowlist flags above. Builders
+            // below override these when an effect-opaque command required a
+            // backstop. Legacy entries deserialized with `None` stay `None`.
+            effect_opaque: Some(false),
+            snapshots_required: Some(false),
+            confinement_required: Some(false),
+            recovery_degradation: None,
         })
     }
 
@@ -100,6 +109,37 @@ impl AuditEntry {
     /// configured for this execution.
     pub fn with_sandbox_status(mut self, status: SandboxStatus) -> Self {
         self.as_base_mut().sandbox_status = status;
+        self
+    }
+
+    /// Record whether the assessed command was `Effect-opaque execution`
+    /// (ADR-016). Orthogonal to `RiskLevel`; defaults to `false` on fresh
+    /// entries built via [`AuditEntry::new`].
+    pub fn with_effect_opaque(mut self, effect_opaque: bool) -> Self {
+        self.as_base_mut().effect_opaque = Some(effect_opaque);
+        self
+    }
+
+    /// Record the required recovery backstops for this execution (ADR-016):
+    /// `snapshots_required` (the primary recovery axis) and
+    /// `confinement_required` (the optional stricter sandbox tier). Both
+    /// default to `false` on fresh entries built via [`AuditEntry::new`].
+    pub fn with_required_backstops(
+        mut self,
+        snapshots_required: bool,
+        confinement_required: bool,
+    ) -> Self {
+        let base = self.as_base_mut();
+        base.snapshots_required = Some(snapshots_required);
+        base.confinement_required = Some(confinement_required);
+        self
+    }
+
+    /// Record why a required recovery backstop was not available (ADR-016).
+    /// `None` by default; set only when a required snapshot could not be
+    /// created so the degradation is a first-class, queryable audit event.
+    pub fn with_recovery_degradation(mut self, degradation: RecoveryDegradation) -> Self {
+        self.as_base_mut().recovery_degradation = Some(degradation);
         self
     }
 

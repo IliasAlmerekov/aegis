@@ -263,3 +263,82 @@ fn read_all_backfills_pattern_ids_for_legacy_entries() {
     assert_eq!(json["allowlist_matched"], serde_json::json!(false));
     assert_eq!(json["allowlist_effective"], serde_json::json!(false));
 }
+
+// ── ADR-016: recovery backstop audit fields ───────────────────────────────
+
+#[test]
+fn legacy_entry_without_recovery_backstop_fields_still_deserializes() {
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    let legacy_entry = r#"{"timestamp":"2023-11-14T22:13:20Z","command":"sh ./x","risk":"Safe","matched_patterns":[],"decision":"AutoApproved","snapshots":[]}"#;
+
+    fs::write(logger.path(), format!("{legacy_entry}\n")).unwrap();
+
+    let entries = logger.read_all().unwrap();
+    assert_eq!(entries.len(), 1);
+    let base = entries[0].as_base();
+    // Pre-ADR-016 logs never recorded these axes; they must read back as
+    // `None` (not `Some(false)`) so "not recorded" stays distinguishable from
+    // "explicitly false" — the same convention used for allowlist flags.
+    assert_eq!(base.effect_opaque, None);
+    assert_eq!(base.snapshots_required, None);
+    assert_eq!(base.confinement_required, None);
+    assert_eq!(base.recovery_degradation, None);
+}
+
+#[test]
+fn new_entry_records_recovery_backstop_for_effect_opaque_command() {
+    let entry = AuditEntry::new(
+        "sh ./cleanup.sh",
+        RiskLevel::Safe,
+        vec![],
+        Decision::AutoApproved,
+        vec![],
+        None,
+        None,
+    )
+    .with_effect_opaque(true)
+    .with_required_backstops(true, false);
+
+    let json = serde_json::to_value(&entry).unwrap();
+    assert_eq!(json["effect_opaque"], serde_json::json!(true));
+    assert_eq!(json["snapshots_required"], serde_json::json!(true));
+    assert_eq!(json["confinement_required"], serde_json::json!(false));
+    assert!(json.get("recovery_degradation").is_none());
+
+    // Round-trips through serde.
+    let roundtripped: AuditEntry = serde_json::from_value(json).unwrap();
+    let base = roundtripped.as_base();
+    assert_eq!(base.effect_opaque, Some(true));
+    assert_eq!(base.snapshots_required, Some(true));
+    assert_eq!(base.confinement_required, Some(false));
+    assert_eq!(base.recovery_degradation, None);
+}
+
+#[test]
+fn new_entry_records_recovery_degradation_reason() {
+    let entry = AuditEntry::new(
+        "sh ./cleanup.sh",
+        RiskLevel::Safe,
+        vec![],
+        Decision::Denied,
+        vec![],
+        None,
+        None,
+    )
+    .with_effect_opaque(true)
+    .with_required_backstops(true, false)
+    .with_recovery_degradation(RecoveryDegradation::NoSnapshotAvailable);
+
+    let json = serde_json::to_value(&entry).unwrap();
+    assert_eq!(
+        json["recovery_degradation"],
+        serde_json::json!("no_snapshot_available")
+    );
+
+    let roundtripped: AuditEntry = serde_json::from_value(json).unwrap();
+    assert_eq!(
+        roundtripped.as_base().recovery_degradation,
+        Some(RecoveryDegradation::NoSnapshotAvailable)
+    );
+}

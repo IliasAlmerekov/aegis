@@ -200,6 +200,7 @@ mod tests {
     fn builds_base_explanation_from_existing_pipeline_facts() {
         let assessment = crate::interceptor::scanner::Assessment {
             risk: RiskLevel::Danger,
+            effect_opaque: false,
             matched: vec![
                 MatchResult {
                     pattern: Arc::new(Pattern {
@@ -250,6 +251,7 @@ mod tests {
             rationale: PolicyRationale::RequiresConfirmation,
             requires_confirmation: true,
             snapshots_required: true,
+            confinement_required: false,
             allowlist_effective: false,
         };
 
@@ -308,6 +310,7 @@ mod tests {
             rationale: PolicyRationale::SafeCommand,
             requires_confirmation: false,
             snapshots_required: false,
+            confinement_required: false,
             allowlist_effective: false,
         };
 

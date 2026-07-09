@@ -338,6 +338,17 @@ impl RuntimeContext {
             options.allowlist_effective,
         )
         .with_sandbox_status(options.sandbox_status)
+        // ADR-016: record the effect-opacity and recovery-backstop state
+        // captured at the decision point so the audit reflects what policy
+        // actually required — not the `Some(false)` defaults from
+        // `AuditEntry::new`. `effect_opaque` comes straight off the
+        // assessment; `snapshots_required` is the policy's recovery decision
+        // already threaded into the explanation. `confinement_required` stays
+        // `false` in v1 (the optional strict tier is reserved, never engaged by
+        // the engine today); when confinement becomes policy-driven, thread it
+        // through `PolicyExplanation` alongside `snapshots_required`.
+        .with_effect_opaque(assessment.effect_opaque)
+        .with_required_backstops(explanation.policy.snapshots_required, false)
     }
 }
 

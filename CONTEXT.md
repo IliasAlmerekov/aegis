@@ -30,6 +30,21 @@ Running commands through an interpreter or another layer (inline scripts, piping
 shell) rather than invoking the program directly. `Strict` mode blocks it.
 _Avoid_: nested execution, eval
 
+**Script-file execution**:
+Running an interpreter against a script _file_ named in argv (`sh ./cleanup.sh`,
+`python3 ./x.py`, `node ./x.js`, `source ./x`) — the destructive effect lives in the file,
+which Aegis does not read at classification time. A sub-case of `Indirect execution` and
+the sibling of `Inline script`: an inline body (`-c` / `-e`) is extracted and scanned, but
+a referenced file is not.
+_Avoid_: external script, script bypass, file exec
+
+**Effect-opaque execution**:
+A command shape whose text reveals that another execution layer will decide the eventual
+filesystem, database, or network effect, but does not reveal that effect directly.
+`Script-file execution` is effect-opaque; an `Inline script` may stop being
+effect-opaque once its body is extracted and assessed. Orthogonal to `RiskLevel`.
+_Avoid_: hidden effect, opaque command, unknown execution
+
 **Launcher prefix**:
 A leading token that launches another program rather than being the target itself
 (`sudo`, `env`, `nice`, `timeout`, `command`, the site-specific `rtk`, …). Stripped — with

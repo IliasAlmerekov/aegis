@@ -58,5 +58,6 @@ fn assert_assessment_matches_pattern(cmd: &str, expected_risk: RiskLevel, expect
 mod advanced;
 mod basic;
 mod edge_cases;
+mod effect_opaque;
 mod h3_followups;
 mod h3_gaps;

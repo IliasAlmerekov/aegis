@@ -1,6 +1,13 @@
 use super::*;
 
 #[test]
+fn safe_command_assessment_is_not_effect_opaque() {
+    let scanner = scanner();
+    let assessment = scanner.assess("ls -la");
+    assert!(!assessment.effect_opaque);
+}
+
+#[test]
 fn quick_scan_still_detects_known_danger_keywords() {
     let scanner = scanner();
     assert!(scanner.quick_scan("rm -rf /tmp/demo"));

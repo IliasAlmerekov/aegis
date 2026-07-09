@@ -250,6 +250,7 @@ mod tests {
     fn danger_assessment(cmd: &str) -> Assessment {
         Assessment {
             risk: RiskLevel::Danger,
+            effect_opaque: false,
             matched: Vec::new(),
             highlight_ranges: Vec::new(),
             command: CommandParser::parse(cmd),
