@@ -74,6 +74,62 @@
   budget was established at 1.96 ms for the pre-filter, which this change does
   not modify.
 - **H9 review cycle round 2 (re-review survivors closed via TDD).** (a) The
+  position-sensitive inline-flag fix had a residual spoof: an interpreter
+  option taking a separate argument (`--require <path>`, `-r <lib>`, `-m
+  <module>`, `-W`/`-X`/`-I`/`-C`) let its path-like *argument* occupy the
+  first-positional slot, so `node --require ./preload.js -e "code"` (preload +
+  inline eval, a real Node idiom) was misclassified as effect-opaque. Added a
+  bounded `VALUE_CONSUMING_OPTIONS` table and a value-skipping walk in
+  `interpreter_invocation_is_effect_opaque` so the option's argument is skipped
+  before locating the first positional; orthogonal coverage confirmed — a real
+  script file following a value-consuming option (`python -W ignore ./x.py`,
+  `ruby -r ./lib.rb ./script.rb`) is still detected. (b) The round-1 Spec#4
+  resolution rested on a false premise (the `M README.md` status does NOT trace
+  to commit 7b214a9, which touches only `landing/src/**`); the real uncommitted
+  36+/16- README diff (install-method rewrite, threat-model wording, FAQ
+  section) plus its coupled contract tests (`tests/homebrew_formula.rs`,
+  `tests/npm_package.rs`) were stashed together as an "install-safety rework"
+  unit (`stash@{0}`) so they cannot be swept into the H9 commit as accidental
+  scope creep; the working tree now matches HEAD on those three paths. Verified:
+  `cargo test --workspace` = 1404 passed, `clippy -D warnings` clean, `fmt
+  --check` clean. The round-2 fix touches only
+  `interpreter_invocation_is_effect_opaque` (still gated by the allocation-free
+  `has_potential_shape` pre-filter, false for all 10 safe bench templates), so
+  the safe hot path is unchanged and no bench re-run was required. **Note:** the
+  working tree still carries other unrelated modified files (`AGENTS.md`,
+  `ARCHITECTURE.md`, `CONVENTION.md`, `ROADMAP.md`, `docs/config-schema.md`,
+  `tests/agent_hooks.rs`, `TASKS.md`, `CONTEXT.md`, `docs/adr/README.md`, plus
+  untracked `RTK.md`/`docs/planning/`) that predate H9 and were not part of the
+  round-1/2 re-review scope — they need their own separation before the H9
+  commit lands.
+- **Standards#2 closed by manual decision after the re-review 2-round ceiling.**
+  The bounded `VALUE_CONSUMING_OPTIONS` table is accepted as a documented v1
+  limitation (ADR-016 Consequences + module doc-comment): unlisted value-consuming
+  flags (`node --conditions`/`--openssl-config`/`--redirect-warnings`/`--diagnostic-dir`)
+  can still spoof the script-file slot, but the error direction is fail-safe — a
+  benign command only earns an extra pre-exec recovery snapshot, and ADR-016
+  recovery never blocks. The inverted heuristic (treat any unknown option as
+  value-consuming) was rejected because it would skip a real script file
+  (`node --inspect ./script.js`) and drop its recovery snapshot — fail-open. A
+  general resolver needs per-flag arity knowledge no text-only heuristic
+  supplies. No code change this step — documentation only.
+
+## Last session (2026-07-09, earlier — docs checkup)
+
+- **Full checkup: docs vs code.** Ran `fmt`/`clippy`/`cargo test --workspace`
+  plus a doc-accuracy sweep. Fixes applied this session: (1) two README
+  contract tests (`homebrew_formula`, `npm_package`) that pinned old install
+  wording were updated to the reworked binary-only phrasing; (2) M10 —
+  README Before/After no longer shows a snapshot line inside the dialog (denial
+  path takes no snapshot); (3) removed a dead `json_contains_command` helper in
+  `tests/agent_hooks.rs` that broke `clippy -D warnings`; (4) TASKS.md H8 marked
+  Done (rules GIT-003/006/008 shipped); (5) this file: crate list 9→11, test
+  count 538→408, open-items synced with TASKS (H9/M10 added, M6/H8 closed),
+  docs-accuracy regressions recorded, stale `AGENTS.md` reference removed.
+- **Open, not yet fixed:** ARCHITECTURE.md / CONVENTION.md / ROADMAP.md /
+  CHANGELOG.md / config-schema.md staleness (see Open decisions) — need content
+  revision, deferred.
+
 ## Last session (2026-07-07)
 
 - **H4 closed via TDD.** Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail
@@ -101,11 +157,11 @@ Full history of prior sessions: `git log` and `CHANGELOG.md`.
 | M3 | Distribution (installer, musl, brew, npm, releases) | ✅ Done |
 | M4 | Scope reduction (drop native Windows) | ✅ Done |
 | M5.1–M5.4 | 800-LoC budget, fuzz CI, snapshot/rollback CI, supply-chain gates | ✅ Done |
-| 1.0 docs gate | README, threat model, docs accuracy | ✅ Done |
+| 1.0 docs gate | README, threat model, docs accuracy | 🔲 Open (reopened 2026-07-09 checkup — ARCHITECTURE/CONVENTION/ROADMAP/CHANGELOG stale; see Open decisions) |
 | P0 security blockers (C1–C4) | Uppercase bypass, `$IFS` obfuscation, project-config weakening, token-prefix anchoring | ✅ Done |
-| P1 security findings (H1–H4) | Segmentation gap, SQL-in-`psql`/`mysql`, pattern gaps, hook fail-open | ✅ Done |
-| P1 security findings (H5–H8) | See Open decisions below | 🔲 Open |
-| P2 security findings (M1–M9) | See Open decisions below | 🔲 Open |
+| P1 security findings (H1–H4, H8) | Segmentation gap, SQL-in-`psql`/`mysql`, pattern gaps, hook fail-open, git force-push/stash-clear/branch-D | ✅ Done |
+| P1 security findings (H5–H7, H9) | See Open decisions below | 🔲 Open |
+| P2 security findings (M1–M10; M6 closed) | See Open decisions below | 🔲 Open |
 | 1.0 perf gate | Hot path < 2 ms (p99) via criterion | 🔲 Open |
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
 
@@ -126,30 +182,54 @@ Multi-crate Cargo workspace. Binary crate (`aegis`) at root depends on:
 - `crates/aegis-tui` — crossterm confirmation dialog
 - `crates/aegis-snapshot` — six snapshot backends (git, docker, pg, mysql, sqlite, supabase)
 - `crates/aegis-audit` — AuditLogger, append-only JSONL with optional hash-chain integrity
+- `crates/aegis-starlark` — opt-in Starlark policy evaluation (behind `starlark-policy`)
+- `crates/aegis-sandbox` — bwrap + Landlock (Linux) / sandbox-exec (macOS) execution confinement
 
-DAG boundaries enforced by `tests/architecture_boundaries.rs`. Architectural
-rationale for the shape of this workspace lives in `docs/adr/` (ADR-001
-through ADR-015; `ADR-009` is intentionally absent, numbering preserved).
+Eleven crates total. DAG boundaries for the first nine are enforced by
+`tests/architecture_boundaries.rs`; `aegis-sandbox` is covered separately by
+`tests/platform_scope.rs`, and `aegis-starlark` is not yet asserted in either
+(gap). Architectural rationale for the shape of this workspace lives in
+`docs/adr/` (ADR-001 through ADR-016; `ADR-009` is intentionally absent,
+numbering preserved).
 
-As of the last session: 538 workspace tests green, `cargo clippy -- -D
-warnings` clean, `cargo fmt --check` clean, `cargo audit`/`cargo deny check`
-clean (aside from pre-existing allowed advisories under the opt-in
-`starlark-policy` feature — see memory `deny_advisories_baseline`).
+As of the 2026-07-09 checkup: `cargo fmt --check` clean; `cargo test
+--workspace` = 1404 passed / 0 failed (86 suites) after this session's fixes
+(the earlier "538" figure was stale); `cargo clippy -- -D warnings` clean after
+removing a dead test helper this session. `cargo audit`/`cargo deny check` clean (aside
+from pre-existing allowed advisories under the opt-in `starlark-policy`
+feature — see memory `deny_advisories_baseline`).
 
 ---
 
 ## Open decisions / blockers
 
-- **P1 security findings H5–H8** (`TASKS.md`): H5 audit hash chain is not
+- **P1 security findings H5–H7, H9** (`TASKS.md`): H5 audit hash chain is not
   true tamper-evidence; H6 snapshot store lacks containment checks; H7
-  database dumps/snapshots/audit files are too permissive; H8 Git
-  token-prefix rules miss `git push --force`, `git stash clear`, etc.
-- **P2 security findings M1–M9** (`TASKS.md`): sandbox degradation too quiet,
-  user-regex size limits, in-band kill-switch/wrapper bypass, hook panics can
-  fail open, additional pattern gaps, project config can disable recovery,
-  latent fail-open around shell audit readiness, snapshot doesn't recover a
-  dangerous command's effect on command output, `aegis rollback` unusable
-  from `aegis snapshot list` output.
+  database dumps/snapshots/audit files are too permissive; H9 dynamic-eval /
+  interpreter bypasses defeat string classification — **partially closed this
+  session**: effect-opaque execution (script-file, interpreter stdin,
+  pipe-to-shell) now requires a pre-exec recovery snapshot under
+  `SnapshotPolicy::{Selective, Full}` without raising risk or adding a prompt
+  (ADR-016, Iter 1–3 done); **Iter 4 (degradation UX / fail-closed when no
+  snapshot can be created) and Iter 5 (threat-model/config-schema/README docs +
+  TASKS close-out) remain open.** H8 (git force-push/stash-clear/branch-D) is
+  **closed** — moved to Done.
+- **P2 security findings M1–M5, M7–M10** (`TASKS.md`): sandbox degradation too
+  quiet, user-regex size limits, in-band kill-switch/wrapper bypass (confirmed
+  on the maintainer's own machine 2026-07-09), hook panics can fail open,
+  additional pattern gaps, latent fail-open around shell audit readiness,
+  snapshot doesn't recover the effect on committed/clean files, `aegis
+  rollback` unusable from copy-pasted snapshot ids (tab-separated), README
+  Before/After misrepresented the snapshot timing (fixed this session). M6
+  (project config can disable recovery) is now **closed** by the C3 ratchet.
+- **Docs accuracy regressions (2026-07-09 checkup):** ARCHITECTURE.md references
+  removed paths (`src/decision/engine.rs`, `src/interceptor/…`, `src/config/…`,
+  `src/snapshot/*.rs`), states a stale 1500/2000 LoC budget (actual 800), and
+  omits the sandbox layer; CONVENTION.md says "10 crates" (11) and cites
+  removed `src/audit/logger.rs`; ROADMAP.md still lists Windows work + "9
+  crates" against the M4 drop-Windows decision; CHANGELOG `[Unreleased]` misses
+  a few post-0.6.0 CI/docs commits; `docs/config-schema.md` omits the
+  `[sandbox]` section that exists in code and `aegis-schema.json`.
 - 1.0 perf gate: hot path p99 < 2 ms not yet confirmed by a criterion run on
   the current workspace.
 - 1.0 test gate: zero-false-negative security bypass corpus not yet locked in.
@@ -169,7 +249,8 @@ clean (aside from pre-existing allowed advisories under the opt-in
 - Read this file, `TASKS.md`, and `CONVENTION.md` before starting non-trivial
   work.
 - Load the `rust-best-practices` skill before writing or reviewing Rust code
-  (see `CLAUDE.md` / `AGENTS.md`).
+  (see `CLAUDE.md`; the root `AGENTS.md` was removed — Codex reads
+  `.codex/AGENTS.md`).
 - Security-sensitive parser/scanner/policy changes go through red → green →
   review TDD (see `tdd` skill); close out with `cargo fmt --check`, `cargo
   clippy -- -D warnings`, full `cargo test --workspace`, and a benchmark run

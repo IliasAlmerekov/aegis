@@ -1,8 +1,21 @@
 # ARCHITECTURE.md — Aegis System Architecture
 
-> **Status:** authoritative. This document fixes the architecture of Aegis.
-> When code and this document disagree, one of them is a bug — fix whichever
-> is wrong, do not let them drift.
+> **⚠ Partially stale (flagged 2026-07-09 checkup).** Several concrete paths in
+> this document predate the multi-crate extraction and no longer exist as
+> written: `src/decision/engine.rs`, the `src/interceptor/scanner/*` and
+> `src/interceptor/parser/*.rs` trees, and `src/config/*.rs` are now thin shims
+> whose real code lives under `crates/` (see `CONVENTION.md` for the current
+> map). §7's "Current breaches" table cites `src/snapshot/*.rs` files that were
+> moved into `crates/aegis-snapshot` and split. The per-file LoC budget quoted
+> here (1500/2000) is superseded by the **800**-line budget in `ROADMAP.md`
+> §3.1 / `CONVENTION.md`. The `aegis-sandbox` layer (bwrap + Landlock /
+> sandbox-exec) is not yet described below. Treat crate-level boundaries and
+> invariants as authoritative; treat `src/...` file paths as needing
+> verification against the tree until this document is revised.
+>
+> **Status:** authoritative for structural contracts. When code and this
+> document disagree, one of them is a bug — fix whichever is wrong, do not let
+> them drift.
 >
 > **Scope:** structural contracts (module boundaries, invariants, request
 > lifecycles, extension points). For _why_ decisions were made, see

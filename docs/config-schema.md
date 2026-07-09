@@ -236,6 +236,35 @@ user = ""
 - `supabase_snapshot.db` configures the direct PostgreSQL transport used by Phase 1
 - credentials must come from `PGPASSWORD` or `~/.pgpass`; never store passwords in config
 
+## Sandbox
+
+Optional effect-level confinement applied before a command executes (bwrap +
+Landlock on Linux, `sandbox-exec` on macOS). Off by default; it complements the
+string classifier, which matches how a command is *spelled* rather than what it
+*does*.
+
+```toml
+[sandbox]
+enabled = false
+required = false
+allow_network = false
+allow_write = []
+```
+
+- `sandbox.enabled` turns the sandbox layer on. Default `false`.
+- `sandbox.required` — when `true`, a command is blocked if the sandbox cannot be
+  applied (missing `bwrap`, unsupported kernel, etc.) instead of degrading to an
+  unsandboxed run. Default `false` (degrade + audit as `SandboxUnavailable`).
+- `sandbox.allow_write` lists paths the sandboxed process may write to. Default
+  empty (no writes outside the sandbox's own scope).
+- `sandbox.allow_network` permits network access from the sandboxed process.
+  Default `false`.
+- Project-layer ratchet (ADR-013): `enabled` / `required` may only tighten (a
+  project can force them on, never off); `allow_network` can only be turned off
+  at the project layer, never on; and project `allow_write` is intersected with
+  the base list — a project `.aegis.toml` can never widen the sandbox.
+- These fields also appear in `aegis-schema.json` under `SandboxSettings`.
+
 ## CI policy
 
 `ci_policy` is a runtime policy input, not the GitHub Actions workflow definition.

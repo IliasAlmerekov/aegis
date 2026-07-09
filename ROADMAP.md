@@ -73,11 +73,16 @@ with `HOME` unset.
 
 ### 0.5 Declare MSRV and add Windows to CI
 
-- Add `rust-version = "1.80"` to `Cargo.toml` (minimum for `std::sync::LazyLock`).
-- Add a `windows-latest` job to `.github/workflows/ci.yml` that runs `cargo test`
-  on all `#[cfg(windows)]` paths.
+> **Superseded by M4 (drop native Windows, 2026):** native Windows is out of
+> scope — Windows is supported only inside WSL2 (see `docs/platform-support.md`,
+> `README.md`). The Windows-CI portion of this item no longer applies; the MSRV
+> portion stands.
 
-**Done when:** CI has a green Windows job; a PR that uses `once_cell` fails CI.
+- Add `rust-version = "1.80"` to `Cargo.toml` (minimum for `std::sync::LazyLock`).
+- ~~Add a `windows-latest` job to `.github/workflows/ci.yml`~~ (dropped — no
+  native Windows build).
+
+**Done when:** MSRV declared and enforced. (Windows-job gate withdrawn.)
 
 ---
 
@@ -324,11 +329,14 @@ aegis/                          (workspace root)
     aegis-tui/     [DONE]       crossterm confirmation dialog — depends on aegis-types, aegis-explanation
     aegis-audit/   [DONE]       AuditLogger, AuditEntry — depends on aegis-types, aegis-scanner, aegis-config, aegis-explanation, aegis-policy
     aegis-snapshot/[DONE]       SnapshotPlugin trait + 6 backends — depends on aegis-types, aegis-config
+    aegis-starlark/[DONE]       Starlark policy DSL loader (opt-in `starlark-policy`) — depends on aegis-types
+    aegis-sandbox/ [DONE]       bwrap + Landlock (Linux) / sandbox-exec (macOS) execution confinement
   src/                          binary — thin wiring, depends on all crates above
 ```
 
-Status: 9 of 9 crates extracted (aegis-types, aegis-parser, aegis-scanner,
-aegis-policy, aegis-config, aegis-explanation, aegis-tui, aegis-snapshot, aegis-audit).
+Status: 11 crates extracted (aegis-types, aegis-parser, aegis-scanner,
+aegis-policy, aegis-config, aegis-explanation, aegis-tui, aegis-snapshot,
+aegis-audit, plus aegis-starlark in Phase 5 and aegis-sandbox in Phase 6).
 
 Each `crates/X/Cargo.toml` must not depend on `aegis-binary` or any other
 application crate. Dependency arrows flow inward toward `aegis-types`.
@@ -504,7 +512,11 @@ allow_network = false
 Apply a `.sbpl` sandbox profile via `/usr/bin/sandbox-exec` before exec'ing the
 approved command. Profile templates live in `crates/aegis-sandbox/profiles/`.
 
-### 6.3 Windows — Job Objects
+### 6.3 Windows — Job Objects (withdrawn)
+
+> **Withdrawn by M4 (drop native Windows).** No native Windows build ships;
+> Windows is supported only through WSL2, which uses the Linux bwrap + Landlock
+> path. This subsection is retained for historical context only.
 
 Use Windows Job Objects to confine approved commands. The initial MVP delivers
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` so all child processes are terminated when
@@ -534,7 +546,7 @@ a 1.0 release.
 - [ ] README and docs accurately describe all features through Phase 4.
 - [ ] Convenience installer documented and tested (`curl | sh` or package manager).
 - [ ] Release workflow exercised on a real tag; artifacts include checksum sidecars.
-- [ ] Supported platforms (Linux x86_64/aarch64, macOS arm64/x86_64, Windows x86_64)
+- [ ] Supported platforms (Linux x86_64/aarch64, macOS arm64/x86_64; Windows via WSL2 only — native Windows dropped per M4)
       stated clearly with notes on sandboxing availability per platform.
 - [ ] CI includes ARM cross-compilation jobs (`aarch64-unknown-linux-musl`).
 - [ ] Threat model and known limitations visible on the project README.
@@ -553,7 +565,7 @@ a 1.0 release.
 | 1     | Scanner Modernization | Token-prefix matching; `justification` in TUI      |
 | 2     | Decision Persistence  | "Always allow/block" writes rules to config        |
 | 3     | Module Architecture   | No file > 800 lines; typed `AuditEntry`; live docs |
-| 4     | Multi-Crate Workspace | 9 focused crates; enforced dependency DAG          |
+| 4     | Multi-Crate Workspace | 9 core crates (11 total w/ starlark+sandbox); DAG   |
 | 5     | Policy DSL            | Typed TOML rules + optional Starlark               |
 | 6     | Sandboxing Layer      | bwrap/Landlock/Seatbelt on approved commands       |
 | 7     | Release Readiness     | 1.0 ships                                          |

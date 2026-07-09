@@ -134,16 +134,6 @@ fn run_claude_code_hook(home: &Path, command: &str) -> Output {
     run_script("hooks/claude-code.sh", home, &[], Some(input.as_str()))
 }
 
-fn json_contains_command(json: &Value, section: &str, command: &str) -> bool {
-    json["hooks"][section].as_array().is_some_and(|entries| {
-        entries.iter().any(|entry| {
-            entry["hooks"]
-                .as_array()
-                .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
-        })
-    })
-}
-
 #[test]
 fn codex_pre_tool_use_rewrites_when_helper_is_missing_in_normal_mode() {
     let home = TempDir::new().unwrap();
