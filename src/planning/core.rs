@@ -41,16 +41,15 @@ pub fn plan_with_context(
         }
         CwdState::Unavailable => context.is_blocked_for_command(request.command, None),
     };
-    let applicable_snapshot_plugins = if assessment.risk == crate::interceptor::RiskLevel::Danger
-        && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
-    {
-        match &request.cwd_state {
-            CwdState::Resolved(path) => context.applicable_snapshot_plugins(path),
-            CwdState::Unavailable => context.applicable_snapshot_plugins(Path::new(".")),
-        }
-    } else {
-        Vec::new()
-    };
+    let applicable_snapshot_plugins =
+        if recovery_backstop_applies(&assessment, context.config().snapshot_policy) {
+            match &request.cwd_state {
+                CwdState::Resolved(path) => context.applicable_snapshot_plugins(path),
+                CwdState::Unavailable => context.applicable_snapshot_plugins(Path::new(".")),
+            }
+        } else {
+            Vec::new()
+        };
 
     build_planning_outcome(
         context,
@@ -60,6 +59,19 @@ pub fn plan_with_context(
         blocklist_match,
         applicable_snapshot_plugins,
     )
+}
+
+/// Whether a recovery (pre-exec snapshot) backstop must be considered for this
+/// command. ADR-016: recovery is the primary v1 backstop for *both* `Danger`
+/// commands and effect-opaque execution — the two axes are orthogonal, so
+/// either one warrants resolving applicable snapshot plugins.
+/// `SnapshotPolicy::None` (the trusted/global opt-out) suppresses both.
+fn recovery_backstop_applies(
+    assessment: &crate::interceptor::scanner::Assessment,
+    snapshot_policy: crate::config::SnapshotPolicy,
+) -> bool {
+    (assessment.risk == crate::interceptor::RiskLevel::Danger || assessment.effect_opaque)
+        && snapshot_policy != crate::config::SnapshotPolicy::None
 }
 
 /// Async variant of `plan_with_context` for callers already inside an async
@@ -82,20 +94,19 @@ pub async fn plan_with_context_async(
         }
         CwdState::Unavailable => context.is_blocked_for_command(request.command, None),
     };
-    let applicable_snapshot_plugins = if assessment.risk == crate::interceptor::RiskLevel::Danger
-        && context.config().snapshot_policy != crate::config::SnapshotPolicy::None
-    {
-        match &request.cwd_state {
-            CwdState::Resolved(path) => context.applicable_snapshot_plugins_async(path).await,
-            CwdState::Unavailable => {
-                context
-                    .applicable_snapshot_plugins_async(Path::new("."))
-                    .await
+    let applicable_snapshot_plugins =
+        if recovery_backstop_applies(&assessment, context.config().snapshot_policy) {
+            match &request.cwd_state {
+                CwdState::Resolved(path) => context.applicable_snapshot_plugins_async(path).await,
+                CwdState::Unavailable => {
+                    context
+                        .applicable_snapshot_plugins_async(Path::new("."))
+                        .await
+                }
             }
-        }
-    } else {
-        Vec::new()
-    };
+        } else {
+            Vec::new()
+        };
 
     build_planning_outcome(
         context,
@@ -404,6 +415,60 @@ mod tests {
         assert_eq!(
             crate::snapshot::snapshot_registry_build_count_for_tests(),
             1
+        );
+    }
+
+    #[test]
+    fn effect_opaque_safe_command_plans_recovery_snapshot_without_prompt() {
+        // ADR-016 / H9: `sh ./cleanup.sh` is Safe to the quick scan yet
+        // effect-opaque. Recovery is the primary v1 backstop, orthogonal to
+        // risk, so the plan must request a pre-exec snapshot
+        // (`SnapshotPlan::Required`) WITHOUT introducing a confirmation prompt
+        // — the command still executes auto-approved, only with a recovery
+        // point taken first.
+        crate::snapshot::reset_snapshot_registry_build_count_for_tests();
+
+        let _guard = CURRENT_DIR_TEST_MUTEX.lock().unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        let workspace = TempDir::new().unwrap();
+        Command::new("git")
+            .arg("init")
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        std::env::set_current_dir(workspace.path()).unwrap();
+
+        let mut config = AegisConfig::default();
+        config.mode = Mode::Protect;
+        config.snapshot_policy = SnapshotPolicy::Selective;
+        config.auto_snapshot_git = true;
+        config.auto_snapshot_docker = false;
+        let context = RuntimeContext::new(config, test_handle()).unwrap();
+
+        let outcome = super::plan_with_context(
+            &context,
+            super::PlanningRequest {
+                command: "sh ./cleanup.sh",
+                cwd_state: CwdState::Unavailable,
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        std::env::set_current_dir(original_cwd).unwrap();
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("effect-opaque safe command must produce a normal plan");
+        };
+        // No extra prompt: effect opacity alone never raises the approval bar.
+        assert_eq!(plan.execution_disposition(), ExecutionDisposition::Execute);
+        assert_eq!(plan.approval_requirement(), ApprovalRequirement::None);
+        // Recovery backstop: a pre-exec snapshot is requested from the git plugin.
+        assert_eq!(
+            plan.snapshot_plan(),
+            SnapshotPlan::Required {
+                applicable_plugins: vec!["git"],
+            }
         );
     }
 }

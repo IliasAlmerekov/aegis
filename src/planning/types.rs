@@ -448,6 +448,7 @@ mod tests {
             rationale: PolicyRationale::RequiresConfirmation,
             requires_confirmation: true,
             snapshots_required: true,
+            confinement_required: false,
             allowlist_effective: false,
         };
         let expected_explanation =
@@ -481,6 +482,7 @@ mod tests {
             rationale: PolicyRationale::AllowlistOverride,
             requires_confirmation: false,
             snapshots_required: false,
+            confinement_required: false,
             allowlist_effective: true,
         };
 

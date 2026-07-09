@@ -11,7 +11,9 @@ use time::format_description::well_known::Rfc3339;
 use aegis_config::{AuditIntegrityMode, Mode};
 use aegis_explanation::CommandExplanation;
 use aegis_scanner::MatchResult;
-use aegis_types::{Category, PatternSource, RiskLevel, SandboxStatus, SnapshotRecord};
+use aegis_types::{
+    Category, PatternSource, RecoveryDegradation, RiskLevel, SandboxStatus, SnapshotRecord,
+};
 
 use crate::error::AuditError;
 
@@ -155,6 +157,19 @@ pub struct DecisionEntry {
     /// this execution. `SandboxStatus::Unavailable` records a sandbox bypass —
     /// a configured sandbox that could not be applied (ROADMAP 6.4).
     pub sandbox_status: SandboxStatus,
+    /// Whether the assessed command was `Effect-opaque execution` (ADR-016).
+    /// `None` on pre-ADR-016 log lines; fresh entries record an explicit bool.
+    pub effect_opaque: Option<bool>,
+    /// Whether a recovery snapshot was required before execution (ADR-016).
+    /// `None` on pre-ADR-016 log lines; fresh entries record an explicit bool.
+    pub snapshots_required: Option<bool>,
+    /// Whether sandbox confinement was required before execution (ADR-016), the
+    /// optional stricter tier distinct from `snapshots_required`. `None` on
+    /// pre-ADR-016 log lines; fresh entries record an explicit bool.
+    pub confinement_required: Option<bool>,
+    /// Why a required recovery backstop was not available, when it was not
+    /// (ADR-016). `None` when no degradation occurred or on pre-ADR-016 lines.
+    pub recovery_degradation: Option<RecoveryDegradation>,
 }
 
 /// Watch-mode audit entry.
@@ -255,6 +270,17 @@ struct AuditEntryFlat {
     // working. `None` for not-configured entries (skipped on the wire).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sandbox_active: Option<bool>,
+    // ADR-016 recovery backstop axes. Legacy logs omit them; `#[serde(default)]`
+    // reads absent fields back as `None` so "not recorded" stays distinct from
+    // "explicitly false" (same convention as the allowlist flags above).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effect_opaque: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshots_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confinement_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery_degradation: Option<RecoveryDegradation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,6 +321,10 @@ impl From<AuditEntryFlat> for AuditEntry {
             sandbox_status: flat
                 .sandbox_status
                 .unwrap_or_else(|| SandboxStatus::from(flat.sandbox_active)),
+            effect_opaque: flat.effect_opaque,
+            snapshots_required: flat.snapshots_required,
+            confinement_required: flat.confinement_required,
+            recovery_degradation: flat.recovery_degradation,
         };
         if is_watch {
             AuditEntry::Watch(WatchEntry {
@@ -342,6 +372,10 @@ impl From<&AuditEntry> for AuditEntryFlat {
             allowlist_reason: base.allowlist_reason.clone(),
             sandbox_status: Some(base.sandbox_status),
             sandbox_active: base.sandbox_status.as_legacy_active(),
+            effect_opaque: base.effect_opaque,
+            snapshots_required: base.snapshots_required,
+            confinement_required: base.confinement_required,
+            recovery_degradation: base.recovery_degradation,
             source,
             cwd,
             id,

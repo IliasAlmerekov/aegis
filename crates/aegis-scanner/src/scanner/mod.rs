@@ -1,6 +1,7 @@
 //! Scanner: assess(cmd) -> RiskLevel
 
 mod assessment;
+mod effect_opaque;
 mod highlighting;
 mod keywords;
 mod pipeline_semantics;

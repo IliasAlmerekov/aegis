@@ -113,6 +113,32 @@ fn project_snapshot_policy_cannot_weaken_global_full_to_none() {
 }
 
 #[test]
+fn project_cannot_disable_effect_opaque_recovery_over_default_selective() {
+    // ADR-016 / H9: recovery is the primary v1 backstop for effect-opaque
+    // execution, and it keys off `snapshot_policy != None`. The C3 ratchet must
+    // keep that requirement intact: a project `.aegis.toml` cannot disable
+    // recovery by lowering `snapshot_policy` to `None`. Over the default
+    // `Selective` base, a project `None` is rejected and the base is kept — so
+    // an effect-opaque command still earns a pre-exec snapshot.
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "snapshot_policy = \"None\"\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(
+        config.snapshot_policy,
+        SnapshotPolicy::Selective,
+        "project must not weaken the default recovery posture to None"
+    );
+}
+
+#[test]
 fn project_snapshot_policy_can_tighten_default_selective_to_full() {
     let workspace = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();

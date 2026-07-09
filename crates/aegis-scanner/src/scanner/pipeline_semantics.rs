@@ -83,7 +83,7 @@ fn push_semantic_match(
     });
 }
 
-fn is_shell_sink(segment: &str) -> bool {
+pub(super) fn is_shell_sink(segment: &str) -> bool {
     matches!(
         first_token(segment).as_deref(),
         Some("sh") | Some("bash") | Some("zsh") | Some("dash") | Some("ksh") | Some("fish")

@@ -46,6 +46,13 @@ pub enum DecisionSource {
 pub struct Assessment {
     /// The highest `RiskLevel` among all matched patterns (`Safe` when none matched).
     pub risk: RiskLevel,
+    /// Whether the command shape is `Effect-opaque execution` — it hands control
+    /// to another execution layer (a script file, interpreter stdin, or a
+    /// pipe-to-shell sink) whose eventual filesystem/database/network effect
+    /// is not visible in argv. Orthogonal to `risk`: an effect-opaque command
+    /// does not raise `RiskLevel` by itself; it only requests a recovery
+    /// backstop downstream (ADR-016).
+    pub effect_opaque: bool,
     /// Every pattern that matched the command (raw + inline scripts).
     pub matched: Vec<MatchResult>,
     /// Sorted, merged highlight spans for the original raw command.

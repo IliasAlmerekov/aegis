@@ -79,6 +79,7 @@ the core classification / approval pipeline when enforcement is active.
 | ADR-013 | Project config uses a security ratchet | [`adr-013-project-config-security-ratchet.md`](adr-013-project-config-security-ratchet.md) |
 | ADR-014 | Launcher and absolute-path normalization for token-prefix detection | [`adr-014-launcher-and-absolute-path-normalization-for-token-prefix-detection.md`](adr-014-launcher-and-absolute-path-normalization-for-token-prefix-detection.md) |
 | ADR-015 | Destructive SQL is detected by match-anywhere regex, not token-prefix rules | [`adr-015-destructive-sql-detected-by-regex-not-token-prefix.md`](adr-015-destructive-sql-detected-by-regex-not-token-prefix.md) |
+| ADR-016 | Effect-opaque execution uses recovery backstops without raising risk | [`adr-016-effect-opaque-execution-uses-recovery-backstops.md`](adr-016-effect-opaque-execution-uses-recovery-backstops.md) |
 
 `ADR-009` is intentionally absent from the active set; numbering is preserved
 as-is so historical references do not drift.

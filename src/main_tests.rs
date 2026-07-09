@@ -36,6 +36,7 @@ use aegis::error::AegisError;
 fn scanner_init_failure_fallback_is_warn_not_safe() {
     let fallback = Assessment {
         risk: RiskLevel::Warn,
+        effect_opaque: false,
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("any command"),
@@ -437,6 +438,7 @@ fn cli_parses_install_subcommand_with_local_flag() {
 fn make_assessment(risk: RiskLevel) -> Assessment {
     Assessment {
         risk,
+        effect_opaque: false,
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("rm -rf /"),
@@ -602,6 +604,7 @@ fn ci_policy_block_blocks_block_in_ci() {
 fn ci_policy_block_allows_safe_in_ci() {
     let assessment = Assessment {
         risk: RiskLevel::Safe,
+        effect_opaque: false,
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("echo hello"),
@@ -623,6 +626,7 @@ fn ci_policy_allow_does_not_short_circuit_in_ci() {
     // A Safe command must still be AutoApproved.
     let assessment = Assessment {
         risk: RiskLevel::Safe,
+        effect_opaque: false,
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("echo hello"),
@@ -643,6 +647,7 @@ fn not_in_ci_does_not_trigger_ci_policy() {
     // Outside CI, even CiPolicy::Block must not affect Safe commands.
     let assessment = Assessment {
         risk: RiskLevel::Safe,
+        effect_opaque: false,
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("echo hello"),

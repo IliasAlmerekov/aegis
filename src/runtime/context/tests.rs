@@ -502,6 +502,130 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
     assert_eq!(base.allowlist_effective, Some(true));
 }
 
+#[test]
+fn build_audit_entry_records_effect_opaque_and_backstop_state_from_runtime_facts() {
+    // ADR-016 / Standards #1: the audit entry must reflect the assessment's
+    // `effect_opaque` flag and the policy's `snapshots_required` decision —
+    // not the `Some(false)` defaults emitted by `AuditEntry::new`. Otherwise a
+    // real `sh ./cleanup.sh` execution that policy required recovery for would
+    // be logged as if no backstop was ever needed.
+    let context = RuntimeContext::new(AegisConfig::default(), test_handle()).unwrap();
+    // `sh ./cleanup.sh` is Safe to the quick scan yet effect-opaque.
+    let assessment = context.assess("sh ./cleanup.sh");
+    assert!(
+        assessment.effect_opaque,
+        "fixture premise: command must be effect-opaque"
+    );
+    let explanation = CommandExplanation {
+        scan: ScanExplanation {
+            highest_risk: assessment.risk,
+            decision_source: assessment.decision_source(),
+            matched_patterns: Vec::new(),
+        },
+        policy: PolicyExplanation {
+            action: PolicyAction::AutoApprove,
+            rationale: PolicyRationale::SafeCommand,
+            requires_confirmation: false,
+            // Policy resolved a pre-exec recovery backstop for this command.
+            snapshots_required: true,
+            allowlist_effective: false,
+            block_reason: None,
+        },
+        context: ExecutionContextExplanation {
+            mode: context.config().mode,
+            transport: ExecutionTransport::Shell,
+            ci_detected: false,
+            allowlist_match: None,
+            applicable_snapshot_plugins: vec!["git".to_string()],
+        },
+        outcome: None,
+    };
+
+    let entry = context.build_audit_entry(
+        &assessment,
+        Decision::AutoApproved,
+        &[],
+        &explanation,
+        AuditWriteOptions {
+            allowlist_match: None,
+            allowlist_effective: false,
+            ci_detected: false,
+            sandbox_status: SandboxStatus::NotConfigured,
+        },
+    );
+
+    let base = entry.as_base();
+    assert_eq!(
+        base.effect_opaque,
+        Some(true),
+        "audit must record the assessment's effect-opaque flag, not the default"
+    );
+    assert_eq!(
+        base.snapshots_required,
+        Some(true),
+        "audit must record the policy's recovery requirement, not the default"
+    );
+    assert_eq!(
+        base.confinement_required,
+        Some(false),
+        "audit must record the v1 confinement state (optional strict tier not engaged)"
+    );
+}
+
+#[test]
+fn build_audit_entry_records_plain_safe_command_without_backstops() {
+    // Orthogonal direction: a non-effect-opaque safe command whose policy did
+    // not require recovery must record `Some(false)` for both axes — the
+    // honest decision, not an unset default.
+    let context = RuntimeContext::new(AegisConfig::default(), test_handle()).unwrap();
+    let assessment = context.assess("echo ok");
+    assert!(
+        !assessment.effect_opaque,
+        "fixture premise: command must not be effect-opaque"
+    );
+    let explanation = CommandExplanation {
+        scan: ScanExplanation {
+            highest_risk: assessment.risk,
+            decision_source: assessment.decision_source(),
+            matched_patterns: Vec::new(),
+        },
+        policy: PolicyExplanation {
+            action: PolicyAction::AutoApprove,
+            rationale: PolicyRationale::SafeCommand,
+            requires_confirmation: false,
+            snapshots_required: false,
+            allowlist_effective: false,
+            block_reason: None,
+        },
+        context: ExecutionContextExplanation {
+            mode: context.config().mode,
+            transport: ExecutionTransport::Shell,
+            ci_detected: false,
+            allowlist_match: None,
+            applicable_snapshot_plugins: Vec::new(),
+        },
+        outcome: None,
+    };
+
+    let entry = context.build_audit_entry(
+        &assessment,
+        Decision::AutoApproved,
+        &[],
+        &explanation,
+        AuditWriteOptions {
+            allowlist_match: None,
+            allowlist_effective: false,
+            ci_detected: false,
+            sandbox_status: SandboxStatus::NotConfigured,
+        },
+    );
+
+    let base = entry.as_base();
+    assert_eq!(base.effect_opaque, Some(false));
+    assert_eq!(base.snapshots_required, Some(false));
+    assert_eq!(base.confinement_required, Some(false));
+}
+
 fn now_utc() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }

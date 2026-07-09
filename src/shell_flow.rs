@@ -556,6 +556,7 @@ mod snapshot_ordering_tests {
             rationale: PolicyRationale::RequiresConfirmation,
             requires_confirmation: true,
             snapshots_required: true,
+            confinement_required: false,
             allowlist_effective: false,
         };
         let explanation = danger_explanation(&context, &assessment, policy_decision, &["git"]);
@@ -590,6 +591,7 @@ mod snapshot_ordering_tests {
             rationale: aegis::decision::PolicyRationale::IntrinsicRiskBlock,
             requires_confirmation: false,
             snapshots_required: true,
+            confinement_required: false,
             allowlist_effective: false,
         };
         let explanation = danger_explanation(&context, &assessment, policy_decision, &[]);

@@ -52,6 +52,10 @@ impl Scanner {
                 Some(
                     "Review the generated script separately or store it in a checked file before execution",
                 ),
+                // An inline-script invocation (`-c` / `-e`) is not effect-opaque:
+                // its body is what exceeded the limit, and inline bodies are
+                // extracted and scanned, not deferred to a file.
+                false,
             );
         }
 
@@ -64,10 +68,16 @@ impl Scanner {
             .map(|pipelines| pipelines.iter().any(|chain| chain.segments.len() > 1))
             .unwrap_or(false);
 
+        // Effect-opacity is orthogonal to the quick-scan gate: a script-file
+        // execution (`sh ./cleanup.sh`) is `Safe` to the quick scan yet still
+        // effect-opaque, so it must be computed before the early return below.
+        let effect_opaque = super::effect_opaque::detect(cmd, &command, maybe_pipelines.as_deref());
+
         // Use the normalized form as the primary scan target — free of quoting noise.
         if !self.quick_scan(&command.normalized) && !has_pipeline_chain {
             return Assessment {
                 risk: RiskLevel::Safe,
+                effect_opaque,
                 matched: vec![],
                 highlight_ranges: vec![],
                 command,
@@ -85,6 +95,7 @@ impl Scanner {
                 Some(
                     "Reduce shell nesting depth or rewrite the command into a reviewed intermediate script",
                 ),
+                effect_opaque,
             );
         }
 
@@ -152,6 +163,7 @@ impl Scanner {
 
         Assessment {
             risk,
+            effect_opaque,
             matched,
             highlight_ranges,
             command,
@@ -176,6 +188,8 @@ fn uncertain_assessment_without_parse(
         id,
         description,
         safe_alt,
+        // No parsed command to classify, so no effect-opacity claim.
+        false,
     )
 }
 
@@ -184,12 +198,14 @@ fn uncertain_assessment(
     id: &'static str,
     description: String,
     safe_alt: Option<&'static str>,
+    effect_opaque: bool,
 ) -> Assessment {
     let matched = vec![uncertain_match(id, description, safe_alt)];
     let highlight_ranges = highlighting::sorted_highlight_ranges(&command.raw, &matched);
 
     Assessment {
         risk: RiskLevel::Warn,
+        effect_opaque,
         matched,
         highlight_ranges,
         command,
