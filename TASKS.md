@@ -180,23 +180,24 @@ fundamental design failure. They are fixable with targeted work.
   absolute program paths before prefix-rule and by-program-index matching.
 - **Evidence (commands that really executed in 0.5.9):**
 
-  | Command                       | Why it passed                              |
-  | ----------------------------- | ------------------------------------------ |
-  | `/usr/bin/git reset --hard`   | absolute path → first token is not `git`   |
-  | `cd dir && git reset --hard`  | `git` is not the first token of the line   |
-  | `rtk git push` (force push)   | RTK wrapper prefix → first token is `rtk`  |
-  | `rtk git stash clear`         | RTK wrapper prefix                         |
-  | `rtk git branch -D`           | RTK wrapper prefix                         |
-  | `rtk psql … DROP TABLE`       | RTK wrapper prefix (see also H2)           |
+  | Command                      | Why it passed                             |
+  | ---------------------------- | ----------------------------------------- |
+  | `/usr/bin/git reset --hard`  | absolute path → first token is not `git`  |
+  | `cd dir && git reset --hard` | `git` is not the first token of the line  |
+  | `rtk git push` (force push)  | RTK wrapper prefix → first token is `rtk` |
+  | `rtk git stash clear`        | RTK wrapper prefix                        |
+  | `rtk git branch -D`          | RTK wrapper prefix                        |
+  | `rtk psql … DROP TABLE`      | RTK wrapper prefix (see also H2)          |
 
   For contrast, the regex-based families (`rm`, `shred`, `chmod`, `docker …`)
   matched correctly even with a prefix: `/usr/bin/rm -rf` and `echo …; rm -rf`
   were both blocked. So the asymmetry is real: **regex patterns match anywhere in
   the normalized string, token-prefix rules only match at the first token.**
+
 - **Destructive proof:** a prefixed `git reset --hard` in a throwaway repo erased an
   uncommitted line (`PRECIOUS UNCOMMITTED WORK`) — Aegis stayed silent and the
   command executed.
-- **Root cause:** GIT-001..008, DB-001/2/6/7/8, CL-*, DK-*, PS-001/2/5 were migrated
+- **Root cause:** GIT-001..008, DB-001/2/6/7/8, CL-_, DK-_, PS-001/2/5 were migrated
   from regex patterns to **token-prefix rules** (`builtin_prefix_rules()` in
   `crates/aegis-scanner/src/patterns.rs`). `Scanner::prefix_scan`
   (`crates/aegis-scanner/src/scanner/mod.rs:240-266`) looks the rule up by the
@@ -322,11 +323,11 @@ fundamental design failure. They are fixable with targeted work.
 - **Follow-up review remediation (2026-06-30):** addressed the lead-review
   findings on the H3 diff — (1) **FS-013 wording vs behavior**: added a `tee`
   branch (`tee\s+(?:-\S+\s+)*\S*authorized_keys`) so the `echo key | tee -a
-  ~/.ssh/authorized_keys` backdoor idiom is caught, and reworded the
+~/.ssh/authorized_keys` backdoor idiom is caught, and reworded the
   description/justification to "Write into … (via redirect or tee)"; (2)
   **bugs-01**: pulled the `aws` pre-service global-flag fix forward — added a
   leading `any_star()` to CL-005/CL-011/CL-012 so `aws --profile … s3 rm/rb/sync
-  …` is caught; (3) **bugs-04**: added must-fire coverage for all five remaining
+…` is caught; (3) **bugs-04**: added must-fire coverage for all five remaining
   FS-014 rc files; (4) **simplicity-01**: hoisted `assert_assessment_matches_pattern`
   into `tests/mod.rs`. The remaining H3-followups below stay deferred.
 
@@ -388,9 +389,17 @@ fundamental design failure. They are fixable with targeted work.
 - **Fix:** directories `0700`, files `0600`, and avoid symlink following for audit
   writes (for example `O_NOFOLLOW` where available).
 
-### [ ] H8 — Git token-prefix rules miss `git push --force`, `git stash clear`, `git branch -D`
+### [x] H8 — Git token-prefix rules miss `git push --force`, `git stash clear`, `git branch -D`
 
-- **Problem:** even with the *first token* correctly `git` (no prefix), several
+- **Status:** resolved. Prefix rules now cover the gap: `GIT-003`
+  (`push … --force` / `-f` / `--force-with-lease`), `GIT-006` + `GIT-006B`/`006C`
+  (`branch -D` / `-d --force`), and `GIT-008` (`stash drop` / `stash clear`) in
+  `crates/aegis-scanner/src/patterns/builtins_a.rs`. The `edge_cases.rs` test
+  that previously asserted `["git","push","--force"]` must NOT match was
+  inverted — it now asserts `GIT-003` fires (the surviving "must NOT match" case
+  is the distinct quoted single-token form, which is legitimately different). C4
+  (landed) removes the wrapper/path-prefix amplification below.
+- **Problem:** even with the _first token_ correctly `git` (no prefix), several
   destructive git subcommands were not flagged in the crash-test:
   - `git push --force` → executed. Note `crates/aegis-scanner/src/scanner/tests/edge_cases.rs:375`
     **explicitly asserts** `["git", "push", "--force"]` must NOT match the prefix
@@ -406,8 +415,99 @@ fundamental design failure. They are fixable with targeted work.
   combined `-d --force`; decide and document the intended risk level for force-push
   (likely `Danger`), and update/replace the edge-case test that currently locks in
   the pass-through. Run through the eval harness alongside H3/M5.
-- **Depends on / amplified by C4:** until C4 lands, every one of these is *also*
+- **Depends on / amplified by C4:** until C4 lands, every one of these is _also_
   reachable via `rtk git …` / path prefix regardless of pattern coverage.
+
+### [ ] H9 — Dynamic-evaluation and interpreter bypasses defeat string classification
+
+- **Problem:** the scanner classifies the _spelling_ of a command, not its
+  _effect_. Any construct that defers the real command past the point of
+  assessment reaches the same syscall while looking nothing like a built-in
+  pattern. None of these require an adversary — an agent only has to phrase the
+  task creatively:
+  - **Runtime variable expansion:** `X='rm -rf ~/.config'; bash -c "$X"` — the
+    scan target is `bash -c "$X"`; the payload only exists after the child shell
+    expands `$X`. Distinct from C2, which normalized the _literal_ `$IFS` /
+    `${IFS}` spelling — this is arbitrary deferred expansion, not a fixed token.
+  - **Encoded payloads:** `echo cm0gLXJm… | base64 -d | sh` — no `rm`, no path,
+    and no flag appear in the command text; only `echo` / `base64` / `sh` do.
+  - **Interpreter one-liners:** `python3 -c "import os; os.unlink('/path')"`,
+    `perl -e 'unlink …'`, `node -e 'fs.rmSync(…)'` — the destructive effect is a
+    library call, not a shell verb, so no `rm` / `unlink` pattern fires.
+  - **Symlink-swap TOCTOU (distinct sub-mechanism):** `rm -rf ./build` passes
+    while `./build` is a directory; the path is swapped for a symlink to a
+    sensitive root between check and use. The assessment was honest; the effect
+    changed after it.
+  - **Script-file execution (confirmed live 2026-07-09; canonical term in
+    `CONTEXT.md`):** `sh ./cleanup.sh` / `python3 ./cleanup.py` /
+    `node ./cleanup.js` (also `bash script.sh`, `source ./x`, `. ./x`) classify
+    as **Safe** and execute unscanned — the destructive effect lives in the
+    referenced file, whose contents Aegis never reads at classification time.
+    Unlike an `Inline script` (`-c` / `-e` body, which is extracted and
+    scanned), a file path in argv carries no verb, no pipe, and no inline body,
+    so none of the shape-based heuristics below fire. This is the cleanest
+    non-adversarial instance of the class: an agent writing a helper script and
+    running it is ordinary behavior. All six forms reproduced against the
+    release binary.
+- **Status:** design limitation, externally raised (dev.to comments, 2026-07-09)
+  and consistent with `docs/threat-model.md` ("heuristic guardrail, not a
+  sandbox … not a defense against a determined adversary"). The finding sharpens
+  the threat model: these vectors are reachable _non-adversarially_, so they
+  fall inside Aegis' stated "accidental agent damage" scope, not only the
+  out-of-scope "determined adversary" clause.
+- **Live-verification note (2026-07-09):** not every "creative phrasing" evades
+  the scanner today — several idioms cited in review are already caught:
+  `find . -delete` (Danger), `git clean -fdx` (GIT-002, Warn), a heredoc'd
+  `rm -rf` (Danger, heredoc recursion), and `curl … | sh` (Danger). Aegis also
+  keys on the _shape_ of deferred execution even when the payload is invisible:
+  `bash -c "$X"` and `python3 -c "$CODE"` → Warn, any `… | sh`/`| bash` →
+  Danger. So the open gap is narrower than "all deferred execution": it is
+  specifically (a) script-file execution (above), (b) interpreter one-liners
+  whose effect is a library call with no shell verb, and (c) the symlink TOCTOU.
+  Warn/Danger only _prompt_ in interactive mode, so in yolo/full-permission use
+  a reflexive approve still lets them through — which is the real argument for
+  the effect-level backstop over more patterns.
+- **Why string classification cannot close it:** these surfaces are unbounded —
+  full variable expansion, arbitrary decoders, and every interpreter's file API
+  are Turing-complete. Adding patterns is whack-a-mole and inflates false
+  positives on the happy path. The only durable mitigation gates the _effect_,
+  not the string.
+- **Design decision:** ADR-016 separates `RiskLevel` from backstop requirements.
+  `Effect-opaque execution` does not raise risk by itself; it records an
+  `effect_opaque` marker and requires recovery by setting `snapshots_required`
+  under the default `SnapshotPolicy::Selective` / `Full` path. Successful
+  snapshot creation preserves the happy path (no extra prompt). Missing required
+  recovery degrades loudly: non-interactive fails closed; interactive explains
+  that the script contents were not inspected and no recovery snapshot is
+  available. `SnapshotPolicy::None` is a trusted/global opt-out only; project
+  config cannot weaken recovery because of the C3/M6 ratchet. Sandbox
+  confinement is a separate optional strict tier (`confinement_required`), not
+  the primary v1 mitigation for effect opacity.
+- **Files:** `src/shell_flow.rs`, `crates/aegis-policy`, `crates/aegis-types`,
+  `crates/aegis-scanner`, `crates/aegis-snapshot`, `docs/threat-model.md`,
+  `docs/adr/adr-016-effect-opaque-execution-uses-recovery-backstops.md`.
+- **Fix:** add bounded shape detection for v1 effect opacity: interpreter +
+  script-file-looking argv (`sh ./x`, `bash ./x`, `python3 ./x.py`,
+  `node ./x.js`, `ruby ./x.rb`, `perl ./x.pl`, `source ./x`, `. ./x`) and
+  interpreter-stdin forms (`sh -s`, `bash -s`, existing pipe-to-shell shapes).
+  Do not `stat()` paths on the hot path and do not include package runners
+  (`npm run`, `make`, `cargo xtask`, etc.) in v1. Extend policy/audit plumbing
+  with `effect_opaque` and `confinement_required`; reuse the existing
+  `snapshots_required` axis for the recovery backstop.
+- **Progress (2026-07-09):** Iter 1–3 done via TDD and verified — `effect_opaque`
+  field on `Assessment`, bounded v1 shape detection
+  (`crates/aegis-scanner/src/scanner/effect_opaque.rs`), `confinement_required`
+  axis, backward-compatible audit fields, and `snapshots_required` firing for
+  effect-opaque commands under `SnapshotPolicy::{Selective, Full}` (no risk
+  raise, no extra prompt; C3 ratchet blocks project opt-out). 1397 tests green,
+  clippy/fmt clean, scanner bench 1.96 ms. **Remaining (deferred):** Iter 4 —
+  degradation UX / fail-closed when no snapshot can be created (non-interactive
+  denies, interactive missing-recovery reason, audit `recovery_degradation`);
+  Iter 5 — `docs/threat-model.md`, `docs/config-schema.md`, `README.md` updates
+  + flip this checkbox. H9 stays `[ ]` until those land.
+- **Related:** M1 (sandbox degradation too quiet), P3 C-next (IFS
+  parameter-expansion modifiers — a narrow instance of deferred expansion), P3
+  sandbox-status TOCTOU.
 
 ---
 
@@ -438,9 +538,21 @@ fundamental design failure. They are fixable with targeted work.
   `~/.aegis/disabled`, fully bypassing Aegis. Hook `is_already_wrapped` skips any
   command starting with `aegis`, so an agent can prefix commands to bypass the
   wrapper.
+- **Status:** agent-confirmed via live test (2026-07-09, MariaDB/Moodle
+  scenario). `~/.aegis/disabled` had existed on the maintainer's own machine for
+  9 days, unnoticed. With the flag present, `run_shell_wrapper` (`shell_wrapper.rs:37-41`)
+  execs the command directly and returns — no dialog, no snapshot, no audit
+  entry, and no stderr/stdout output of any kind, so a disabled Aegis is
+  indistinguishable from a healthy one until a destructive command already ran.
+  This is the same "too quiet" failure mode as M1, but for the kill-switch
+  rather than the sandbox, and it hit the tool's own author first.
 - **Files:** `shell_wrapper.rs:37-41`, `install/hook.rs:72`.
 - **Fix:** gate and audit `aegis off`; narrow `is_already_wrapped` to the exact
-  supported `aegis --command ...` form.
+  supported `aegis --command ...` form; additionally, surface the disabled
+  state loudly — a shell-startup banner, a warning on every hook response, or
+  both — so a user (or the maintainer) cannot go a single session without
+  noticing Aegis is off. Treat as a release blocker: it is the difference
+  between "the guardrail said no" and "the guardrail was never there."
 
 ### [ ] M4 — Hook panics can fail open
 
@@ -455,10 +567,14 @@ fundamental design failure. They are fixable with targeted work.
   without `TABLE`, `docker volume rm`, and `npm publish`.
 - **Fix:** extend rules and add regression tests.
 
-### [ ] M6 — Project config can disable recovery
+### [x] M6 — Project config can disable recovery
 
 - **Problem:** same merge issue as C3 lets project config set
   `snapshot_policy = "None"` and `sandbox.required = false`.
+- **Status:** resolved — closed by the C3 ratchet (ADR-013). `snapshot_policy`
+  and `sandbox.required` can only tighten at the project layer, so a project
+  `.aegis.toml` can no longer disable recovery; weakening is ignored and warned
+  by `aegis config validate`. Covered by C3's regression suite.
 - **Fix:** covered by C3 restrictive merge ratchet.
 
 ### [ ] M7 — Latent structural fail-open around shell audit readiness
@@ -472,7 +588,7 @@ fundamental design failure. They are fixable with targeted work.
 ### [ ] M8 — Snapshot does not recover the dangerous command's effect on committed/clean files
 
 - **Problem:** the snapshot promised as the "rollback the dangerous action" safety
-  net is a `git stash push --include-untracked`, which captures only *uncommitted*
+  net is a `git stash push --include-untracked`, which captures only _uncommitted_
   changes + untracked files present at snapshot time. A `Danger` command that
   deletes **committed/clean** files (e.g. `rm -rf scripts` on tracked files) runs
   after the stash, so its deletion is never in the snapshot — `aegis rollback`
@@ -500,14 +616,42 @@ fundamental design failure. They are fixable with targeted work.
   two arguments. There is no practical way for a user to copy the tab-bearing id
   from the listing into a working `rollback` invocation — the recovery CLI is
   effectively non-functional.
-- **Status:** agent-confirmed via live test.
+- **Status:** agent-confirmed via live test, twice. Original repro was the git
+  backend. Re-confirmed 2026-07-09 on the MySQL/MariaDB backend
+  (`crates/aegis-snapshot/src/mysql/mod.rs:19` uses the identical
+  `SEP: char = '\t'` composite-id scheme) — this is not a git-only bug, it is
+  the shared snapshot-id convention. Copying the id shown by the CLI/audit log
+  into a terminal converts the tab to spaces; the resulting `aegis rollback
+<id>` fails with "not found in the audit log." The only workaround found was
+  regenerating the literal tab with `printf`, which a user who just lost data
+  will not do. Recovery via `aegis rollback` is effectively non-functional from
+  copy-paste, which is the tool's core promise on the Danger path.
 - **Files:** `crates/aegis-snapshot/src/git.rs:20` (`SEP = '\t'`), `:97`
   (`snapshot_id = format!("{}{SEP}{hash}", cwd.display())`), `:108`/`:179`
-  (`split_once(SEP)` on rollback), `src/rollback.rs` (single-arg `<SNAPSHOT_ID>`).
-- **Fix:** make the id round-trip-safe — store the repo path as a separate audit
-  field and use the bare hash as the id (or have `rollback` resolve a bare hash
-  against the audit log), and/or have `snapshot list` print a ready-to-paste
-  `aegis rollback '<exact-id>'` line.
+  (`split_once(SEP)` on rollback), `crates/aegis-snapshot/src/mysql/mod.rs:19`
+  (same `SEP` scheme), `src/rollback.rs` (single-arg `<SNAPSHOT_ID>`).
+- **Fix:** make the id round-trip-safe — store the repo/database path as a
+  separate audit field and use the bare hash as the id (or have `rollback`
+  resolve a bare hash against the audit log), and/or have `snapshot list` /
+  the audit entry print a ready-to-paste `aegis rollback '<exact-id>'` line.
+  Minimum viable fix before release: `aegis rollback --last`, so the panic path
+  never depends on copy-paste at all.
+
+### [ ] M10 — README "Before/After" example misrepresents when the snapshot is taken
+
+- **Problem:** the `Before/After` table in `README.md` shows `Snapshot git stash
+created (a3f9b12)` as a line inside the confirmation dialog, above
+  `[A] approve [D] deny [i] info`. Live behavior (and `src/shell_flow.rs:343`,
+  cited under M8: "snapshot taken on `Danger` approve") is that the snapshot is
+  created _after_ approval, not before — there is no snapshot line in the
+  dialog itself. Agent-confirmed by re-running the real flow.
+- **Files:** `README.md` (Before/After section, `Snapshot git stash created`
+  line).
+- **Fix:** move the snapshot line out of the dialog block in the example —
+  show it as the line printed after `[A] approve`, matching the real sequence
+  (dialog → approve → snapshot created → command runs). Low effort, high
+  exposure: this is the kind of discrepancy a first-glance skeptical reader
+  checks against the code within minutes.
 
 ---
 
@@ -564,7 +708,7 @@ fundamental design failure. They are fixable with targeted work.
 
 ### Sprint 1 — required before release: core bypass closure
 
-1. [ ] C1 — `RegexBuilder::case_insensitive(true)` for built-in patterns plus
+1. [x] C1 — `RegexBuilder::case_insensitive(true)` for built-in patterns plus
        uppercase regression tests.
 2. [x] C2 — normalize `$IFS` / `${IFS}` as separators in tokenizer or
        normalization plus fixtures.
@@ -578,29 +722,32 @@ fundamental design failure. They are fixable with targeted work.
 5. [x] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).
 6. [x] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
        anchors.
-7. [ ] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
+7. [x] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
        revisit the edge-case test that whitelists force-push.
 8. [x] H4 — hooks fail closed when `aegis` binary is missing (`command -v` guard →
        deny + exit 0); jq/invalid-JSON cases were already covered by Rust delegation.
 
 ### Sprint 2 — required before release: defense in depth
 
-7. [ ] H3 / M5 — expand pattern database for `wipefs`, S3 delete flows, `gsutil`,
+9. [ ] H3 / M5 — expand pattern database for `wipefs`, S3 delete flows, `gsutil`,
        `~/.ssh`, shell rc truncation, `unlink`, `chmod 000`, `TRUNCATE`,
        `docker volume rm`, and `npm publish`; run eval harness.
-8. [ ] H6 / H7 — add snapshot path containment checks; create snapshot directories
-       as `0700`, dumps/logs as `0600`; avoid following audit-log symlinks.
-9. [ ] M1 — default `sandbox.required = true` or unconditional stderr warning on
-       degradation.
-10. [ ] M2 — add regex size limits.
-11. [ ] M4 — add `catch_unwind` in `run_hook` and emit deny.
+10. [ ] H6 / H7 — add snapshot path containment checks; create snapshot directories
+        as `0700`, dumps/logs as `0600`; avoid following audit-log symlinks.
+11. [ ] H9 / M1 — layered effect-level defense (ADR-016): detect bounded
+        effect-opaque execution shapes, keep `RiskLevel` orthogonal, require
+        snapshot recovery by default, fail closed / prompt loudly when required
+        recovery is unavailable, and keep sandbox confinement as an optional
+        stricter tier rather than the primary v1 backstop.
+12. [ ] M2 — add regex size limits.
+13. [ ] M4 — add `catch_unwind` in `run_hook` and emit deny.
 
 ### Sprint 3 — honesty and resilience
 
-12. [ ] H5 — add HMAC/external anchor for audit chain, or change public wording
+14. [ ] H5 — add HMAC/external anchor for audit chain, or change public wording
         from "tamper-evident" to "integrity/corruption check".
-13. [ ] M3 — gate/audit `aegis off`; narrow `is_already_wrapped`.
-14. [ ] M7 + P3 — type-safe audit readiness, fail-closed renderer fallback,
+15. [ ] M3 — gate/audit `aegis off`; narrow `is_already_wrapped`.
+16. [ ] M7 + P3 — type-safe audit readiness, fail-closed renderer fallback,
         SQLite `create_new`, and sandbox confidentiality documentation.
 
 ---

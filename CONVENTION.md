@@ -60,17 +60,20 @@ These rules are non-negotiable.
 
 The repository is a Cargo workspace. The `aegis` binary crate lives at the
 root and depends on focused library crates under `crates/` (Phase 4 of
-`ROADMAP.md`). Extraction is complete — all 10 crates are live:
+`ROADMAP.md`). Extraction is complete — all 11 crates are live:
 `aegis-types` (zero-dep foundation), `aegis-parser` (shell tokenizer +
 `PrefixPattern` matcher), `aegis-scanner` (`Scanner`, `PatternSet`, built-in
 patterns), `aegis-policy` (pure `PolicyEngine`), `aegis-config` (config model,
 loader, validation, schema, `amend`), `aegis-explanation` (`CommandExplanation`
 and related types), `aegis-tui` (crossterm confirmation dialog), `aegis-snapshot`
 (six snapshot backends), `aegis-audit` (`AuditLogger`, append-only JSONL with
-optional hash-chain integrity), and `aegis-starlark` (Starlark policy DSL loader
-for `~/.aegis/policy.star`). Dependency arrows flow inward toward `aegis-types`;
-no library crate may depend on the root binary crate. DAG boundaries are enforced
-by `tests/architecture_boundaries.rs`.
+optional hash-chain integrity), `aegis-starlark` (Starlark policy DSL loader
+for `~/.aegis/policy.star`), and `aegis-sandbox` (bwrap + Landlock on Linux,
+sandbox-exec on macOS; opt-in execution confinement). Dependency arrows flow
+inward toward `aegis-types`; no library crate may depend on the root binary
+crate. DAG boundaries for the first nine are enforced by
+`tests/architecture_boundaries.rs`; `aegis-sandbox` is covered by
+`tests/platform_scope.rs` and `aegis-starlark` is not yet asserted in either.
 
 Current module responsibilities:
 
@@ -85,9 +88,12 @@ Current module responsibilities:
 - `src/decision/`: thin re-export shim over the `aegis-policy` crate
 - `crates/aegis-config/`: config model, layered loader, validation, schema, `amend`
 - `src/config/`: thin re-export shim over the `aegis-config` crate
-- `src/snapshot/`: snapshot plugin trait and Git/Docker implementations
+- `crates/aegis-snapshot/`: snapshot plugin trait and six backends (git, docker, pg, mysql, sqlite, supabase)
+- `src/snapshot/`: thin re-export shim over the `aegis-snapshot` crate
+- `crates/aegis-sandbox/`: opt-in execution confinement (bwrap + Landlock / sandbox-exec)
 - `src/ui/confirm.rs`: interactive confirmation flow
-- `src/audit/logger.rs`: append-only audit log and rotation
+- `crates/aegis-audit/`: `AuditLogger`, append-only JSONL, rotation, optional hash-chain
+- `src/audit/`: thin re-export shim over the `aegis-audit` crate
 
 Architectural constraints:
 
@@ -331,8 +337,9 @@ Treat a change as high-risk if it touches any of:
 - `crates/aegis-tui/`
 - `crates/aegis-explanation/`
 - `src/ui/confirm.rs` (re-export shim — real implementation in `crates/aegis-tui/`)
-- `src/audit/logger.rs`
+- `crates/aegis-audit/` (re-exported via `src/audit/` shim)
 - `crates/aegis-snapshot/` (re-exported via `src/snapshot/` shim)
+- `crates/aegis-sandbox/`
 - `src/snapshot/`
 - `Cargo.toml`
 - `Cargo.lock`

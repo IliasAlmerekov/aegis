@@ -20,16 +20,47 @@ changed last session and what is currently open.
 
 ---
 
-## Before writing any code
+## Agent Configuration
 
-**Always invoke the `rust-best-practices` skill before writing or reviewing
-Rust code in this repo** (`Skill({skill: "rust-best-practices"})`, backed by
-`~/agents/skills/rust-best-practies/SKILL.md`). It encodes the idiomatic-Rust
-guidance this project expects (ownership/borrowing, error handling, testing
-style). Apply it on top of — never instead of — `CONVENTION.md`, which is
-authoritative for this project's specific architecture, security invariants,
-and release gates. Use the `tdd` skill for red-green-refactor work on
-security-sensitive parser/scanner/policy code.
+Before starting any non-trivial task, use the global skills installed under
+`~/.agents/skills/` (symlinked into `~/.claude/skills/`) in this order:
+
+1. **`grill-me`** (or **`grill-with-docs`** when a PRD/spec already exists) — interview
+   the task to a shared understanding before writing a plan.
+2. **`tdd`** — implement the planned slice red-green. For any Rust code touched
+   during this step, self-trigger **`rust-best-practices`**
+   (`Skill({skill: "rust-best-practices"})`) before writing the first line —
+   it encodes the idiomatic-Rust guidance this project expects
+   (ownership/borrowing, error handling, testing style), applied on top of —
+   never instead of — `CONVENTION.md`, which is authoritative for this
+   project's architecture, security invariants, and release gates.
+3. **`code-review`** — review the diff on the Standards and Spec axes.
+4. **`re-review`** — adversarially verify `code-review`'s findings are real, then,
+   after `tdd` fixes them, confirm the fix actually closed them. Capped at 2
+   rounds; see `~/.agents/ENGINEERING_GATES.md`.
+
+Only push and open a PR once `re-review` reports a clean cycle.
+
+The Definition-of-Done checklist, `TASKS.md` traceability convention, and branch
+protection requirements are defined once, project-agnostically, in
+`~/.agents/ENGINEERING_GATES.md` — consult it, don't duplicate it here. This
+project's required CI status checks (for branch protection on `main`) are every
+job in `.github/workflows/ci.yml` that runs on a PR targeting `main` (i.e. every
+job except `gate` itself, since the heavy-job `gate` sets `heavy=true` whenever
+`github.event.pull_request.base.ref == 'main'`):
+
+- `Quality (fmt, clippy, test)`
+- `Security (audit, deny)`
+- `Release build (ubuntu-latest)`
+- `Release build (macos-15)`
+- `Performance baseline (scanner bench)`
+- `Live installer validation (ubuntu-latest)`
+- `Live installer validation (macos-15)`
+- `Live snapshot/rollback (Docker + SQLite)`
+- `Fuzzing (parser + scanner + heredoc)`
+
+If a job is renamed or the heavy-job gate condition changes, update this list in
+the same change.
 
 ---
 
@@ -100,11 +131,10 @@ before the task is actually done and verified. Order matters:
      changed and what was verified.
    - Update "Milestone status" rows whose status changed.
    - Update "Open decisions / blockers" if any were resolved or new ones surfaced.
-4. And `TASKS.md`: flip the relevant `[ ]` to `[x]` if the task closes a
-   tracked finding.
 
-Never mark a task done in `PROJECT_STATE.md`/`TASKS.md` before verification
-actually passed.
+The full Definition-of-Done (including when `TASKS.md` may be checked off and
+how commits trace back to it) is defined once in `~/.agents/ENGINEERING_GATES.md`
+— consult it, don't duplicate it here.
 
 ---
 

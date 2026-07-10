@@ -34,6 +34,14 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - CI: eliminated duplicate push+PR runs on feature branches (`push` trigger now scoped to `main` only) and added a `concurrency` group that cancels superseded runs on non-`main` refs only — pushes to `main` always run to completion so every commit gets a full audit/deny/fuzz pass, and the weekly schedule/`workflow_dispatch` can't race-cancel an in-flight `main` push (or vice versa).
 - CI: split the `build` and `live-installer` jobs into always-on Linux jobs plus gated `build-macos`/`live-installer-macos` jobs that only run on pushes to `main`, PRs targeting `main`, the weekly schedule, and manual dispatch — cuts macOS runner minutes (billed at 10x Linux) on every feature-branch push/PR while keeping macOS coverage before merge to `main`. `release.yml` macOS builds are unaffected.
 - CI: added `timeout-minutes` to the `quality`, `security`, `build`, `build-macos`, `live-installer`, and `live-installer-macos` jobs so a hung runner (macOS in particular) fails fast instead of burning minutes up to GitHub's 360-minute default.
+- CI: pinned the macOS runners to `macos-26` instead of the drifting `macos-latest` label so the build/installer jobs target a fixed image.
+- CI: dropped `--locked` from the `cargo-fuzz` install step so the fuzz job isn't broken by a stale lockfile for the tool.
+- CI: deduped Rust toolchain setup into a composite action and gated the heavy jobs behind a single job to cut redundant work.
+
+### Fixed
+
+- Restored release docs required by the `release_docs` tests after a docs prune removed them.
+- Docs: corrected `PROJECT_STATE.md` (crate list 9→11, test count, open-items sync), `CONVENTION.md` (10→11 crates, stale `src/audit/logger.rs` / `src/snapshot/` paths), `ROADMAP.md` (native-Windows items withdrawn per M4, crate count), and `ARCHITECTURE.md` (staleness banner) during the 2026-07-09 checkup; removed the snapshot line from the README Before/After denial example (M10).
 
 ---
 

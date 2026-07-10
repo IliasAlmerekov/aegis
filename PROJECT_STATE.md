@@ -101,11 +101,11 @@ Full history of prior sessions: `git log` and `CHANGELOG.md`.
 | M3 | Distribution (installer, musl, brew, npm, releases) | ✅ Done |
 | M4 | Scope reduction (drop native Windows) | ✅ Done |
 | M5.1–M5.4 | 800-LoC budget, fuzz CI, snapshot/rollback CI, supply-chain gates | ✅ Done |
-| 1.0 docs gate | README, threat model, docs accuracy | ✅ Done |
+| 1.0 docs gate | README, threat model, docs accuracy | 🔲 Open (reopened 2026-07-09 checkup — ARCHITECTURE/CONVENTION/ROADMAP/CHANGELOG stale; see Open decisions) |
 | P0 security blockers (C1–C4) | Uppercase bypass, `$IFS` obfuscation, project-config weakening, token-prefix anchoring | ✅ Done |
-| P1 security findings (H1–H4) | Segmentation gap, SQL-in-`psql`/`mysql`, pattern gaps, hook fail-open | ✅ Done |
-| P1 security findings (H5–H8) | See Open decisions below | 🔲 Open |
-| P2 security findings (M1–M9) | See Open decisions below | 🔲 Open |
+| P1 security findings (H1–H4, H8) | Segmentation gap, SQL-in-`psql`/`mysql`, pattern gaps, hook fail-open, git force-push/stash-clear/branch-D | ✅ Done |
+| P1 security findings (H5–H7, H9) | See Open decisions below | 🔲 Open |
+| P2 security findings (M1–M10; M6 closed) | See Open decisions below | 🔲 Open |
 | 1.0 perf gate | Hot path < 2 ms (p99) via criterion | 🔲 Open |
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
 
@@ -126,30 +126,54 @@ Multi-crate Cargo workspace. Binary crate (`aegis`) at root depends on:
 - `crates/aegis-tui` — crossterm confirmation dialog
 - `crates/aegis-snapshot` — six snapshot backends (git, docker, pg, mysql, sqlite, supabase)
 - `crates/aegis-audit` — AuditLogger, append-only JSONL with optional hash-chain integrity
+- `crates/aegis-starlark` — opt-in Starlark policy evaluation (behind `starlark-policy`)
+- `crates/aegis-sandbox` — bwrap + Landlock (Linux) / sandbox-exec (macOS) execution confinement
 
-DAG boundaries enforced by `tests/architecture_boundaries.rs`. Architectural
-rationale for the shape of this workspace lives in `docs/adr/` (ADR-001
-through ADR-015; `ADR-009` is intentionally absent, numbering preserved).
+Eleven crates total. DAG boundaries for the first nine are enforced by
+`tests/architecture_boundaries.rs`; `aegis-sandbox` is covered separately by
+`tests/platform_scope.rs`, and `aegis-starlark` is not yet asserted in either
+(gap). Architectural rationale for the shape of this workspace lives in
+`docs/adr/` (ADR-001 through ADR-016; `ADR-009` is intentionally absent,
+numbering preserved).
 
-As of the last session: 538 workspace tests green, `cargo clippy -- -D
-warnings` clean, `cargo fmt --check` clean, `cargo audit`/`cargo deny check`
-clean (aside from pre-existing allowed advisories under the opt-in
-`starlark-policy` feature — see memory `deny_advisories_baseline`).
+As of the 2026-07-09 checkup: `cargo fmt --check` clean; `cargo test
+--workspace` = 1404 passed / 0 failed (86 suites) after this session's fixes
+(the earlier "538" figure was stale); `cargo clippy -- -D warnings` clean after
+removing a dead test helper this session. `cargo audit`/`cargo deny check` clean (aside
+from pre-existing allowed advisories under the opt-in `starlark-policy`
+feature — see memory `deny_advisories_baseline`).
 
 ---
 
 ## Open decisions / blockers
 
-- **P1 security findings H5–H8** (`TASKS.md`): H5 audit hash chain is not
+- **P1 security findings H5–H7, H9** (`TASKS.md`): H5 audit hash chain is not
   true tamper-evidence; H6 snapshot store lacks containment checks; H7
-  database dumps/snapshots/audit files are too permissive; H8 Git
-  token-prefix rules miss `git push --force`, `git stash clear`, etc.
-- **P2 security findings M1–M9** (`TASKS.md`): sandbox degradation too quiet,
-  user-regex size limits, in-band kill-switch/wrapper bypass, hook panics can
-  fail open, additional pattern gaps, project config can disable recovery,
-  latent fail-open around shell audit readiness, snapshot doesn't recover a
-  dangerous command's effect on command output, `aegis rollback` unusable
-  from `aegis snapshot list` output.
+  database dumps/snapshots/audit files are too permissive; H9 dynamic-eval /
+  interpreter bypasses defeat string classification — **partially closed this
+  session**: effect-opaque execution (script-file, interpreter stdin,
+  pipe-to-shell) now requires a pre-exec recovery snapshot under
+  `SnapshotPolicy::{Selective, Full}` without raising risk or adding a prompt
+  (ADR-016, Iter 1–3 done); **Iter 4 (degradation UX / fail-closed when no
+  snapshot can be created) and Iter 5 (threat-model/config-schema/README docs +
+  TASKS close-out) remain open.** H8 (git force-push/stash-clear/branch-D) is
+  **closed** — moved to Done.
+- **P2 security findings M1–M5, M7–M10** (`TASKS.md`): sandbox degradation too
+  quiet, user-regex size limits, in-band kill-switch/wrapper bypass (confirmed
+  on the maintainer's own machine 2026-07-09), hook panics can fail open,
+  additional pattern gaps, latent fail-open around shell audit readiness,
+  snapshot doesn't recover the effect on committed/clean files, `aegis
+  rollback` unusable from copy-pasted snapshot ids (tab-separated), README
+  Before/After misrepresented the snapshot timing (fixed this session). M6
+  (project config can disable recovery) is now **closed** by the C3 ratchet.
+- **Docs accuracy regressions (2026-07-09 checkup):** ARCHITECTURE.md references
+  removed paths (`src/decision/engine.rs`, `src/interceptor/…`, `src/config/…`,
+  `src/snapshot/*.rs`), states a stale 1500/2000 LoC budget (actual 800), and
+  omits the sandbox layer; CONVENTION.md says "10 crates" (11) and cites
+  removed `src/audit/logger.rs`; ROADMAP.md still lists Windows work + "9
+  crates" against the M4 drop-Windows decision; CHANGELOG `[Unreleased]` misses
+  a few post-0.6.0 CI/docs commits; `docs/config-schema.md` omits the
+  `[sandbox]` section that exists in code and `aegis-schema.json`.
 - 1.0 perf gate: hot path p99 < 2 ms not yet confirmed by a criterion run on
   the current workspace.
 - 1.0 test gate: zero-false-negative security bypass corpus not yet locked in.
@@ -169,7 +193,8 @@ clean (aside from pre-existing allowed advisories under the opt-in
 - Read this file, `TASKS.md`, and `CONVENTION.md` before starting non-trivial
   work.
 - Load the `rust-best-practices` skill before writing or reviewing Rust code
-  (see `CLAUDE.md` / `AGENTS.md`).
+  (see `CLAUDE.md`; the root `AGENTS.md` was removed — Codex reads
+  `.codex/AGENTS.md`).
 - Security-sensitive parser/scanner/policy changes go through red → green →
   review TDD (see `tdd` skill); close out with `cargo fmt --check`, `cargo
   clippy -- -D warnings`, full `cargo test --workspace`, and a benchmark run
