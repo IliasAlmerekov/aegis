@@ -209,8 +209,10 @@ _Avoid_: sandbox failure, escape
 ## Snapshot & Audit
 
 **Snapshot**:
-A best-effort pre-execution capture (e.g. `git stash`) taken before an approved
-`Danger` command, so the action can be rolled back. Best-effort, not a guarantee.
+A best-effort pre-execution capture (e.g. `git stash`) produced by an applicable
+`Snapshot plugin`. It preserves only the state that plugin captures at that
+moment; it is not a complete backup and does not promise to reverse every later
+command effect.
 _Avoid_: backup, checkpoint
 
 **Snapshot plugin**:
@@ -220,13 +222,22 @@ that knows how to capture and restore state for its domain. Each successful run 
 _Avoid_: snapshotter, driver, backend
 
 **Rollback**:
-Restoring a previously taken `Snapshot` by its `snapshot_id`.
+Restoring the state captured by a previous `Snapshot`, addressed by its
+`snapshot_id`. It restores captured state; it is not a general undo of the
+command that ran afterward.
 _Avoid_: undo, revert
 
 **Audit log**:
 The append-only JSONL record at `~/.aegis/audit.jsonl`. One `AuditEntry` per line;
 never rewritten. The format is part of the public contract.
 _Avoid_: history, journal
+
+**Audit integrity chain**:
+The optional unkeyed SHA-256 link between consecutive `AuditEntry` values and
+rotated segments (`ChainSha256`). It detects corruption and inconsistent edits,
+but has no keyed or external anchor and therefore does not prove adversarial
+tamper-evidence against an actor who can rewrite the whole local log.
+_Avoid_: tamper-evident log, tamper-proof audit
 
 **AuditEntry**:
 One JSONL line in the audit log — the structured record of a single intercepted command,

@@ -65,11 +65,10 @@ $ rm -rf ~/.config
 Command  rm -rf ~/.config
 Risk     Danger
 Pattern  FS-001 — rm with -rf flag
-Snapshot git stash created (a3f9b12)
 
 [A] approve  [D] deny  [i] info
 
-● Denied. Snapshot retained.
+● Denied.
 ```
 
 </td>
@@ -192,7 +191,7 @@ AI agent command
       │
       ├──▶ Safe   ──▶ run immediately
       ├──▶ Warn   ──▶ ask first
-      ├──▶ Danger ──▶ snapshot if configured, then ask
+      ├──▶ Danger ──▶ ask first, then snapshot if approved/configured
       └──▶ Block  ──▶ refuse
                           │
                           ▼

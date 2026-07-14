@@ -1,765 +1,446 @@
-# TASKS — Reviewer Security Findings Blocking Aegis 1.0
+# TASKS — Security findings blocking Aegis 1.0
 
-> Source: ultra-deep security audit report from reviewer, dated 2026-06-23.
-> Branch: `feat/shell-security` · version path: `0.5.8` → `1.0.0`.
+> Sources: the 2026-06-23 reviewer security audit and the 2026-06-24 live
+> crash-test of `aegis 0.5.9`.
 >
-> Method summary: 7 parallel adversarial agents across critical surfaces plus
-> independent verification of key findings against real `assess()`, policy engine,
-> and git state.
->
-> **Second source (appended 2026-06-24):** manual crash-test of the released
-> `aegis 0.5.9`. Dangerous commands from `PROMPTS.md` were fed one-by-one as
-> top-level `Bash` calls so the aegis hook assessed each independently; reactions
-> were observed on an isolated git-backed stand (fully reversible). This run
-> surfaced the C4 token-prefix anchoring bypass below and confirmed several
-> pattern-coverage gaps.
+> This file is the normalized backlog index. Each item contains only the
+> finding, acceptance criteria, current status, and traceability. Implementation
+> detail belongs in the linked file under `docs/plans/`; architectural decisions
+> belong in `docs/adr/`; completed history belongs in git and `CHANGELOG.md`.
 
 ## Release verdict
 
-**Do not ship to production.** The core product promise — "a dangerous command
-will not execute without confirmation" — is currently bypassable in at least five
-trivial ways that require no preparation. Several bypasses were reproduced against
-the real scanner.
+**Not ready for 1.0.** The original critical scanner bypasses are closed, but the
+ordered release backlog below still contains open containment, recovery,
+fail-closed, and product-contract findings. A checkbox may be closed only after
+the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 
-The architectural core is still sound: intrinsic `Block` is unbreakable and policy
-precedence is strong. The blockers are coverage and normalization gaps, not a
-fundamental design failure. They are fixable with targeted work.
+## Status vocabulary
 
----
-
-## Important local-machine context
-
-1. **Aegis is currently disabled on this machine.** `~/.aegis/disabled` exists
-   (`aegis off`). In this mode every command executes directly without scanning.
-   During review, one test agent really executed destructive
-   `git reset --hard HEAD~5` commands. The repository survived: the agent restored
-   it to `84879eb`, the tree was clean, and no commits were lost. Commit
-   `1ea55c8` (`chore: replace aegis gif`) above that is an operator commit by
-   Ilias Almerekov, not damage.
-2. **Rejected false alarm:** `export CI=1` does **not** auto-approve dangerous
-   commands. Code review and re-checking show the default `ci_policy = Block`
-   makes Aegis stricter (`Danger` → `Block`, exit 3). Do not track this as a
-   vulnerability.
+- **Open** — confirmed finding with acceptance criteria not yet met.
+- **Partial** — a verified slice landed, but at least one acceptance criterion
+  remains open; the checkbox stays unchecked.
+- **Closed** — acceptance criteria are met and verification evidence is linked.
 
 ---
 
-## P0 — Critical release blockers
+## P0 — Critical
 
-### [x] C1 — Uppercase bypasses all regex patterns
+### [x] C1 — Uppercase bypasses built-in regex patterns
 
-- **Risk:** Critical.
-- **Status:** confirmed on real `assess()`.
-- **Evidence:** `RM -RF /` → `Safe` while lowercase `rm -rf /` → `Block`.
-  Similar uppercase variants of `DD if=/dev/zero of=/dev/sda`,
-  `MKFS.ext4 /dev/sda`, `SHRED`, `FIND / -delete`, `CHMOD 777 ...` also return
-  `Safe`.
-- **Root cause:** `scanner/mod.rs:141-144` builds Aho-Corasick with
-  `ascii_case_insensitive(true)`, so the fast pass hits. Regexes from
-  `patterns.toml` are compiled without `(?i)` / case-insensitive mode
-  (`scanner/mod.rs:91`), so the verification pass silently misses and falls
-  through to `Safe`.
-- **Fix:** compile all built-in regexes with `RegexBuilder::case_insensitive(true)`
-  or add `(?i)` consistently. Add regression tests for uppercase variants of each
-  `Danger` / `Block` pattern.
-- **Resolution:** built-in regex patterns are compiled case-insensitively, with regression tests for uppercase destructive commands and custom-pattern case sensitivity.
+- **Finding:** destructive commands written in uppercase bypassed regex
+  verification after the case-insensitive quick pass.
+- **Acceptance criteria:** built-in regex matching is ASCII-case-insensitive;
+  uppercase and mixed-case destructive examples match; custom regex semantics
+  remain user-controlled.
+- **Status:** **Closed** — verified 2026-06-23.
+- **Traceability:** commits `60de12d`, `4d8d58b`; scanner mixed-case regression
+  tests.
 
-### [x] C2 — `$IFS` obfuscation bypasses most patterns
+### [x] C2 — Literal `$IFS` command obfuscation bypasses classification
 
-- **Risk:** Critical.
-- **Status:** resolved.
-- **Evidence:** `rm$IFS-rf$IFS/` → `Safe`; `rm${IFS}-rf${IFS}/` → `Safe`;
-  `dd${IFS}of=/dev/sda` → `Safe`. In a real shell, `$IFS` is whitespace, so these
-  execute as destructive commands. The bypass composes through `bash -c`, heredoc,
-  and process substitution.
-- **Root cause:** `tokenizer.rs` keeps `rm$IFS-rf$IFS/` as a single token; the
-  normalized command has no spaces, so regexes do not match. `$IFS` is a
-  deterministic shell word-splitting primitive, not an unknown variable.
-- **Fix:** treat literal `$IFS` and `${IFS}` as separators in tokenization or
-  normalization. This is cheap and does not require full variable expansion.
-- **Resolution:** `split_tokens` now treats unquoted literal `$IFS` / `${IFS}` as
-  shell word-separators via the `ifs_marker_len` helper (bare `$IFS` only at an
-  identifier boundary; braced `${IFS}` self-delimited). The fix flows through
-  `Parser::parse` and `logical_segments` into direct, nested-shell (`bash -c` /
-  `sh -c`), heredoc, and process-substitution scan paths. Quoted (`'$IFS'`,
-  `"$IFS"`), escaped (`\$IFS`), and non-IFS variable forms (`$PATH`, `$IFSHOME`)
-  stay opaque. Covered by tokenizer positive/negative tests, parser
-  normalized-form tests, and scanner regressions across PS-006, FS-002, FS-003,
-  FS-004, and FS-006.
+- **Finding:** unquoted literal `$IFS` / `${IFS}` can act as shell separators
+  while remaining fused inside scanner tokens.
+- **Acceptance criteria:** literal unquoted markers split tokens across direct,
+  nested-shell, heredoc, and process-substitution paths; quoted, escaped, and
+  unrelated variables remain opaque.
+- **Status:** **Closed** — verified 2026-06-24.
+- **Traceability:** commit `a920370`; parser and scanner `$IFS` regressions.
 
-### [x] C3 — Project-local `.aegis.toml` can weaken Aegis to audit-only
+### [x] C3 — Project config can weaken trusted security settings
 
-- **Risk:** Critical.
-- **Status:** confirmed via live `config show` / `config validate` and merge code
-  review (`model.rs:353`, `overlay.mode.unwrap_or(base.mode)`).
-- **Attack config:** a repository entered by an AI agent can include:
+- **Finding:** project-local `.aegis.toml` could weaken mode, recovery,
+  confinement, provider targets, or policy outcomes inherited from trusted
+  config.
+- **Acceptance criteria:** project config may only tighten security-critical
+  fields; weakening attempts are ignored and surfaced by `config validate`;
+  project `[[rules]] Allow` cannot silently auto-approve guarded commands.
+- **Status:** **Closed** — verified 2026-06-25.
+- **Traceability:** [ADR-013](docs/adr/adr-013-project-config-security-ratchet.md);
+  commits `86f38ad`, `f4bd0a7`, `c834477`, `5e6ab59`; config ratchet tests.
 
-  ```toml
-  mode = "Audit"
-  allowlist_override_level = "Danger"
-  snapshot_policy = "None"
-  ```
+### [x] C3-residual — Project rules and audit integrity escaped the first ratchet
 
-  Result: `engine.rs:45` auto-approves all non-intrinsic-`Block` `Warn`/`Danger`
-  commands without prompt and without snapshot. `config validate` reports the
-  config as valid with no warning.
+- **Finding:** project `[[rules]] Allow` and `audit.integrity_mode = "Off"`
+  remained last-wins after the initial C3 fix.
+- **Acceptance criteria:** untrusted effective `Allow` rules are dropped and
+  warned; project audit integrity can only tighten; merge and warning logic share
+  the same predicates.
+- **Status:** **Closed** — verified 2026-06-25.
+- **Traceability:** [ADR-013](docs/adr/adr-013-project-config-security-ratchet.md);
+  commit `5e6ab59`; `c3_residual` and policy-planning regressions.
 
-- **Root cause:** layered config merge is pure "last layer wins" for
-  security-critical scalar fields; the project layer is applied last.
-- **Fix:** add a restrictive ratchet. Project config may only tighten:
-  - `mode` only toward `Strict`
-  - `allowlist_override_level`, `ci_policy`, `snapshot_policy`, and
-    `sandbox.required` use most-restrictive global/project semantics
-  - minimum fallback: loud `config validate` warning for weakening attempts
-- **Positive note:** intrinsic `Block` remains unbreakable even under this config.
-- **Resolution:** scalar ratchet landed (ADR-013): `mode`, `allowlist_override_level`,
-  `ci_policy`, `snapshot_policy`, `sandbox.enabled`/`required`/`allow_network`/
-  `allow_write`, the six `auto_snapshot_*`, and provider-target config
-  (`sqlite_snapshot_path`, `postgres`/`mysql`/`supabase` `database`, `docker_scope`)
-  can only tighten at the project layer; weakening is ignored + warned by
-  `aegis config validate`. The documented attack config is defeated under defaults.
+### [x] C4 — Launcher and absolute-path prefixes bypass token-prefix rules
 
-### [x] C3-residual — Project `[[rules]] Allow` + `audit.integrity_mode` still last-wins
-
-- **Risk:** Critical (same class as C3).
-- **Status:** resolved.
-- **Status:** confirmed via code review during the C3 grilling session (2026-06-25).
-- **Root cause:** two security-critical paths were left out of the ADR-013 ratchet:
-  - `[[rules]]` entries are merged by **concatenation** with no ratchet on
-    `decision` and **no per-rule provenance** (`rules_layers` is absent — only
-    `allowlist`/`blocklist`/`custom_patterns` carry layer provenance;
-    `runtime/context.rs:139` flattens `config.rules` into one `Vec`). A
-    `PolicyRuleDecision::Allow` auto-approves a `Warn`/`Danger` command **before**
-    `Mode` and with **no `allowlist_override_level` ceiling**
-    (`engine.rs:28-43`) — unlike an `[[allow]]` entry, which is capped. So a
-    repository can add `[[rules]] pattern=[...] decision="Allow"` and silently
-    auto-approve e.g. `git reset --hard` with no prompt, defeating the
-    `allowlist_override_level` ratchet. `validate_policy_rules` imposes no
-    risk-level cap on `Allow`.
-  - `audit.integrity_mode` is pure last-layer-wins (`model.rs:600-603`): a project
-    can set `[audit] integrity_mode="Off"` and silently disable the audit
-    integrity chain.
-- **Fix (sanctioned 2026-06-25, ADR-013 amended):**
-  - **Drop + warn** project-layer `[[rules]]` `decision = "Allow"` (project may
-    still add `Prompt`/`Block` tightening rules). Surface as a
-    `project_security_ratchet` warning in `config validate`. Global stays
-    last-wins. A project needing an auto-approve must declare the rule in global
-    config.
-  - **Ratchet** `audit.integrity_mode` so a project cannot weaken it to `Off`;
-    keep the stricter of base/requested + warn.
-  - Add `rules_layers` provenance (mirror `allowlist_layers`) so the merge and
-    warning paths can identify project-layer `Allow` rules, OR filter at merge
-    time — pick whichever keeps merge==warning parity with the existing helpers.
-  - Regression: project `[[rules]] Allow` on a `Danger` command is dropped + warned
-    (command still prompts under `Protect`); global `[[rules]] Allow` still
-    honors; project `audit.integrity_mode="Off"` ratcheted + warned.
-- **Note:** intrinsic `Block` is unaffected (checked first in `engine.rs:22`,
-  before rules).
-- **Resolution:** the ADR-013 ratchet now covers both residual paths. A
-  project-layer `[[rules]]` entry whose effective decision is `Allow` — either
-  a top-level `decision = "allow"` OR a `decision = "prompt"`/`"block"` rule
-  with `when.then = "allow"` (resolved at runtime by `effective_decision`,
-  which reads only `rule.decision` and `rule.when.then`; both `PolicyRule` and
-  `WhenClause` are `#[serde(deny_unknown_fields)]`, so no other `Allow` source
-  exists) — is DROPPED at merge and surfaced as a `project_security_ratchet`
-  warning. The merge filter and the warning loop share the single
-  `is_untrusted_allow` predicate (`ratchet.rs`), so merge==warning parity holds
-  automatically; global `[[rules]]` stays last-wins (unfiltered); project
-  `Prompt`/`Block` rules (incl. `when.then = "prompt"`/`"block"`) still
-  tighten. `audit.integrity_mode` is ratcheted via the shared
-  `most_restrictive_integrity_mode` helper (stricter of base/requested under
-  Project; `ChainSha256` > `Off`); global stays last-wins. Regression tests in
-  `crates/aegis-config/src/model/tests/ratchet/c3_residual.rs` (config-layer)
-  and `src/planning/policy_rules.rs` (engine: dropped project Allow leaves a
-  `Danger` command prompting under `Protect`, not auto-approved).
-
-### [x] C4 — Token-prefix rules are anchored to the first token; any prefix bypasses them
-
-- **Risk:** Critical.
-- **Status:** fixed by ADR-014 — token-prefix detection now resolves an `Effective program`
-  per scan target by stripping built-in launcher prefixes and basename-normalizing
-  absolute program paths before prefix-rule and by-program-index matching.
-- **Evidence (commands that really executed in 0.5.9):**
-
-  | Command                      | Why it passed                             |
-  | ---------------------------- | ----------------------------------------- |
-  | `/usr/bin/git reset --hard`  | absolute path → first token is not `git`  |
-  | `cd dir && git reset --hard` | `git` is not the first token of the line  |
-  | `rtk git push` (force push)  | RTK wrapper prefix → first token is `rtk` |
-  | `rtk git stash clear`        | RTK wrapper prefix                        |
-  | `rtk git branch -D`          | RTK wrapper prefix                        |
-  | `rtk psql … DROP TABLE`      | RTK wrapper prefix (see also H2)          |
-
-  For contrast, the regex-based families (`rm`, `shred`, `chmod`, `docker …`)
-  matched correctly even with a prefix: `/usr/bin/rm -rf` and `echo …; rm -rf`
-  were both blocked. So the asymmetry is real: **regex patterns match anywhere in
-  the normalized string, token-prefix rules only match at the first token.**
-
-- **Destructive proof:** a prefixed `git reset --hard` in a throwaway repo erased an
-  uncommitted line (`PRECIOUS UNCOMMITTED WORK`) — Aegis stayed silent and the
-  command executed.
-- **Root cause:** GIT-001..008, DB-001/2/6/7/8, CL-_, DK-_, PS-001/2/5 were migrated
-  from regex patterns to **token-prefix rules** (`builtin_prefix_rules()` in
-  `crates/aegis-scanner/src/patterns.rs`). `Scanner::prefix_scan`
-  (`crates/aegis-scanner/src/scanner/mod.rs:240-266`) looks the rule up by the
-  literal `tokens[0]` of each scan target — there is **no basename normalization**
-  (so `/usr/bin/git` ≠ `git`) and **no skipping of launcher/wrapper prefixes**
-  (`rtk`, `sudo`, `env`, `command`, `nice`, `xargs`, …, so `rtk git` ≠ `git`).
-  Compound forms (`cd dir && git …`, `true; git …`) only get caught if
-  segmentation happens to expose `git` as a segment's first token; in practice it
-  does not (related to H1's segmentation gaps). The regex families were left in
-  `patterns.toml` and still match by substring, which is why they survive prefixes.
-  - The RTK-wrapper case is the most dangerous in practice: this environment's RTK
-    hook auto-rewrites `git push` / `git branch` / `git stash` / `psql` to
-    `rtk <cmd>`, so these destructive operations are unprotected during normal
-    work with no attacker effort at all.
-- **Fix:**
-  1. Normalize the lookup key before `prefix_scan`: take the **basename** of
-     `tokens[0]` (strip directory components) so `/usr/bin/git` resolves to `git`.
-  2. **Strip known launcher/wrapper prefixes** (`rtk`, `sudo`, `env`, `command`,
-     `nice`, `nohup`, `time`, `xargs`, `doas`, …) and re-resolve the real program
-     token before lookup — handle chained wrappers (`sudo env … git`).
-  3. Ensure compound/segmented commands expose the inner program as a segment
-     first token (couple this with the H1 segmentation fix) so `cd … && git …`
-     and `… ; git …` are evaluated.
-  4. Add explicit regression coverage for RTK-wrapped forms (`rtk git push`,
-     `rtk psql …`) and absolute-path / `sudo` / `env` prefixes for every
-     token-prefix family, not just git.
-- **Note:** this is a structural regression introduced by the regex→token-prefix
-  migration. The migrated families (git/db/cloud/docker/process) are all affected,
-  not just git; the same `tokens[0]` literal lookup gates them all.
+- **Finding:** token-prefix lookup used the literal first token, so absolute
+  paths and launcher prefixes such as `rtk`, `sudo`, or `env` hid the effective
+  program.
+- **Acceptance criteria:** detection resolves the `Effective program` per scan
+  target by basename-normalizing paths and stripping supported launcher prefixes;
+  compound commands expose each logical target.
+- **Status:** **Closed** — verified 2026-06-25.
+- **Traceability:** [ADR-014](docs/adr/adr-014-launcher-and-absolute-path-normalization-for-token-prefix-detection.md);
+  commit `bdfbaf9`; prefix-normalization regressions.
 
 ---
 
-## P1 — High severity
+## P1 — High
 
-### [x] H1 — Single `&` command segmentation gap
+### [x] H1 — Standalone `&` is not a command separator
 
-- **Problem:** command segmentation handles major operators but review found a
-  gap around single `&` background separators.
-- **Status:** resolved.
-- **File:** `segmentation.rs:156-165`.
-- **Fix:** segment on standalone `&` consistently with other shell control
-  operators and add regression tests.
-- **Resolution:** both `split_top_level_segments` and
-  `split_top_level_command_groups` now treat a standalone background `&` as a
-  command separator via a redirect-aware discriminator. `&` splits only when the
-  next char is not `&` (logical AND, unchanged), not `>` (`&>` / `&>>`), and the
-  preceding char is not an **unescaped** redirect target (`>` or `<`). The
-  preceding-char test is the shared `ends_with_redirect_target` helper — a single
-  source of truth used by both copies — which checks backslash parity so an
-  escaped `\>` / `\<` is treated as a literal argument char (the `&` still
-  splits) while genuine `>&` / `<&` / `2>&1` / `3>&-` / `cat 0<&3` stay one
-  segment. This closed a fail-open bypass found in code review
-  (`echo a\> & git push --force` previously stayed one segment → effective
-  program `echo` → GIT-003 never fired → `Safe`) and a benign `<&` over-split.
-  The change is fail-closed in the common case (adds scan targets, never removes;
-  `Intrinsic Block` untouched) and a narrow heuristic per ADR-010 — not a
-  redirect parser. Covered by parser unit tests (`segments_single_ampersand`,
-  `segments_ampersand_chain`, `segments_ampersand_no_spaces`,
-  `segments_trailing_ampersand`, `segments_escaped_gt_then_background_split`,
-  `segments_input_fd_dup_not_split`, `segments_fd_dup_then_background_split`),
-  redirect anti-regression tests (`segments_combined_redirect_not_split`,
-  `segments_append_redirect_not_split`, `segments_fd_dup_not_split`,
-  `segments_combined_redirect_no_spaces_not_split`), the pipeline-path test
-  `top_level_pipelines_splits_command_groups_on_background_ampersand`, scanner
-  end-to-end regressions `ampersand_does_not_bypass_git_prefix_rule`,
-  `ampersand_escaped_redirect_char_does_not_bypass_git_prefix_rule`, and
-  `ampersand_does_not_bypass_pipeline_rule` (PIPE-001 across `&`), and parity
-  guards `segments_double_backslash_redirect_kept` (even backslash run is a real
-  redirect) and `segments_escaped_lt_then_background_split` (escaped `\<` still
-  splits) that pin the backslash-parity branch against a boolean-collapse
-  regression. Verified RED on the pre-fix code, GREEN after. No changes to
-  `split_pipeline_segments`, `split_tokens`, dependencies, or lockfile.
+- **Finding:** background-separated commands could remain one scan target and
+  hide a destructive effective program.
+- **Acceptance criteria:** standalone `&` splits logical segments without
+  splitting `&&`, `&>`, `>&`, `<&`, or file-descriptor duplication forms.
+- **Status:** **Closed** — verified 2026-06-25.
+- **Traceability:** commit `54743de`; parser and scanner ampersand regressions.
 
-### [x] H2 — SQL inside `psql -c` / `mysql -e` is not scanned
+### [x] H2 — Destructive SQL inside database CLI arguments is missed
 
-- **Problem:** `psql -c 'DROP TABLE users'` → `Safe` while bare
-  `DROP TABLE users` → `Danger`.
-- **Status:** resolved.
-- **File:** `nested_shells.rs:39-45`.
-- **Fix:** recursively scan SQL passed to `psql -c` / `mysql -e`, or remove overly
-  strict prefix anchoring from destructive SQL rules so embedded `DROP` is caught.
-- **Resolution:** `DB-001`/`002`/`007`/`008` reverted from token-prefix rules to
-  match-anywhere regex `Pattern`s in `patterns.toml` (`\bdrop\s+table\b`,
-  `\bdrop\s+database\b`, `\bdrop\s+schema\b`,
-  `\balter\s+table\s+.+?\s+drop\s+column\b`), restoring parity with
-  `DB-003`/`004`/`005` (ADR-015). SQL verbs are arguments, not program tokens, so
-  regex match-anywhere catches them regardless of delivery (`-c`, `-e`,
-  `--command=`, `--execute`, `rtk psql`, heredoc, stdin, `;`-compound). The four
-  `PrefixRule`s were removed from `builtin_prefix_rules()`; `DB-006`
-  (Redis `FLUSHALL`/`FLUSHDB`, verb-is-program) stays a prefix rule. IDs and risk
-  levels unchanged (`DB-008` = `Warn`). Fail-closed: match-anywhere ⊇ first-token
-  match, `Intrinsic Block` untouched. Covered by
-  `assess_detects_destructive_sql_embedded_in_db_cli_invocations` (positive,
-  psql/mysql/rtk/compound delivery) and the `destructive_sql_does_not_*`
-  narrowness guards (`drop_table_log` identifier and uncovered `DROP INDEX` stay
-  below `Danger`). `DB-006` redis gap and `TRUNCATE` without `TABLE` (M5) remain
-  out of scope.
+- **Finding:** destructive SQL delivered through `psql -c`, `mysql -e`, wrappers,
+  or compound forms did not match first-token SQL rules.
+- **Acceptance criteria:** covered destructive SQL signatures match anywhere in
+  normalized scan targets without converting SQL handling into a full parser.
+- **Status:** **Closed** — verified 2026-06-30.
+- **Traceability:** [ADR-015](docs/adr/adr-015-destructive-sql-detected-by-regex-not-token-prefix.md);
+  commit `106ac04`; destructive-SQL delivery regressions.
 
-### [x] H3 — Pattern database has dangerous gaps
+### [x] H3 — High-impact destructive command families are missing
 
-- **Problem:** the following currently classify as `Safe`: `wipefs -a /dev/sda`,
-  `aws s3 rb --force`, `aws s3 sync --delete`, `gsutil rm -r`, appending keys to
-  `~/.ssh/authorized_keys`, truncating shell rc files such as `> ~/.bashrc`, and
-  `unlink`.
-- **Status:** agent-confirmed.
-- **Files:** `patterns.toml`, `builtins_a.rs`.
-- **Fix:** extend built-in patterns and run through the eval harness.
-- **Scope (set during 2026-06-29 grill):** add exactly seven rules — FS-011
-  `wipefs … -a` (prefix, Danger), FS-012 `unlink` (prefix, Warn), FS-013
-  `>+ … authorized_keys` (regex, Danger, matches `>`/`>>`), FS-014 shell-rc clobber
-  (regex, Warn, single-`>` only), CL-011 `aws s3 rb --force` (prefix, Danger),
-  CL-012 `aws s3 sync --delete` (prefix, Warn), CL-013 `gsutil … rm … -r` (prefix,
-  Danger). Mechanism split follows ADR-014 (program-led verb → token-prefix) /
-  ADR-015 (embedded signature → match-anywhere regex). No new ADR.
-- **Resolution (2026-06-29):** all seven rules added exactly as scoped —
-  FS-011/FS-012 as the first Filesystem token-prefix rules in `builtins_a.rs`,
-  CL-011/012/013 in its Cloud block, FS-013/FS-014 as match-anywhere regexes in
-  `patterns.toml` (FS-013 keyword anchors on `authorized_keys`, FS-014 uses
-  top-level per-filename alternation with the no-lookbehind `(^|[^>])>[^>]`
-  single-`>` guard). TDD RED→GREEN per slice; covered by `assess_h3_*` positives
-  in `basic.rs` and the `h3_*` narrowness guards in `h3_gaps.rs`. Fail-closed
-  preserved (additive matches only); `validate_examples` green.
-- **Follow-up review remediation (2026-06-30):** addressed the lead-review
-  findings on the H3 diff — (1) **FS-013 wording vs behavior**: added a `tee`
-  branch (`tee\s+(?:-\S+\s+)*\S*authorized_keys`) so the `echo key | tee -a
-~/.ssh/authorized_keys` backdoor idiom is caught, and reworded the
-  description/justification to "Write into … (via redirect or tee)"; (2)
-  **bugs-01**: pulled the `aws` pre-service global-flag fix forward — added a
-  leading `any_star()` to CL-005/CL-011/CL-012 so `aws --profile … s3 rm/rb/sync
-…` is caught; (3) **bugs-04**: added must-fire coverage for all five remaining
-  FS-014 rc files; (4) **simplicity-01**: hoisted `assert_assessment_matches_pattern`
-  into `tests/mod.rs`. The remaining H3-followups below stay deferred.
+- **Finding:** destructive filesystem and cloud forms including `wipefs`,
+  `unlink`, writes to `authorized_keys`, shell-rc clobbering, S3/gsutil deletion,
+  and related sibling commands were unclassified.
+- **Acceptance criteria:** the scoped H3 and H3-follow-up command families have
+  positive and narrowness examples and pass the built-in rule validation harness.
+- **Status:** **Closed** — verified 2026-07-02.
+- **Traceability:** commits `e2ddd5d`, `796d4a0`; scanner `h3_gaps` and built-in
+  example tests.
 
-#### [x] H3-followups — siblings deferred from the H3 grill
+### [x] H4 — Agent hooks can fail open when Aegis is unavailable
 
-- **Resolution (2026-07-02):** closed the remaining siblings as additive scanner
-  hardening: `FS-011` now handles `wipefs` short flag bundles containing `a`;
-  `CL-014` covers `gcloud storage rm --recursive`; `FS-015` covers
-  `rsync --delete*`; `FS-016` blocks `blkdiscard`; `FS-017` covers
-  `sgdisk --zap-all`/`-Z`; `FS-018` covers destructive `parted mklabel`/`rm`;
-  `DB-006` now also covers `redis-cli` invocations containing `FLUSHALL` or `FLUSHDB`. Existing resolved
-  H3 review follow-ups (`aws` global flags, `tee` to `authorized_keys`) remain
-  recorded in the H3 remediation note above.
+- **Finding:** a missing `aegis` binary could make a managed shell hook exit
+  without a deny response.
+- **Acceptance criteria:** Claude and Codex hooks emit the agent-specific deny
+  shape for missing binary, invalid JSON, or invalid required input.
+- **Status:** **Closed** — verified 2026-07-07.
+- **Traceability:** [ADR-007](docs/adr/adr-007-shell-hooks-share-one-managed-helper-but-must-not-fail-open.md);
+  commit `9667a02`; `tests/agent_hooks.rs`.
 
-### [x] H4 — `claude-code.sh` hook fails open
+### [ ] H5 — Audit hash-chain claims exceed the integrity contract
 
-- **Problem:** when `jq` or `aegis` is missing, or JSON is invalid, the Claude hook
-  exits 0, allowing the command to pass without scanning. The Codex hook already
-  denies in these cases. This violates ADR-007.
-- **Status:** closed. Finding as written was stale — the jq fail-open and the
-  Claude/Codex divergence were already fixed in `8dbb61d` (jq-free Rust delegation;
-  `src/install/hook.rs` denies on invalid JSON / missing `tool_input`). The residual
-  fail-open was `exec "${AEGIS_BIN}" hook` exiting 127 with empty stdout when the
-  binary is missing → command ran unscanned. Fixed by a `command -v` guard before
-  `exec` in both hooks that emits a `deny` decision and exits 0 (ADR-007).
-- **File:** `scripts/hooks/claude-code.sh`, `scripts/hooks/codex-pre-tool-use.sh`.
-- **Fix:** shipped — fail-closed guard + regression tests in `tests/agent_hooks.rs`.
+- **Finding:** an unkeyed, locally stored SHA-256 chain detects accidental
+  corruption and some edits, but cannot prove adversarial tamper-evidence against
+  an actor who can rewrite or truncate the whole log.
+- **Acceptance criteria:** public docs, CLI help, config comments, source docs,
+  and user-visible verification output consistently call this an **integrity
+  chain/check**; they state that it has no keyed or external anchor and do not
+  claim adversarial tamper-evidence. Cryptographic anchoring is out of the 1.0
+  product contract unless separately designed in a future ADR.
+- **Status:** **Open** — misleading wording remains in current docs and code.
+- **Traceability:** [plan](docs/plans/2026-07-14-h5-audit-integrity-contract.md);
+  [ADR-004](docs/adr/adr-004-snapshots-are-best-effort-audit-is-append-only.md).
 
-### [ ] H5 — Audit hash chain is not true tamper-evidence
+### [ ] H6 — Snapshot paths are not proven contained in the snapshot store
 
-- **Problem:** the audit hash chain is not keyed and has no external anchor. Anyone
-  who can write `audit.jsonl` can rewrite entries and recompute a valid chain;
-  truncation from the end and complete reset are not detected. Public
-  "tamper-evident" wording is misleading: this is an integrity/corruption check,
-  not adversarial tamper-evidence.
-- **Status:** agent-confirmed via tests.
-- **File:** `logger/integrity.rs:90-133`.
-- **Fix:** add HMAC/external anchoring, or change public wording to
-  "integrity/corruption check".
+- **Finding:** path validation rejects absolute paths and `..` but does not prove
+  that a resolved artifact remains inside the configured snapshot root before
+  overwrite or deletion.
+- **Acceptance criteria:** every filesystem snapshot rollback/delete path is
+  resolved beneath its trusted root; traversal, symlink escape, and sibling-prefix
+  cases fail closed; legitimate stored artifacts continue to round-trip.
+- **Status:** **Open** — confirmed.
+- **Traceability:** [plan](docs/plans/2026-07-14-h6-snapshot-path-containment.md);
+  Supabase rollback containment is the current reference seam.
 
-### [ ] H6 — Snapshot store lacks containment checks
+### [ ] H7a — Snapshot artifacts inherit overly broad permissions
 
-- **Problem:** `validate_snapshot_path` checks absolute paths and rejects `..`, but
-  does not prove the path is contained inside `~/.aegis/snapshots`. This creates an
-  arbitrary overwrite/delete primitive. Today it is partially mitigated because
-  `snapshot_id` comes from the audit log, not directly from CLI input.
-- **Status:** agent-confirmed.
-- **Files:** `sqlite.rs:99-115`, `postgres/mod.rs:249`.
-- **Fix:** add containment validation, using `supabase/runtime/rollback.rs` as a
-  reference pattern.
+- **Finding:** database dumps and snapshot directories can be created with
+  process-umask defaults that expose database contents or credentials to other
+  local users.
+- **Acceptance criteria:** newly created snapshot directories are owner-only and
+  snapshot files are owner-readable/writable only on supported Unix platforms;
+  existing unsafe paths are rejected or tightened before sensitive writes;
+  non-Unix behavior is documented and tested without adding native-Windows scope.
+- **Status:** **Open** — split from H7.
+- **Traceability:** [plan](docs/plans/2026-07-14-h7a-snapshot-artifact-permissions.md).
 
-### [ ] H7 — Database dumps, snapshots, and audit files are too permissive
+### [ ] H7b — Audit artifacts follow unsafe paths and inherit broad permissions
 
-- **Problem:** DB dumps and snapshot directories are created world-readable
-  (`0644` / `0755`) without explicit mode; audit log is similar and follows
-  symlinks. Dumps can contain full database contents and credentials.
-- **Status:** agent-confirmed.
-- **Files:** `postgres/mod.rs:91-110`, `audit/writer.rs:236`.
-- **Fix:** directories `0700`, files `0600`, and avoid symlink following for audit
-  writes (for example `O_NOFOLLOW` where available).
+- **Finding:** audit log, rotation, and lock-file creation rely on ordinary
+  `OpenOptions`/`create_dir_all`, allowing broad modes and symlink-following on
+  security-artifact paths.
+- **Acceptance criteria:** audit directories/files/locks are owner-only on
+  supported Unix platforms; active log and rotation opens reject symlink targets
+  without weakening append-only or fail-closed audit behavior; platform limits
+  are explicit.
+- **Status:** **Open** — split from H7.
+- **Traceability:** [plan](docs/plans/2026-07-14-h7b-audit-file-hardening.md);
+  `crates/aegis-audit/src/logger/writer.rs`.
 
-### [x] H8 — Git token-prefix rules miss `git push --force`, `git stash clear`, `git branch -D`
+### [x] H8 — Destructive Git forms lack token-prefix coverage
 
-- **Status:** resolved. Prefix rules now cover the gap: `GIT-003`
-  (`push … --force` / `-f` / `--force-with-lease`), `GIT-006` + `GIT-006B`/`006C`
-  (`branch -D` / `-d --force`), and `GIT-008` (`stash drop` / `stash clear`) in
-  `crates/aegis-scanner/src/patterns/builtins_a.rs`. The `edge_cases.rs` test
-  that previously asserted `["git","push","--force"]` must NOT match was
-  inverted — it now asserts `GIT-003` fires (the surviving "must NOT match" case
-  is the distinct quoted single-token form, which is legitimately different). C4
-  (landed) removes the wrapper/path-prefix amplification below.
-- **Problem:** even with the _first token_ correctly `git` (no prefix), several
-  destructive git subcommands were not flagged in the crash-test:
-  - `git push --force` → executed. Note `crates/aegis-scanner/src/scanner/tests/edge_cases.rs:375`
-    **explicitly asserts** `["git", "push", "--force"]` must NOT match the prefix
-    rules — this is a deliberate decision that needs revisiting, not just a missing
-    pattern. A force-push is irreversible history destruction on the remote.
-  - `git stash clear` → executed (drops all stashed work, unrecoverable).
-  - `git branch -D <branch>` → executed (force-deletes an unmerged branch).
-- **Status:** crash-test confirmed.
-- **Files:** `crates/aegis-scanner/src/patterns.rs` (`builtin_prefix_rules()` —
-  GIT-001..008), `crates/aegis-scanner/src/scanner/tests/edge_cases.rs:375`.
-- **Fix:** add token-prefix rules for `git push --force` / `--force-with-lease` /
-  `-f`, `git stash clear` (and `git stash drop`), and `git branch -D` / `-D`
-  combined `-d --force`; decide and document the intended risk level for force-push
-  (likely `Danger`), and update/replace the edge-case test that currently locks in
-  the pass-through. Run through the eval harness alongside H3/M5.
-- **Depends on / amplified by C4:** until C4 lands, every one of these is _also_
-  reachable via `rtk git …` / path prefix regardless of pattern coverage.
+- **Finding:** force-push, forced branch deletion, and stash drop/clear could pass
+  without the intended Git rule.
+- **Acceptance criteria:** `GIT-003`, `GIT-006`/`006B`/`006C`, and `GIT-008`
+  cover their destructive forms and survive launcher/path normalization.
+- **Status:** **Closed** — verified in the current scanner; backlog status synced
+  2026-07-09.
+- **Traceability:** commit `b1b64183`; C4 commit `bdfbaf9`; built-in Git rule
+  examples and scanner edge-case tests.
 
-### [ ] H9 — Dynamic-evaluation and interpreter bypasses defeat string classification
+### [ ] H9 — ADR-016 required recovery can degrade silently
 
-- **Problem:** the scanner classifies the _spelling_ of a command, not its
-  _effect_. Any construct that defers the real command past the point of
-  assessment reaches the same syscall while looking nothing like a built-in
-  pattern. None of these require an adversary — an agent only has to phrase the
-  task creatively:
-  - **Runtime variable expansion:** `X='rm -rf ~/.config'; bash -c "$X"` — the
-    scan target is `bash -c "$X"`; the payload only exists after the child shell
-    expands `$X`. Distinct from C2, which normalized the _literal_ `$IFS` /
-    `${IFS}` spelling — this is arbitrary deferred expansion, not a fixed token.
-  - **Encoded payloads:** `echo cm0gLXJm… | base64 -d | sh` — no `rm`, no path,
-    and no flag appear in the command text; only `echo` / `base64` / `sh` do.
-  - **Interpreter one-liners:** `python3 -c "import os; os.unlink('/path')"`,
-    `perl -e 'unlink …'`, `node -e 'fs.rmSync(…)'` — the destructive effect is a
-    library call, not a shell verb, so no `rm` / `unlink` pattern fires.
-  - **Symlink-swap TOCTOU (distinct sub-mechanism):** `rm -rf ./build` passes
-    while `./build` is a directory; the path is swapped for a symlink to a
-    sensitive root between check and use. The assessment was honest; the effect
-    changed after it.
-  - **Script-file execution (confirmed live 2026-07-09; canonical term in
-    `CONTEXT.md`):** `sh ./cleanup.sh` / `python3 ./cleanup.py` /
-    `node ./cleanup.js` (also `bash script.sh`, `source ./x`, `. ./x`) classify
-    as **Safe** and execute unscanned — the destructive effect lives in the
-    referenced file, whose contents Aegis never reads at classification time.
-    Unlike an `Inline script` (`-c` / `-e` body, which is extracted and
-    scanned), a file path in argv carries no verb, no pipe, and no inline body,
-    so none of the shape-based heuristics below fire. This is the cleanest
-    non-adversarial instance of the class: an agent writing a helper script and
-    running it is ordinary behavior. All six forms reproduced against the
-    release binary.
-- **Status:** design limitation, externally raised (dev.to comments, 2026-07-09)
-  and consistent with `docs/threat-model.md` ("heuristic guardrail, not a
-  sandbox … not a defense against a determined adversary"). The finding sharpens
-  the threat model: these vectors are reachable _non-adversarially_, so they
-  fall inside Aegis' stated "accidental agent damage" scope, not only the
-  out-of-scope "determined adversary" clause.
-- **Live-verification note (2026-07-09):** not every "creative phrasing" evades
-  the scanner today — several idioms cited in review are already caught:
-  `find . -delete` (Danger), `git clean -fdx` (GIT-002, Warn), a heredoc'd
-  `rm -rf` (Danger, heredoc recursion), and `curl … | sh` (Danger). Aegis also
-  keys on the _shape_ of deferred execution even when the payload is invisible:
-  `bash -c "$X"` and `python3 -c "$CODE"` → Warn, any `… | sh`/`| bash` →
-  Danger. So the open gap is narrower than "all deferred execution": it is
-  specifically (a) script-file execution (above), (b) interpreter one-liners
-  whose effect is a library call with no shell verb, and (c) the symlink TOCTOU.
-  Warn/Danger only _prompt_ in interactive mode, so in yolo/full-permission use
-  a reflexive approve still lets them through — which is the real argument for
-  the effect-level backstop over more patterns.
-- **Why string classification cannot close it:** these surfaces are unbounded —
-  full variable expansion, arbitrary decoders, and every interpreter's file API
-  are Turing-complete. Adding patterns is whack-a-mole and inflates false
-  positives on the happy path. The only durable mitigation gates the _effect_,
-  not the string.
-- **Design decision:** ADR-016 separates `RiskLevel` from backstop requirements.
-  `Effect-opaque execution` does not raise risk by itself; it records an
-  `effect_opaque` marker and requires recovery by setting `snapshots_required`
-  under the default `SnapshotPolicy::Selective` / `Full` path. Successful
-  snapshot creation preserves the happy path (no extra prompt). Missing required
-  recovery degrades loudly: non-interactive fails closed; interactive explains
-  that the script contents were not inspected and no recovery snapshot is
-  available. `SnapshotPolicy::None` is a trusted/global opt-out only; project
-  config cannot weaken recovery because of the C3/M6 ratchet. Sandbox
-  confinement is a separate optional strict tier (`confinement_required`), not
-  the primary v1 mitigation for effect opacity.
-- **Files:** `src/shell_flow.rs`, `crates/aegis-policy`, `crates/aegis-types`,
-  `crates/aegis-scanner`, `crates/aegis-snapshot`, `docs/threat-model.md`,
-  `docs/adr/adr-016-effect-opaque-execution-uses-recovery-backstops.md`.
-- **Fix:** add bounded shape detection for v1 effect opacity: interpreter +
-  script-file-looking argv (`sh ./x`, `bash ./x`, `python3 ./x.py`,
-  `node ./x.js`, `ruby ./x.rb`, `perl ./x.pl`, `source ./x`, `. ./x`) and
-  interpreter-stdin forms (`sh -s`, `bash -s`, existing pipe-to-shell shapes).
-  Do not `stat()` paths on the hot path and do not include package runners
-  (`npm run`, `make`, `cargo xtask`, etc.) in v1. Extend policy/audit plumbing
-  with `effect_opaque` and `confinement_required`; reuse the existing
-  `snapshots_required` axis for the recovery backstop.
-- **Progress (2026-07-09):** Iter 1–3 done via TDD and verified — `effect_opaque`
-  field on `Assessment`, bounded v1 shape detection
-  (`crates/aegis-scanner/src/scanner/effect_opaque.rs`), `confinement_required`
-  axis, backward-compatible audit fields, and `snapshots_required` firing for
-  effect-opaque commands under `SnapshotPolicy::{Selective, Full}` (no risk
-  raise, no extra prompt; C3 ratchet blocks project opt-out). 1397 tests green,
-  clippy/fmt clean, scanner bench 1.96 ms. **Remaining (deferred):** Iter 4 —
-  degradation UX / fail-closed when no snapshot can be created (non-interactive
-  denies, interactive missing-recovery reason, audit `recovery_degradation`);
-  Iter 5 — `docs/threat-model.md`, `docs/config-schema.md`, `README.md` updates
-  + flip this checkbox. H9 stays `[ ]` until those land.
-- **Related:** M1 (sandbox degradation too quiet), P3 C-next (IFS
-  parameter-expansion modifiers — a narrow instance of deferred expansion), P3
-  sandbox-status TOCTOU.
+- **Finding:** ADR-016 marks bounded `Effect-opaque execution` and requests a
+  recovery backstop, but execution can still proceed when no required snapshot is
+  created. This finding does **not** claim that Aegis can classify arbitrary
+  dynamic evaluation, encoded payloads, interpreter library calls, or TOCTOU;
+  those remain outside the heuristic scanner contract.
+- **Acceptance criteria:** for the bounded ADR-016 shapes already detected,
+  missing required recovery denies in non-interactive execution and presents the
+  missing-recovery reason in an interactive prompt; audit records the degradation
+  reason; threat-model/config/public docs match ADR-016. No new risk
+  level, script-file inspection, filesystem `stat()` on the hot path, or package
+  runner expansion is introduced.
+- **Status:** **Partial** — ADR-016 iterations 1–3 landed and were verified in
+  `8dd5392`; degradation UX/fail-closed behavior and public-doc alignment remain.
+- **Traceability:** [plan](docs/plans/2026-07-09-h9-effect-opaque-recovery-backstop.md);
+  [ADR-016](docs/adr/adr-016-effect-opaque-execution-uses-recovery-backstops.md);
+  commit `8dd5392`.
 
 ---
 
-## P2 — Medium severity
+## P2 — Medium
 
-### [ ] M1 — Sandbox degradation is too quiet
+### [ ] M1 — Optional Sandbox degradation is not reliably visible
 
-- **Problem:** when sandboxing is configured but unavailable and `required = false`
-  (default), execution silently degrades to unsandboxed. Warning is only
-  `tracing::warn`; without a subscriber the user may not see it. Profiles also
-  allow broad `file-read*` / `process*`, so this is a write/network guard, not a
-  confidentiality boundary.
-- **Files:** `sandbox/lib.rs`, `linux.rs`, `profiles/*.sbpl`.
-- **Fix:** make `required = true` the default or always print a loud stderr
-  warning; narrow read permissions and document the confidentiality boundary.
+- **Finding:** when optional execution confinement is configured but unavailable,
+  Aegis may continue unconfined with only a tracing warning that the operator
+  never sees.
+- **Acceptance criteria:** `SandboxStatus::Unavailable` is surfaced on the active
+  user/agent channel and recorded in audit; `required = true` still fails closed;
+  docs state that the optional `Sandbox` is a write/network guardrail add-on, not
+  a confidentiality boundary. Making confinement mandatory or narrowing all read
+  access is not required by the 1.0 product contract.
+- **Status:** **Open** — no longer coupled to H9 or ADR-016 recovery.
+- **Traceability:** [plan](docs/plans/2026-07-14-m1-sandbox-degradation-contract.md);
+  [ADR-003](docs/adr/adr-003-aegis-is-a-heuristic-guardrail-not-a-sandbox.md).
 
-### [ ] M2 — User/custom regexes lack size limits
+### [ ] M2 — Untrusted custom regexes lack resource limits
 
-- **Problem:** `Regex::new` without `size_limit` lets project config patterns
-  inflate memory/CPU during compilation on the hot path, creating a DoS vector.
-- **Files:** `scanner/mod.rs:91`, `allowlist/compile.rs`.
-- **Fix:** use `RegexBuilder::size_limit` / `dfa_size_limit` and cap pattern
-  length.
+- **Finding:** project/user regex compilation has no explicit pattern-length,
+  automaton-size, or DFA-size budget.
+- **Acceptance criteria:** untrusted regexes use bounded builders and a documented
+  input-length cap; oversized patterns fail closed with actionable validation;
+  built-in scanner performance remains within the hot-path gate.
+- **Status:** **Open** — confirmed.
+- **Traceability:** [plan](docs/plans/2026-07-14-m2-custom-regex-limits.md).
 
-### [ ] M3 — In-band kill-switch and wrapper bypass
+### [ ] M3a — Disabled Toggle state is operationally invisible
 
-- **Problem:** `aegis off` is itself treated as safe and creates
-  `~/.aegis/disabled`, fully bypassing Aegis. Hook `is_already_wrapped` skips any
-  command starting with `aegis`, so an agent can prefix commands to bypass the
-  wrapper.
-- **Status:** agent-confirmed via live test (2026-07-09, MariaDB/Moodle
-  scenario). `~/.aegis/disabled` had existed on the maintainer's own machine for
-  9 days, unnoticed. With the flag present, `run_shell_wrapper` (`shell_wrapper.rs:37-41`)
-  execs the command directly and returns — no dialog, no snapshot, no audit
-  entry, and no stderr/stdout output of any kind, so a disabled Aegis is
-  indistinguishable from a healthy one until a destructive command already ran.
-  This is the same "too quiet" failure mode as M1, but for the kill-switch
-  rather than the sandbox, and it hit the tool's own author first.
-- **Files:** `shell_wrapper.rs:37-41`, `install/hook.rs:72`.
-- **Fix:** gate and audit `aegis off`; narrow `is_already_wrapped` to the exact
-  supported `aegis --command ...` form; additionally, surface the disabled
-  state loudly — a shell-startup banner, a warning on every hook response, or
-  both — so a user (or the maintainer) cannot go a single session without
-  noticing Aegis is off. Treat as a release blocker: it is the difference
-  between "the guardrail said no" and "the guardrail was never there."
+- **Finding:** the intentional global `Toggle` can leave Aegis in unguarded
+  passthrough for multiple sessions without a visible indication on shell-wrapper
+  and hook surfaces.
+- **Acceptance criteria:** `aegis off` remains an explicit operator control and is
+  audited when toggled; every newly started agent session receives a visible
+  disabled-state notice without corrupting hook/JSON protocols; `aegis status`
+  remains authoritative; disabled passthrough semantics remain explicit in docs.
+- **Status:** **Open** — split from M3; toggle auditing exists, persistent
+  visibility does not.
+- **Traceability:** [plan](docs/plans/2026-07-14-m3a-disabled-toggle-visibility.md);
+  [ADR-005](docs/adr/adr-005-global-toggle-at-command-boundaries.md).
 
-### [ ] M4 — Hook panics can fail open
+### [x] M3b — Non-canonical `aegis` hook commands bypass wrapping
 
-- **Problem:** `run_hook` lacks `catch_unwind`; a panic can produce no deny JSON,
-  and consumers may allow the tool call.
-- **File:** `install/hook.rs`.
-- **Fix:** wrap hook execution in `catch_unwind` and emit deny on panic.
+- **Finding:** a hook that treats any command beginning with `aegis` as already
+  wrapped can be bypassed with a malformed or prefixed command.
+- **Acceptance criteria:** only canonical `aegis --command ...` input is passed
+  through; other commands beginning with the `aegis` word deny with an actionable
+  reason; ordinary commands are rewritten once.
+- **Status:** **Closed** — verified 2026-06-24.
+- **Traceability:** [ADR-011](docs/adr/adr-011-hooks-rewrite-transparently-in-rust-and-setup-shell-escapes.md);
+  commit `091950c`; hook rewrite tests.
 
-### [ ] M5 — Additional point pattern gaps
+### [ ] M4 — Hook panics can produce no deny response
 
-- **Problem:** missing or weak coverage for `chmod -R 000 /`, `TRUNCATE users;`
-  without `TABLE`, `docker volume rm`, and `npm publish`.
-- **Fix:** extend rules and add regression tests.
+- **Finding:** an unwind across the hook entry point can leave the agent without
+  a structured deny response.
+- **Acceptance criteria:** panics at the hook boundary are contained and converted
+  into the correct Claude/Codex deny shape; ordinary error handling and panic-free
+  paths remain unchanged.
+- **Status:** **Open** — confirmed.
+- **Traceability:** [plan](docs/plans/2026-07-14-m4-hook-panic-fail-closed.md);
+  `src/install/hook.rs`.
+
+### [ ] M5 — Remaining point pattern gaps
+
+- **Finding:** scoped destructive forms remain uncovered: `chmod -R 000 /`,
+  `TRUNCATE` without `TABLE`, `docker volume rm`, and `npm publish`.
+- **Acceptance criteria:** each accepted form has a rule with positive and
+  narrowness examples; the eval harness passes; SQL additions respect ADR-015
+  and program-led forms respect ADR-014.
+- **Status:** **Open** — separate from completed H3/H3-follow-ups.
+- **Traceability:** [plan](docs/plans/2026-07-14-m5-point-pattern-gaps.md);
+  [ADR-014](docs/adr/adr-014-launcher-and-absolute-path-normalization-for-token-prefix-detection.md),
+  [ADR-015](docs/adr/adr-015-destructive-sql-detected-by-regex-not-token-prefix.md).
 
 ### [x] M6 — Project config can disable recovery
 
-- **Problem:** same merge issue as C3 lets project config set
-  `snapshot_policy = "None"` and `sandbox.required = false`.
-- **Status:** resolved — closed by the C3 ratchet (ADR-013). `snapshot_policy`
-  and `sandbox.required` can only tighten at the project layer, so a project
-  `.aegis.toml` can no longer disable recovery; weakening is ignored and warned
-  by `aegis config validate`. Covered by C3's regression suite.
-- **Fix:** covered by C3 restrictive merge ratchet.
+- **Finding:** project config could set a weaker snapshot policy or disable
+  required confinement inherited from trusted config.
+- **Acceptance criteria:** project recovery/confinement settings only tighten and
+  weakening attempts are ignored and warned.
+- **Status:** **Closed** — subsumed by C3 and verified 2026-06-25.
+- **Traceability:** [ADR-013](docs/adr/adr-013-project-config-security-ratchet.md);
+  commits `86f38ad`, `f4bd0a7`, `c834477`.
 
-### [ ] M7 — Latent structural fail-open around shell audit readiness
+### [ ] M7 — Shell execution is not type-safe on audit readiness
 
-- **Problem:** `append_shell_audit` returns `Ok(())` on `SetupFailure`, and
-  `execute_with_snapshots` executes after a "successful" audit. Today this appears
-  unreachable by construction, but the invariant is fragile.
-- **File:** `shell_flow.rs:165-235`.
-- **Fix:** make execution type-safe on an explicit `Ready` state.
+- **Finding:** an audit setup failure can be represented as a successful helper
+  result, leaving the execute-after-audit invariant dependent on control-flow
+  convention.
+- **Acceptance criteria:** only an explicit audit-ready state can reach command
+  execution; setup/write failures cannot collapse into success; shell-wrapper and
+  watch-mode behavior remain fail closed.
+- **Status:** **Open** — latent structural risk.
+- **Traceability:** [plan](docs/plans/2026-07-14-m7-audit-readiness-state.md);
+  `src/shell_flow.rs`.
 
-### [ ] M8 — Snapshot does not recover the dangerous command's effect on committed/clean files
+### [ ] M8 — Snapshot and Rollback wording implies post-effect recovery
 
-- **Problem:** the snapshot promised as the "rollback the dangerous action" safety
-  net is a `git stash push --include-untracked`, which captures only _uncommitted_
-  changes + untracked files present at snapshot time. A `Danger` command that
-  deletes **committed/clean** files (e.g. `rm -rf scripts` on tracked files) runs
-  after the stash, so its deletion is never in the snapshot — `aegis rollback`
-  restores the stashed delta but does **not** undo the deletion. Outside a git
-  repo, `GitPlugin` is not applicable so no snapshot is taken at all. Net effect:
-  the headline "delete → rollback" promise does not hold for the most common case.
-- **Status:** agent-confirmed via live test — approved `rm -rf scripts` in a git
-  repo; the resulting stash contained only the untracked `scratch.txt`, not the
-  deleted (committed) `scripts/`; recovery required `git restore`, not
-  `aegis rollback`.
-- **Files:** `crates/aegis-snapshot/src/git.rs:67-99` (`git stash push` only
-  captures the working-tree delta), `is_applicable` (git repo only),
-  `src/shell_flow.rs:343` (snapshot taken on `Danger` approve).
-- **Fix:** either back the snapshot with a real copy of the targeted paths so
-  deletions of committed/clean and out-of-repo data are recoverable, or narrow the
-  feature's promise in docs/UX to "preserves uncommitted work at snapshot time"
-  and surface clearly when no snapshot is possible (non-git cwd).
+- **Finding:** Git snapshots preserve pre-execution working-tree state; they do
+  not capture a later command's deletion of clean tracked files, and no snapshot
+  plugin is universal. Wording that promises to undo the dangerous command
+  exceeds the product contract.
+- **Acceptance criteria:** README, TUI/explanation copy, threat model, glossary,
+  and examples describe a `Snapshot` as a best-effort pre-execution capture and
+  `Rollback` as restoration of that captured state; surfaces disclose when no
+  plugin applies and do not claim full backup or universal undo. Implementing
+  targeted copies or a general backup system is out of scope.
+- **Status:** **Open** — reframed to the actual heuristic-guardrail and
+  best-effort snapshot contract.
+- **Traceability:** [plan](docs/plans/2026-07-14-m8-snapshot-product-contract.md);
+  [ADR-004](docs/adr/adr-004-snapshots-are-best-effort-audit-is-append-only.md).
 
-### [ ] M9 — `aegis rollback` is unusable from `aegis snapshot list` output
+### [ ] M9 — Snapshot identifiers do not round-trip through the rollback CLI
 
-- **Problem:** the git `snapshot_id` is the composite `"<cwd>\t<hash>"`
-  (`SEP = '\t'`). `aegis snapshot list` renders it as `<path>␉<hash>`, which looks
-  like two columns; `aegis rollback <SNAPSHOT_ID>` takes a single argument, so the
-  bare hash is "not found in the audit log" and `path<space>hash` is rejected as
-  two arguments. There is no practical way for a user to copy the tab-bearing id
-  from the listing into a working `rollback` invocation — the recovery CLI is
-  effectively non-functional.
-- **Status:** agent-confirmed via live test, twice. Original repro was the git
-  backend. Re-confirmed 2026-07-09 on the MySQL/MariaDB backend
-  (`crates/aegis-snapshot/src/mysql/mod.rs:19` uses the identical
-  `SEP: char = '\t'` composite-id scheme) — this is not a git-only bug, it is
-  the shared snapshot-id convention. Copying the id shown by the CLI/audit log
-  into a terminal converts the tab to spaces; the resulting `aegis rollback
-<id>` fails with "not found in the audit log." The only workaround found was
-  regenerating the literal tab with `printf`, which a user who just lost data
-  will not do. Recovery via `aegis rollback` is effectively non-functional from
-  copy-paste, which is the tool's core promise on the Danger path.
-- **Files:** `crates/aegis-snapshot/src/git.rs:20` (`SEP = '\t'`), `:97`
-  (`snapshot_id = format!("{}{SEP}{hash}", cwd.display())`), `:108`/`:179`
-  (`split_once(SEP)` on rollback), `crates/aegis-snapshot/src/mysql/mod.rs:19`
-  (same `SEP` scheme), `src/rollback.rs` (single-arg `<SNAPSHOT_ID>`).
-- **Fix:** make the id round-trip-safe — store the repo/database path as a
-  separate audit field and use the bare hash as the id (or have `rollback`
-  resolve a bare hash against the audit log), and/or have `snapshot list` /
-  the audit entry print a ready-to-paste `aegis rollback '<exact-id>'` line.
-  Minimum viable fix before release: `aegis rollback --last`, so the panic path
-  never depends on copy-paste at all.
+- **Finding:** composite tab-separated snapshot IDs render like columns and are
+  not reliably copyable as the single `aegis rollback` argument.
+- **Acceptance criteria:** every listed snapshot exposes a ready-to-use rollback
+  path; Git and database IDs round-trip without reconstructing literal tabs;
+  legacy audit entries remain recoverable.
+- **Status:** **Open** — live-confirmed for Git and MySQL.
+- **Traceability:** [plan](docs/plans/2026-07-14-m9-rollback-id-round-trip.md);
+  `src/rollback.rs` and snapshot plugin ID parsers.
 
-### [ ] M10 — README "Before/After" example misrepresents when the snapshot is taken
+### [ ] M10 — README shows a snapshot before approval
 
-- **Problem:** the `Before/After` table in `README.md` shows `Snapshot git stash
-created (a3f9b12)` as a line inside the confirmation dialog, above
-  `[A] approve [D] deny [i] info`. Live behavior (and `src/shell_flow.rs:343`,
-  cited under M8: "snapshot taken on `Danger` approve") is that the snapshot is
-  created _after_ approval, not before — there is no snapshot line in the
-  dialog itself. Agent-confirmed by re-running the real flow.
-- **Files:** `README.md` (Before/After section, `Snapshot git stash created`
-  line).
-- **Fix:** move the snapshot line out of the dialog block in the example —
-  show it as the line printed after `[A] approve`, matching the real sequence
-  (dialog → approve → snapshot created → command runs). Low effort, high
-  exposure: this is the kind of discrepancy a first-glance skeptical reader
-  checks against the code within minutes.
+- **Finding:** the Before/After example placed snapshot creation inside the
+  confirmation dialog even though snapshots are created only after approval.
+- **Acceptance criteria:** the denial example contains no snapshot claim and the
+  command-flow summary follows the real sequence: dialog → approval → snapshot
+  attempt → execution.
+- **Status:** **Partial** — README examples are corrected in the current change;
+  closure waits for the full review/re-review/PR-CI Definition of Done.
+- **Traceability:** `README.md` Before/After and command-flow examples;
+  `tests/snapshot_ordering.rs::test_denied_danger_command_records_no_snapshots`.
 
 ---
 
 ## P3 — Low / informational
 
-- [ ] SQLite snapshot TOCTOU: `exists()` + `copy` instead of `create_new`.
-- [ ] Backslash-newline tokenization edge cases.
-- [ ] C-next — IFS parameter-expansion modifiers: the C2 fix normalizes only the
-      literal `$IFS` / `${IFS}` default spellings. Parametric forms
-      (`${IFS:-x}`, `${IFS:+x}`) and runtime `IFS=` reassignment are not
-      normalized and remain opaque. Decide whether broader shell-state analysis
-      is warranted.
-- [ ] `stdout_renderer` final `_ => Approve` arm is future fail-open for new risk
-      variants; currently unreachable.
-- [ ] Sandbox status TOCTOU.
-- [ ] `current_dir()` failure can snapshot against `.`.
-- [ ] `cargo audit` reports 4 unmaintained advisories
-      (`atomic-polyfill`, `derivative`, `fxhash`, `paste`) only under opt-in
-      `--features starlark-policy`; not default build and no CVE.
-- [ ] H2-followup — destructive-SQL coverage gaps (surfaced in the ADR-015 lead
-      review). The match-anywhere SQL rules do not cover: (a) non-whitespace
-      separators between verb and object — `DROP/**/TABLE users` evades the
-      mandatory `\s+` because PostgreSQL treats `/**/` as whitespace but `\s`
-      does not match `/`; closing it needs a SQL-aware normalizer (ADR-010 rules
-      out a full parser); (b) uncovered destructive verbs `DROP VIEW`,
-      `DROP INDEX`, and the `dropdb <name>` shell client (verb-is-program → a
-      `DB-006`-style prefix-rule candidate). All pre-existing, none regressions.
-      Run additions through the eval harness alongside H3/M5.
+The following follow-ups remain outside the 1.0 release-blocker sequence unless
+an implementation review promotes them:
+
+### [ ] P3-1 — SQLite snapshot creation has a TOCTOU window
+
+- **Finding:** existence checks and copy are separate instead of reserving the
+  target atomically.
+- **Acceptance criteria:** target creation is atomic and collision behavior is
+  covered without overwriting existing artifacts.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-1--sqlite-snapshot-creation-toctou).
+
+### [ ] P3-2 — Backslash-newline tokenization is underspecified
+
+- **Finding:** shell line-continuation edge cases can diverge from scanner
+  tokenization.
+- **Acceptance criteria:** supported behavior is explicitly scoped and regression
+  tested; unsupported shell evaluation remains an ADR-010 non-goal.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-2--backslash-newline-tokenization).
+
+### [ ] P3-3 — Parameterized IFS expansion remains opaque
+
+- **Finding:** C2 covers literal `$IFS` / `${IFS}`, not `${IFS:-x}`,
+  `${IFS:+x}`, or runtime reassignment.
+- **Acceptance criteria:** make and document a bounded detection decision without
+  drifting into full shell evaluation.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-3--parameterized-ifs-expansion).
+
+### [ ] P3-4 — Renderer fallback is future fail-open
+
+- **Finding:** the final wildcard renderer arm could auto-approve a future risk
+  variant.
+- **Acceptance criteria:** new risk variants cannot compile or execute through an
+  implicit approve fallback.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-4--renderer-fallback).
+
+### [ ] P3-5 — Sandbox status is vulnerable to check/use drift
+
+- **Finding:** recorded availability can diverge from confinement actually
+  applied at execution.
+- **Acceptance criteria:** the applied status is derived at the execution seam and
+  audit records the actual result.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-5--sandbox-status-toctou).
+
+### [ ] P3-6 — Current-directory failure falls back to `.`
+
+- **Finding:** snapshot planning can use `.` after `current_dir()` failure.
+- **Acceptance criteria:** an unresolved working directory fails explicitly and
+  cannot redirect snapshot work to an ambiguous path.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-6--current-directory-fallback).
+
+### [ ] P3-7 — Optional Starlark dependencies carry unmaintained advisories
+
+- **Finding:** `cargo audit` reports allowed unmaintained crates only through the
+  opt-in `starlark-policy` feature.
+- **Acceptance criteria:** keep the exception documented and bounded, or remove
+  the dependency chain when a supported replacement is viable.
+- **Status:** **Open** — no default-build CVE.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-7--optional-starlark-advisories).
+
+### [ ] P3-8 — Destructive SQL has known coverage limits
+
+- **Finding:** SQL comments as separators and additional destructive verbs/CLI
+  programs remain outside current ADR-015 patterns.
+- **Acceptance criteria:** accepted additions preserve the bounded heuristic and
+  include narrowness examples; SQL parsing remains out of scope.
+- **Status:** **Open**.
+- **Traceability:** [consolidated plan](docs/plans/2026-07-14-p3-follow-ups.md#p3-8--destructive-sql-follow-ups).
 
 ---
 
-## Confirmed strengths
+## Current implementation order
 
-- Intrinsic `Block` is unbreakable: checked first in `engine.rs:22`, before
-  allowlist/rules/mode. Covered by `block_risk_is_never_bypassable` tests.
-- `CI=1` is not a bypass; default `ci_policy = Block` makes behavior stricter.
-- Policy precedence is correct: blocklist > allowlist; allowlist override is gated
-  by risk; allowlist glob `*` maps to `[^;&|]+` and does not cross `;`, `&&`, or
-  `|`.
-- Starlark is constrained: `max_tick_count = 100k`, heap 10MiB, callstack 500;
-  opt-in; path only global `~/.aegis/policy.star`; fail-closed.
-- `unsafe` is limited to documented libc syscalls for Landlock plus
-  edition-mandated `env::set_var` in tests; no transmute/FFI problems found.
-- No command-input panics found; parser uses `Vec<char>` and guarded logic;
-  `$SHELL` proxy is fail-closed on panic.
-- Installer has strict path validation, JSON/TOML serializers, atomic writes; amend
-  escapes TOML.
-- `cargo deny check` is green.
-- Audit-log newline injection is not exploitable because `serde` escapes it.
+This is a dependency/risk order, not a calendar sprint:
 
----
+1. H6 → H7a → H7b — contain and protect security artifacts.
+2. H9 — finish ADR-016 missing-recovery behavior.
+3. M3a — make the disabled Toggle state visible. M3b is already closed.
+4. M4 → M7 — harden hook and audit fail-closed structure.
+5. M9 — make Rollback operationally usable.
+6. M1 — surface optional Sandbox degradation.
+7. M2 → M5 — bound untrusted regexes and close scoped pattern gaps.
+8. H5 → M8 — align integrity and snapshot promises with the product contract.
+9. P3 follow-ups — only after release blockers, unless promoted by new evidence.
 
-## Fix plan by priority
+## Confirmed strengths retained from the audit
 
-### Sprint 1 — required before release: core bypass closure
-
-1. [x] C1 — `RegexBuilder::case_insensitive(true)` for built-in patterns plus
-       uppercase regression tests.
-2. [x] C2 — normalize `$IFS` / `${IFS}` as separators in tokenizer or
-       normalization plus fixtures.
-3. [x] C3 / M6 — restrictive merge ratchet for security fields:
-       `mode`, `*_override_level`, `ci_policy`, `snapshot_policy`,
-       `sandbox.required`; warn on weakening in `config validate`. C3-residual
-       (project `[[rules]] Allow` + `audit.integrity_mode`) also closed.
-4. [x] C4 — normalize the prefix-rule lookup key: basename of `tokens[0]` + strip
-       launcher/wrapper prefixes (`rtk`, `sudo`, `env`, `command`, …); cover
-       RTK-wrapped and absolute-path forms for every token-prefix family.
-5. [x] H1 — segment on standalone `&` (couples with C4 so `cd … && git …` is seen).
-6. [x] H2 — recurse into `psql -c` / `mysql -e` or relax destructive SQL prefix
-       anchors.
-7. [x] H8 — add git prefix rules for `push --force`, `stash clear`, `branch -D`;
-       revisit the edge-case test that whitelists force-push.
-8. [x] H4 — hooks fail closed when `aegis` binary is missing (`command -v` guard →
-       deny + exit 0); jq/invalid-JSON cases were already covered by Rust delegation.
-
-### Sprint 2 — required before release: defense in depth
-
-9. [ ] H3 / M5 — expand pattern database for `wipefs`, S3 delete flows, `gsutil`,
-       `~/.ssh`, shell rc truncation, `unlink`, `chmod 000`, `TRUNCATE`,
-       `docker volume rm`, and `npm publish`; run eval harness.
-10. [ ] H6 / H7 — add snapshot path containment checks; create snapshot directories
-        as `0700`, dumps/logs as `0600`; avoid following audit-log symlinks.
-11. [ ] H9 / M1 — layered effect-level defense (ADR-016): detect bounded
-        effect-opaque execution shapes, keep `RiskLevel` orthogonal, require
-        snapshot recovery by default, fail closed / prompt loudly when required
-        recovery is unavailable, and keep sandbox confinement as an optional
-        stricter tier rather than the primary v1 backstop.
-12. [ ] M2 — add regex size limits.
-13. [ ] M4 — add `catch_unwind` in `run_hook` and emit deny.
-
-### Sprint 3 — honesty and resilience
-
-14. [ ] H5 — add HMAC/external anchor for audit chain, or change public wording
-        from "tamper-evident" to "integrity/corruption check".
-15. [ ] M3 — gate/audit `aegis off`; narrow `is_already_wrapped`.
-16. [ ] M7 + P3 — type-safe audit readiness, fail-closed renderer fallback,
-        SQLite `create_new`, and sandbox confidentiality documentation.
-
----
-
-## Cross-cutting conclusion
-
-Aegis' foundation is correctly designed: unbreakable `Block`, precedence rules,
-and fail-closed behavior around errors, panics, and toggle I/O are strong. The
-current release blocker is scanner input normalization and coverage: case,
-`$IFS`, `&`, nested SQL, and — newly found in the 0.5.9 crash-test — the
-token-prefix anchoring bypass (C4), where any path/launcher/wrapper prefix
-(`/usr/bin/git`, `rtk git`, `sudo git`, `cd … && git`) defeats the migrated
-git/db/cloud/docker/process rules. These false-negatives are unacceptable for a
-security tool. The open 1.0 gate for "zero false-negatives" is factually not met.
-Sprint 1 must block release.
+- Intrinsic `Block` remains unbreakable by allowlist, rules, mode, or CI policy.
+- Classification, config, policy, confirmation, and hook failures are intended to
+  fail closed.
+- Aegis remains a heuristic command guardrail, not a sandbox or backup system.

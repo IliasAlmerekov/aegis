@@ -58,9 +58,11 @@ default.
   executed script), the resolver carries a bounded per-interpreter table of value-consuming
   options. Real flags outside that table (`node --conditions ./preload.js -e "code"`) can
   still spoof the script-file slot and read as effect-opaque. This is accepted as a v1
-  limitation because the error direction is fail-safe: a misclassified benign command only
-  earns an extra pre-exec recovery snapshot, and ADR-016 recovery never blocks. The
-  opposite error — conservatively treating every unknown option as value-consuming — would
+  limitation because the error direction is fail-safe: when recovery is available, a
+  misclassified benign command only earns an extra pre-exec snapshot without risk
+  escalation or another confirmation; when required recovery is unavailable, the loud /
+  fail-closed rule above applies and may interrupt it. The opposite error — conservatively
+  treating every unknown option as value-consuming — would
   skip a real script file (`node --inspect ./script.js`) and drop its recovery snapshot,
   which is fail-open and is therefore rejected. A general resolver would need per-flag
   arity knowledge no text-only heuristic can supply.
