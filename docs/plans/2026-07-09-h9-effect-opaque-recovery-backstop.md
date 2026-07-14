@@ -1,8 +1,10 @@
-# H9 / M1 — Effect-opaque execution recovery backstop
+# H9 — ADR-016 effect-opaque execution recovery backstop
 
 ## Status
 
-Planned — design grilled and captured in ADR-016.
+Partial — iterations 1–3 landed in `8dd5392`; iteration 4 and the remaining
+public-contract alignment are open. M1 Sandbox degradation is tracked separately
+in `2026-07-14-m1-sandbox-degradation-contract.md`.
 
 ## Problem
 
@@ -15,7 +17,7 @@ catches several reviewer examples and shape idioms:
 - `curl … | sh` / pipe-to-shell → `Danger`
 - `bash -c "$X"` and similar indirect forms → shape-detected
 
-The real gap is narrower and sharper: **Effect-opaque execution**. Aegis can see that a
+The ADR-016 gap is narrower and sharper: **Effect-opaque execution**. Aegis can see that a
 command hands control to another execution layer, but not the eventual filesystem,
 database, or network effect. The strongest confirmed v1 case is **Script-file execution**:
 `sh ./cleanup.sh`, `python3 ./cleanup.py`, `node ./cleanup.js`, `source ./x`, and `. ./x`.
@@ -32,11 +34,16 @@ ADR-016 is the architectural contract for this slice:
 - `RiskLevel` and backstop requirements are orthogonal.
 - Effect-opaque commands set `effect_opaque = true` without raising risk by default.
 - The primary v1 backstop is recovery: `snapshots_required = true`.
-- Confinement is a separate optional strict tier: `confinement_required = true`.
+- Confinement is a separate optional strict tier represented by
+  `confinement_required`; it remains `false` in v1 until that tier is designed.
 - Missing required recovery fails closed in non-interactive mode and prompts loudly in
   interactive mode.
 - `SnapshotPolicy::None` is trusted/global opt-out only; project config cannot weaken
   recovery because of the C3/M6 ratchet.
+
+Arbitrary runtime expansion, encoded payloads, interpreter library calls, and
+symlink-swap TOCTOU are not acceptance criteria for H9. Aegis remains a heuristic
+guardrail and ADR-010 continues to exclude full deferred shell evaluation.
 
 ## Non-goals
 
@@ -48,6 +55,8 @@ ADR-016 is the architectural contract for this slice:
 - Do not make sandbox confinement the primary mitigation for effect opacity.
 
 ## Iteration 1 — Model and audit plumbing
+
+**Status: complete in `8dd5392`.**
 
 Goal: represent effect opacity and confinement requirements without changing risk ordering.
 
@@ -70,6 +79,8 @@ Tests:
 - `RiskLevel` ordering and serialized names remain unchanged.
 
 ## Iteration 2 — Bounded shape detection
+
+**Status: complete in `8dd5392`.**
 
 Goal: detect v1 effect-opaque forms without turning this into a general interpreter.
 
@@ -106,6 +117,8 @@ Tests:
 
 ## Iteration 3 — Policy and snapshot flow
 
+**Status: complete in `8dd5392`.**
+
 Goal: require recovery for effect-opaque execution under normal snapshot policy.
 
 Tasks:
@@ -124,6 +137,8 @@ Tests:
 - Project `.aegis.toml` cannot disable the recovery requirement.
 
 ## Iteration 4 — Degradation UX and fail-closed behavior
+
+**Status: open; this is the remaining runtime closure criterion.**
 
 Goal: make missing recovery loud and safe.
 
@@ -144,6 +159,10 @@ Tests:
 
 ## Iteration 5 — Documentation and release-gate alignment
 
+**Status: partial. ADR/glossary/model docs landed; threat-model, config/public
+snapshot claims, and final task close-out remain. Coordinate snapshot wording
+with M8 rather than expanding H9 into a backup-system project.**
+
 Goal: keep public claims honest.
 
 Docs:
@@ -153,7 +172,8 @@ Docs:
 - `docs/config-schema.md`: document any new config or audit fields.
 - `README.md`: avoid implying snapshots are complete backups; describe recovery as
   best-effort unless required recovery fails closed.
-- `TASKS.md`: mark H9/M1 complete only after tests and gates pass.
+- `TASKS.md`: mark H9 complete only after tests and gates pass; M1 remains an
+  independent Sandbox finding.
 - `CHANGELOG.md` and `PROJECT_STATE.md`: update after implementation verification.
 
 Verification:

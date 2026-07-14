@@ -27,3 +27,4 @@ docs/CODEX-*.md
 docs/tickets/
 packaging/npm/vendor/
 .gstack/
+RTK.md

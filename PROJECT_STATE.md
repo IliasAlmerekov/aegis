@@ -17,13 +17,43 @@
 
 ## Last updated
 
-2026-07-09
+2026-07-14
+
+---
+
+## Last session (2026-07-14)
+
+- **Security backlog normalized.** `TASKS.md` now keeps only the Finding,
+  Acceptance criteria, Status, and Traceability for every item. Verified work is
+  closed, H7 and M3 are split into independently closable `a`/`b` findings, H9
+  is limited to the remaining ADR-016 required-recovery contract, and H5/M1/M8
+  now match the audit-integrity / optional-Sandbox / best-effort Snapshot product
+  boundaries. Stale Sprint 2/3 groupings were replaced with the agreed
+  dependency/risk order.
+- **Implementation detail moved to `docs/plans/`.** The existing H9 plan was
+  moved from `docs/planning/`, updated with completed/open iterations, and linked
+  alongside focused plans for every open P1/P2 finding plus a consolidated P3
+  plan. `CONTEXT.md` now distinguishes the `Audit integrity chain`, captured
+  `Snapshot` state, and `Rollback` from adversarial tamper proof, backup, or
+  general undo.
+- **Factually closed:** H3 and M6 remain closed; M3b canonical hook wrapping is
+  recorded separately as closed. M10's README denial/flow examples are fixed but
+  its checkbox stays Partial until PR CI satisfies the Definition of Done. H9
+  remains Partial (iterations 1–3 only), while H5, H6, H7a/b, M1, M2, M3a, M4,
+  M5, and M7–M9 stay open. Docs verification:
+  `cargo test --test contracts_docs --test homebrew_formula --test npm_package
+  --test release_docs --test snapshot_ordering` = 40 passed; local Markdown
+  links = 0 broken; `git diff --check` clean. Standards/Spec review findings on
+  M10 closure, plan readiness, and H9 terminology were confirmed and fixed;
+  round-2 re-review closed all three. The Audit-mode/H9 concern was dropped as
+  not reproducible because fail-closed degradation applies only after recovery
+  is required.
 
 ---
 
 ## Last session (2026-07-09)
 
-- **H9 / M1 — effect-opaque execution recovery backstop (ADR-016), Iterations
+- **H9 — effect-opaque execution recovery backstop (ADR-016), Iterations
   1–3 done via TDD.** Iter 1 (model + audit plumbing): direct `effect_opaque:
   bool` field on `Assessment` (orthogonal to `RiskLevel`), `confinement_required`
   axis on `PolicyDecision` (false in v1 — reserved for an optional strict
@@ -73,7 +103,6 @@
   it could not hit its sample target), not a code regression — the < 2 ms
   budget was established at 1.96 ms for the pre-filter, which this change does
   not modify.
-- **H9 review cycle round 2 (re-review survivors closed via TDD).** (a) The
 ## Last session (2026-07-07)
 
 - **H4 closed via TDD.** Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail
@@ -103,9 +132,9 @@ Full history of prior sessions: `git log` and `CHANGELOG.md`.
 | M5.1–M5.4 | 800-LoC budget, fuzz CI, snapshot/rollback CI, supply-chain gates | ✅ Done |
 | 1.0 docs gate | README, threat model, docs accuracy | 🔲 Open (reopened 2026-07-09 checkup — ARCHITECTURE/CONVENTION/ROADMAP/CHANGELOG stale; see Open decisions) |
 | P0 security blockers (C1–C4) | Uppercase bypass, `$IFS` obfuscation, project-config weakening, token-prefix anchoring | ✅ Done |
-| P1 security findings (H1–H4, H8) | Segmentation gap, SQL-in-`psql`/`mysql`, pattern gaps, hook fail-open, git force-push/stash-clear/branch-D | ✅ Done |
-| P1 security findings (H5–H7, H9) | See Open decisions below | 🔲 Open |
-| P2 security findings (M1–M10; M6 closed) | See Open decisions below | 🔲 Open |
+| P1 security findings (H1–H4, H8) | Segmentation, destructive SQL, H3 patterns, hooks, destructive Git forms | ✅ Done |
+| P1 security findings (H5, H6, H7a, H7b, H9) | Integrity wording, containment, artifact hardening, ADR-016 degradation | 🔲 Open |
+| P2 security findings | M3b/M6 closed; M10 partial; M1, M2, M3a, M4, M5, M7, M8, M9 open | 🔲 Open |
 | 1.0 perf gate | Hot path < 2 ms (p99) via criterion | 🔲 Open |
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
 
@@ -147,25 +176,20 @@ feature — see memory `deny_advisories_baseline`).
 
 ## Open decisions / blockers
 
-- **P1 security findings H5–H7, H9** (`TASKS.md`): H5 audit hash chain is not
-  true tamper-evidence; H6 snapshot store lacks containment checks; H7
-  database dumps/snapshots/audit files are too permissive; H9 dynamic-eval /
-  interpreter bypasses defeat string classification — **partially closed this
-  session**: effect-opaque execution (script-file, interpreter stdin,
-  pipe-to-shell) now requires a pre-exec recovery snapshot under
-  `SnapshotPolicy::{Selective, Full}` without raising risk or adding a prompt
-  (ADR-016, Iter 1–3 done); **Iter 4 (degradation UX / fail-closed when no
-  snapshot can be created) and Iter 5 (threat-model/config-schema/README docs +
-  TASKS close-out) remain open.** H8 (git force-push/stash-clear/branch-D) is
-  **closed** — moved to Done.
-- **P2 security findings M1–M5, M7–M10** (`TASKS.md`): sandbox degradation too
-  quiet, user-regex size limits, in-band kill-switch/wrapper bypass (confirmed
-  on the maintainer's own machine 2026-07-09), hook panics can fail open,
-  additional pattern gaps, latent fail-open around shell audit readiness,
-  snapshot doesn't recover the effect on committed/clean files, `aegis
-  rollback` unusable from copy-pasted snapshot ids (tab-separated), README
-  Before/After misrepresented the snapshot timing (fixed this session). M6
-  (project config can disable recovery) is now **closed** by the C3 ratchet.
+- **Current security order** (`TASKS.md`): H6 → H7a → H7b; H9; M3a; M4 → M7;
+  M9; M1; M2 → M5; H5 → M8; then P3. This is dependency/risk order, not a
+  calendar sprint.
+- **P1 open contract:** H5 aligns public wording with an unkeyed local `Audit
+  integrity chain`; H6 proves snapshot path containment; H7a protects snapshot
+  artifact modes; H7b hardens audit modes and symlink opens; H9 finishes only
+  ADR-016 missing-required-recovery degradation. Arbitrary dynamic evaluation
+  and TOCTOU are not H9 closure criteria.
+- **P2 open contract:** M1 surfaces optional `Sandbox` degradation without making
+  confinement mandatory; M3a makes the intentional disabled `Toggle` visible;
+  M8 aligns Snapshot/Rollback wording with captured pre-execution state rather
+  than building a general backup system. M2, M4, M5, M7, and M9 retain their
+  focused correctness findings. M3b and M6 are closed; M10 is fixed locally but
+  remains Partial until PR CI completes its closure gate.
 - **Docs accuracy regressions (2026-07-09 checkup):** ARCHITECTURE.md references
   removed paths (`src/decision/engine.rs`, `src/interceptor/…`, `src/config/…`,
   `src/snapshot/*.rs`), states a stale 1500/2000 LoC budget (actual 800), and
