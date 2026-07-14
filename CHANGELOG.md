@@ -31,6 +31,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Changed
 
+- Closed the M10 backlog finding after PR #120 merged with all required CI checks green; the README denial example and command-flow wording now match the verified snapshot ordering.
 - Normalized the 1.0 security backlog: closed verified work, split H7/M3 into independently closable findings, narrowed H9 to the remaining ADR-016 contract, aligned H5/M1/M8 with the heuristic-guardrail product boundary, replaced stale sprints with dependency order, and moved implementation detail into linked `docs/plans/` files.
 - CI: eliminated duplicate push+PR runs on feature branches (`push` trigger now scoped to `main` only) and added a `concurrency` group that cancels superseded runs on non-`main` refs only — pushes to `main` always run to completion so every commit gets a full audit/deny/fuzz pass, and the weekly schedule/`workflow_dispatch` can't race-cancel an in-flight `main` push (or vice versa).
 - CI: split the `build` and `live-installer` jobs into always-on Linux jobs plus gated `build-macos`/`live-installer-macos` jobs that only run on pushes to `main`, PRs targeting `main`, the weekly schedule, and manual dispatch — cuts macOS runner minutes (billed at 10x Linux) on every feature-branch push/PR while keeping macOS coverage before merge to `main`. `release.yml` macOS builds are unaffected.

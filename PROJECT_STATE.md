@@ -23,6 +23,9 @@
 
 ## Last session (2026-07-14)
 
+- **M10 closed.** README denial/flow examples and the snapshot-ordering
+  regression test passed review/re-review; PR #120 merged after all required CI
+  contexts passed.
 - **Security backlog normalized.** `TASKS.md` now keeps only the Finding,
   Acceptance criteria, Status, and Traceability for every item. Verified work is
   closed, H7 and M3 are split into independently closable `a`/`b` findings, H9
@@ -37,8 +40,8 @@
   `Snapshot` state, and `Rollback` from adversarial tamper proof, backup, or
   general undo.
 - **Factually closed:** H3 and M6 remain closed; M3b canonical hook wrapping is
-  recorded separately as closed. M10's README denial/flow examples are fixed but
-  its checkbox stays Partial until PR CI satisfies the Definition of Done. H9
+  recorded separately as closed. M10's README denial/flow examples are fixed
+  and its PR-CI closure gate passed. H9
   remains Partial (iterations 1–3 only), while H5, H6, H7a/b, M1, M2, M3a, M4,
   M5, and M7–M9 stay open. Docs verification:
   `cargo test --test contracts_docs --test homebrew_formula --test npm_package
@@ -134,7 +137,7 @@ Full history of prior sessions: `git log` and `CHANGELOG.md`.
 | P0 security blockers (C1–C4) | Uppercase bypass, `$IFS` obfuscation, project-config weakening, token-prefix anchoring | ✅ Done |
 | P1 security findings (H1–H4, H8) | Segmentation, destructive SQL, H3 patterns, hooks, destructive Git forms | ✅ Done |
 | P1 security findings (H5, H6, H7a, H7b, H9) | Integrity wording, containment, artifact hardening, ADR-016 degradation | 🔲 Open |
-| P2 security findings | M3b/M6 closed; M10 partial; M1, M2, M3a, M4, M5, M7, M8, M9 open | 🔲 Open |
+| P2 security findings | M3b/M6/M10 closed; M1, M2, M3a, M4, M5, M7, M8, M9 open | 🔲 Open |
 | 1.0 perf gate | Hot path < 2 ms (p99) via criterion | 🔲 Open |
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
 
@@ -188,8 +191,7 @@ feature — see memory `deny_advisories_baseline`).
   confinement mandatory; M3a makes the intentional disabled `Toggle` visible;
   M8 aligns Snapshot/Rollback wording with captured pre-execution state rather
   than building a general backup system. M2, M4, M5, M7, and M9 retain their
-  focused correctness findings. M3b and M6 are closed; M10 is fixed locally but
-  remains Partial until PR CI completes its closure gate.
+  focused correctness findings. M3b, M6, and M10 are closed.
 - **Docs accuracy regressions (2026-07-09 checkup):** ARCHITECTURE.md references
   removed paths (`src/decision/engine.rs`, `src/interceptor/…`, `src/config/…`,
   `src/snapshot/*.rs`), states a stale 1500/2000 LoC budget (actual 800), and
