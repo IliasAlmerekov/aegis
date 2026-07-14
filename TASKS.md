@@ -332,17 +332,20 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Traceability:** [plan](docs/plans/2026-07-14-m9-rollback-id-round-trip.md);
   `src/rollback.rs` and snapshot plugin ID parsers.
 
-### [ ] M10 — README shows a snapshot before approval
+### [x] M10 — README shows a snapshot before approval
 
 - **Finding:** the Before/After example placed snapshot creation inside the
   confirmation dialog even though snapshots are created only after approval.
 - **Acceptance criteria:** the denial example contains no snapshot claim and the
   command-flow summary follows the real sequence: dialog → approval → snapshot
   attempt → execution.
-- **Status:** **Partial** — README examples are corrected in the current change;
-  closure waits for the full review/re-review/PR-CI Definition of Done.
+- **Status:** **Closed** — README examples are corrected; review/re-review
+  completed and all required CI checks passed before PR #120 merged on
+  2026-07-14.
 - **Traceability:** `README.md` Before/After and command-flow examples;
-  `tests/snapshot_ordering.rs::test_denied_danger_command_records_no_snapshots`.
+  `tests/snapshot_ordering.rs::test_denied_danger_command_records_no_snapshots`;
+  [PR #120](https://github.com/IliasAlmerekov/aegis/pull/120);
+  [required CI run](https://github.com/IliasAlmerekov/aegis/actions/runs/29342385519).
 
 ---
 
