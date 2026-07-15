@@ -235,3 +235,110 @@ fn read_last_entry_skips_truncated_final_line() {
 
     assert_eq!(last.as_base().command, "command-1");
 }
+
+#[cfg(unix)]
+#[test]
+fn query_rejects_a_symlinked_archive_instead_of_returning_a_partial_view() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    logger.append(entry(1, RiskLevel::Warn)).unwrap();
+    let target = dir.path().join("outside-segment");
+    let mut bytes = serde_json::to_vec(&entry(0, RiskLevel::Safe)).unwrap();
+    bytes.push(b'\n');
+    fs::write(&target, bytes).unwrap();
+    let archive = dir.path().join("audit.jsonl.1");
+    symlink(&target, &archive).unwrap();
+
+    let error = logger.read_all().unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == archive.to_string_lossy()
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn query_rejects_a_broken_symlinked_active_log() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    symlink(dir.path().join("missing-target"), logger.path()).unwrap();
+
+    let error = logger.read_all().unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == logger.path().to_string_lossy()
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn query_tightens_an_owned_existing_archive() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    logger.append(entry(1, RiskLevel::Warn)).unwrap();
+    let archive = dir.path().join("audit.jsonl.1");
+    let mut bytes = serde_json::to_vec(&entry(0, RiskLevel::Safe)).unwrap();
+    bytes.push(b'\n');
+    fs::write(&archive, bytes).unwrap();
+    fs::set_permissions(&archive, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let entries = logger.read_all().unwrap();
+
+    assert_eq!(entries.len(), 2);
+    let mode = fs::metadata(archive).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn query_rejects_an_unsafe_duplicate_archive_shape() {
+    use std::io::Write as _;
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    logger.append(entry(1, RiskLevel::Warn)).unwrap();
+    let gzip_archive = dir.path().join("audit.jsonl.1.gz");
+    let archive = File::create(&gzip_archive).unwrap();
+    let mut encoder = flate2::write::GzEncoder::new(archive, flate2::Compression::default());
+    let mut bytes = serde_json::to_vec(&entry(0, RiskLevel::Safe)).unwrap();
+    bytes.push(b'\n');
+    encoder.write_all(&bytes).unwrap();
+    encoder.finish().unwrap();
+    let target = dir.path().join("outside-plain");
+    fs::write(&target, &bytes).unwrap();
+    let plain_archive = dir.path().join("audit.jsonl.1");
+    symlink(target, &plain_archive).unwrap();
+
+    let error = logger.read_all().unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == plain_archive.to_string_lossy()
+    ));
+}
+
+#[test]
+fn query_of_an_absent_parent_is_empty_without_creating_filesystem_state() {
+    let dir = TempDir::new().unwrap();
+    let parent = dir.path().join("missing");
+    let logger = AuditLogger::new(parent.join("audit.jsonl"));
+
+    let entries = logger.read_all().unwrap();
+    let integrity = logger.verify_integrity().unwrap();
+
+    assert!(entries.is_empty());
+    assert_eq!(integrity.status, AuditIntegrityStatus::NoIntegrityData);
+    assert!(!parent.exists());
+}

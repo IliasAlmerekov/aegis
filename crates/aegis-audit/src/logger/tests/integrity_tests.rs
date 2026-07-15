@@ -39,26 +39,6 @@ fn append_normalizes_legacy_fields_only_once() {
 }
 
 #[test]
-fn append_documents_directory_creation_race_window() {
-    let source = include_str!("../writer.rs");
-    let append_start = source
-        .find("pub fn append(&self, entry: AuditEntry) -> Result<()> {")
-        .expect("append function must exist");
-    let append_source = &source[append_start..];
-    let next_fn = append_source
-        .find("\n    pub(super) fn lock_path(&self) -> PathBuf {")
-        .expect("append must be followed by read_all");
-    let append_body = &append_source[..next_fn];
-
-    assert!(
-        append_body.contains("narrow race window")
-            && append_body.contains("create_dir_all")
-            && append_body.contains("lock file lives inside that directory"),
-        "append must document the acceptable create_dir_all-before-lock race window"
-    );
-}
-
-#[test]
 fn compute_entry_hash_changes_when_explanation_changes() {
     let base_entry =
         entry(0, RiskLevel::Danger).with_explanation(explanation_with_match_text("rm -rf"));
@@ -127,4 +107,26 @@ fn verify_integrity_detects_reordered_entries() {
     let report = verify_integrity_entries(&entries);
     assert_eq!(report.status, AuditIntegrityStatus::Corrupt);
     assert!(report.message.contains("chain link mismatch"));
+}
+
+#[cfg(unix)]
+#[test]
+fn verify_integrity_rejects_a_symlinked_gzip_segment() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    logger.append(entry(1, RiskLevel::Warn)).unwrap();
+    let target = dir.path().join("outside-gzip");
+    fs::write(&target, b"not relevant").unwrap();
+    let archive = dir.path().join("audit.jsonl.1.gz");
+    symlink(&target, &archive).unwrap();
+
+    let error = logger.verify_integrity().unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == archive.to_string_lossy()
+    ));
 }

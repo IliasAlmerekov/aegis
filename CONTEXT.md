@@ -255,6 +255,17 @@ The append-only JSONL record at `~/.aegis/audit.jsonl`. One `AuditEntry` per lin
 never rewritten. The format is part of the public contract.
 _Avoid_: history, journal
 
+**Audit directory**:
+A directory Aegis creates while materializing the configured `Audit log` path.
+A pre-existing parent remains a caller-owned container, not an Audit directory.
+_Avoid_: audit parent, log folder
+
+**Audit artifact**:
+An owner-only filesystem object used by the audit subsystem: the active `Audit
+log`, its lock file, a rotated segment, or the managed gzip rotation staging
+object.
+_Avoid_: audit file, log artifact
+
 **Audit integrity chain**:
 The optional unkeyed SHA-256 link between consecutive `AuditEntry` values and
 rotated segments (`ChainSha256`). It detects corruption and inconsistent edits,

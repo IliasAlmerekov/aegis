@@ -1,11 +1,14 @@
 use std::env;
-use std::fs::{self, File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use super::*;
 use crate::error::AuditError;
+use crate::secure_fs::{
+    create_parent_directories, open_append, open_lock, parent_exists_and_is_safe,
+};
 use aegis_config::AuditConfig;
 
 impl AuditEntry {
@@ -254,13 +257,7 @@ impl AuditLogger {
     /// Failures must be handled — ignoring them silently defeats integrity checking.
     #[must_use = "audit write failures must be handled — ignoring them silently defeats integrity checking"]
     pub fn append(&self, entry: AuditEntry) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            // The lock file lives inside that directory, so we must ensure the directory
-            // exists before opening the lock path. This leaves a narrow race window around
-            // create_dir_all before the lock is acquired, but directory creation is idempotent
-            // and the append/chain-critical work still happens only after taking the lock.
-            fs::create_dir_all(parent)?;
-        }
+        create_parent_directories(&self.path)?;
         let _lock = AuditLock::exclusive(&self.lock_path())?;
 
         let prev_hash = self.latest_chained_hash()?;
@@ -273,10 +270,7 @@ impl AuditLogger {
             self.rotate_if_needed(policy, serialized.len() as u64)?;
         }
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
+        let mut file = open_append(&self.path)?;
 
         file.write_all(&serialized)?;
         file.flush()?;
@@ -299,7 +293,7 @@ impl AuditLogger {
 
     pub(super) fn acquire_shared_lock(&self) -> Result<Option<AuditLock>> {
         let lock_path = self.lock_path();
-        if lock_path.parent().is_some_and(|parent| !parent.exists()) {
+        if !parent_exists_and_is_safe(&lock_path)? {
             return Ok(None);
         }
 
@@ -319,17 +313,11 @@ fn default_audit_path() -> PathBuf {
 }
 
 fn open_lock_file(path: &Path, create_parent: bool) -> Result<File> {
-    if create_parent && let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    if create_parent {
+        create_parent_directories(path)?;
     }
 
-    OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-        .map_err(Into::into)
+    open_lock(path)
 }
 
 fn current_timestamp() -> AuditTimestamp {

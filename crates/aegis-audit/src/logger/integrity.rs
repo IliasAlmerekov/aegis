@@ -31,7 +31,7 @@ impl AuditLogger {
             return Ok(entry.as_base().entry_hash.clone());
         }
 
-        if let Some(path) = self.existing_archive_path(1) {
+        if let Some(path) = self.existing_archive_path(1)? {
             let compressed = path.extension().and_then(|ext| ext.to_str()) == Some("gz");
             let segment = ArchiveSegment {
                 path,

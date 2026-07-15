@@ -87,6 +87,12 @@ impl From<aegis_scanner::ScannerError> for AegisError {
 impl From<aegis_audit::error::AuditError> for AegisError {
     fn from(error: aegis_audit::error::AuditError) -> Self {
         match error {
+            aegis_audit::error::AuditError::InsecureAuditArtifact { path, detail } => {
+                Self::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("audit artifact '{path}' is insecure: {detail}"),
+                ))
+            }
             aegis_audit::error::AuditError::Io(io) => Self::Io(io),
             aegis_audit::error::AuditError::Parse(msg) => Self::Config(msg),
         }

@@ -1,11 +1,22 @@
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
 
 use super::*;
+use crate::secure_fs::{create_new, open_read_if_exists, parent_exists_and_is_safe};
 use aegis_config::AuditConfig;
+
+#[cfg(test)]
+thread_local! {
+    static INJECT_GZIP_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn inject_gzip_failure() {
+    INJECT_GZIP_FAILURE.with(|flag| flag.set(true));
+}
 
 impl AuditRotationPolicy {
     /// Build a rotation policy from the effective audit config, if enabled.
@@ -23,7 +34,7 @@ impl AuditLogger {
         let mut segments = self.discover_archives()?;
         segments.sort_by_key(|segment| segment.index);
         segments.reverse();
-        if self.path.exists() {
+        if open_read_if_exists(&self.path)?.is_some() {
             segments.push(ArchiveSegment {
                 path: self.path.clone(),
                 compressed: false,
@@ -44,7 +55,7 @@ impl AuditLogger {
         let mut segments = Vec::new();
         let prefix = format!("{base_name}.");
 
-        if !parent.exists() {
+        if !parent_exists_and_is_safe(&self.path)? {
             return Ok(segments);
         }
 
@@ -72,8 +83,18 @@ impl AuditLogger {
                 continue;
             }
 
+            let path = entry.path();
+            drop(open_read_if_exists(&path)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!(
+                        "audit segment disappeared during discovery: {}",
+                        path.display()
+                    ),
+                )
+            })?);
             segments.push(ArchiveSegment {
-                path: entry.path(),
+                path,
                 compressed,
                 index,
             });
@@ -93,11 +114,10 @@ impl AuditLogger {
         policy: &AuditRotationPolicy,
         incoming_bytes: u64,
     ) -> Result<()> {
-        if !self.path.exists() {
+        let Some(file) = open_read_if_exists(&self.path)? else {
             return Ok(());
-        }
-
-        let current_size = fs::metadata(&self.path)?.len();
+        };
+        let current_size = file.metadata()?.len();
         if current_size.saturating_add(incoming_bytes) <= policy.max_file_size_bytes {
             return Ok(());
         }
@@ -106,10 +126,14 @@ impl AuditLogger {
     }
 
     fn rotate(&self, policy: &AuditRotationPolicy) -> Result<()> {
+        let stale_staging = self.preflight_rotation(policy)?;
+        if stale_staging {
+            fs::remove_file(self.staging_path())?;
+        }
         self.remove_existing_archive(policy.retention_files)?;
 
         for index in (1..policy.retention_files).rev() {
-            if let Some(source) = self.existing_archive_path(index) {
+            if let Some(source) = self.existing_archive_path(index)? {
                 let destination = if source
                     .extension()
                     .and_then(|ext| ext.to_str())
@@ -139,18 +163,53 @@ impl AuditLogger {
         Ok(())
     }
 
-    fn compress_current_to_archive(&self, destination: &Path) -> Result<()> {
-        if destination.exists() {
-            fs::remove_file(destination)?;
+    fn preflight_rotation(&self, policy: &AuditRotationPolicy) -> Result<bool> {
+        drop(open_read_if_exists(&self.path)?);
+        for index in 1..=policy.retention_files {
+            for path in [
+                self.archive_path(index, false),
+                self.archive_path(index, true),
+            ] {
+                drop(open_read_if_exists(&path)?);
+            }
         }
+        if policy.compress_rotated {
+            Ok(open_read_if_exists(&self.staging_path())?.is_some())
+        } else {
+            Ok(false)
+        }
+    }
 
-        let mut source = File::open(&self.path)?;
-        let archive = File::create(destination)?;
-        let mut encoder = GzEncoder::new(archive, Compression::default());
-        std::io::copy(&mut source, &mut encoder)?;
-        encoder.finish()?;
-        fs::remove_file(&self.path)?;
-        Ok(())
+    fn compress_current_to_archive(&self, destination: &Path) -> Result<()> {
+        let staging = self.staging_path();
+        let result = (|| {
+            let mut source = open_read_if_exists(&self.path)?.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("active audit log not found: {}", self.path.display()),
+                )
+            })?;
+            let archive = create_new(&staging)?;
+            let mut encoder = GzEncoder::new(archive, Compression::default());
+            std::io::copy(&mut source, &mut encoder)?;
+
+            #[cfg(test)]
+            if INJECT_GZIP_FAILURE.with(|flag| flag.replace(false)) {
+                return Err(AuditError::Io(std::io::Error::other(
+                    "injected gzip failure",
+                )));
+            }
+
+            encoder.finish()?;
+            fs::rename(&staging, destination)?;
+            fs::remove_file(&self.path)?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&staging);
+        }
+        result
     }
 
     fn remove_existing_archive(&self, index: usize) -> Result<()> {
@@ -165,13 +224,16 @@ impl AuditLogger {
         Ok(())
     }
 
-    pub(super) fn existing_archive_path(&self, index: usize) -> Option<PathBuf> {
-        [
+    pub(super) fn existing_archive_path(&self, index: usize) -> Result<Option<PathBuf>> {
+        for path in [
             self.archive_path(index, true),
             self.archive_path(index, false),
-        ]
-        .into_iter()
-        .find(|path| path.exists())
+        ] {
+            if open_read_if_exists(&path)?.is_some() {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
     }
 
     fn archive_path(&self, index: usize, compressed: bool) -> PathBuf {
@@ -198,5 +260,11 @@ impl AuditLogger {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join(file_name)
+    }
+
+    fn staging_path(&self) -> PathBuf {
+        let mut path = self.archive_path(1, true).into_os_string();
+        path.push(".tmp");
+        PathBuf::from(path)
     }
 }

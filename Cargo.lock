@@ -64,6 +64,7 @@ dependencies = [
  "aegis-scanner",
  "aegis-types",
  "flate2",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
