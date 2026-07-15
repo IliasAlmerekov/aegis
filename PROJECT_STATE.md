@@ -23,6 +23,18 @@
 
 ## Last session (2026-07-15)
 
+- **H7a implemented and verified locally; PR CI pending.** Snapshot stores and
+  bundle directories now use `0700`, while
+  SQLite/PostgreSQL/MySQL/Supabase artifacts and manifests use `0600` on Unix.
+  Unsafe store leaves are tightened only when owned by the current uid; symlinks
+  and other-owner paths fail closed before sensitive writes. Creation composes
+  H6 containment before secure reservation; non-Unix deliberately has no POSIX
+  mode promise. A follow-up preserves caller-owned SQLite restore modes,
+  types unreadable store-metadata failures, tests the other-uid branch, and
+  recovers Supabase writes from stale manifest temps. ADR-019, the glossary,
+  and regression coverage landed. TDD,
+  review/re-review, workspace tests, clippy, fmt, audit, deny, and diff-check
+  passed locally; H7a remains Partial in `TASKS.md` until required PR CI passes.
 - **H6 closed.** SQLite, PostgreSQL,
   and MySQL now prove rollback/delete artifacts remain beneath their plugin-owned
   Snapshot store, rejecting forged outside paths, traversal, and symlink
@@ -160,7 +172,7 @@ Full history of prior sessions: `git log` and `CHANGELOG.md`.
 | 1.0 docs gate | README, threat model, docs accuracy | 🔲 Open (reopened 2026-07-09 checkup — ARCHITECTURE/CONVENTION/ROADMAP/CHANGELOG stale; see Open decisions) |
 | P0 security blockers (C1–C4) | Uppercase bypass, `$IFS` obfuscation, project-config weakening, token-prefix anchoring | ✅ Done |
 | P1 security findings (H1–H4, H8) | Segmentation, destructive SQL, H3 patterns, hooks, destructive Git forms | ✅ Done |
-| P1 security findings (H5, H6, H7a, H7b, H9) | Integrity wording, containment, artifact hardening, ADR-016 degradation | 🔲 Open |
+| P1 security findings (H5, H6, H7a, H7b, H9) | Integrity wording, containment, artifact hardening, ADR-016 degradation | 🔲 Open (H5/H6 closed; H7a/H7b/H9 remain) |
 | P2 security findings | M3b/M6/M10 closed; M1, M2, M3a, M4, M5, M7, M8, M9 open | 🔲 Open |
 | 1.0 perf gate | Hot path < 2 ms (p99) via criterion | 🔲 Open |
 | 1.0 test gate | Zero false-negatives on security bypass corpus | 🔲 Open |
@@ -203,6 +215,8 @@ feature — see memory `deny_advisories_baseline`).
 
 ## Open decisions / blockers
 
+- **H7a closure blocker:** implementation and local gates are clean; required
+  PR CI must pass before the `TASKS.md` checkbox is closed.
 - **Current security order** (`TASKS.md`): H6 → H7a → H7b; H9; M3a; M4 → M7;
   M9; M1; M2 → M5; H5 → M8; then P3. This is dependency/risk order, not a
   calendar sprint.

@@ -329,7 +329,19 @@ async fn snapshot_uses_pg_dump_and_creates_dump_file() {
     assert!(logged_args.lines().any(|line| line == "-f"));
     assert!(logged_args.lines().any(|line| line == "app"));
     let dump_path = PathBuf::from(decode_hex(parts[5]));
-    assert_eq!(fs::read_to_string(dump_path).unwrap(), "dump-data");
+    assert_eq!(fs::read_to_string(&dump_path).unwrap(), "dump-data");
+    assert_eq!(
+        fs::metadata(dump_path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        fs::metadata(dump_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
 }
 
 #[cfg(unix)]

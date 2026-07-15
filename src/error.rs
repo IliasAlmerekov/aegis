@@ -129,6 +129,13 @@ impl From<aegis_snapshot::SnapshotError> for AegisError {
             } => Self::Snapshot(format!(
                 "{plugin} snapshot artifact '{candidate}' escapes snapshot store '{store}'"
             )),
+            aegis_snapshot::SnapshotError::InsecureSnapshotPermissions {
+                plugin,
+                path,
+                detail,
+            } => Self::Snapshot(format!(
+                "{plugin} snapshot path '{path}' does not meet owner-only permissions: {detail}"
+            )),
             aegis_snapshot::SnapshotError::Config(msg) => Self::Config(msg),
             aegis_snapshot::SnapshotError::Io(io) => Self::Io(io),
             aegis_snapshot::SnapshotError::Snapshot(msg) => Self::Snapshot(msg),

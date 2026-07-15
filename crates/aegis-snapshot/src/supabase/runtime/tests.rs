@@ -91,6 +91,23 @@ fn snapshot_id_v1_round_trips_manifest_path() {
 }
 
 #[test]
+fn manifest_write_recovers_from_a_stale_temp_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let manifest_path = manifest_path(&temp_dir);
+    fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
+    let stale_temp = manifest_path.with_extension("json.tmp");
+    fs::write(&stale_temp, "stale").unwrap();
+    let manifest = SupabaseManifest::phase1_fixture();
+
+    write_manifest_atomically(&manifest_path, &manifest).unwrap();
+
+    let persisted: SupabaseManifest =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(persisted.provider, "supabase");
+    assert_eq!(fs::read_to_string(stale_temp).unwrap(), "stale");
+}
+
+#[test]
 fn manifest_requires_target_db_for_v1() {
     let manifest = SupabaseManifest {
         manifest_version: 1,
@@ -239,6 +256,36 @@ async fn snapshot_uses_pg_dump_and_writes_manifest_bundle() {
         &expected_checksum
     );
     assert_eq!(fs::read_to_string(&dump_path).unwrap(), "dump-data");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        assert_eq!(
+            fs::metadata(manifest_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(dump_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&dump_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(&manifest_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 }
 
 #[tokio::test]

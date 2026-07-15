@@ -165,8 +165,10 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   snapshot files are owner-readable/writable only on supported Unix platforms;
   existing unsafe paths are rejected or tightened before sensitive writes;
   non-Unix behavior is documented and tested without adding native-Windows scope.
-- **Status:** **Open** — split from H7.
-- **Traceability:** [plan](docs/plans/2026-07-14-h7a-snapshot-artifact-permissions.md).
+- **Status:** **Partial** — implemented and verified locally on 2026-07-15;
+  required PR CI remains before closure.
+- **Traceability:** [plan](docs/plans/2026-07-14-h7a-snapshot-artifact-permissions.md);
+  [ADR-019](docs/adr/adr-019-owner-only-snapshot-artifact-permissions.md).
 
 ### [ ] H7b — Audit artifacts follow unsafe paths and inherit broad permissions
 

@@ -237,6 +237,13 @@ The invariant that a resolved `Snapshot artifact` is provably beneath its
 `Snapshot store`, including after symlink resolution.
 _Avoid_: path validation, path sanitization
 
+**Owner-only artifact permissions**:
+The Unix invariant that a `Snapshot store` and its directory artifacts use mode
+`0700`, while file `Snapshot artifact`s use mode `0600`; an unsafe store leaf
+is tightened only when the current owner owns it, otherwise rejected before a
+sensitive write.
+_Avoid_: private snapshot, chmod security
+
 **Rollback**:
 Restoring the state captured by a previous `Snapshot`, addressed by its
 `snapshot_id`. It restores captured state; it is not a general undo of the

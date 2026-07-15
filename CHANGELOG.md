@@ -13,6 +13,8 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- H7a follow-up: SQLite Rollback now preserves the caller-owned live database mode, unsafe Snapshot-store metadata reads yield the typed permission rejection, and a stale Supabase manifest temp is bypassed with a fresh secure reservation (ADR-019, H7a).
+- H7a snapshot artifacts now use owner-only Unix modes (`0700` directories and `0600` files); unsafe Snapshot store leaves are tightened or rejected before sensitive writes, while non-Unix behavior deliberately makes no POSIX-mode claim (ADR-019, H7a).
 - H6 snapshot path containment: SQLite, PostgreSQL, and MySQL now prove every rollback/delete artifact stays beneath the plugin-owned Snapshot store, rejecting traversal, outside, sibling-prefix, and symlink escapes; SQLite restores only to its configured live database path, never an identifier-provided destination (ADR-018, H6).
 - H5 audit-integrity contract: `ChainSha256` is now consistently described as an unkeyed local audit integrity chain that detects corruption and inconsistent edits, not an adversarial anchor; `aegis audit --verify-integrity` states that bounded contract, and a tracked-file wording guard prevents capability overclaims (ADR-017, H5).
 - Effect-opaque execution (`sh ./cleanup.sh`, `python3 ./x.py`, `source ./x`, `. ./x`, `sh -s`, and existing pipe-to-shell shapes) now requires a pre-execution recovery snapshot under `SnapshotPolicy::{Selective, Full}` when an applicable snapshot plugin exists — without raising `RiskLevel` or introducing a confirmation prompt; `SnapshotPolicy::None` remains the trusted/global opt-out and project `.aegis.toml` cannot disable the requirement under the C3 ratchet (ADR-016, H9).
