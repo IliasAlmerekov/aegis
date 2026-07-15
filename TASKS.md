@@ -126,7 +126,7 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Traceability:** [ADR-007](docs/adr/adr-007-shell-hooks-share-one-managed-helper-but-must-not-fail-open.md);
   commit `9667a02`; `tests/agent_hooks.rs`.
 
-### [ ] H5 — Audit hash-chain claims exceed the integrity contract
+### [x] H5 — Audit hash-chain claims exceed the integrity contract
 
 - **Finding:** an unkeyed, locally stored SHA-256 chain detects accidental
   corruption and some edits, but cannot prove adversarial tamper-evidence against
@@ -136,9 +136,12 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   chain/check**; they state that it has no keyed or external anchor and do not
   claim adversarial tamper-evidence. Cryptographic anchoring is out of the 1.0
   product contract unless separately designed in a future ADR.
-- **Status:** **Open** — misleading wording remains in current docs and code.
+- **Status:** **Closed** — verified locally and by all required PR CI checks on
+  2026-07-15.
 - **Traceability:** [plan](docs/plans/2026-07-14-h5-audit-integrity-contract.md);
-  [ADR-004](docs/adr/adr-004-snapshots-are-best-effort-audit-is-append-only.md).
+  [ADR-004](docs/adr/adr-004-snapshots-are-best-effort-audit-is-append-only.md);
+  [ADR-017](docs/adr/adr-017-audit-integrity-chain-has-no-external-anchor.md);
+  commit `ad9c947` (PR #122).
 
 ### [ ] H6 — Snapshot paths are not proven contained in the snapshot store
 
