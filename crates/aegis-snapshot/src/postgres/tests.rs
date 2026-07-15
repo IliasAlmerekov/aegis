@@ -416,6 +416,7 @@ async fn rollback_uses_pg_restore_with_expected_arguments() {
     plugin.rollback(&snapshot_id).await.unwrap();
 
     let logged_args = fs::read_to_string(&log_path).unwrap();
+    let canonical_dump_path = dump_path.canonicalize().unwrap();
     assert!(logged_args.lines().any(|line| line == "--clean"));
     assert!(logged_args.lines().any(|line| line == "--if-exists"));
     assert!(logged_args.lines().any(|line| line == "--create"));
@@ -425,7 +426,7 @@ async fn rollback_uses_pg_restore_with_expected_arguments() {
     assert!(
         logged_args
             .lines()
-            .any(|line| line == dump_path.to_string_lossy())
+            .any(|line| line == canonical_dump_path.to_string_lossy())
     );
 }
 
