@@ -12,6 +12,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use crate::SnapshotPlugin;
 use crate::containment::contain_artifact;
 use crate::error::SnapshotError;
+use crate::secure_fs::{create_artifact_file, create_store_dir, harden_existing_artifact};
 
 type Result<T> = std::result::Result<T, SnapshotError>;
 
@@ -93,20 +94,20 @@ impl PostgresPlugin {
         let mut suffix = None;
 
         loop {
-            let dump_path = self.dump_path_candidate(timestamp, suffix);
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&dump_path)
-            {
+            let dump_path = contain_artifact(
+                "postgres",
+                &self.snapshots_dir,
+                &self.dump_path_candidate(timestamp, suffix),
+            )?;
+            match create_artifact_file("postgres", &dump_path) {
                 Ok(file) => {
                     drop(file);
                     return Ok(dump_path);
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(SnapshotError::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                     suffix = Some(suffix.map_or(1, |current| current + 1));
                 }
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(err),
             }
         }
     }
@@ -328,7 +329,7 @@ impl SnapshotPlugin for PostgresPlugin {
     }
 
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
-        std::fs::create_dir_all(&self.snapshots_dir)?;
+        create_store_dir("postgres", &self.snapshots_dir)?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -346,11 +347,24 @@ impl SnapshotPlugin for PostgresPlugin {
 
         let mut command = Command::new(&self.pg_dump_bin);
         command.args(&args);
-        let output = Self::output_with_busy_retry(&mut command, "failed to run pg_dump").await?;
+        let output = match Self::output_with_busy_retry(&mut command, "failed to run pg_dump").await
+        {
+            Ok(output) => output,
+            Err(error) => {
+                let _ = std::fs::remove_file(&dump_path);
+                return Err(error);
+            }
+        };
 
         if !output.status.success() {
+            let _ = std::fs::remove_file(&dump_path);
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(SnapshotError::Snapshot(format!("pg_dump failed: {stderr}")));
+        }
+
+        if let Err(error) = harden_existing_artifact("postgres", &dump_path) {
+            let _ = std::fs::remove_file(&dump_path);
+            return Err(error);
         }
 
         let dump_path = dump_path.canonicalize()?;

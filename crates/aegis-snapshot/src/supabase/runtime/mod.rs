@@ -15,6 +15,7 @@
 //! trait; the helper logic is split out to keep every file under 800 LoC.
 
 use super::*;
+use crate::containment::contain_artifact;
 
 use manifest_io::write_manifest_atomically;
 use manifest_state::phase1_complete;
@@ -42,9 +43,10 @@ impl SnapshotPlugin for SupabasePlugin {
         self.validate_preflight().await?;
 
         let bundle_dir = self.create_bundle_dir()?;
-        let artifacts_dir = bundle_dir.join("artifacts");
-        if let Err(error) = fs::create_dir_all(&artifacts_dir) {
-            return Err(self.fail_closed_after_cleanup(error.into(), &bundle_dir, None));
+        let artifacts_dir =
+            contain_artifact("supabase", &bundle_dir, &bundle_dir.join("artifacts"))?;
+        if let Err(error) = create_store_dir("supabase", &artifacts_dir) {
+            return Err(self.fail_closed_after_cleanup(error, &bundle_dir, None));
         }
 
         let dump_path = artifacts_dir.join("db.dump");

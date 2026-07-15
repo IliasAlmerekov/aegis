@@ -12,6 +12,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use crate::SnapshotPlugin;
 use crate::containment::contain_artifact;
 use crate::error::SnapshotError;
+use crate::secure_fs::{create_artifact_file, create_store_dir};
 
 type Result<T> = std::result::Result<T, SnapshotError>;
 
@@ -160,7 +161,7 @@ impl SnapshotPlugin for SqlitePlugin {
 
     async fn snapshot(&self, cwd: &Path, _cmd: &str) -> Result<String> {
         let db_path = self.resolve_db_path(cwd).canonicalize()?;
-        fs::create_dir_all(&self.snapshots_dir)?;
+        create_store_dir("sqlite", &self.snapshots_dir)?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -172,14 +173,31 @@ impl SnapshotPlugin for SqlitePlugin {
             .filter(|stem| !stem.is_empty())
             .unwrap_or("db");
         let base_name = format!("sqlite-{file_stem}-{timestamp}");
-        let mut dump_path = self.snapshots_dir.join(format!("{base_name}.db"));
+        let mut dump_path = contain_artifact(
+            "sqlite",
+            &self.snapshots_dir,
+            &self.snapshots_dir.join(format!("{base_name}.db")),
+        )?;
         let mut suffix = 1usize;
-        while dump_path.exists() {
-            dump_path = self.snapshots_dir.join(format!("{base_name}-{suffix}.db"));
-            suffix += 1;
-        }
-
-        fs::copy(&db_path, &dump_path)?;
+        let mut dump_file = loop {
+            match create_artifact_file("sqlite", &dump_path) {
+                Ok(file) => break file,
+                Err(SnapshotError::Io(error))
+                    if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                {
+                    dump_path = contain_artifact(
+                        "sqlite",
+                        &self.snapshots_dir,
+                        &self.snapshots_dir.join(format!("{base_name}-{suffix}.db")),
+                    )?;
+                    suffix += 1;
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        let mut source = fs::File::open(&db_path)?;
+        std::io::copy(&mut source, &mut dump_file)?;
+        drop(dump_file);
         let dump_path = dump_path.canonicalize()?;
 
         let snapshot_id = Self::build_snapshot_id(&db_path, &dump_path);
@@ -198,7 +216,12 @@ impl SnapshotPlugin for SqlitePlugin {
 
         let cwd = std::env::current_dir()?;
         let restore_path = self.resolve_db_path(&cwd);
-        fs::copy(dump_path, restore_path)?;
+        let mut dump_file = fs::File::open(dump_path)?;
+        let mut restore_file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(restore_path)?;
+        std::io::copy(&mut dump_file, &mut restore_file)?;
         tracing::info!(snapshot_id = snapshot_id, "sqlite snapshot rolled back");
         Ok(())
     }
@@ -227,6 +250,8 @@ impl SnapshotPlugin for SqlitePlugin {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::secure_fs::{inject_effective_uid, inject_store_metadata_failure};
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
     fn write_db(path: &Path, contents: &[u8]) {
@@ -298,7 +323,116 @@ mod tests {
         assert_eq!(decode_hex(parts[1]), canonical_db_path.to_string_lossy());
         let dump = PathBuf::from(decode_hex(parts[2]));
         assert_eq!(dump.parent().unwrap(), canonical_snapshots_dir.as_path());
-        assert_eq!(fs::read(dump).unwrap(), b"before-snapshot");
+        assert_eq!(fs::read(&dump).unwrap(), b"before-snapshot");
+        assert_eq!(
+            fs::metadata(&canonical_snapshots_dir)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700,
+            "the snapshot store must be owner-only on Unix"
+        );
+        assert_eq!(
+            fs::metadata(&dump).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the SQLite snapshot artifact must be owner-readable and writable only"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_tightens_an_existing_owner_owned_store_before_copying() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        write_db(&db_path, b"before-snapshot");
+        fs::create_dir(&snapshots_dir).unwrap();
+        fs::set_permissions(&snapshots_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let plugin = SqlitePlugin::new(db_path, snapshots_dir.clone());
+
+        plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::metadata(snapshots_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_rejects_a_symlinked_store_before_copying_sensitive_data() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let outside_dir = temp_dir.path().join("outside");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        write_db(&db_path, b"before-snapshot");
+        fs::create_dir(&outside_dir).unwrap();
+        symlink(&outside_dir, &snapshots_dir).unwrap();
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+
+        let err = plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::InsecureSnapshotPermissions { plugin, .. } if plugin == "sqlite"
+        ));
+        assert!(fs::read_dir(outside_dir).unwrap().next().is_none());
+        assert_eq!(fs::read(db_path).unwrap(), b"before-snapshot");
+    }
+
+    #[tokio::test]
+    async fn snapshot_rejects_unreadable_store_metadata_before_copying_sensitive_data() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        write_db(&db_path, b"before-snapshot");
+        inject_store_metadata_failure();
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir.clone());
+
+        let err = plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::InsecureSnapshotPermissions { plugin, .. } if plugin == "sqlite"
+        ));
+        assert!(!snapshots_dir.exists());
+        assert_eq!(fs::read(db_path).unwrap(), b"before-snapshot");
+    }
+
+    #[tokio::test]
+    async fn snapshot_rejects_a_store_owned_by_another_uid_before_copying_sensitive_data() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        write_db(&db_path, b"before-snapshot");
+        fs::create_dir(&snapshots_dir).unwrap();
+        let owner_uid = fs::metadata(&snapshots_dir).unwrap().uid();
+        inject_effective_uid(owner_uid.wrapping_add(1));
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir.clone());
+
+        let err = plugin
+            .snapshot(temp_dir.path(), "sqlite-command")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::InsecureSnapshotPermissions { plugin, .. } if plugin == "sqlite"
+        ));
+        assert!(fs::read_dir(snapshots_dir).unwrap().next().is_none());
+        assert_eq!(fs::read(db_path).unwrap(), b"before-snapshot");
     }
 
     #[tokio::test]
@@ -313,11 +447,17 @@ mod tests {
             .snapshot(temp_dir.path(), "sqlite-command")
             .await
             .unwrap();
+        fs::set_permissions(&db_path, fs::Permissions::from_mode(0o664)).unwrap();
         write_db(&db_path, b"after-change");
 
         plugin.rollback(&snapshot_id).await.unwrap();
 
         assert_eq!(fs::read(&db_path).unwrap(), b"before-snapshot");
+        assert_eq!(
+            fs::metadata(&db_path).unwrap().permissions().mode() & 0o777,
+            0o664,
+            "rollback must not modify the caller-owned live database permissions"
+        );
     }
 
     #[tokio::test]

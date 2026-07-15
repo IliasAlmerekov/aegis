@@ -14,6 +14,7 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use crate::SnapshotPlugin;
 use crate::containment::contain_artifact;
 use crate::error::SnapshotError;
+use crate::secure_fs::{create_artifact_file, create_store_dir, harden_existing_artifact};
 
 type Result<T> = std::result::Result<T, SnapshotError>;
 
@@ -89,20 +90,20 @@ impl MysqlPlugin {
         let mut suffix = None;
 
         loop {
-            let dump_path = self.dump_path_candidate(timestamp, suffix);
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&dump_path)
-            {
+            let dump_path = contain_artifact(
+                "mysql",
+                &self.snapshots_dir,
+                &self.dump_path_candidate(timestamp, suffix),
+            )?;
+            match create_artifact_file("mysql", &dump_path) {
                 Ok(file) => {
                     drop(file);
                     return Ok(dump_path);
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(SnapshotError::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                     suffix = Some(suffix.map_or(1, |current| current + 1));
                 }
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(err),
             }
         }
     }
@@ -372,7 +373,7 @@ impl SnapshotPlugin for MysqlPlugin {
     }
 
     async fn snapshot(&self, _cwd: &Path, _cmd: &str) -> Result<String> {
-        std::fs::create_dir_all(&self.snapshots_dir)?;
+        create_store_dir("mysql", &self.snapshots_dir)?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -439,6 +440,11 @@ impl SnapshotPlugin for MysqlPlugin {
             return Err(SnapshotError::Snapshot(format!(
                 "mysqldump failed: {stderr}"
             )));
+        }
+
+        if let Err(error) = harden_existing_artifact("mysql", &dump_path) {
+            let _ = std::fs::remove_file(&dump_path);
+            return Err(error);
         }
 
         let dump_path = dump_path.canonicalize()?;

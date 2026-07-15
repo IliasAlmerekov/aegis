@@ -46,6 +46,8 @@ mod paths;
 mod registry;
 /// Snapshot retention policy and prunable-record resolution.
 mod retention;
+/// Owner-only filesystem creation helpers for snapshot artifacts.
+mod secure_fs;
 /// Test hooks for observing snapshot registry materialization.
 pub mod testing;
 

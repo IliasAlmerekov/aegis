@@ -39,6 +39,16 @@ pub enum SnapshotError {
         candidate: String,
     },
 
+    /// A snapshot store or artifact could not be made owner-only before a sensitive write.
+    InsecureSnapshotPermissions {
+        /// Plugin creating the snapshot artifact.
+        plugin: String,
+        /// Path whose permissions could not be secured.
+        path: String,
+        /// Specific reason permission hardening failed.
+        detail: String,
+    },
+
     /// The persisted rollback artifact no longer matches the manifest checksum.
     RollbackIntegrityCheckFailed {
         /// Path to the artifact that failed verification.
@@ -92,6 +102,14 @@ impl std::fmt::Display for SnapshotError {
             } => write!(
                 f,
                 "{plugin} snapshot artifact '{candidate}' escapes snapshot store '{store}'"
+            ),
+            Self::InsecureSnapshotPermissions {
+                plugin,
+                path,
+                detail,
+            } => write!(
+                f,
+                "{plugin} snapshot path '{path}' does not meet owner-only permissions: {detail}"
             ),
             Self::RollbackIntegrityCheckFailed {
                 path,

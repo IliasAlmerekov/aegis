@@ -14,7 +14,11 @@ use tokio::process::Command;
 use aegis_config::SupabaseSnapshotConfig;
 
 use crate::SnapshotPlugin;
+use crate::containment::contain_artifact;
 use crate::error::SnapshotError;
+use crate::secure_fs::{
+    create_artifact_dir, create_artifact_file, create_store_dir, harden_existing_artifact,
+};
 
 type Result<T> = std::result::Result<T, SnapshotError>;
 
@@ -311,7 +315,7 @@ impl SupabasePlugin {
     }
 
     fn create_bundle_dir(&self) -> Result<PathBuf> {
-        fs::create_dir_all(&self.snapshots_dir)?;
+        create_store_dir("supabase", &self.snapshots_dir)?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -325,14 +329,20 @@ impl SupabasePlugin {
             } else {
                 format!("supabase-{timestamp}-{suffix}")
             };
-            let bundle_dir = self.snapshots_dir.join(dir_name);
+            let bundle_dir = contain_artifact(
+                "supabase",
+                &self.snapshots_dir,
+                &self.snapshots_dir.join(dir_name),
+            )?;
 
-            match fs::create_dir(&bundle_dir) {
+            match create_artifact_dir("supabase", &bundle_dir) {
                 Ok(()) => return Ok(bundle_dir),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(SnapshotError::Io(error))
+                    if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                {
                     suffix += 1;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(error),
             }
         }
     }
@@ -381,6 +391,12 @@ impl SupabasePlugin {
     }
 
     async fn run_pg_dump(&self, dump_path: &Path) -> Result<()> {
+        let artifacts_dir = dump_path.parent().ok_or_else(|| {
+            SnapshotError::Snapshot("supabase dump path requires an artifact directory".to_string())
+        })?;
+        let dump_path = contain_artifact("supabase", artifacts_dir, dump_path)?;
+        let file = create_artifact_file("supabase", &dump_path)?;
+        drop(file);
         let output = Command::new(&self.pg_dump_bin)
             .arg("-Fc")
             .arg("-h")
@@ -390,7 +406,7 @@ impl SupabasePlugin {
             .arg("-U")
             .arg(&self.config.db.user)
             .arg("-f")
-            .arg(dump_path)
+            .arg(&dump_path)
             .arg(&self.config.db.database)
             .output()
             .await
@@ -400,6 +416,8 @@ impl SupabasePlugin {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(SnapshotError::Snapshot(format!("pg_dump failed: {stderr}")));
         }
+
+        harden_existing_artifact("supabase", &dump_path)?;
 
         Ok(())
     }

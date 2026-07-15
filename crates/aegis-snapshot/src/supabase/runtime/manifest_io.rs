@@ -9,6 +9,8 @@ use std::fs;
 use std::path::Path;
 
 use super::super::{Result, SnapshotError, SupabaseManifest, sync_parent_directory};
+use crate::containment::contain_artifact;
+use crate::secure_fs::create_artifact_file;
 
 #[cfg(test)]
 use super::super::INJECT_MANIFEST_WRITE_FAILURE_FOR_TESTS;
@@ -17,7 +19,9 @@ pub(super) fn write_manifest_atomically(
     manifest_path: &Path,
     manifest: &SupabaseManifest,
 ) -> Result<()> {
-    let temp_path = manifest_path.with_extension("json.tmp");
+    let parent = manifest_path.parent().ok_or_else(|| {
+        SnapshotError::Snapshot("manifest parent directory is required".to_string())
+    })?;
     let bytes = serde_json::to_vec_pretty(manifest).map_err(|error| {
         SnapshotError::Snapshot(format!("failed to serialize supabase manifest: {error}"))
     })?;
@@ -25,22 +29,37 @@ pub(super) fn write_manifest_atomically(
     {
         use std::io::Write as _;
 
-        let mut file = fs::File::create(&temp_path)?;
+        let mut suffix = None;
+        let (temp_path, mut file) = loop {
+            let extension = match suffix {
+                Some(suffix) => format!("json.tmp-{suffix}"),
+                None => "json.tmp".to_string(),
+            };
+            let temp_path =
+                contain_artifact("supabase", parent, &manifest_path.with_extension(extension))?;
+            match create_artifact_file("supabase", &temp_path) {
+                Ok(file) => break (temp_path, file),
+                Err(SnapshotError::Io(error))
+                    if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                {
+                    suffix = Some(suffix.map_or(1, |current| current + 1));
+                }
+                Err(error) => return Err(error),
+            }
+        };
         file.write_all(&bytes)?;
         file.sync_all()?;
-    }
 
-    #[cfg(test)]
-    if INJECT_MANIFEST_WRITE_FAILURE_FOR_TESTS.with(|flag| flag.replace(false)) {
-        return Err(SnapshotError::Snapshot(
-            "manifest commit injected failure".to_string(),
-        ));
-    }
+        #[cfg(test)]
+        if INJECT_MANIFEST_WRITE_FAILURE_FOR_TESTS.with(|flag| flag.replace(false)) {
+            return Err(SnapshotError::Snapshot(
+                "manifest commit injected failure".to_string(),
+            ));
+        }
 
-    fs::rename(&temp_path, manifest_path)?;
-    let parent = manifest_path.parent().ok_or_else(|| {
-        SnapshotError::Snapshot("manifest parent directory is required".to_string())
-    })?;
+        drop(file);
+        fs::rename(&temp_path, manifest_path)?;
+    }
     sync_parent_directory(parent)?;
     Ok(())
 }

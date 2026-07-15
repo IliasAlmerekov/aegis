@@ -13,6 +13,8 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- H7a follow-up: SQLite Rollback now preserves the caller-owned live database mode, unsafe Snapshot-store metadata reads yield the typed permission rejection, and a stale Supabase manifest temp is bypassed with a fresh secure reservation (ADR-019, H7a).
+- H7a snapshot artifacts now use owner-only Unix modes (`0700` directories and `0600` files); unsafe Snapshot store leaves are tightened or rejected before sensitive writes, while non-Unix behavior deliberately makes no POSIX-mode claim (ADR-019, H7a).
 - H6 snapshot path containment: SQLite, PostgreSQL, and MySQL now prove every rollback/delete artifact stays beneath the plugin-owned Snapshot store, rejecting traversal, outside, sibling-prefix, and symlink escapes; SQLite restores only to its configured live database path, never an identifier-provided destination (ADR-018, H6).
 - H5 audit-integrity contract: `ChainSha256` is now consistently described as an unkeyed local audit integrity chain that detects corruption and inconsistent edits, not an adversarial anchor; `aegis audit --verify-integrity` states that bounded contract, and a tracked-file wording guard prevents capability overclaims (ADR-017, H5).
 - Effect-opaque execution (`sh ./cleanup.sh`, `python3 ./x.py`, `source ./x`, `. ./x`, `sh -s`, and existing pipe-to-shell shapes) now requires a pre-execution recovery snapshot under `SnapshotPolicy::{Selective, Full}` when an applicable snapshot plugin exists — without raising `RiskLevel` or introducing a confirmation prompt; `SnapshotPolicy::None` remains the trusted/global opt-out and project `.aegis.toml` cannot disable the requirement under the C3 ratchet (ADR-016, H9).
@@ -33,6 +35,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Changed
 
+- Locked the H7b audit-artifact hardening design: Unix owner-only artifacts,
+  target-level no-follow, tighten-if-owned migration, whole-rotation preflight,
+  staged gzip commit, and explicit parent/non-Unix/durability limits; code work
+  remains gated on the H7a clean cycle and its follow-up fact refresh.
 - Closed the M10 backlog finding after PR #120 merged with all required CI checks green; the README denial example and command-flow wording now match the verified snapshot ordering.
 - Normalized the 1.0 security backlog: closed verified work, split H7/M3 into independently closable findings, narrowed H9 to the remaining ADR-016 contract, aligned H5/M1/M8 with the heuristic-guardrail product boundary, replaced stale sprints with dependency order, and moved implementation detail into linked `docs/plans/` files.
 - CI: eliminated duplicate push+PR runs on feature branches (`push` trigger now scoped to `main` only) and added a `concurrency` group that cancels superseded runs on non-`main` refs only — pushes to `main` always run to completion so every commit gets a full audit/deny/fuzz pass, and the weekly schedule/`workflow_dispatch` can't race-cancel an in-flight `main` push (or vice versa).
