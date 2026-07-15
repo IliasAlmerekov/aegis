@@ -23,15 +23,15 @@
 
 ## Last session (2026-07-15)
 
-- **H6 implementation complete locally; PR CI pending.** SQLite, PostgreSQL,
+- **H6 closed.** SQLite, PostgreSQL,
   and MySQL now prove rollback/delete artifacts remain beneath their plugin-owned
   Snapshot store, rejecting forged outside paths, traversal, and symlink
   escapes with `PathEscapesSnapshotStore`. SQLite restores only to the configured
   database path; legacy in-store artifacts remain supported. ADR-018 and the
   Snapshot store / Snapshot artifact / Path containment glossary are added.
   TDD, review/re-review, `cargo fmt --check`, clippy, workspace tests, audit,
-  deny, and diff-check passed locally (the allowed starlark advisories remain).
-  Do not close H6 in `TASKS.md` until required PR CI passes.
+  deny, and diff-check passed locally (the allowed starlark advisories remain);
+  required PR CI checks passed. H6 is closed in `TASKS.md`.
 - **H5 closed.** PR #122 merged after all required CI checks passed.
   Public/config/landing wording now calls `ChainSha256` an unkeyed local Audit
   integrity chain that detects corruption and inconsistent edits, never an

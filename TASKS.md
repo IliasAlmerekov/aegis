@@ -143,7 +143,7 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   [ADR-017](docs/adr/adr-017-audit-integrity-chain-has-no-external-anchor.md);
   commit `ad9c947` (PR #122).
 
-### [ ] H6 — Snapshot paths are not proven contained in the snapshot store
+### [x] H6 — Snapshot paths are not proven contained in the snapshot store
 
 - **Finding:** path validation rejects absolute paths and `..` but does not prove
   that a resolved artifact remains inside the configured snapshot root before
@@ -151,9 +151,10 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Acceptance criteria:** every filesystem snapshot rollback/delete path is
   resolved beneath its trusted root; traversal, symlink escape, and sibling-prefix
   cases fail closed; legitimate stored artifacts continue to round-trip.
-- **Status:** **Open** — confirmed.
+- **Status:** **Closed** — verified locally and by required PR CI checks on
+  2026-07-15.
 - **Traceability:** [plan](docs/plans/2026-07-14-h6-snapshot-path-containment.md);
-  Supabase rollback containment is the current reference seam.
+  [ADR-018](docs/adr/adr-018-snapshot-path-containment.md); commit `e26c7e7`.
 
 ### [ ] H7a — Snapshot artifacts inherit overly broad permissions
 
