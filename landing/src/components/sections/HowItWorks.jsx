@@ -25,9 +25,9 @@ const STEPS = [
 // looks like this in a real terminal, start to finish.
 const SESSION = [
   { k: 'cmd', prompt: '$', text: 'npm i -g @iliasalmerekov/aegis', color: '#ddffdc', step: 0 },
-  { k: 'out', text: '+ @iliasalmerekov/aegis@0.6.0', color: '#485346', delay: 500 },
+  { k: 'out', text: '+ @iliasalmerekov/aegis@0.6.1', color: '#485346', delay: 500 },
   { k: 'cmd', prompt: '$', text: 'aegis --version', color: '#ddffdc' },
-  { k: 'out', text: 'aegis 0.6.0', color: '#7fee64', delay: 350 },
+  { k: 'out', text: 'aegis 0.6.1', color: '#7fee64', delay: 350 },
   { k: 'pause', ms: 900 },
   { k: 'cmd', prompt: '$', text: 'aegis setup-shell', color: '#ddffdc', step: 1 },
   { k: 'out', text: '✓ managed shell block installed', color: '#7fee64', delay: 450 },
