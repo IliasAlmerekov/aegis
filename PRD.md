@@ -161,7 +161,7 @@ path, but team features are not shipped in 1.0.
 - Each entry is an `AuditEntry` (typed enum: `Decision` / `Watch`).
 - A `sandbox_status` field (`active` / `unavailable` / `not_configured`); the
   legacy `sandbox_active` boolean is mirrored for backward compatibility.
-- Tamper detection: SHA-256 hash chain, mode `ChainSha256` enabled **by default**
+- Audit integrity chain: SHA-256 hash chain, mode `ChainSha256` enabled **by default**
   (opt-out, not opt-in).
 - **Concurrent writes:** appends are serialized with an advisory file lock
   (`flock`) so parallel Aegis processes (multiple agent sessions) cannot interleave

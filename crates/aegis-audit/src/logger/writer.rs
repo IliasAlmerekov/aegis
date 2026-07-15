@@ -251,8 +251,8 @@ impl AuditLogger {
 
     /// Append one entry to the audit log, acquiring the file lock first.
     ///
-    /// Failures must be handled — ignoring them silently defeats tamper-detection.
-    #[must_use = "audit write failures must be handled — ignoring them silently defeats tamper-detection"]
+    /// Failures must be handled — ignoring them silently defeats integrity checking.
+    #[must_use = "audit write failures must be handled — ignoring them silently defeats integrity checking"]
     pub fn append(&self, entry: AuditEntry) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             // The lock file lives inside that directory, so we must ensure the directory

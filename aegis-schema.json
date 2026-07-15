@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AegisConfig",
-  "description": "Top-level Aegis runtime configuration.\n\nLoaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)\n→ `.aegis.toml` (project). Later layers override scalar fields; `allow`/`block`\nrules are concatenated.",
+  "description": "Top-level Aegis runtime configuration.\n\nLoaded in order: built-in defaults → `~/.config/aegis/config.toml` (user-global)\n→ `.aegis.toml` (project). Later layers override ordinary scalar fields.\nProject-local security-critical fields are ratcheted so they can only tighten,\nnever loosen: `mode`, `allowlist_override_level`, `ci_policy`,\n`snapshot_policy`, `sandbox.enabled`/`required`/`allow_network`/`allow_write`,\nand the `auto_snapshot_*` flags. `allow`/`block` rules are concatenated. See\nADR-013 for the full ordering.",
   "type": "object",
   "properties": {
     "allow": {
@@ -244,7 +244,7 @@
           "default": true
         },
         "integrity_mode": {
-          "description": "Integrity chaining mode for tamper evidence.",
+          "description": "Integrity chaining mode for corruption and inconsistent-edit checks.",
           "$ref": "#/$defs/AuditIntegrityMode",
           "default": "ChainSha256"
         },
@@ -279,7 +279,7 @@
           "const": "Off"
         },
         {
-          "description": "Tamper-evident chained SHA-256 (default).",
+          "description": "Chained SHA-256 integrity check (default).",
           "type": "string",
           "const": "ChainSha256"
         }
@@ -366,7 +366,7 @@
       ]
     },
     "CiPolicy": {
-      "description": "What aegis does when it detects a CI environment.\n\n`Block` is the safe default: no interactive TTY is available in CI, so\nprompting would hang the pipeline.  Instead, non-safe commands are\nhard-blocked and the pipeline fails fast with a clear error message.\n\n`Allow` is an explicit opt-in override for cases where a project has\naudited its CI pipeline and is confident that destructive commands are\nintentional (e.g., a release script that runs `terraform destroy` in a\ntear-down job).  Set this only in `.aegis.toml`, not globally.",
+      "description": "What aegis does when it detects a CI environment.\n\n`Block` is the safe default: no interactive TTY is available in CI, so\nprompting would hang the pipeline.  Instead, non-safe commands are\nhard-blocked and the pipeline fails fast with a clear error message.\n\n`Allow` is an explicit opt-in override for cases where a project has\naudited its CI pipeline and is confident that destructive commands are\nintentional (e.g., a release script that runs `terraform destroy` in a\ntear-down job).  Because a project-local `.aegis.toml` is untrusted, `Allow`\nis only honored from the trusted global config\n(`~/.config/aegis/config.toml`); a project cannot weaken an inherited\n`Block` to `Allow` (see ADR-013).",
       "oneOf": [
         {
           "description": "Hard-block all non-safe commands. No dialog. Pipeline fails fast.",
@@ -681,7 +681,8 @@
           "type": "boolean",
           "default": false
         }
-      }
+      },
+      "additionalProperties": false
     },
     "SnapshotPolicy": {
       "description": "Controls when and how snapshot plugins run before dangerous commands.\n\n- `None`      — never snapshot.\n- `Selective` — only plugins enabled by `auto_snapshot_git` /\n  `auto_snapshot_docker` / `auto_snapshot_postgres` /\n  `auto_snapshot_mysql` / `auto_snapshot_supabase` /\n  `auto_snapshot_sqlite`.\n- `Full`      — run every registered plugin regardless of per-plugin flags.",

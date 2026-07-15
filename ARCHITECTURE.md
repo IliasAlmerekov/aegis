@@ -60,7 +60,8 @@ Neither is part of the interception path described in this document.
   evaluation-only JSON all converge on the same planning and policy path; hook
   integrations may only route commands into that path, never fork policy.
 - An **append-only audit recorder**. When `[audit].integrity_mode =
-"ChainSha256"`, audit segments become tamper-evident via hash chaining.
+"ChainSha256"`, audit segments are linked by an integrity chain that detects
+corruption and inconsistent edits.
 
 ### What Aegis is NOT
 
@@ -317,8 +318,8 @@ Two config paths:
 
 ### 2.6 Audit Layer — `src/audit/`
 
-**Responsibility:** record every decision to an append-only log, with optional
-tamper-evident hash chaining when integrity mode is enabled.
+**Responsibility:** record every decision to an append-only log, with an optional
+integrity chain when integrity mode is enabled.
 
 - Format: JSONL at `~/.aegis/audit.jsonl` (plus rotated segments).
 - Integrity: when `[audit].integrity_mode = "ChainSha256"`, each segment

@@ -80,7 +80,8 @@ export function AuditSection() {
             Aegis appends a JSONL entry to{' '}
             <code className="font-mono text-xs text-[#ddffdc]">~/.aegis/audit.jsonl</code>{' '}
             for every command — approved, denied, or auto-passed. Append-only,
-            structured, and tamper-evident when hash-chain integrity is enabled.
+            structured, and able to flag corruption and inconsistent edits when
+            hash-chain integrity is enabled.
           </p>
           <a
             href="https://github.com/IliasAlmerekov/aegis#audit-log"

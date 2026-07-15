@@ -186,7 +186,7 @@ pub struct AuditConfig {
     pub retention_files: usize,
     /// Compress rotated audit files with gzip.
     pub compress_rotated: bool,
-    /// Integrity chaining mode for tamper evidence.
+    /// Integrity chaining mode for corruption and inconsistent-edit checks.
     pub integrity_mode: AuditIntegrityMode,
 }
 

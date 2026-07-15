@@ -79,6 +79,46 @@ integrity_mode = "ChainSha256"
 }
 
 #[test]
+fn verify_integrity_reports_the_honest_success_contract() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        r#"
+[audit]
+integrity_mode = "ChainSha256"
+"#,
+    )
+    .unwrap();
+
+    let command = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "printf one"])
+        .output()
+        .unwrap();
+    assert!(
+        command.status.success(),
+        "command must create an audit entry"
+    );
+
+    let verify = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["audit", "--verify-integrity"])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        verify.status.success()
+            && stdout.contains("Audit integrity chain OK (")
+            && stdout.contains("detects corruption and inconsistent edits")
+            && stdout.contains("not a keyed or remote anchor"),
+        "success output must state the audit-integrity contract: stdout={stdout:?}"
+    );
+}
+
+#[test]
 fn verify_integrity_detects_tampered_active_log() {
     let home = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
@@ -120,8 +160,11 @@ integrity_mode = "ChainSha256"
     let stderr = String::from_utf8_lossy(&verify.stderr);
     let stdout = String::from_utf8_lossy(&verify.stdout);
     assert!(
-        stderr.contains("integrity") || stdout.contains("integrity"),
-        "verify output must explain integrity failure"
+        !verify.status.success()
+            && stderr.contains("Audit integrity check FAILED:")
+            && (stderr.contains("chain link mismatch") || stderr.contains("entry hash mismatch"))
+            && stdout.is_empty(),
+        "verification failure must use the integrity-check contract: stdout={stdout:?}, stderr={stderr:?}"
     );
 }
 

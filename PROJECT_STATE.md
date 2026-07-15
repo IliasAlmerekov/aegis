@@ -17,9 +17,24 @@
 
 ## Last updated
 
-2026-07-14
+2026-07-15
 
 ---
+
+## Last session (2026-07-15)
+
+- **H5 implementation is locally verified; awaiting PR CI before backlog closure.**
+  Public/config/landing wording now calls `ChainSha256` an unkeyed local Audit
+  integrity chain that detects corruption and inconsistent edits, never an
+  adversarial anchor. `aegis audit --verify-integrity` uses the variant-B
+  success/failure contract with a residual-risk note. ADR-017 records external
+  anchoring as a 1.0 non-goal; a tracked-file wording regression guard and CLI
+  integration coverage were added. The guard resolves the repository root from
+  `CARGO_MANIFEST_DIR` and allowlists only exact historical/denial lines, so it
+  is independent of test cwd and cannot suppress adjacent capability claims.
+  Local `fmt`, `clippy`, workspace tests,
+  audit/deny, focused docs tests, and review/re-review passed; `TASKS.md` H5
+  remains open pending required PR CI.
 
 ## Last session (2026-07-14)
 

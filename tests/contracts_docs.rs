@@ -189,6 +189,17 @@ fn config_schema_recommends_chain_sha256_for_security_conscious_deployments() {
 }
 
 #[test]
+fn audit_integrity_docs_match_the_chain_sha256_runtime_default() {
+    for path in ["docs/config-schema.md", "docs/release-readiness.md"] {
+        let contents = fs::read_to_string(repo_path(path)).expect("audit integrity doc must exist");
+        assert!(
+            contents.contains("The runtime default is `ChainSha256`"),
+            "{path} must state the ChainSha256 runtime default"
+        );
+    }
+}
+
+#[test]
 fn troubleshooting_covers_manual_checksum_and_integrity_verification() {
     let path = repo_path("docs/troubleshooting.md");
     let contents = fs::read_to_string(&path).expect("docs/troubleshooting.md must exist");

@@ -15,7 +15,7 @@ const STATS = [
   {
     value: '100%',
     label: 'Decisions on record',
-    detail: 'Every approval, denial, and auto-pass appends an entry to your local JSONL audit log — tamper-evident when hash-chain integrity is enabled.',
+    detail: 'Every approval, denial, and auto-pass appends an entry to your local JSONL audit log — its integrity chain flags corruption and inconsistent edits.',
   },
   {
     value: 'MIT',

@@ -20,7 +20,7 @@ const TABS = [
     id: 'audit',
     label: 'AUDIT',
     heading: 'Append-only log of every decision.',
-    body: 'Every approval and denial appends a JSONL entry to ~/.aegis/audit.jsonl. Append-only, timestamped, tamper-evident when hash-chain integrity is enabled.',
+    body: 'Every approval and denial appends a JSONL entry to ~/.aegis/audit.jsonl. Append-only, timestamped, with an integrity chain that flags corruption and inconsistent edits.',
   },
 ]
 

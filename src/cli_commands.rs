@@ -33,15 +33,22 @@ pub(crate) fn handle_audit_command(args: AuditArgs) -> i32 {
         } else {
             let logger = AuditLogger::default();
             match logger.verify_integrity() {
-                Ok(report) => {
-                    println!("{}", report.message);
-                    match report.status {
-                        AuditIntegrityStatus::Verified => 0,
-                        AuditIntegrityStatus::NoIntegrityData | AuditIntegrityStatus::Corrupt => {
-                            EXIT_INTERNAL
-                        }
+                Ok(report) => match report.status {
+                    AuditIntegrityStatus::Verified => {
+                        println!(
+                            "Audit integrity chain OK ({} chained entries checked).",
+                            report.chained_entries
+                        );
+                        println!(
+                            "This integrity chain detects corruption and inconsistent edits; not a keyed or remote anchor."
+                        );
+                        0
                     }
-                }
+                    AuditIntegrityStatus::NoIntegrityData | AuditIntegrityStatus::Corrupt => {
+                        eprintln!("Audit integrity check FAILED: {}", report.message);
+                        EXIT_INTERNAL
+                    }
+                },
                 Err(err) => {
                     eprintln!("error: failed to verify audit integrity: {err}");
                     EXIT_INTERNAL
