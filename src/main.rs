@@ -140,7 +140,7 @@ struct AuditArgs {
     #[arg(long)]
     summary: bool,
 
-    /// Verify tamper-evident hash chaining across all audit segments.
+    /// Verify the audit integrity chain across all audit segments.
     #[arg(long)]
     verify_integrity: bool,
 }

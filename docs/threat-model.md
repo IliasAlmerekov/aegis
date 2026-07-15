@@ -122,7 +122,7 @@ tell whether the log remained intact across rotation.
 - `aegis audit --verify-integrity` checks active and rotated segments
 
 **Residual risk:** Integrity mode is configurable, not universal. If it is off,
-the log is still useful operationally but not tamper-evident.
+the log is still useful operationally but has no integrity chain.
 
 **Known limitation:** the `sandbox_status` field (which records a sandbox
 bypass, `unavailable`) is intentionally outside the hash-chain payload for

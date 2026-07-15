@@ -14,7 +14,7 @@ pub use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
 pub enum AuditIntegrityMode {
     /// No integrity chaining.
     Off,
-    /// Tamper-evident chained SHA-256 (default).
+    /// Chained SHA-256 integrity check (default).
     #[default]
     ChainSha256,
 }

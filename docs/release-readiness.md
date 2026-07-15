@@ -339,10 +339,10 @@ rotation_enabled = true
 integrity_mode = "ChainSha256"
 ```
 
-The current runtime default remains `integrity_mode = "Off"`, which is still
-acceptable for lower-trust or low-overhead setups. `ChainSha256` makes audit
-segments tamper-evident by chaining SHA-256 hashes across entries and rotated
-files.
+The runtime default is `ChainSha256`. It links audit segments with SHA-256
+hashes to detect corruption and inconsistent edits; it has no keyed or remote
+anchor. Set `integrity_mode = "Off"` only when intentionally opting out of
+integrity checks.
 
 After enabling integrity mode, verify the active and rotated logs with:
 

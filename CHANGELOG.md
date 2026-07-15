@@ -13,6 +13,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- H5 audit-integrity contract: `ChainSha256` is now consistently described as an unkeyed local audit integrity chain that detects corruption and inconsistent edits, not an adversarial anchor; `aegis audit --verify-integrity` states that bounded contract, and a tracked-file wording guard prevents capability overclaims (ADR-017, H5).
 - Effect-opaque execution (`sh ./cleanup.sh`, `python3 ./x.py`, `source ./x`, `. ./x`, `sh -s`, and existing pipe-to-shell shapes) now requires a pre-execution recovery snapshot under `SnapshotPolicy::{Selective, Full}` when an applicable snapshot plugin exists — without raising `RiskLevel` or introducing a confirmation prompt; `SnapshotPolicy::None` remains the trusted/global opt-out and project `.aegis.toml` cannot disable the requirement under the C3 ratchet (ADR-016, H9).
 - Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail closed when the `aegis` binary is unavailable: a `command -v` guard before `exec` emits a `deny` decision (matching the Rust `hook_deny_output` shape) and exits 0 instead of letting `exec` fail with 127 and pass the command through unscanned (ADR-007, closes H4).
 - Bumped transitive `crossbeam-epoch` 0.9.18 → 0.9.20 to clear RUSTSEC-2026-0204 (invalid pointer dereference in the `fmt::Pointer` impl for `Atomic`/`Shared`); pulled in via the `starlark` chain (`blake3` → `rayon-core` → `crossbeam-deque`).

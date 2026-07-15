@@ -48,7 +48,7 @@ impl AuditLogger {
     }
 }
 
-/// Fields covered by the tamper-evident hash chain.
+/// Fields covered by the audit integrity chain.
 ///
 /// NOTE — `sandbox_status` (and its legacy `sandbox_active` mirror) are
 /// deliberately **not** part of this payload. The hash format predates the
@@ -56,8 +56,8 @@ impl AuditLogger {
 /// field here would recompute every legacy entry's hash with a defaulted
 /// `NotConfigured`, breaking verification of all logs written before this
 /// change. The consequence is that the recorded sandbox status — including a
-/// bypass (`Unavailable`) — is tamper-evident only via the surrounding fields,
-/// not on its own. Closing that gap requires versioning `chain_alg` so new
+/// bypass (`Unavailable`) — is not covered by the chain on its own. Closing that
+/// gap requires versioning `chain_alg` so new
 /// entries opt into a payload that includes `sandbox_status` while old entries
 /// keep verifying under the original layout. Tracked as a known limitation in
 /// `docs/threat-model.md`.

@@ -13,8 +13,8 @@ Recovery and forensics are important, but they are not symmetric guarantees.
 - snapshots are provider-based and best-effort
 - rollback may still fail or conflict
 - audit output remains append-only JSONL
-- stronger tamper-evidence is available only when audit integrity mode is
-  enabled
+- the optional audit integrity chain detects corruption and inconsistent edits;
+  it has no keyed or external anchor
 
 ## Implication
 

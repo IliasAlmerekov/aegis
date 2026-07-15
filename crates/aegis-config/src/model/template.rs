@@ -97,7 +97,7 @@ rotation_enabled = false
 max_file_size_bytes = 10485760
 retention_files = 5
 compress_rotated = true
-integrity_mode = "ChainSha256" # Off = no chain hashes, ChainSha256 = tamper-evident chained SHA-256.
+integrity_mode = "ChainSha256" # Off = no chain hashes, ChainSha256 = chained SHA-256 integrity check.
 "#;
 
 type Result<T> = std::result::Result<T, ConfigError>;

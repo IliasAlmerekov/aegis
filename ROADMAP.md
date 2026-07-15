@@ -36,7 +36,8 @@ These are not cleanups — they are open security and correctness bugs.
 - Emit a hard error (not a `tracing::warn`) on every audit write failure,
   regardless of the `verbose` flag.
 - Change the default for `AuditIntegrityMode` from `Off` to `ChainSha256`.
-  SHA-256 hash chaining is Aegis's only tamper-detection mechanism; it must be
+  SHA-256 hash chaining is Aegis's integrity check for corruption and
+  inconsistent edits; it must be
   opt-out, not opt-in.
 - Add `#[must_use]` to `AuditLogger::append` and every `Result`-returning
   public function in the audit module.

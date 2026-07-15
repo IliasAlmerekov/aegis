@@ -285,29 +285,26 @@ Current runtime behavior:
 
 ## Audit integrity mode
 
-The audit log integrity mode is a runtime choice, not a required launch
-default.
-
-Current default:
+The runtime default is `ChainSha256`:
 
 ```toml
 [audit]
-integrity_mode = "Off"
+integrity_mode = "ChainSha256"
 ```
 
-Recommended for security-conscious deployments:
+Choose `Off` only when an operator intentionally opts out of integrity checks:
 
 ```toml
 [audit]
 rotation_enabled = true
-integrity_mode = "ChainSha256"
+integrity_mode = "Off"
 ```
 
 Guidance:
 
-- `Off` keeps the current low-overhead default and is acceptable for lighter
-  deployments.
-- `ChainSha256` makes audit entries and rotated segments tamper-evident.
+- `Off` disables integrity chaining.
+- `ChainSha256` links audit entries and rotated segments to detect corruption
+  and inconsistent edits; it is not a keyed or remote anchor.
 - verify the active and rotated logs with `aegis audit --verify-integrity`.
 
 ## JSON output contract

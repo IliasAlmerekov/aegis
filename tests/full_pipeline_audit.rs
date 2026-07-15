@@ -35,7 +35,7 @@ fn planner_migration_keeps_shell_audit_projection_fields() {
 
 /// If `~/.aegis` is a file instead of a directory, audit append fails.
 /// The binary must exit non-zero and print an error — audit is a security
-/// artifact; silently dropping write failures defeats tamper-detection.
+/// artifact; silently dropping write failures defeats integrity checking.
 #[test]
 fn audit_logger_failure_exits_nonzero_with_error() {
     let home = TempDir::new().unwrap();
