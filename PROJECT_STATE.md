@@ -23,12 +23,15 @@
 
 ## Last session (2026-07-15)
 
-- **H7b design locked; implementation not started.** The accepted plan uses
-  owner-only Unix Audit artifacts, descriptor-bound target no-follow,
-  tighten-if-owned migration, whole-rotation preflight, and staged gzip commit.
-  Existing custom-path parents are not chmodded, so parent-entry races remain an
-  explicit limit; non-Unix retains compatibility without a security guarantee.
-  H7b stays open and code work waits for the H7a clean-cycle fact refresh.
+- **H7b implemented and verified locally; PR CI pending.** Unix Audit
+  directories/artifacts now use `0700`/`0600`; active, lock, query, integrity,
+  tail-hash, and rotation opens share descriptor-bound no-follow plus
+  tighten-if-owned validation. Rotation preflights every managed slot and
+  commits gzip output from owner-only staging before removing the active log.
+  ADR-020 and threat-model limits cover caller-owned parent races, non-Unix,
+  and crash durability. TDD, review/re-review, 1445 workspace tests, clippy,
+  fmt, audit/deny, docs tests, and diff-check passed locally. The checkbox stays
+  open until required PR CI passes.
 - **H7a closed.** Snapshot stores and bundle directories now use `0700`, while
   SQLite/PostgreSQL/MySQL/Supabase artifacts and manifests use `0600` on Unix.
   Unsafe store leaves are tightened only when owned by the current uid; symlinks
@@ -209,17 +212,17 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-016; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-09 checkup: `cargo fmt --check` clean; `cargo test
---workspace` = 1404 passed / 0 failed (86 suites) after this session's fixes
-(the earlier "538" figure was stale); `cargo clippy -- -D warnings` clean after
-removing a dead test helper this session. `cargo audit`/`cargo deny check` clean (aside
-from pre-existing allowed advisories under the opt-in `starlark-policy`
-feature — see memory `deny_advisories_baseline`).
+As of the 2026-07-15 H7b slice: `cargo fmt --check` and clippy are clean;
+`cargo test --workspace` = 1445 passed / 0 failed (87 suites). `cargo audit` /
+`cargo deny check` pass aside from the pre-existing allowed advisories under the
+opt-in `starlark-policy` feature.
 
 ---
 
 ## Open decisions / blockers
 
+- **H7b closure blocker:** implementation and local gates are clean; required
+  PR CI must pass before the `TASKS.md` checkbox is closed.
 - **Current security order** (`TASKS.md`): H6 → H7a → H7b; H9; M3a; M4 → M7;
   M9; M1; M2 → M5; H5 → M8; then P3. This is dependency/risk order, not a
   calendar sprint.

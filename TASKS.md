@@ -174,13 +174,15 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Finding:** audit log, rotation, and lock-file creation rely on ordinary
   `OpenOptions`/`create_dir_all`, allowing broad modes and symlink-following on
   security-artifact paths.
-- **Acceptance criteria:** audit directories/files/locks are owner-only on
-  supported Unix platforms; active log and rotation opens reject symlink targets
-  without weakening append-only or fail-closed audit behavior; platform limits
-  are explicit.
-- **Status:** **Open** — split from H7.
+- **Acceptance criteria:** Audit directories and Audit artifacts are owner-only
+  on supported Unix platforms; active log and rotation opens reject symlink
+  targets without weakening append-only or fail-closed audit behavior; platform
+  limits are explicit.
+- **Status:** **Partial** — implemented and verified locally on 2026-07-15;
+  required PR CI remains before closure.
 - **Traceability:** [plan](docs/plans/2026-07-14-h7b-audit-file-hardening.md);
-  `crates/aegis-audit/src/logger/writer.rs`.
+  [ADR-020](docs/adr/adr-020-owner-only-audit-artifacts-and-no-follow-opens.md);
+  `crates/aegis-audit/src/secure_fs.rs` and logger regressions.
 
 ### [x] H8 — Destructive Git forms lack token-prefix coverage
 

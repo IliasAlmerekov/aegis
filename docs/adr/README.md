@@ -83,6 +83,7 @@ the core classification / approval pipeline when enforcement is active.
 | ADR-017 | Audit integrity chain has no external anchor | [`adr-017-audit-integrity-chain-has-no-external-anchor.md`](adr-017-audit-integrity-chain-has-no-external-anchor.md) |
 | ADR-018 | Filesystem snapshot artifacts stay contained in their snapshot store | [`adr-018-snapshot-path-containment.md`](adr-018-snapshot-path-containment.md) |
 | ADR-019 | Snapshot artifacts use owner-only permissions on Unix | [`adr-019-owner-only-snapshot-artifact-permissions.md`](adr-019-owner-only-snapshot-artifact-permissions.md) |
+| ADR-020 | Audit artifacts are owner-only and use no-follow opens on Unix | [`adr-020-owner-only-audit-artifacts-and-no-follow-opens.md`](adr-020-owner-only-audit-artifacts-and-no-follow-opens.md) |
 
 `ADR-009` is intentionally absent from the active set; numbering is preserved
 as-is so historical references do not drift.

@@ -117,12 +117,29 @@ tell whether the log remained intact across rotation.
 **Mitigations:**
 
 - audit log is append-only JSONL
+- on Unix, Aegis-created Audit directories use mode `0700`, while the active
+  log, lock, rotated segments, and gzip staging artifact use mode `0600`
+- Unix artifact opens reject final-component symlinks, non-regular objects, and
+  other-owner files; owner-owned broad files are tightened through the opened
+  descriptor before use
+- rotation validates every managed active/archive/staging slot before archive
+  mutation and commits gzip output from a fresh staging artifact before removing
+  the active log
 - entries carry timestamps and in-process sequence numbers
 - optional chained SHA-256 integrity mode records `prev_hash` and `entry_hash`
 - `aegis audit --verify-integrity` checks active and rotated segments
 
 **Residual risk:** Integrity mode is configurable, not universal. If it is off,
 the log is still useful operationally but has no integrity chain.
+
+Unix no-follow applies to the Audit artifact itself, not a component-by-component
+directory walk. A pre-existing custom-path parent remains caller-owned and may
+be writable or owned by another user, so an actor able to rename entries there
+retains races between separate open, rename, remove, and lock operations. Use a
+dedicated owner-only directory for custom audit paths. Compressed rotation adds
+no `fsync` or power-loss durability guarantee. Non-Unix builds retain compatible
+I/O but make no mode, owner, ACL, no-follow, or Windows reparse-point guarantee
+(ADR-020).
 
 **Known limitation:** the `sandbox_status` field (which records a sandbox
 bypass, `unavailable`) is intentionally outside the hash-chain payload for

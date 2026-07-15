@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -6,6 +5,7 @@ use flate2::read::GzDecoder;
 
 use super::*;
 use crate::error::AuditError;
+use crate::secure_fs::open_read_if_exists;
 
 impl AuditLogger {
     /// Read every audit entry from all segments, oldest first.
@@ -194,11 +194,9 @@ impl AuditLogger {
         &self,
         path: &Path,
     ) -> Result<Option<AuditEntry>> {
-        if !path.exists() {
+        let Some(mut file) = open_read_if_exists(path)? else {
             return Ok(None);
-        }
-
-        let mut file = File::open(path)?;
+        };
         let file_len = file.metadata()?.len();
         if file_len == 0 {
             return Ok(None);
@@ -296,7 +294,12 @@ impl AuditLogger {
     }
 
     fn open_segment_reader(&self, segment: &ArchiveSegment) -> Result<Box<dyn BufRead>> {
-        let file = File::open(&segment.path)?;
+        let file = open_read_if_exists(&segment.path)?.ok_or_else(|| {
+            AuditError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("audit segment not found: {}", segment.path.display()),
+            ))
+        })?;
         if segment.compressed {
             Ok(Box::new(BufReader::new(GzDecoder::new(file))))
         } else {

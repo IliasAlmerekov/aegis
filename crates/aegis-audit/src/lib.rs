@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod logger;
+mod secure_fs;
 pub use error::AuditError;
 pub use logger::{
     AuditEntry, AuditIntegrityReport, AuditIntegrityStatus, AuditLogger, AuditQuery,

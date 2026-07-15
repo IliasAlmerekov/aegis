@@ -143,24 +143,143 @@ fn append_normalizes_legacy_fields_only_once() {
     );
 }
 
+#[cfg(unix)]
 #[test]
-fn append_documents_directory_creation_race_window() {
-    let source = include_str!("../writer.rs");
-    let append_start = source
-        .find("pub fn append(&self, entry: AuditEntry) -> Result<()> {")
-        .expect("append function must exist");
-    let append_source = &source[append_start..];
-    let next_fn = append_source
-        .find("\n    pub(super) fn lock_path(&self) -> PathBuf {")
-        .expect("append must be followed by read_all");
-    let append_body = &append_source[..next_fn];
+fn append_creates_owner_only_audit_directories_and_artifacts() {
+    use std::os::unix::fs::PermissionsExt;
 
-    assert!(
-        append_body.contains("narrow race window")
-            && append_body.contains("create_dir_all")
-            && append_body.contains("lock file lives inside that directory"),
-        "append must document the acceptable create_dir_all-before-lock race window"
-    );
+    let dir = TempDir::new().unwrap();
+    let first_directory = dir.path().join("first");
+    let second_directory = first_directory.join("second");
+    let logger = AuditLogger::new(second_directory.join("audit.jsonl"));
+
+    logger.append(entry(0, RiskLevel::Safe)).unwrap();
+
+    for directory in [&first_directory, &second_directory] {
+        let mode = fs::metadata(directory).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{} must be owner-only", directory.display());
+    }
+    for artifact in [logger.path(), logger.lock_path().as_path()] {
+        let mode = fs::metadata(artifact).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{} must be owner-only", artifact.display());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn append_tightens_owned_existing_audit_artifacts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    fs::write(logger.path(), []).unwrap();
+    fs::write(logger.lock_path(), []).unwrap();
+    fs::set_permissions(logger.path(), fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(logger.lock_path(), fs::Permissions::from_mode(0o644)).unwrap();
+
+    logger.append(entry(0, RiskLevel::Safe)).unwrap();
+
+    for artifact in [logger.path(), logger.lock_path().as_path()] {
+        let mode = fs::metadata(artifact).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{} must be tightened", artifact.display());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn append_rejects_a_symlinked_active_log_without_touching_its_target() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target");
+    fs::write(&target, b"sentinel").unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    symlink(&target, logger.path()).unwrap();
+
+    let error = logger.append(entry(0, RiskLevel::Safe)).unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == logger.path().to_string_lossy()
+    ));
+    assert_eq!(fs::read(target).unwrap(), b"sentinel");
+}
+
+#[cfg(unix)]
+#[test]
+fn append_rejects_a_symlinked_immediate_parent() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target-directory");
+    fs::create_dir(&target).unwrap();
+    let parent = dir.path().join("audit-directory");
+    symlink(&target, &parent).unwrap();
+    let logger = AuditLogger::new(parent.join("audit.jsonl"));
+
+    let error = logger.append(entry(0, RiskLevel::Safe)).unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == parent.to_string_lossy()
+    ));
+    assert!(fs::read_dir(target).unwrap().next().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn append_rejects_a_non_regular_active_log_with_a_typed_error() {
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    fs::create_dir(logger.path()).unwrap();
+
+    let error = logger.append(entry(0, RiskLevel::Safe)).unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == logger.path().to_string_lossy()
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn append_leaves_a_preexisting_parent_mode_unchanged() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new().unwrap();
+    let parent = dir.path().join("caller-owned");
+    fs::create_dir(&parent).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o750)).unwrap();
+    let logger = AuditLogger::new(parent.join("audit.jsonl"));
+
+    logger.append(entry(0, RiskLevel::Safe)).unwrap();
+
+    let mode = fs::metadata(parent).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o750);
+}
+
+#[cfg(unix)]
+#[test]
+fn append_rejects_a_symlinked_lock_without_touching_its_target() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new().unwrap();
+    let logger = AuditLogger::new(dir.path().join("audit.jsonl"));
+    let target = dir.path().join("lock-target");
+    fs::write(&target, b"sentinel").unwrap();
+    symlink(&target, logger.lock_path()).unwrap();
+
+    let error = logger.append(entry(0, RiskLevel::Safe)).unwrap_err();
+
+    assert!(matches!(
+        error,
+        AuditError::InsecureAuditArtifact { path, .. }
+            if path == logger.lock_path().to_string_lossy()
+    ));
+    assert_eq!(fs::read(target).unwrap(), b"sentinel");
 }
 
 #[test]
