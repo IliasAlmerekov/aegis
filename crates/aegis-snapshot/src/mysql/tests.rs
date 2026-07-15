@@ -76,6 +76,64 @@ fn snapshot_id_for(database: &str, host: &str, port: u16, user: &str, dump_path:
 }
 
 #[tokio::test]
+async fn rollback_rejects_artifact_outside_snapshot_store() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin = plugin_with_user(&temp_dir, "root");
+    let outside_dump = temp_dir.path().join("outside.sql");
+    fs::write(&outside_dump, b"outside").unwrap();
+    let snapshot_id = snapshot_id_for("app", "localhost", 3306, "root", &outside_dump);
+
+    let err = plugin.rollback(&snapshot_id).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        SnapshotError::PathEscapesSnapshotStore {
+            plugin: "mysql",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn delete_rejects_artifact_outside_snapshot_store() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin = plugin_with_user(&temp_dir, "root");
+    let outside_dump = temp_dir.path().join("outside.sql");
+    fs::write(&outside_dump, b"outside").unwrap();
+    let snapshot_id = snapshot_id_for("app", "localhost", 3306, "root", &outside_dump);
+
+    let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        SnapshotError::PathEscapesSnapshotStore {
+            plugin: "mysql",
+            ..
+        }
+    ));
+    assert_eq!(fs::read(outside_dump).unwrap(), b"outside");
+}
+
+#[tokio::test]
+async fn delete_rejects_parent_traversal_artifact_path() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin = plugin_with_user(&temp_dir, "root");
+    fs::create_dir_all(&plugin.snapshots_dir).unwrap();
+    let traversal_path = plugin.snapshots_dir.join("..").join("outside.sql");
+    let snapshot_id = snapshot_id_for("app", "localhost", 3306, "root", &traversal_path);
+
+    let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        SnapshotError::PathEscapesSnapshotStore {
+            plugin: "mysql",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
 async fn is_not_applicable_when_database_empty() {
     let temp_dir = TempDir::new().unwrap();
     let plugin = MysqlPlugin::new(
@@ -205,6 +263,7 @@ async fn rollback_errors_on_malformed_dump_path_encoding() {
 async fn rollback_errors_when_dump_file_missing() {
     let temp_dir = TempDir::new().unwrap();
     let plugin = plugin_with_user(&temp_dir, "root");
+    fs::create_dir_all(&plugin.snapshots_dir).unwrap();
     let missing_dump = plugin.snapshots_dir.join("missing.sql");
     let snapshot_id = snapshot_id_for("app", "localhost", 3_306, "root", &missing_dump);
 
@@ -435,28 +494,21 @@ async fn rollback_retries_when_mysql_binary_is_temporarily_busy() {
 }
 
 #[tokio::test]
-async fn rollback_rejects_legacy_snapshot_ids() {
+async fn rollback_restores_legacy_artifact_inside_snapshot_store() {
     let temp_dir = TempDir::new().unwrap();
     let dump_path = temp_dir.path().join("snaps").join("legacy.sql");
     fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
     fs::write(&dump_path, "dump-data").unwrap();
-    let plugin = plugin_with_user(&temp_dir, "root");
+    let mysql = stub_bin(&temp_dir, "mysql", "cat > /dev/null");
+    let mut plugin = plugin_with_user(&temp_dir, "root");
+    plugin.mysql_bin = mysql.display().to_string();
     let snapshot_id = format!(
         "{}{SEP}{}",
         MysqlPlugin::encode_database("app"),
         MysqlPlugin::encode_component("legacy.sql")
     );
 
-    let err = plugin.rollback(&snapshot_id).await.unwrap_err();
-
-    match err {
-        SnapshotError::Snapshot(msg) => {
-            assert!(msg.contains("legacy"));
-            assert!(msg.contains("cannot be safely restored"));
-            assert!(msg.contains("original target server/account was not recorded"));
-        }
-        other => panic!("expected snapshot error, got {other:?}"),
-    }
+    plugin.rollback(&snapshot_id).await.unwrap();
 }
 
 #[cfg(unix)]
@@ -495,7 +547,7 @@ async fn rollback_uses_snapshot_time_target_and_dump_path_instead_of_current_con
         "drifted-host".to_string(),
         4_321,
         "drifted-user".to_string(),
-        temp_dir.path().join("new-snaps"),
+        temp_dir.path().join("old-snaps"),
     );
     rollback_plugin.mysql_bin = mysql.display().to_string();
 

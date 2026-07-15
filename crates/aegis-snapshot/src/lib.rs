@@ -38,6 +38,8 @@ pub use supabase::SupabasePlugin;
 
 /// Injectable clock primitives for deterministic retention tests.
 mod clock;
+/// Filesystem containment checks for snapshot artifacts.
+mod containment;
 /// Filesystem path helpers for the snapshot subsystem.
 mod paths;
 /// Snapshot registry materialization and runtime dispatch.
@@ -88,6 +90,14 @@ mod tests {
 
     use super::*;
 
+    fn hex_encode_path(path: &std::path::Path) -> String {
+        path.to_string_lossy()
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     #[tokio::test]
     async fn test_git_plugin_delete_missing_artifact_is_idempotent() {
         let result = GitPlugin
@@ -112,6 +122,7 @@ mod tests {
     #[tokio::test]
     async fn test_postgres_plugin_delete_missing_dump_returns_ok() {
         let temp = tempfile::tempdir().unwrap();
+        let missing_dump = temp.path().join("missing.dump");
         let plugin = PostgresPlugin::new(
             "db".to_string(),
             "localhost".to_string(),
@@ -120,9 +131,10 @@ mod tests {
             temp.path().to_path_buf(),
         );
         let result = plugin
-            .delete(
-                "v2\t6462\t6c6f63616c686f7374\t5432\t75736572\t2f6e6f6e652f65786973742e64756d70",
-            )
+            .delete(&format!(
+                "v2\t6462\t6c6f63616c686f7374\t5432\t75736572\t{}",
+                hex_encode_path(&missing_dump)
+            ))
             .await;
         assert!(
             result.is_ok(),
@@ -133,6 +145,7 @@ mod tests {
     #[tokio::test]
     async fn test_mysql_plugin_delete_missing_dump_returns_ok() {
         let temp = tempfile::tempdir().unwrap();
+        let missing_dump = temp.path().join("missing.sql");
         let plugin = MysqlPlugin::new(
             "db".to_string(),
             "localhost".to_string(),
@@ -141,7 +154,10 @@ mod tests {
             temp.path().to_path_buf(),
         );
         let result = plugin
-            .delete("v2\t6462\t6c6f63616c686f7374\t3306\t75736572\t2f6e6f6e652f65786973742e73716c")
+            .delete(&format!(
+                "v2\t6462\t6c6f63616c686f7374\t3306\t75736572\t{}",
+                hex_encode_path(&missing_dump)
+            ))
             .await;
         assert!(
             result.is_ok(),
@@ -152,9 +168,13 @@ mod tests {
     #[tokio::test]
     async fn test_sqlite_plugin_delete_missing_dump_returns_ok() {
         let temp = tempfile::tempdir().unwrap();
+        let missing_dump = temp.path().join("missing.db");
         let plugin = SqlitePlugin::new(PathBuf::from("/tmp/app.db"), temp.path().to_path_buf());
         let result = plugin
-            .delete("v2\t2f746d702f6170702e6462\t2f6e6f6e652f65786973742e6462")
+            .delete(&format!(
+                "v2\t2f746d702f6170702e6462\t{}",
+                hex_encode_path(&missing_dump)
+            ))
             .await;
         assert!(
             result.is_ok(),

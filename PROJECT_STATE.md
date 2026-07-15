@@ -23,7 +23,16 @@
 
 ## Last session (2026-07-15)
 
-- **H5 implementation is locally verified; awaiting PR CI before backlog closure.**
+- **H6 closed.** SQLite, PostgreSQL,
+  and MySQL now prove rollback/delete artifacts remain beneath their plugin-owned
+  Snapshot store, rejecting forged outside paths, traversal, and symlink
+  escapes with `PathEscapesSnapshotStore`. SQLite restores only to the configured
+  database path; legacy in-store artifacts remain supported. ADR-018 and the
+  Snapshot store / Snapshot artifact / Path containment glossary are added.
+  TDD, review/re-review, `cargo fmt --check`, clippy, workspace tests, audit,
+  deny, and diff-check passed locally (the allowed starlark advisories remain);
+  required PR CI checks passed. H6 is closed in `TASKS.md`.
+- **H5 closed.** PR #122 merged after all required CI checks passed.
   Public/config/landing wording now calls `ChainSha256` an unkeyed local Audit
   integrity chain that detects corruption and inconsistent edits, never an
   adversarial anchor. `aegis audit --verify-integrity` uses the variant-B
@@ -32,9 +41,9 @@
   integration coverage were added. The guard resolves the repository root from
   `CARGO_MANIFEST_DIR` and allowlists only exact historical/denial lines, so it
   is independent of test cwd and cannot suppress adjacent capability claims.
-  Local `fmt`, `clippy`, workspace tests,
-  audit/deny, focused docs tests, and review/re-review passed; `TASKS.md` H5
-  remains open pending required PR CI.
+  Local `fmt`, `clippy`, workspace tests, audit/deny, focused docs tests, and
+  review/re-review passed; all required CI checks passed before merge. H5 is
+  closed in `TASKS.md` with PR #122 traceability.
 
 ## Last session (2026-07-14)
 

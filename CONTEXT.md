@@ -221,6 +221,22 @@ that knows how to capture and restore state for its domain. Each successful run 
 `SnapshotRecord` (`plugin` + opaque `snapshot_id`).
 _Avoid_: snapshotter, driver, backend
 
+**Snapshot store**:
+The trusted directory a `Snapshot plugin` owns for reading and writing its
+artifacts. A filesystem artifact must resolve beneath this directory before a
+rollback or deletion may use it.
+_Avoid_: snapshots dir, bundle root, snapshot root
+
+**Snapshot artifact**:
+The concrete filesystem object in a `Snapshot store` addressed by a
+`snapshot_id`.
+_Avoid_: dump, blob
+
+**Path containment**:
+The invariant that a resolved `Snapshot artifact` is provably beneath its
+`Snapshot store`, including after symlink resolution.
+_Avoid_: path validation, path sanitization
+
 **Rollback**:
 Restoring the state captured by a previous `Snapshot`, addressed by its
 `snapshot_id`. It restores captured state; it is not a general undo of the

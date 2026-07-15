@@ -122,6 +122,13 @@ impl From<aegis_snapshot::SnapshotError> for AegisError {
                 expected_sha256,
                 actual_sha256,
             },
+            aegis_snapshot::SnapshotError::PathEscapesSnapshotStore {
+                plugin,
+                store,
+                candidate,
+            } => Self::Snapshot(format!(
+                "{plugin} snapshot artifact '{candidate}' escapes snapshot store '{store}'"
+            )),
             aegis_snapshot::SnapshotError::Config(msg) => Self::Config(msg),
             aegis_snapshot::SnapshotError::Io(io) => Self::Io(io),
             aegis_snapshot::SnapshotError::Snapshot(msg) => Self::Snapshot(msg),

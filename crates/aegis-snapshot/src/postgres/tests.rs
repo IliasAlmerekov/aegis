@@ -61,6 +61,70 @@ fn snapshot_id_for(database: &str, host: &str, port: u16, user: &str, dump_path:
 }
 
 #[tokio::test]
+async fn rollback_rejects_artifact_outside_snapshot_store() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin = plugin_with_user(&temp_dir, "postgres");
+    let outside_dump = temp_dir.path().join("outside.dump");
+    fs::write(&outside_dump, b"outside").unwrap();
+    let snapshot_id = snapshot_id_for("app", "localhost", 5432, "postgres", &outside_dump);
+
+    let err = plugin.rollback(&snapshot_id).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        SnapshotError::PathEscapesSnapshotStore {
+            plugin: "postgres",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn delete_rejects_artifact_outside_snapshot_store() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin = plugin_with_user(&temp_dir, "postgres");
+    let outside_dump = temp_dir.path().join("outside.dump");
+    fs::write(&outside_dump, b"outside").unwrap();
+    let snapshot_id = snapshot_id_for("app", "localhost", 5432, "postgres", &outside_dump);
+
+    let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        SnapshotError::PathEscapesSnapshotStore {
+            plugin: "postgres",
+            ..
+        }
+    ));
+    assert_eq!(fs::read(outside_dump).unwrap(), b"outside");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn delete_rejects_symlinked_artifact_outside_snapshot_store() {
+    use std::os::unix::fs::symlink;
+
+    let temp_dir = TempDir::new().unwrap();
+    let plugin = plugin_with_user(&temp_dir, "postgres");
+    let outside_dump = temp_dir.path().join("outside.dump");
+    let artifact_path = temp_dir.path().join("snaps").join("artifact.dump");
+    fs::create_dir_all(artifact_path.parent().unwrap()).unwrap();
+    fs::write(&outside_dump, b"outside").unwrap();
+    symlink(&outside_dump, &artifact_path).unwrap();
+    let snapshot_id = snapshot_id_for("app", "localhost", 5432, "postgres", &artifact_path);
+
+    let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+    assert!(matches!(
+        err,
+        SnapshotError::PathEscapesSnapshotStore {
+            plugin: "postgres",
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
 async fn is_not_applicable_when_database_empty() {
     let temp_dir = TempDir::new().unwrap();
     let plugin = PostgresPlugin::new(
@@ -186,7 +250,8 @@ fn snapshot_id_v2_round_trips_target_fields_and_dump_path() {
 async fn rollback_errors_when_dump_file_missing() {
     let temp_dir = TempDir::new().unwrap();
     let plugin = plugin_with_user(&temp_dir, "postgres");
-    let missing_dump = temp_dir.path().join("missing.dump");
+    fs::create_dir_all(temp_dir.path().join("snaps")).unwrap();
+    let missing_dump = temp_dir.path().join("snaps").join("missing.dump");
     let snapshot_id = snapshot_id_for("app", "localhost", 5_432, "postgres", &missing_dump);
 
     let err = plugin.rollback(&snapshot_id).await.unwrap_err();
@@ -351,6 +416,7 @@ async fn rollback_uses_pg_restore_with_expected_arguments() {
     plugin.rollback(&snapshot_id).await.unwrap();
 
     let logged_args = fs::read_to_string(&log_path).unwrap();
+    let canonical_dump_path = dump_path.canonicalize().unwrap();
     assert!(logged_args.lines().any(|line| line == "--clean"));
     assert!(logged_args.lines().any(|line| line == "--if-exists"));
     assert!(logged_args.lines().any(|line| line == "--create"));
@@ -360,7 +426,7 @@ async fn rollback_uses_pg_restore_with_expected_arguments() {
     assert!(
         logged_args
             .lines()
-            .any(|line| line == dump_path.to_string_lossy())
+            .any(|line| line == canonical_dump_path.to_string_lossy())
     );
 }
 
@@ -385,28 +451,21 @@ async fn rollback_retries_when_pg_restore_binary_is_temporarily_busy() {
 }
 
 #[tokio::test]
-async fn rollback_rejects_legacy_snapshot_ids() {
+async fn rollback_restores_legacy_artifact_inside_snapshot_store() {
     let temp_dir = TempDir::new().unwrap();
     let dump_path = temp_dir.path().join("snaps").join("legacy.dump");
     fs::create_dir_all(dump_path.parent().unwrap()).unwrap();
     fs::write(&dump_path, "dump-data").unwrap();
-    let plugin = plugin_with_user(&temp_dir, "postgres");
+    let pg_restore = stub_bin(&temp_dir, "pg_restore", "exit 0");
+    let mut plugin = plugin_with_user(&temp_dir, "postgres");
+    plugin.pg_restore_bin = pg_restore.display().to_string();
     let snapshot_id = format!(
         "{}{SEP}{}",
         PostgresPlugin::encode_database("app"),
         dump_path.display()
     );
 
-    let err = plugin.rollback(&snapshot_id).await.unwrap_err();
-
-    match err {
-        SnapshotError::Snapshot(msg) => {
-            assert!(msg.contains("legacy"));
-            assert!(msg.contains("cannot be safely restored"));
-            assert!(msg.contains("original target server/account was not recorded"));
-        }
-        other => panic!("expected snapshot error, got {other:?}"),
-    }
+    plugin.rollback(&snapshot_id).await.unwrap();
 }
 
 #[cfg(unix)]
@@ -433,7 +492,6 @@ async fn rollback_uses_snapshot_time_target_instead_of_current_config() {
     );
 
     let old_snaps = temp_dir.path().join("old-snaps");
-    let new_snaps = temp_dir.path().join("new-snaps");
     let mut snapshot_plugin = PostgresPlugin::new(
         "app".to_string(),
         "snapshot-host".to_string(),
@@ -453,7 +511,7 @@ async fn rollback_uses_snapshot_time_target_instead_of_current_config() {
         "drifted-host".to_string(),
         6_432,
         "drifted-user".to_string(),
-        new_snaps,
+        temp_dir.path().join("old-snaps"),
     );
     rollback_plugin.pg_restore_bin = pg_restore.display().to_string();
 

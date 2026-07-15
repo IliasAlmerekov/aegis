@@ -13,6 +13,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- H6 snapshot path containment: SQLite, PostgreSQL, and MySQL now prove every rollback/delete artifact stays beneath the plugin-owned Snapshot store, rejecting traversal, outside, sibling-prefix, and symlink escapes; SQLite restores only to its configured live database path, never an identifier-provided destination (ADR-018, H6).
 - H5 audit-integrity contract: `ChainSha256` is now consistently described as an unkeyed local audit integrity chain that detects corruption and inconsistent edits, not an adversarial anchor; `aegis audit --verify-integrity` states that bounded contract, and a tracked-file wording guard prevents capability overclaims (ADR-017, H5).
 - Effect-opaque execution (`sh ./cleanup.sh`, `python3 ./x.py`, `source ./x`, `. ./x`, `sh -s`, and existing pipe-to-shell shapes) now requires a pre-execution recovery snapshot under `SnapshotPolicy::{Selective, Full}` when an applicable snapshot plugin exists — without raising `RiskLevel` or introducing a confirmation prompt; `SnapshotPolicy::None` remains the trusted/global opt-out and project `.aegis.toml` cannot disable the requirement under the C3 ratchet (ADR-016, H9).
 - Shell hooks (`claude-code.sh`, `codex-pre-tool-use.sh`) now fail closed when the `aegis` binary is unavailable: a `command -v` guard before `exec` emits a `deny` decision (matching the Rust `hook_deny_output` shape) and exits 0 instead of letting `exec` fail with 127 and pass the command through unscanned (ADR-007, closes H4).

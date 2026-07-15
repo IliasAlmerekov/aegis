@@ -10,6 +10,7 @@ use tokio::process::Command;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 use crate::SnapshotPlugin;
+use crate::containment::contain_artifact;
 use crate::error::SnapshotError;
 
 type Result<T> = std::result::Result<T, SnapshotError>;
@@ -238,30 +239,11 @@ impl PostgresPlugin {
             ))
         })?);
 
-        Self::validate_snapshot_path(&path, label)?;
         Ok(path)
     }
 
     fn is_executable_busy(error: &std::io::Error) -> bool {
         error.raw_os_error() == Some(EXECUTABLE_BUSY_ERRNO)
-    }
-
-    fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
-        if !path.is_absolute()
-            || path.file_name().is_none()
-            || path.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::CurDir | std::path::Component::ParentDir
-                )
-            })
-        {
-            return Err(SnapshotError::Snapshot(format!(
-                "malformed snapshot_id: invalid {label} {path:?}"
-            )));
-        }
-
-        Ok(())
     }
 
     fn build_snapshot_id(&self, dump_path: &Path) -> String {
@@ -315,12 +297,12 @@ impl PostgresPlugin {
             SnapshotError::Snapshot(format!("malformed snapshot_id: {snapshot_id:?}"))
         })?;
         let _database = Self::decode_database(database_encoded)?;
-        let dump_path = PathBuf::from(dump_str);
-        Self::validate_snapshot_path(&dump_path, "dump path")?;
-
-        Err(SnapshotError::Snapshot(
-            "legacy postgres snapshot IDs cannot be safely restored after v2 hardening because the original target server/account was not recorded".to_string(),
-        ))
+        Ok(PostgresRollbackTarget {
+            host: self.host.clone(),
+            port: self.port,
+            user: self.user.clone(),
+            dump_path: PathBuf::from(dump_str),
+        })
     }
 }
 
@@ -378,7 +360,8 @@ impl SnapshotPlugin for PostgresPlugin {
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let target = self.parse_snapshot_id(snapshot_id)?;
+        let mut target = self.parse_snapshot_id(snapshot_id)?;
+        target.dump_path = contain_artifact("postgres", &self.snapshots_dir, &target.dump_path)?;
         if !target.dump_path.exists() {
             return Err(SnapshotError::RollbackDumpNotFound {
                 path: target.dump_path.to_string_lossy().to_string(),
@@ -411,7 +394,8 @@ impl SnapshotPlugin for PostgresPlugin {
     }
 
     async fn delete(&self, snapshot_id: &str) -> Result<()> {
-        let target = self.parse_snapshot_id(snapshot_id)?;
+        let mut target = self.parse_snapshot_id(snapshot_id)?;
+        target.dump_path = contain_artifact("postgres", &self.snapshots_dir, &target.dump_path)?;
         match std::fs::remove_file(&target.dump_path) {
             Ok(()) => {
                 tracing::info!(path = %target.dump_path.display(), "postgres dump deleted");

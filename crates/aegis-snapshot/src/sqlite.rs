@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 use crate::SnapshotPlugin;
+use crate::containment::contain_artifact;
 use crate::error::SnapshotError;
 
 type Result<T> = std::result::Result<T, SnapshotError>;
@@ -92,26 +93,7 @@ impl SqlitePlugin {
             ))
         })?);
 
-        Self::validate_snapshot_path(&path, label)?;
         Ok(path)
-    }
-
-    fn validate_snapshot_path(path: &Path, label: &str) -> Result<()> {
-        if !path.is_absolute()
-            || path.file_name().is_none()
-            || path.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::CurDir | std::path::Component::ParentDir
-                )
-            })
-        {
-            return Err(SnapshotError::Snapshot(format!(
-                "malformed snapshot_id: invalid {label} {path:?}"
-            )));
-        }
-
-        Ok(())
     }
 
     fn build_snapshot_id(original_path: &Path, dump_path: &Path) -> String {
@@ -150,8 +132,6 @@ impl SqlitePlugin {
         })?;
         let original_path = PathBuf::from(original_str);
         let dump_path = PathBuf::from(dump_str);
-        Self::validate_snapshot_path(&original_path, "original path")?;
-        Self::validate_snapshot_path(&dump_path, "dump path")?;
         Ok((original_path, dump_path))
     }
 }
@@ -208,20 +188,24 @@ impl SnapshotPlugin for SqlitePlugin {
     }
 
     async fn rollback(&self, snapshot_id: &str) -> Result<()> {
-        let (original_path, dump_path) = Self::parse_snapshot_id(snapshot_id)?;
+        let (_original_path, dump_path) = Self::parse_snapshot_id(snapshot_id)?;
+        let dump_path = contain_artifact("sqlite", &self.snapshots_dir, &dump_path)?;
         if !dump_path.exists() {
             return Err(SnapshotError::RollbackDumpNotFound {
                 path: dump_path.to_string_lossy().to_string(),
             });
         }
 
-        fs::copy(dump_path, original_path)?;
+        let cwd = std::env::current_dir()?;
+        let restore_path = self.resolve_db_path(&cwd);
+        fs::copy(dump_path, restore_path)?;
         tracing::info!(snapshot_id = snapshot_id, "sqlite snapshot rolled back");
         Ok(())
     }
 
     async fn delete(&self, snapshot_id: &str) -> Result<()> {
         let (_original_path, dump_path) = Self::parse_snapshot_id(snapshot_id)?;
+        let dump_path = contain_artifact("sqlite", &self.snapshots_dir, &dump_path)?;
         match fs::remove_file(&dump_path) {
             Ok(()) => {
                 tracing::info!(path = %dump_path.display(), "sqlite dump deleted");
@@ -334,6 +318,172 @@ mod tests {
         plugin.rollback(&snapshot_id).await.unwrap();
 
         assert_eq!(fs::read(&db_path).unwrap(), b"before-snapshot");
+    }
+
+    #[tokio::test]
+    async fn rollback_rejects_forged_artifact_path_without_modifying_database() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let outside_path = temp_dir.path().join("outside.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        write_db(&db_path, b"configured-database");
+        write_db(&outside_path, b"outside-artifact");
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&db_path, &outside_path);
+
+        let err = plugin.rollback(&snapshot_id).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::PathEscapesSnapshotStore {
+                plugin: "sqlite",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(db_path).unwrap(), b"configured-database");
+    }
+
+    #[tokio::test]
+    async fn rollback_uses_configured_database_instead_of_snapshot_id_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let artifact_path = snapshots_dir.join("captured.db");
+        let forged_destination = temp_dir.path().join("outside.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        write_db(&db_path, b"configured-database");
+        write_db(&artifact_path, b"captured-database");
+        write_db(&forged_destination, b"outside-data");
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&forged_destination, &artifact_path);
+
+        plugin.rollback(&snapshot_id).await.unwrap();
+
+        assert_eq!(fs::read(db_path).unwrap(), b"captured-database");
+        assert_eq!(fs::read(forged_destination).unwrap(), b"outside-data");
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_forged_artifact_path_without_removing_it() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let outside_path = temp_dir.path().join("outside.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        write_db(&outside_path, b"outside-artifact");
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&db_path, &outside_path);
+
+        let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::PathEscapesSnapshotStore {
+                plugin: "sqlite",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(outside_path).unwrap(), b"outside-artifact");
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_symlinked_artifact_outside_snapshot_store() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let outside_path = temp_dir.path().join("outside.db");
+        let artifact_path = snapshots_dir.join("captured.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        write_db(&outside_path, b"outside-artifact");
+        symlink(&outside_path, &artifact_path).unwrap();
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&db_path, &artifact_path);
+
+        let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::PathEscapesSnapshotStore {
+                plugin: "sqlite",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(outside_path).unwrap(), b"outside-artifact");
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_parent_traversal_artifact_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let traversal_path = snapshots_dir.join("..").join("outside.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&db_path, &traversal_path);
+
+        let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::PathEscapesSnapshotStore {
+                plugin: "sqlite",
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_sibling_prefix_artifact_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let sibling_store = temp_dir.path().join("snaps-evil");
+        let outside_path = sibling_store.join("captured.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        fs::create_dir_all(&sibling_store).unwrap();
+        write_db(&outside_path, b"outside-artifact");
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&db_path, &outside_path);
+
+        let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::PathEscapesSnapshotStore {
+                plugin: "sqlite",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(outside_path).unwrap(), b"outside-artifact");
+    }
+
+    #[tokio::test]
+    async fn delete_rejects_symlinked_artifact_parent_outside_snapshot_store() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("app.db");
+        let snapshots_dir = temp_dir.path().join("snaps");
+        let outside_dir = temp_dir.path().join("outside");
+        let artifact_path = snapshots_dir.join("nested").join("captured.db");
+        fs::create_dir_all(&snapshots_dir).unwrap();
+        fs::create_dir_all(&outside_dir).unwrap();
+        symlink(&outside_dir, snapshots_dir.join("nested")).unwrap();
+        let plugin = SqlitePlugin::new(db_path.clone(), snapshots_dir);
+        let snapshot_id = SqlitePlugin::build_snapshot_id(&db_path, &artifact_path);
+
+        let err = plugin.delete(&snapshot_id).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            SnapshotError::PathEscapesSnapshotStore {
+                plugin: "sqlite",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
