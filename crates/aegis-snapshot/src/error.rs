@@ -29,6 +29,16 @@ pub enum SnapshotError {
         path: String,
     },
 
+    /// A snapshot artifact is not provably contained by its trusted snapshot store.
+    PathEscapesSnapshotStore {
+        /// Plugin that attempted to use the artifact.
+        plugin: &'static str,
+        /// Trusted snapshot store configured for that plugin.
+        store: String,
+        /// Untrusted artifact candidate decoded from a snapshot identifier.
+        candidate: String,
+    },
+
     /// The persisted rollback artifact no longer matches the manifest checksum.
     RollbackIntegrityCheckFailed {
         /// Path to the artifact that failed verification.
@@ -74,6 +84,14 @@ impl std::fmt::Display for SnapshotError {
             Self::RollbackDumpNotFound { path } => write!(
                 f,
                 "rollback failed: dump file not found at '{path}'. The file may have been deleted manually."
+            ),
+            Self::PathEscapesSnapshotStore {
+                plugin,
+                store,
+                candidate,
+            } => write!(
+                f,
+                "{plugin} snapshot artifact '{candidate}' escapes snapshot store '{store}'"
             ),
             Self::RollbackIntegrityCheckFailed {
                 path,

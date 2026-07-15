@@ -81,6 +81,7 @@ the core classification / approval pipeline when enforcement is active.
 | ADR-015 | Destructive SQL is detected by match-anywhere regex, not token-prefix rules | [`adr-015-destructive-sql-detected-by-regex-not-token-prefix.md`](adr-015-destructive-sql-detected-by-regex-not-token-prefix.md) |
 | ADR-016 | Effect-opaque execution uses recovery backstops without raising risk | [`adr-016-effect-opaque-execution-uses-recovery-backstops.md`](adr-016-effect-opaque-execution-uses-recovery-backstops.md) |
 | ADR-017 | Audit integrity chain has no external anchor | [`adr-017-audit-integrity-chain-has-no-external-anchor.md`](adr-017-audit-integrity-chain-has-no-external-anchor.md) |
+| ADR-018 | Filesystem snapshot artifacts stay contained in their snapshot store | [`adr-018-snapshot-path-containment.md`](adr-018-snapshot-path-containment.md) |
 
 `ADR-009` is intentionally absent from the active set; numbering is preserved
 as-is so historical references do not drift.
