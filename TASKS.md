@@ -156,7 +156,7 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Traceability:** [plan](docs/plans/2026-07-14-h6-snapshot-path-containment.md);
   [ADR-018](docs/adr/adr-018-snapshot-path-containment.md); commit `e26c7e7`.
 
-### [x] H7a — Snapshot artifacts inherit overly broad permissions
+### [ ] H7a — Snapshot artifacts inherit overly broad permissions
 
 - **Finding:** database dumps and snapshot directories can be created with
   process-umask defaults that expose database contents or credentials to other
@@ -165,7 +165,8 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   snapshot files are owner-readable/writable only on supported Unix platforms;
   existing unsafe paths are rejected or tightened before sensitive writes;
   non-Unix behavior is documented and tested without adding native-Windows scope.
-- **Status:** **Closed** — verified locally on 2026-07-15.
+- **Status:** **Partial** — implemented and verified locally on 2026-07-15;
+  required PR CI remains before closure.
 - **Traceability:** [plan](docs/plans/2026-07-14-h7a-snapshot-artifact-permissions.md);
   [ADR-019](docs/adr/adr-019-owner-only-snapshot-artifact-permissions.md).
 
