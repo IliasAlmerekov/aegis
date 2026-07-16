@@ -51,7 +51,8 @@ fn release_tag() -> String {
 }
 
 fn repository() -> String {
-    std::env::var("AEGIS_TEST_RELEASE_REPO").unwrap_or_else(|_| "IliasAlmerekov/aegis".to_string())
+    std::env::var("AEGIS_TEST_RELEASE_REPO")
+        .unwrap_or_else(|_| "IliasAlmerekov/aegis-shellguard".to_string())
 }
 
 fn download(url: &str, destination: &Path) {

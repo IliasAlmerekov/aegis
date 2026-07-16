@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO="${AEGIS_REPO:-IliasAlmerekov/aegis}"
+REPO="${AEGIS_REPO:-IliasAlmerekov/aegis-shellguard}"
 VERSION="${AEGIS_VERSION:-latest}"
 BINDIR="${AEGIS_BINDIR:-/usr/local/bin}"
 OS_OVERRIDE="${AEGIS_OS:-}"
@@ -365,7 +365,7 @@ EOF
 Open a new shell (or source the file above) to activate it.
 
 Rollback:
-  curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis-shellguard/main/scripts/uninstall.sh | sh
 
   Claude Code:
   Open Claude Code settings and set the shell path to the output of `which aegis`.

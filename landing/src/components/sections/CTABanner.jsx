@@ -38,7 +38,7 @@ export function CTABanner() {
 
         <div className="relative mt-8 flex flex-wrap items-center justify-center gap-3">
           <a
-            href="https://github.com/IliasAlmerekov/aegis"
+            href="https://github.com/IliasAlmerekov/aegis-shellguard"
             target="_blank"
             rel="noopener noreferrer"
             className="btn-fill inline-flex h-11 items-center gap-2 rounded px-6 text-sm font-medium text-[#000000] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64]"

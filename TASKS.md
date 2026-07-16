@@ -352,8 +352,8 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   2026-07-14.
 - **Traceability:** `README.md` Before/After and command-flow examples;
   `tests/snapshot_ordering.rs::test_denied_danger_command_records_no_snapshots`;
-  [PR #120](https://github.com/IliasAlmerekov/aegis/pull/120);
-  [required CI run](https://github.com/IliasAlmerekov/aegis/actions/runs/29342385519).
+  [PR #120](https://github.com/IliasAlmerekov/aegis-shellguard/pull/120);
+  [required CI run](https://github.com/IliasAlmerekov/aegis-shellguard/actions/runs/29342385519).
 
 ---
 

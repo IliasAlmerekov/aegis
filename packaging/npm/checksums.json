@@ -1,6 +1,6 @@
 {
   "release": "v0.5.6",
-  "repo": "IliasAlmerekov/aegis",
+  "repo": "IliasAlmerekov/aegis-shellguard",
   "assets": {
     "aegis-linux-x86_64": "3af320804df191d3a10637e3da103dc306a5d573a85f1d740726d62c0826f683",
     "aegis-linux-aarch64": "5e900632230750dff271d5816bd7c81a53158005d88c30ec439e59df871d0e31",

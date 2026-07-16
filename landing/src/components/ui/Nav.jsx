@@ -62,7 +62,7 @@ export function Nav() {
           {/* Right cluster */}
           <div className="flex items-center gap-3">
             <a
-              href="https://github.com/IliasAlmerekov/aegis"
+              href="https://github.com/IliasAlmerekov/aegis-shellguard"
               target="_blank"
               rel="noopener noreferrer"
               className="btn-fill flex h-9 items-center gap-2 rounded px-4 text-sm font-medium text-[#000000] transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7fee64] focus-visible:ring-offset-2 focus-visible:ring-offset-[#212525]"
