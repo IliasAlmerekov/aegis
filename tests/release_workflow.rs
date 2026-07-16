@@ -169,6 +169,31 @@ fn release_workflow_should_publish_each_binary_and_matching_sha256_sidecar() {
 }
 
 #[test]
+fn release_workflow_should_use_node24_actions_for_release_publication() {
+    let wf = release_workflow();
+
+    for node24_action in [
+        "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+        "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2",
+    ] {
+        assert!(
+            wf.contains(node24_action),
+            "release publication must pin the Node.js 24 action {node24_action}"
+        );
+    }
+
+    for node20_action in [
+        "actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0",
+        "softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+    ] {
+        assert!(
+            !wf.contains(node20_action),
+            "release publication must not retain the Node.js 20 action {node20_action}"
+        );
+    }
+}
+
+#[test]
 fn release_workflow_should_generate_sha256_before_uploading_artifacts() {
     let wf = release_workflow();
     let checksum_step = wf

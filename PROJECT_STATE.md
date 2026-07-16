@@ -13,13 +13,23 @@
 
 ## Active branch
 
-`feat/landingpage` (release preparation staged on `release/v0.6.1-prep`)
+`main` (Node.js 24 release-workflow follow-up staged on `ci/node24-actions`)
 
 ## Last updated
 
-2026-07-15
+2026-07-16
 
 ---
+
+## Last session (2026-07-16)
+
+- **Release publication migrated to Node.js 24-native actions; PR CI pending.**
+  `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2
+  are pinned by immutable commit SHA, and the release-workflow contract rejects
+  the prior Node.js 20 pins. The focused red/green test, all 10 release-workflow
+  tests, fmt, clippy, 1446 workspace tests, audit/deny, and diff-check passed.
+  The first parallel workspace run hit an unrelated `snapshot_ordering` flake;
+  its focused retry and the complete workspace retry passed.
 
 ## Last session (2026-07-15)
 
