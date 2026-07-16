@@ -1,26 +1,26 @@
 class Aegis < Formula
   desc "Heuristic shell guardrail for AI agent command execution"
   homepage "https://github.com/IliasAlmerekov/aegis-shellguard"
-  version "0.5.6"
+  version "0.6.2"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.5.6/aegis-macos-aarch64", using: :nounzip
-      sha256 "8768865f2456c115788967ab29db790106e8a87fea8aa654561f8e942ec172b0"
+      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.6.2/aegis-macos-aarch64", using: :nounzip
+      sha256 "c17189eb9a823cd14bc3df19fe7388080a53470b0969a39398cccc0c06e4acf7"
     else
-      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.5.6/aegis-macos-x86_64", using: :nounzip
-      sha256 "092d91e7b22800e68df8290707031beac531feb44bd02ddb0356ff082299ff2e"
+      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.6.2/aegis-macos-x86_64", using: :nounzip
+      sha256 "239958ea5fb24fd9d00b4c53c89670ffd803e032700909759146bebb8ac117f5"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.5.6/aegis-linux-aarch64", using: :nounzip
-      sha256 "5e900632230750dff271d5816bd7c81a53158005d88c30ec439e59df871d0e31"
+      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.6.2/aegis-linux-aarch64", using: :nounzip
+      sha256 "60488cbc84054689c50124b37fcc5a21e31065a4ecbaca0d4c9f4583ab431d28"
     else
-      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.5.6/aegis-linux-x86_64", using: :nounzip
-      sha256 "3af320804df191d3a10637e3da103dc306a5d573a85f1d740726d62c0826f683"
+      url "https://github.com/IliasAlmerekov/aegis-shellguard/releases/download/v0.6.2/aegis-linux-x86_64", using: :nounzip
+      sha256 "912dbc29774e8564ee2ae8fc33a560a96687e001bba19bbe757701a673016dca"
     end
   end
 
