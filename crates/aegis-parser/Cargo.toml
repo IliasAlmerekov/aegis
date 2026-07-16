@@ -1,6 +1,6 @@
 [package]
 name = "aegis-parser"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,4 +10,4 @@ documentation = "https://docs.rs/aegis-parser"
 description = "Shell command tokenizer and PrefixPattern matching for Aegis. Depends only on aegis-types."
 
 [dependencies]
-aegis-types = { version = "0.6.1", path = "../aegis-types" }
+aegis-types = { version = "0.6.2", path = "../aegis-types" }

@@ -11,6 +11,8 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-07-16
+
 ### Security
 
 - Optional Sandbox degradation is now visible and auditable on every execution surface: Shell warns on stderr, Watch emits protocol-safe warning or required-block diagnostics without blocking its Tokio worker, Audit records the prepared path including `NotAttempted`, `aegis-sandbox` remains locally packageable with its versioned foundation dependency, and `sandbox.required = true` remains fail closed; public docs define the write/network guardrail and preparation/exec error contracts without claiming confidentiality (ADR-021, M1).

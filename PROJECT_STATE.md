@@ -9,11 +9,11 @@
 
 ## Current version
 
-`0.6.1` — pre-1.0, targeting `1.0.0`
+`0.6.2` — pre-1.0, targeting `1.0.0` (release prepared; tag pending)
 
 ## Active branch
 
-`agent/h9-required-recovery` (PR #129)
+`chore/prepare-v0.6.2`
 
 ## Last updated
 
@@ -23,6 +23,13 @@
 
 ## Last session (2026-07-16)
 
+- **v0.6.2 release prepared; tag pending.** Version bumped to `0.6.2` across
+  the workspace (`Cargo.toml` + all crates + `Cargo.lock`), npm `package.json`,
+  README (badge, `--tag v0.6.2` install line), `tests/npm_package.rs`,
+  `docs/releases/current-line.md`, `docs/releases/v1.0.0.md`, and the landing
+  (`Hero.jsx`, `HowItWorks.jsx`). `CHANGELOG.md` `[Unreleased]` cut to
+  `[0.6.2] — 2026-07-16` with a fresh empty `[Unreleased]` above it. Verified:
+  workspace tests, clippy `-D warnings`, fmt, landing production build.
 - **M1 implemented, skeptic-clean, and locally verified; required PR CI pending.**
   Shell and Watch derive Audit status and active-channel diagnostics from typed
   Sandbox preparation; Watch moves synchronous capability probes to Tokio's

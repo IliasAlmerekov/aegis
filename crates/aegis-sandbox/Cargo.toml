@@ -1,6 +1,6 @@
 [package]
 name = "aegis-sandbox"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -10,7 +10,7 @@ documentation = "https://docs.rs/aegis-sandbox"
 description = "Sandboxing layer for Aegis — bwrap+Landlock (Linux), Seatbelt (macOS); native Windows unsupported."
 
 [dependencies]
-aegis-types = { version = "0.6.1", path = "../aegis-types" }
+aegis-types = { version = "0.6.2", path = "../aegis-types" }
 thiserror = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
