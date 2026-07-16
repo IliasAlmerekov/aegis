@@ -29,32 +29,32 @@
       }
     },
     "auto_snapshot_docker": {
-      "description": "Enable Docker container snapshots before dangerous commands.",
+      "description": "Enable Docker when a command's Snapshot plan requests it.",
       "type": "boolean",
       "default": false
     },
     "auto_snapshot_git": {
-      "description": "Enable Git snapshots before dangerous commands.",
+      "description": "Enable Git when a command's Snapshot plan requests it.",
       "type": "boolean",
       "default": true
     },
     "auto_snapshot_mysql": {
-      "description": "Enable MySQL snapshots before dangerous commands.",
+      "description": "Enable MySQL when a command's Snapshot plan requests it.",
       "type": "boolean",
       "default": false
     },
     "auto_snapshot_postgres": {
-      "description": "Enable PostgreSQL snapshots before dangerous commands.",
+      "description": "Enable PostgreSQL when a command's Snapshot plan requests it.",
       "type": "boolean",
       "default": false
     },
     "auto_snapshot_sqlite": {
-      "description": "Enable SQLite snapshots before dangerous commands.",
+      "description": "Enable SQLite when a command's Snapshot plan requests it.",
       "type": "boolean",
       "default": false
     },
     "auto_snapshot_supabase": {
-      "description": "Enable Supabase snapshots before dangerous commands.",
+      "description": "Enable Supabase when a command's Snapshot plan requests it.",
       "type": "boolean",
       "default": false
     },
@@ -148,7 +148,7 @@
       }
     },
     "snapshot_policy": {
-      "description": "Controls which snapshot plugins run before dangerous commands.",
+      "description": "Controls which Snapshot plugins run for planned recovery.",
       "$ref": "#/$defs/SnapshotPolicy",
       "default": "Selective"
     },
@@ -685,7 +685,7 @@
       "additionalProperties": false
     },
     "SnapshotPolicy": {
-      "description": "Controls when and how snapshot plugins run before dangerous commands.\n\n- `None`      — never snapshot.\n- `Selective` — only plugins enabled by `auto_snapshot_git` /\n  `auto_snapshot_docker` / `auto_snapshot_postgres` /\n  `auto_snapshot_mysql` / `auto_snapshot_supabase` /\n  `auto_snapshot_sqlite`.\n- `Full`      — run every registered plugin regardless of per-plugin flags.",
+      "description": "Controls when and how Snapshot plugins run for planned recovery.\n\n- `None`      — never snapshot.\n- `Selective` — only plugins enabled by `auto_snapshot_git` /\n  `auto_snapshot_docker` / `auto_snapshot_postgres` /\n  `auto_snapshot_mysql` / `auto_snapshot_supabase` /\n  `auto_snapshot_sqlite`.\n- `Full`      — run every registered plugin regardless of per-plugin flags.",
       "oneOf": [
         {
           "description": "Never create snapshots.",

@@ -35,10 +35,11 @@ allowlist_override_level = "Warn" # Protect/Strict allowlist ceiling: Warn | Dan
 # cwd = "/srv/infra"
 # reason = "never allow recursive root deletion"
 
-snapshot_policy = "Selective" # None = never snapshot, Selective = per-plugin flags below, Full = all plugins.
-auto_snapshot_git = true # Create a Git snapshot before dangerous commands when possible (Selective only).
+snapshot_policy = "Selective" # None = trusted recovery opt-out, Selective = per-plugin flags below, Full = all plugins.
+# Protect/Strict require at least one Snapshot for bounded effect-opaque execution; no plugin or failed creation denies without a one-time Recovery override.
+auto_snapshot_git = true # Use Git when a command's Snapshot plan requests it (Selective only).
 auto_snapshot_docker = false # Docker snapshot is opt-in (Selective only). Enable once you have tested rollback.
-auto_snapshot_postgres = false # PostgreSQL snapshot before dangerous commands. Requires pg_dump on PATH and [postgres_snapshot] config.
+auto_snapshot_postgres = false # PostgreSQL Snapshot-plan provider. Requires pg_dump on PATH and [postgres_snapshot] config.
 auto_snapshot_mysql = false    # MySQL/MariaDB snapshot. Requires mysqldump on PATH and [mysql_snapshot] config.
 auto_snapshot_supabase = false # Supabase project-level snapshot. Phase 1 captures a DB-only manifest bundle.
 auto_snapshot_sqlite = false   # SQLite snapshot. Set sqlite_snapshot_path to your .db file path.

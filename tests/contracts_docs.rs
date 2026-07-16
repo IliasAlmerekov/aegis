@@ -54,6 +54,54 @@ fn threat_model_is_current_and_documents_non_goals_honestly() {
 }
 
 #[test]
+fn h9_public_docs_distinguish_required_recovery_from_best_effort_snapshots() {
+    let threat_model = fs::read_to_string(repo_path("docs/threat-model.md")).unwrap();
+    let config_schema = fs::read_to_string(repo_path("docs/config-schema.md")).unwrap();
+    let readme = fs::read_to_string(repo_path("README.md")).unwrap();
+
+    for needle in [
+        "Effect-opaque execution",
+        "Required recovery",
+        "one-time Recovery override",
+        "Mode::Audit",
+        "SnapshotPolicy::None",
+    ] {
+        assert!(
+            threat_model.contains(needle),
+            "threat model must document H9 term `{needle}`"
+        );
+    }
+    for needle in [
+        "Effect-opaque execution",
+        "Required recovery",
+        "no applicable Snapshot plugin",
+        "Run once without recovery",
+    ] {
+        assert!(
+            config_schema.contains(needle),
+            "config schema must document H9 term `{needle}`"
+        );
+    }
+    for needle in [
+        "Effect-opaque execution",
+        "Run once without recovery",
+        "does not inspect the referenced script",
+    ] {
+        assert!(readme.contains(needle), "README must mention `{needle}`");
+    }
+    for stale in [
+        "when snapshots are requested, that matters only for `Danger`",
+        "Snapshot requests matter only for `Danger` flows.",
+        "if there are no applicable snapshot plugins, no snapshots are requested even for `Danger`",
+    ] {
+        assert!(
+            !config_schema.contains(stale),
+            "config schema must remove stale snapshot claim `{stale}`"
+        );
+    }
+}
+
+#[test]
 fn readme_links_to_contract_docs() {
     let readme = fs::read_to_string(repo_path("README.md")).expect("README.md must exist");
     assert!(

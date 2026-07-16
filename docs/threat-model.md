@@ -34,7 +34,8 @@ Approved commands still run with the operator's normal OS permissions.
 1. **User data and workstation state** from common destructive shell commands
 2. **Execution intent** by requiring explicit approval for risky commands
 3. **Audit history** of what was approved, denied, blocked, or auto-approved
-4. **Recoverability** for some dangerous commands through best-effort snapshots
+4. **Recoverability** through ordinary best-effort Snapshots and bounded
+   effect-opaque Required recovery
 
 ## Trust boundaries
 
@@ -91,6 +92,37 @@ piped, or the caller is an automated agent runner.
 
 **Residual risk:** Safe commands still auto-approve by design. A deliberately
 over-broad allowlist can also permit risky commands.
+
+### Effect-opaque execution without Required recovery
+
+**Threat:** A bounded **Effect-opaque execution** shape, such as
+`sh ./cleanup.sh`, interpreter stdin, or pipe-to-shell, hands control to another
+execution layer whose eventual filesystem, database, or network effect is not
+visible in the assessed command text.
+
+**Mitigations:**
+
+- Aegis marks only the bounded ADR-016 shapes; it does not inspect the referenced
+  script file or raise `RiskLevel` solely because the shape is effect-opaque.
+- In Protect and Strict with `SnapshotPolicy::Selective` or
+  `SnapshotPolicy::Full`, **Required recovery** means at least one Snapshot must
+  be created before execution, independently of plugin applicability.
+- If no Snapshot is created, non-interactive execution denies. Interactive
+  execution explains the missing recovery and can proceed only through a
+  one-time Recovery override (`Run once without recovery`), which cannot be
+  persisted as an allowlist rule.
+- Audit records `no_snapshot_available` together with the final `Denied` or
+  human `Approved` decision.
+- An optional Sandbox can add confinement, but is not the primary ADR-016
+  backstop and is not made mandatory by Required recovery.
+
+**Trusted opt-outs:** `Mode::Audit` remains observe-only and
+`SnapshotPolicy::None` is the trusted global recovery opt-out. Neither is a
+Recovery degradation.
+
+**Residual risk:** Detection remains heuristic. Aegis does not classify every
+dynamic evaluation, encoded payload, interpreter library call, package runner,
+or TOCTOU change, and does not read referenced scripts during classification.
 
 ### 3. Allowlist abuse or overreach
 
@@ -152,18 +184,22 @@ verifying under the original layout. See the note on `AuditIntegrityPayload` in
 
 ### 5. Snapshot failure or false recovery expectations
 
-**Threat:** Operators assume dangerous commands are always recoverable.
+**Threat:** Operators assume every dangerous command is recoverable or confuse
+ADR-016 Required recovery with a general backup guarantee.
 
 **Mitigations:**
 
-- snapshots are attempted only when policy requires them
+- ordinary non-effect-opaque `Danger` Snapshots remain best-effort
+- bounded Effect-opaque execution under active recovery policy must create at
+  least one Snapshot, receive a one-time Recovery override, or deny
 - providers are applicability-checked per environment
 - snapshot records are written to the audit log
 - rollback resolves snapshot targets from the audit log
 
-**Residual risk:** Snapshots and rollback are **best-effort**, not guaranteed.
-Plugin failures do not create a security boundary, and rollback can still fail
-or conflict.
+**Residual risk:** A successful Snapshot captures only what its plugin supports;
+it is not a complete backup or universal undo. Rollback can still fail or
+conflict. Required recovery proves only that at least one Snapshot record was
+created before this execution.
 
 ### 6. Evasion through shell tricks or deferred execution
 
@@ -227,7 +263,8 @@ The following properties are part of Aegis' intended contract:
 - `Block` commands must never be bypassed by allowlist or CI behavior
 - non-interactive risky commands must not auto-approve
 - approved commands must be audited
-- snapshot behavior must be described honestly as best-effort
+- ordinary Snapshot behavior must be described honestly as best-effort, while
+  ADR-016 Required recovery must fail closed or receive a one-time override
 
 ## Explicit non-goals
 

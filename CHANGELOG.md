@@ -19,6 +19,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- H9 required recovery now survives missing Snapshot-plugin availability: bounded ADR-016 Effect-opaque execution denies without a TTY when no required Snapshot is created, offers only a visible one-time interactive Recovery override, records `no_snapshot_available` with the final Audit decision, and keeps ordinary non-opaque Danger Snapshots best-effort (ADR-016, H9).
 - H7b audit hardening now creates Unix Audit directories/artifacts with owner-only modes, rejects unsafe final-component targets through descriptor-bound no-follow opens, preflights every managed rotation slot, and stages gzip archives before commit; non-Unix and parent-entry/durability limits remain explicit (ADR-020, H7b).
 - H7a follow-up: SQLite Rollback now preserves the caller-owned live database mode, unsafe Snapshot-store metadata reads yield the typed permission rejection, and a stale Supabase manifest temp is bypassed with a fresh secure reservation (ADR-019, H7a).
 - H7a snapshot artifacts now use owner-only Unix modes (`0700` directories and `0600` files); unsafe Snapshot store leaves are tightened or rejected before sensitive writes, while non-Unix behavior deliberately makes no POSIX-mode claim (ADR-019, H7a).

@@ -62,20 +62,22 @@ This `mode semantics` section documents the current runtime behavior.
 - `Warn` prompts unless an allowlist override makes it effective
 - `Danger` prompts unless an allowlist override makes it effective
 - `Block` always blocks
-- when snapshots are requested, that matters only for `Danger`
+- bounded `Effect-opaque execution` uses Required recovery independently of its
+  `RiskLevel`
 
 ### Audit
 
 - `Safe`, `Warn`, `Danger`, and `Block` all remain non-blocking at runtime
 - Audit mode does not prompt
 - Audit mode does not request snapshots
+- Audit mode is an intentional observe-only opt-out from Required recovery
 
 ### Strict
 
 - `Safe` auto-approves
 - `Warn` and `Danger` block unless an allowlist override makes them effective
 - `Block` always blocks
-- when an allowlisted `Danger` command is auto-approved, snapshot requirements still apply
+- allowlist and policy-rule approval cannot waive effect-opaque Required recovery
 
 ### Prompt semantics
 
@@ -86,6 +88,8 @@ This `mode semantics` section documents the current runtime behavior.
 - read failure denies
 - non-interactive prompt-required flows deny
 - default is deny
+- a Recovery degradation has a separate focused prompt with only
+  `Run once without recovery` and `Deny`; it never offers a persistent rule
 
 ## Allowlist semantics
 
@@ -130,20 +134,34 @@ Legacy compatibility:
 
 ## Snapshot policy
 
-Snapshot requests matter only for `Danger` flows.
+Snapshot planning has two distinct contracts:
 
-- `None` never requests snapshots
+- ordinary non-effect-opaque `Danger` commands use best-effort Snapshots when an
+  applicable plugin is available
+- bounded `Effect-opaque execution` in Protect or Strict uses **Required
+  recovery** under `Selective` / `Full`: at least one Snapshot must be created
+  before execution
+
+- `None` never requests snapshots and is the trusted global recovery opt-out
 - `Selective` honors `auto_snapshot_git` / `auto_snapshot_docker`
 - `Selective` also honors `auto_snapshot_postgres` / `auto_snapshot_mysql` / `auto_snapshot_sqlite` / `auto_snapshot_supabase`
 - `Full` requests all applicable snapshot plugins regardless of per-plugin flags
 
 Important details:
 
-- snapshots are created only after a `Danger` command is approved (human approval or allowlist auto-approval), never for `Block` or for denied prompts
+- snapshots are attempted only after the ordinary command decision is approved
+  or auto-approved, never for `Block` or a denied ordinary prompt
 - snapshots are created before the command is executed; when a sandbox is configured, the snapshot happens before sandbox confinement is applied
-- if there are no applicable snapshot plugins, no snapshots are requested even for `Danger`
-- `Audit` does not request snapshots
-- `Warn` does not request snapshots
+- if there is no applicable Snapshot plugin, ordinary non-effect-opaque
+  `Danger` behavior remains best-effort, but effect-opaque Required recovery
+  remains active and becomes a Recovery degradation
+- when no required Snapshot is created, non-interactive execution denies;
+  interactive execution explains the missing recovery and offers only
+  `Run once without recovery` or `Deny`
+- `Mode::Audit` and `SnapshotPolicy::None` are intentional opt-outs and do not
+  produce a Recovery degradation
+- `Warn` requests no ordinary Danger Snapshot, but can still require recovery
+  when the same command is effect-opaque
 - blocked commands write an audit entry with an empty `snapshots` array
 - denied commands write an audit entry with an empty `snapshots` array
 
@@ -178,7 +196,7 @@ port = 5432
 user = ""
 ```
 
-- `auto_snapshot_postgres` enables PostgreSQL snapshots before dangerous commands
+- `auto_snapshot_postgres` enables PostgreSQL when a command's Snapshot plan requests it
 - `postgres_snapshot.database` is required when PostgreSQL snapshots are enabled
 - `postgres_snapshot.host` and `postgres_snapshot.port` select the database endpoint
 - `postgres_snapshot.user` may be left empty to use `PGUSER` or the current OS user
@@ -196,7 +214,7 @@ port = 3306
 user = ""
 ```
 
-- `auto_snapshot_mysql` enables MySQL/MariaDB snapshots before dangerous commands
+- `auto_snapshot_mysql` enables MySQL/MariaDB when a command's Snapshot plan requests it
 - `mysql_snapshot.database` is required when MySQL/MariaDB snapshots are enabled
 - `mysql_snapshot.host` and `mysql_snapshot.port` select the database endpoint
 - `mysql_snapshot.user` may be left empty to use `MYSQL_USER` or `~/.my.cnf`
@@ -209,7 +227,7 @@ auto_snapshot_sqlite = false
 sqlite_snapshot_path = ""
 ```
 
-- `auto_snapshot_sqlite` enables SQLite snapshots before dangerous commands
+- `auto_snapshot_sqlite` enables SQLite when a command's Snapshot plan requests it
 - `sqlite_snapshot_path` must point to the `.db` file, either relative to the current working directory or absolute
 - SQLite snapshots do not use a username/password block; the database file path is the only required setting
 
@@ -229,7 +247,7 @@ port = 5432
 user = ""
 ```
 
-- `auto_snapshot_supabase` enables the project-level Supabase provider for dangerous-command snapshot planning, but the provider only applies when `supabase_snapshot.db.database` is set and both `pg_dump` and `pg_restore` are available
+- `auto_snapshot_supabase` enables the project-level Supabase provider when a command's Snapshot plan requests it, but the provider only applies when `supabase_snapshot.db.database` is set and both `pg_dump` and `pg_restore` are available
 - in Phase 1, the effective captured scope is a **db-only manifest snapshot**
 - `project_ref` is advisory-only metadata stored in the snapshot manifest for future audit/UI use
 - `require_config_target_match_on_rollback` fail-closes rollback if current config disagrees with the manifest target

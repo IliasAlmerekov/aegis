@@ -71,7 +71,8 @@ fn evaluate_protect(input: PolicyInput<'_>) -> PolicyDecision {
         }
         RiskLevel::Warn => {
             if allowlist_override_applies(&input) {
-                auto_approve(input, PolicyRationale::AllowlistOverride, true, false)
+                let snaps = snapshots_required(&input);
+                auto_approve(input, PolicyRationale::AllowlistOverride, true, snaps)
             } else if input.ci_state.detected && input.config_flags.ci_policy == CiPolicy::Block {
                 block(input, PolicyRationale::ProtectCiPolicy)
             } else {
@@ -186,8 +187,15 @@ fn block(_input: PolicyInput<'_>, rationale: PolicyRationale) -> PolicyDecision 
 }
 
 fn snapshots_required(input: &PolicyInput<'_>) -> bool {
-    if input.config_flags.snapshot_policy == SnapshotPolicy::None {
+    if input.mode == Mode::Audit || input.config_flags.snapshot_policy == SnapshotPolicy::None {
         return false;
+    }
+
+    // ADR-016: plugin applicability cannot erase Required recovery for
+    // effect-opaque execution. An empty plugin set is observed later as a
+    // Recovery degradation.
+    if input.assessment.effect_opaque {
+        return true;
     }
 
     if input
@@ -198,13 +206,9 @@ fn snapshots_required(input: &PolicyInput<'_>) -> bool {
         return false;
     }
 
-    // ADR-016: recovery is the primary v1 backstop for *both* Danger commands
-    // and effect-opaque execution (e.g. `sh ./cleanup.sh`). Risk and effect
-    // opacity are orthogonal axes, so either condition requests a pre-exec
-    // snapshot — a Safe command that defers its effect to a script file still
-    // earns a recovery point. `SnapshotPolicy::None` (the trusted/global
-    // opt-out) and "no applicable plugin" both suppress this above.
-    input.assessment.risk == RiskLevel::Danger || input.assessment.effect_opaque
+    // Ordinary non-effect-opaque Danger snapshots remain best-effort and are
+    // requested only when a plugin is applicable.
+    input.assessment.risk == RiskLevel::Danger
 }
 
 #[cfg(test)]

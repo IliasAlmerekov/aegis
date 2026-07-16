@@ -2,10 +2,11 @@
 
 ## Status
 
-Design locked on 2026-07-15; implementation not started. Iterations 1–3 landed
-in `8dd5392`. The remaining work is the required-recovery runtime gate and
-public-contract alignment described below. H9 stays **Partial** until the code,
-docs, review/re-review cycle, local gates, and required PR CI checks pass.
+Iterations 4–5 were implemented and locally verified on 2026-07-16; iterations
+1–3 landed in `8dd5392`. Shell and Watch now enforce the required-recovery
+runtime gate and the public/config contract matches ADR-016. Standards/Spec
+review findings were confirmed, fixed through TDD, and closed in the second
+skeptic round. H9 stays **Partial** until all required PR CI checks pass.
 
 M1 optional Sandbox degradation and M8 general Snapshot/Rollback wording remain
 separate findings. H7b audit-artifact hardening is locally verified with PR CI

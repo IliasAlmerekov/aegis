@@ -23,6 +23,16 @@
 
 ## Last session (2026-07-16)
 
+- **H9 implemented and verified locally; required PR CI pending.** Protect/Strict
+  now preserve Required recovery for bounded Effect-opaque execution even when
+  no Snapshot plugin applies. Zero created Snapshots deny without a TTY or use a
+  visible, non-persistable one-time Recovery override; Shell and Watch share the
+  typed Recovery status and Audit records `no_snapshot_available` with the final
+  decision. Audit/`SnapshotPolicy::None` remain opt-outs and ordinary non-opaque
+  Danger Snapshots remain best-effort. Public/config/threat-model docs and the
+  generated schema match ADR-016. TDD, Standards/Spec review, two-round skeptic
+  confirmation, workspace tests, clippy, fmt, audit/deny, and diff-check passed
+  locally. H9 stays Partial/unchecked until all required PR CI contexts pass.
 - **Release publication migrated to Node.js 24-native actions; PR CI pending.**
   `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2
   are pinned by immutable commit SHA, and the release-workflow contract rejects
@@ -40,15 +50,6 @@
   tests (22), Landing production build, npm dry-run package, 1445 workspace
   tests, fmt, clippy, audit/deny, and diff-check passed. The tag remains pending
   until the release-preparation commit is pushed and required branch CI is green.
-- **H9 remaining design locked; implementation not started.** In Protect/Strict,
-  bounded Effect-opaque execution now has a planned Required recovery contract
-  independent of Snapshot-plugin availability: zero created Snapshots denies
-  without a TTY or requires a non-persistable one-time Recovery override with
-  truthful audit facts. Audit/`SnapshotPolicy::None` remain intentional opt-outs;
-  ordinary non-opaque Danger Snapshots remain best-effort. Shell and Watch will
-  share one typed Recovery status. The ADR, glossary, and implementation plan
-  are synchronized; H9 stays Partial and implementation must preserve H7b's
-  current shared-doc baseline.
 - **H7b implemented and verified locally; PR CI pending.** Unix Audit
   directories/artifacts now use `0700`/`0600`; active, lock, query, integrity,
   tail-hash, and rotation opens share descriptor-bound no-follow plus

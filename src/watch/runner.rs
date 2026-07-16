@@ -15,10 +15,11 @@ use crate::planning::{
     CwdState, ExecutionDisposition, InterceptionPlan, PlanningOutcome, PreparedPlanner,
     SetupFailureKind, SetupFailurePlan, prepare_and_plan_async,
 };
-use crate::runtime::{RuntimeContext, WatchAuditContext};
+use crate::runtime::{RecoveryStatus, RuntimeContext, WatchAuditContext, recovery_status};
 use crate::ui::confirm::{
-    PromptDecision, show_block_via_tty, show_confirmation_via_tty_with_decision,
-    show_policy_block_via_tty,
+    PromptDecision, RecoveryPromptDecision, show_block_via_tty,
+    show_confirmation_via_tty_with_decision, show_policy_block_via_tty,
+    show_recovery_override_via_tty,
 };
 
 use super::protocol::{
@@ -257,6 +258,21 @@ async fn run_watch_plan(
     plan: InterceptionPlan,
     ci_detected: bool,
 ) {
+    run_watch_plan_with_recovery_prompt(frame, prepared, plan, ci_detected, || {
+        tokio::task::block_in_place(show_recovery_override_via_tty)
+    })
+    .await;
+}
+
+async fn run_watch_plan_with_recovery_prompt<F>(
+    frame: InputFrame,
+    prepared: &PreparedPlanner,
+    plan: InterceptionPlan,
+    ci_detected: bool,
+    recovery_prompt: F,
+) where
+    F: FnOnce() -> RecoveryPromptDecision,
+{
     let id = frame.id.clone();
     let context = runtime_context(prepared);
     let cwd = watch_execution_cwd(plan.decision_context().cwd_state());
@@ -355,6 +371,58 @@ async fn run_watch_plan(
     match runtime_decision {
         Decision::Approved | Decision::AutoApproved => {
             let snapshots = create_watch_snapshots(context, &plan, cwd.as_path()).await;
+            if let Some(RecoveryStatus::Degraded(degradation)) = recovery_status(
+                plan.assessment().effect_opaque,
+                plan.policy_decision().snapshots_required,
+                &snapshots,
+            ) {
+                let recovery_decision = recovery_prompt();
+                let final_decision = match recovery_decision {
+                    RecoveryPromptDecision::RunOnceWithoutRecovery => Decision::Approved,
+                    RecoveryPromptDecision::Deny => Decision::Denied,
+                };
+                if let Err(err) = context.append_watch_audit_entry_with_recovery_degradation(
+                    plan.assessment(),
+                    final_decision,
+                    &snapshots,
+                    plan.explanation(),
+                    WatchAuditContext {
+                        allowlist_match: plan.decision_context().allowlist_match(),
+                        allowlist_effective: plan.policy_decision().allowlist_effective,
+                        ci_detected,
+                        source: frame.source.clone(),
+                        cwd: frame.cwd.clone(),
+                        id: id.clone(),
+                    },
+                    degradation,
+                ) {
+                    if emit_frame(&OutputFrame::Error {
+                        id: id.clone(),
+                        exit_code: 4,
+                        message: format!("audit log write failed: {err}"),
+                    })
+                    .is_err()
+                    {
+                        std::process::exit(4);
+                    }
+                    return;
+                }
+                if final_decision == Decision::Denied {
+                    if emit_frame(&OutputFrame::Result {
+                        id,
+                        decision: OutputDecision::Denied,
+                        exit_code: 2,
+                    })
+                    .is_err()
+                    {
+                        std::process::exit(4);
+                    }
+                    return;
+                }
+                execute_and_emit(&frame.cmd, &cwd, id).await;
+                return;
+            }
+
             if let Err(err) = context.append_watch_audit_entry(
                 plan.assessment(),
                 runtime_decision,
@@ -698,24 +766,4 @@ async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) 
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::watch_execution_cwd;
-    use crate::planning::CwdState;
-
-    #[test]
-    fn watch_execution_cwd_returns_resolved_path() {
-        let path = PathBuf::from("/srv/project");
-        let cwd_state = CwdState::Resolved(path.clone());
-
-        assert_eq!(watch_execution_cwd(&cwd_state), path);
-    }
-
-    #[test]
-    fn watch_execution_cwd_returns_dot_when_unavailable() {
-        let cwd_state = CwdState::Unavailable;
-
-        assert_eq!(watch_execution_cwd(&cwd_state), PathBuf::from("."));
-    }
-}
+mod tests;
