@@ -2,8 +2,10 @@
 
 # Aegis
 
-**Shell safety for AI agents.**  
-Safe commands run instantly. Dangerous ones wait for you.
+**Make AI agents ask first. Undo them when they don't.**  
+Your AI agent is one `rm -rf` away from ruining your week. Aegis proxies its shell:
+safe commands run instantly, destructive ones need your approval — with a Snapshot
+taken first, so even a "yes" is recoverable.
 
 [![version](https://img.shields.io/badge/version-0.6.1-60A5FA?style=flat-square)](CHANGELOG.md)
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL2-22C55E?style=flat-square)](#how-to-install)
@@ -18,7 +20,9 @@ Safe commands run instantly. Dangerous ones wait for you.
 
 ## What is Aegis?
 
-Aegis is a Rust CLI that sits between an AI agent and your real shell. It checks every command before it runs:
+Aegis is a Rust CLI that sits between an AI agent and your real shell. Claude Code,
+Codex, Cursor — any agent that runs shell commands goes through it. Every command
+is risk-scored before it executes:
 
 | Level | What happens |
 |-------|-------------|
@@ -30,6 +34,13 @@ Aegis is a Rust CLI that sits between an AI agent and your real shell. It checks
 > [!NOTE]
 > Aegis is a heuristic guardrail, not a sandbox or privilege boundary.
 > See [`docs/threat-model.md`](docs/threat-model.md) for the full security model.
+
+The optional **Sandbox** is a best-effort write/network guardrail add-on and
+not a confidentiality boundary: it does not promise to hide readable files
+or secrets.
+If optional confinement is unavailable, Aegis records
+`sandbox_status = "unavailable"` and warns on the active Shell or Watch channel
+before running unconfined. Set `sandbox.required = true` to block instead.
 
 Bounded **Effect-opaque execution** such as `sh ./cleanup.sh` stays on its normal
 `RiskLevel`, but Protect/Strict requires at least one configured Snapshot before
@@ -85,14 +96,20 @@ Pattern  FS-001 — rm with -rf flag
 
 ## Why Aegis?
 
-AI agents can move fast and run destructive commands by mistake:
+AI agents move fast — and sometimes fast in the wrong direction:
 
 - delete files and directories
 - reset or rewrite git history
 - drop databases
 - publish or push something unintended
 
-Aegis adds a human checkpoint before damage happens. It also keeps an append-only audit log, can take best-effort Snapshots for dangerous commands, and requires recovery for bounded effect-opaque execution unless the trusted recovery policy opts out.
+Blocking alone isn't enough: block too much and the agent is useless, block too
+little and you're restoring from backups. Aegis takes a different deal — **you stay
+in the loop, and mistakes become rollbacks, not incidents**:
+
+- **Ask first.** Destructive commands pause for your decision in a TUI — approve, deny, or inspect.
+- **Snapshot before damage.** Dangerous commands trigger best-effort Snapshots (git, Docker) before they run, and opaque scripts *require* recovery unless the trusted recovery policy opts out.
+- **Remember everything.** An append-only audit log records every command and every decision.
 
 ---
 
@@ -104,7 +121,7 @@ Aegis adds a human checkpoint before damage happens. It also keeps an append-onl
 ### Quick install (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis-shellguard/main/scripts/install.sh | sh
 ```
 
 Installs the binary, writes a managed block to `~/.zshrc` or `~/.bashrc`, and hooks into Claude Code / Codex when those config directories already exist. Reload your shell afterwards.
@@ -131,7 +148,7 @@ Homebrew installs the binary only — like npm and Cargo, it does not run the gl
 ### Developer source install
 
 ```bash
-cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.6.1 aegis
+cargo install --git https://github.com/IliasAlmerekov/aegis-shellguard --tag v0.6.1 aegis
 ```
 
 ---
@@ -216,7 +233,7 @@ override, or deny.
 ## Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh
+curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis-shellguard/main/scripts/uninstall.sh | sh
 ```
 
 ---

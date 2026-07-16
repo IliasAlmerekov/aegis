@@ -3,13 +3,13 @@
   "version": "0.6.1",
   "description": "Terminal proxy that intercepts AI agent shell commands and requires human confirmation before destructive operations",
   "license": "MIT",
-  "homepage": "https://github.com/IliasAlmerekov/aegis",
+  "homepage": "https://github.com/IliasAlmerekov/aegis-shellguard",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/IliasAlmerekov/aegis.git"
+    "url": "git+https://github.com/IliasAlmerekov/aegis-shellguard.git"
   },
   "bugs": {
-    "url": "https://github.com/IliasAlmerekov/aegis/issues"
+    "url": "https://github.com/IliasAlmerekov/aegis-shellguard/issues"
   },
   "bin": {
     "aegis": "bin/aegis.js"

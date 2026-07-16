@@ -17,6 +17,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Changed
 
+- Renamed the repository to `IliasAlmerekov/aegis-shellguard`: all repository URLs in the README, installer scripts, packaging metadata, tests, and docs now point at the new address (GitHub redirects the old ones). The product name **Aegis**, the `aegis` binary, crate names, npm package `@iliasalmerekov/aegis`, Homebrew tap `IliasAlmerekov/aegis`, config files, and `~/.aegis/` paths are unchanged.
 - Release publication now pins the Node.js 24-native `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2 by immutable SHA, removing the Node.js 20 deprecation annotation from future tag workflows.
 
 ## [0.6.1] — 2026-07-15

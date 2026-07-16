@@ -27,7 +27,7 @@ case "$tag" in
 esac
 
 version="${tag#v}"
-repo="${AEGIS_RELEASE_REPO:-IliasAlmerekov/aegis}"
+repo="${AEGIS_RELEASE_REPO:-IliasAlmerekov/aegis-shellguard}"
 base_url="https://github.com/${repo}/releases/download/${tag}"
 out="${AEGIS_HOMEBREW_FORMULA:-packaging/homebrew/Formula/aegis.rb}"
 tmp_dir="$(mktemp -d)"
@@ -62,7 +62,7 @@ mkdir -p "$(dirname "$out")"
 cat > "$out" <<EOF
 class Aegis < Formula
   desc "Heuristic shell guardrail for AI agent command execution"
-  homepage "https://github.com/IliasAlmerekov/aegis"
+  homepage "https://github.com/IliasAlmerekov/aegis-shellguard"
   version "${version}"
   license "MIT"
 

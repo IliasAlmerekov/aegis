@@ -84,7 +84,7 @@ export function AuditSection() {
             hash-chain integrity is enabled.
           </p>
           <a
-            href="https://github.com/IliasAlmerekov/aegis#audit-log"
+            href="https://github.com/IliasAlmerekov/aegis-shellguard#audit-log"
             target="_blank"
             rel="noopener noreferrer"
             className="link-arrow-group mt-6 inline-flex items-center gap-1.5 font-mono text-sm text-[#7fee64] hover:text-[#c8f9b6] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7fee64] rounded"

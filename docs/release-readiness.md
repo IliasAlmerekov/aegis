@@ -121,9 +121,9 @@ and users who opt into the advisory-tainted dependency chain do so explicitly.
       GitHub Release tag.
 - [ ] The published tap contains the same `Formula/aegis.rb`.
 - [ ] `brew audit --strict --online --formula aegis` passes in the tap.
-- [ ] `brew install IliasAlmerekov/aegis/aegis` succeeds on macOS.
-- [ ] `brew install IliasAlmerekov/aegis/aegis` succeeds on Linux.
-- [ ] `brew test IliasAlmerekov/aegis/aegis` passes on both platforms.
+- [ ] `brew install IliasAlmerekov/aegis-shellguard/aegis` succeeds on macOS.
+- [ ] `brew install IliasAlmerekov/aegis-shellguard/aegis` succeeds on Linux.
+- [ ] `brew test IliasAlmerekov/aegis-shellguard/aegis` passes on both platforms.
 
 Homebrew validation is currently a release-operator smoke test rather than a
 default CI job. The required commands are listed above; a gated live test
@@ -142,9 +142,9 @@ Live Linux x64 Homebrew evidence was collected on 2026-06-22 against the public
 tap after fixing the tap repository's line-ending policy
 (`c209468 fix: force LF line endings for formulae`). A clean retap produced
 `Formula/aegis.rb: Ruby script, ASCII text`; `brew audit --strict --online
---formula IliasAlmerekov/aegis/aegis` exited 0; `brew install
-IliasAlmerekov/aegis/aegis` installed v0.5.6; `brew test
-IliasAlmerekov/aegis/aegis` passed; and
+--formula IliasAlmerekov/aegis-shellguard/aegis` exited 0; `brew install
+IliasAlmerekov/aegis-shellguard/aegis` installed v0.5.6; `brew test
+IliasAlmerekov/aegis-shellguard/aegis` passed; and
 `/home/linuxbrew/.linuxbrew/opt/aegis/bin/aegis --version` printed
 `aegis 0.5.6`.
 
@@ -260,7 +260,7 @@ tarball; `tests/npm_package.rs` was updated to assert the same form.
 
 ## Cargo install validation
 
-- [ ] `cargo install --git https://github.com/IliasAlmerekov/aegis --tag vX.Y.Z aegis`
+- [ ] `cargo install --git https://github.com/IliasAlmerekov/aegis-shellguard --tag vX.Y.Z aegis`
       succeeds on a clean machine with a current stable Rust toolchain.
 - [ ] `aegis --version` prints the selected release version after Cargo install.
 - [ ] crates.io publication, if enabled, is handled as a separate release

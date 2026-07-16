@@ -240,7 +240,7 @@ or the log files were altered.
 
 If wrapper state becomes inconsistent:
 
-- `curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis/main/scripts/uninstall.sh | sh`
+- `curl -fsSL https://raw.githubusercontent.com/IliasAlmerekov/aegis-shellguard/main/scripts/uninstall.sh | sh`
 - Check `~/.bashrc` / `~/.zshrc` cleanup: only Aegis-managed block should be removed.
 - Confirm binary removal: `command -v aegis` no longer points to managed path.
 

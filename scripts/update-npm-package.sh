@@ -20,7 +20,7 @@ case "$tag" in
 esac
 
 version="${tag#v}"
-repo="${AEGIS_RELEASE_REPO:-IliasAlmerekov/aegis}"
+repo="${AEGIS_RELEASE_REPO:-IliasAlmerekov/aegis-shellguard}"
 base_url="https://github.com/${repo}/releases/download/${tag}"
 out="${AEGIS_NPM_CHECKSUMS:-packaging/npm/checksums.json}"
 package_json="${AEGIS_NPM_PACKAGE_JSON:-packaging/npm/package.json}"
