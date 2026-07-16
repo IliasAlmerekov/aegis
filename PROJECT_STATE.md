@@ -9,11 +9,11 @@
 
 ## Current version
 
-`0.6.0` — pre-1.0, targeting `1.0.0` (released from `feat/shell-security`)
+`0.6.1` — pre-1.0, targeting `1.0.0`
 
 ## Active branch
 
-`feat/shell-security` (branched from `main`)
+`feat/landingpage` (release preparation staged on `release/v0.6.1-prep`)
 
 ## Last updated
 
@@ -23,6 +23,13 @@
 
 ## Last session (2026-07-15)
 
+- **v0.6.1 release candidate prepared locally.** Workspace crate and internal
+  dependency versions, `Cargo.lock`, npm metadata, release docs, README install
+  instructions, and Landing version copy now agree on `0.6.1`; the changelog
+  cuts the accumulated Unreleased entries as `2026-07-15`. The release-contract
+  tests (22), Landing production build, npm dry-run package, 1445 workspace
+  tests, fmt, clippy, audit/deny, and diff-check passed. The tag remains pending
+  until the release-preparation commit is pushed and required branch CI is green.
 - **H7b implemented and verified locally; PR CI pending.** Unix Audit
   directories/artifacts now use `0700`/`0600`; active, lock, query, integrity,
   tail-hash, and rotation opens share descriptor-bound no-follow plus

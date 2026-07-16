@@ -5,7 +5,7 @@
 **Shell safety for AI agents.**  
 Safe commands run instantly. Dangerous ones wait for you.
 
-[![version](https://img.shields.io/badge/version-0.6.0-60A5FA?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.6.1-60A5FA?style=flat-square)](CHANGELOG.md)
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL2-22C55E?style=flat-square)](#how-to-install)
 [![license](https://img.shields.io/badge/license-MIT-A855F7?style=flat-square)](LICENSE)
 [![built with](https://img.shields.io/badge/built%20with-Rust-F59E0B?style=flat-square)](Cargo.toml)
@@ -125,7 +125,7 @@ Homebrew installs the binary only — like npm and Cargo, it does not run the gl
 ### Developer source install
 
 ```bash
-cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.6.0 aegis
+cargo install --git https://github.com/IliasAlmerekov/aegis --tag v0.6.1 aegis
 ```
 
 ---

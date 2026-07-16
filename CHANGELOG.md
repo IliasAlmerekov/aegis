@@ -11,6 +11,8 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-15
+
 ### Security
 
 - H7b audit hardening now creates Unix Audit directories/artifacts with owner-only modes, rejects unsafe final-component targets through descriptor-bound no-follow opens, preflights every managed rotation slot, and stages gzip archives before commit; non-Unix and parent-entry/durability limits remain explicit (ADR-020, H7b).

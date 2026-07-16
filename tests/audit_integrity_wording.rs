@@ -109,7 +109,8 @@ fn tracked_files() -> Vec<String> {
     output
         .stdout
         .split(|byte| *byte == b'\0')
-        .filter_map(|path| (!path.is_empty()).then(|| String::from_utf8_lossy(path).into_owned()))
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
         .collect()
 }
 
