@@ -24,15 +24,29 @@ breaks normal work.
 Keep `RiskLevel` and backstop requirements as orthogonal axes. `Effect-opaque execution`
 does not raise `RiskLevel` by itself. Instead, it records an `effect_opaque` marker and
 requires a recovery backstop by setting `snapshots_required` under the default
-`SnapshotPolicy::Selective` / `Full` path. A successful snapshot preserves the happy path:
-the command can run without an extra prompt when policy would otherwise allow it.
+`SnapshotPolicy::Selective` / `Full` path. That requirement exists independently of
+whether planning finds an applicable Snapshot plugin: absence of a plugin is evidence that
+required recovery is unavailable, not evidence that recovery was never required. A
+successful Snapshot preserves the happy path: the command can run without an extra prompt
+when policy would otherwise allow it.
 
 If a required snapshot cannot be created, Aegis must degrade loudly: non-interactive
 execution fails closed, and interactive execution must present the missing-recovery
-reason instead of silently running unprotected. `SnapshotPolicy::None` is a trusted
-global opt-out only; project config cannot weaken recovery because the project security
-ratchet applies. Runtime confinement remains an optional stricter tier represented by a
-separate `confinement_required` axis, not the default mitigation for effect opacity.
+reason instead of silently running unprotected. Interactive execution may proceed only
+through an explicit one-time Recovery override; that override is not an allowlist rule and
+cannot be persisted. Audit records `NoSnapshotAvailable` alongside the final decision: a
+rejected degradation is `Denied`, while a human override that executes is `Approved`, not
+`AutoApproved`. `SnapshotPolicy::None` is a trusted global opt-out only; project config
+cannot weaken recovery because the project security ratchet applies. `Mode::Audit` remains
+the existing observe-only opt-out from enforcement. Runtime confinement remains an
+optional stricter tier represented by a separate `confinement_required` axis, not the
+default mitigation for effect opacity.
+
+This fail-closed rule is scoped to bounded effect-opaque execution. Ordinary
+non-effect-opaque `Danger` Snapshot failures retain the best-effort contract from ADR-004;
+ADR-016 does not turn every missing Danger Snapshot into a new execution denial. An
+effect-opaque command that is also `Danger` still uses the ADR-016 required-recovery rule.
+Allowlist and policy-rule approval do not waive that rule.
 
 For v1 detection, only bounded script/interpreter shapes are in scope: shell and common
 language interpreters invoked with a script-file-looking argv token, plus interpreter
@@ -46,8 +60,11 @@ default.
 - A command can remain `Safe` for prompt UX while still requiring snapshot recovery.
 - Audit entries need to explain both why a command was effect-opaque and which backstops
   were required or degraded.
-- Snapshot-before-Danger becomes snapshot-before-Danger-or-opaque; the snapshot contract
-  remains best-effort unless a required snapshot fails closed.
+- Shell and Watch must derive post-attempt Recovery status from one shared fact and apply
+  their existing terminal adapters without duplicating the requirement predicate.
+- Snapshot-before-Danger becomes snapshot-before-Danger-or-opaque; ordinary Danger
+  snapshots remain best-effort, while bounded effect-opaque recovery must either create at
+  least one Snapshot, receive a one-time human override, or deny.
 - Sandbox availability on non-Linux platforms does not block this decision because the
   primary v1 backstop is recovery, not confinement.
 - Package/script runners remain an explicit follow-up decision rather than a noisy v1

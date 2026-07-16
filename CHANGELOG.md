@@ -42,6 +42,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Changed
 
+- Locked the remaining H9 ADR-016 design: bounded Effect-opaque execution requires at least one Snapshot independently of plugin availability, non-interactive degradation denies, and interactive execution needs a non-persistable one-time Recovery override; ordinary non-opaque Danger snapshots remain best-effort (ADR-016, H9).
 - Locked the H7b audit-artifact hardening design: Unix owner-only artifacts,
   target-level no-follow, tighten-if-owned migration, whole-rotation preflight,
   staged gzip commit, and explicit parent/non-Unix/durability limits; the

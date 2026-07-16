@@ -40,6 +40,15 @@
   tests (22), Landing production build, npm dry-run package, 1445 workspace
   tests, fmt, clippy, audit/deny, and diff-check passed. The tag remains pending
   until the release-preparation commit is pushed and required branch CI is green.
+- **H9 remaining design locked; implementation not started.** In Protect/Strict,
+  bounded Effect-opaque execution now has a planned Required recovery contract
+  independent of Snapshot-plugin availability: zero created Snapshots denies
+  without a TTY or requires a non-persistable one-time Recovery override with
+  truthful audit facts. Audit/`SnapshotPolicy::None` remain intentional opt-outs;
+  ordinary non-opaque Danger Snapshots remain best-effort. Shell and Watch will
+  share one typed Recovery status. The ADR, glossary, and implementation plan
+  are synchronized; H9 stays Partial and implementation must preserve H7b's
+  current shared-doc baseline.
 - **H7b implemented and verified locally; PR CI pending.** Unix Audit
   directories/artifacts now use `0700`/`0600`; active, lock, query, integrity,
   tail-hash, and rotation opens share descriptor-bound no-follow plus
@@ -238,11 +247,11 @@ opt-in `starlark-policy` feature.
 
 ## Open decisions / blockers
 
-- **H7b closure blocker:** implementation and local gates are clean; required
-  PR CI must pass before the `TASKS.md` checkbox is closed.
 - **Current security order** (`TASKS.md`): H6 → H7a → H7b; H9; M3a; M4 → M7;
   M9; M1; M2 → M5; H5 → M8; then P3. This is dependency/risk order, not a
   calendar sprint.
+- **H7b closure blocker:** implementation and local gates are clean; required
+  PR CI must pass before the `TASKS.md` checkbox is closed.
 - **P1 open contract:** H5 aligns public wording with an unkeyed local `Audit
   integrity chain`; H6 proves snapshot path containment; H7a protects snapshot
   artifact modes; H7b hardens audit modes and symlink opens; H9 finishes only

@@ -244,6 +244,31 @@ is tightened only when the current owner owns it, otherwise rejected before a
 sensitive write.
 _Avoid_: private snapshot, chmod security
 
+**Required recovery**:
+The obligation to create at least one `Snapshot` before executing a command.
+The obligation is independent of whether any `Snapshot plugin` is available or
+succeeds; an explicit trusted opt-out means recovery is not required rather than
+degraded.
+_Avoid_: mandatory backup, available snapshot
+
+**Recovery degradation**:
+The state where `Required recovery` applies but no `Snapshot` was created. It is
+distinct from an explicit trusted recovery opt-out and must never silently become
+permission to execute.
+_Avoid_: snapshot warning, best-effort failure
+
+**Recovery status**:
+The post-attempt state of `Required recovery`: `Ready` when at least one
+`Snapshot` was created, or `Degraded` when none was created. Execution surfaces
+derive their deny or `Recovery override` behavior from this shared fact.
+_Avoid_: snapshot result, recovery verdict
+
+**Recovery override**:
+A one-time human approval to execute despite a visible `Recovery degradation`.
+It cannot be persisted as an allowlist entry because it applies to the observed
+failure to create a `Snapshot`, not to the command prefix.
+_Avoid_: always allow, recovery bypass
+
 **Rollback**:
 Restoring the state captured by a previous `Snapshot`, addressed by its
 `snapshot_id`. It restores captured state; it is not a general undo of the

@@ -169,7 +169,7 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Traceability:** [plan](docs/plans/2026-07-14-h7a-snapshot-artifact-permissions.md);
   [ADR-019](docs/adr/adr-019-owner-only-snapshot-artifact-permissions.md).
 
-### [ ] H7b — Audit artifacts follow unsafe paths and inherit broad permissions
+### [x] H7b — Audit artifacts follow unsafe paths and inherit broad permissions
 
 - **Finding:** audit log, rotation, and lock-file creation rely on ordinary
   `OpenOptions`/`create_dir_all`, allowing broad modes and symlink-following on
