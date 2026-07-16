@@ -153,9 +153,9 @@ pub struct DecisionEntry {
     pub allowlist_pattern: Option<String>,
     /// Reason the allowlist matched.
     pub allowlist_reason: Option<String>,
-    /// Whether a sandbox profile was applied, bypassed, or not configured for
-    /// this execution. `SandboxStatus::Unavailable` records a sandbox bypass —
-    /// a configured sandbox that could not be applied (ROADMAP 6.4).
+    /// Factual confinement state for this command. `Unavailable` covers both
+    /// optional unconfined fallback and required fail-closed blocking;
+    /// `NotAttempted` records an enabled Sandbox stopped before preparation.
     pub sandbox_status: SandboxStatus,
     /// Whether the assessed command was `Effect-opaque execution` (ADR-016).
     /// `None` on pre-ADR-016 log lines; fresh entries record an explicit bool.

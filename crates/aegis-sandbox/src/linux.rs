@@ -2,8 +2,8 @@
 
 use std::ffi::{OsStr, OsString};
 
-use crate::support::{is_forced_sandbox_unavailable, run_unavailable_result, warn_sandbox_bypass};
-use crate::{SandboxConfig, SandboxError, SandboxResult};
+use crate::support::{is_forced_sandbox_unavailable, run_unavailable_result};
+use crate::{PreparedSandboxCommand, SandboxConfig, SandboxError, SandboxResult};
 
 // ── Public-to-crate entry points ──────────────────────────────────────────────
 
@@ -55,30 +55,41 @@ pub(crate) fn prepare_for_exec(
     config: &SandboxConfig,
     program: &OsStr,
     args: &[OsString],
-) -> Result<std::process::Command, SandboxError> {
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    prepare(config, program, args, true)
+}
+
+pub(crate) fn prepare_for_spawn(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    prepare(config, program, args, false)
+}
+
+fn prepare(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+    apply_exec_restrictions: bool,
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    let mut bwrap_args = build_bwrap_args(config)?;
     if is_forced_sandbox_unavailable() || !is_sandbox_available(config) {
         if config.required {
             return Err(SandboxError::Required);
         }
-        warn_sandbox_bypass();
         let mut cmd = std::process::Command::new(program);
         cmd.args(args);
-        return Ok(cmd);
+        return Ok(PreparedSandboxCommand::unavailable(cmd));
     }
 
-    // Apply Landlock restrictions to the current process BEFORE exec().
-    // These restrictions are inherited by the exec'd bwrap process and,
-    // transitively, by the user command. bwrap's namespace setup does not
-    // require writing to regular files, so the restrictions do not interfere.
-    apply_landlock_restrictions(config)?;
-
-    let mut bwrap_args = build_bwrap_args(config)?;
     bwrap_args.push(program.to_owned());
     bwrap_args.extend_from_slice(args);
 
     let mut cmd = std::process::Command::new("bwrap");
     cmd.args(&bwrap_args);
-    Ok(cmd)
+    let exec_config = apply_exec_restrictions.then(|| config.clone());
+    Ok(PreparedSandboxCommand::active(cmd, exec_config))
 }
 
 // ── Sandbox availability probe ────────────────────────────────────────────────
@@ -383,7 +394,7 @@ pub(crate) fn sysctl_userns_available() -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::support::test_helpers::{ForceUnavailableGuard, WarnCounter};
+    use crate::support::test_helpers::ForceUnavailableGuard;
     use crate::support::{is_forced_sandbox_unavailable, set_force_sandbox_unavailable};
     use crate::{
         SandboxConfig, SandboxError, SandboxExecutor, SandboxProfile, SandboxResult,
@@ -723,24 +734,55 @@ mod tests {
         }
     }
 
-    /// The audit status (`Unavailable`) is computed separately from the live
-    /// `WARN`, so this guards that the exec path actually emits the warning when
-    /// it bypasses — keeping the live signal consistent with the audit record.
     #[cfg(target_os = "linux")]
     #[test]
-    fn prepare_for_exec_warns_on_bypass_when_forced_unavailable() {
+    fn prepare_for_exec_reports_optional_unavailability_without_rendering() {
+        use aegis_types::SandboxStatus;
         use std::ffi::OsStr;
+
         set_force_sandbox_unavailable(true);
         let _guard = ForceUnavailableGuard;
         let cfg = SandboxConfig {
             required: false,
             ..Default::default()
         };
-        let counter = WarnCounter::default();
-        let count = counter.counter();
-        tracing::subscriber::with_default(counter, || {
-            let _ = prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[]);
-        });
-        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let prepared = prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[])
+            .expect("optional unavailability must prepare the direct command");
+
+        assert_eq!(prepared.status, SandboxStatus::Unavailable);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn prepare_for_spawn_reports_optional_unavailability() {
+        use aegis_types::SandboxStatus;
+        use std::ffi::OsStr;
+
+        set_force_sandbox_unavailable(true);
+        let _guard = ForceUnavailableGuard;
+        let cfg = SandboxConfig::default();
+
+        let prepared = super::prepare_for_spawn(&cfg, OsStr::new("/usr/bin/true"), &[])
+            .expect("optional unavailability must prepare the direct command");
+
+        assert_eq!(prepared.status, SandboxStatus::Unavailable);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn optional_unavailability_does_not_hide_invalid_profile() {
+        use std::ffi::OsStr;
+
+        set_force_sandbox_unavailable(true);
+        let _guard = ForceUnavailableGuard;
+        let cfg = SandboxConfig {
+            allow_write: vec![PathBuf::from("/nonexistent_aegis_test_path_xyz")],
+            required: false,
+            ..Default::default()
+        };
+
+        let result = prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[]);
+
+        assert!(matches!(result, Err(SandboxError::Execution(_))));
     }
 }

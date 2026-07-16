@@ -150,17 +150,22 @@ path, but team features are not shipped in 1.0.
 - **Windows:** not supported. On Windows, Aegis runs only inside WSL2, where it
   behaves as a Linux environment and uses the Linux sandbox.
 - `[sandbox]` config: `enabled`, `allow_write`, `allow_network`, `required`.
-- **Bypass is an audit event:** if the sandbox cannot be applied, the log records
-  `sandbox_status = "unavailable"` and a `WARN` is emitted on the
-  `aegis::sandbox` target. With `sandbox.required = true`, unavailability is a
-  hard block.
+- The optional Sandbox is a best-effort write/network guardrail add-on, not a
+  confidentiality boundary; current profiles do not promise to hide all
+  readable files or secrets.
+- **Bypass is an audit and active-channel event:** if infrastructure is
+  unavailable, the log records `sandbox_status = "unavailable"` and Shell stderr
+  or Watch NDJSON warns before an optional unconfined fallback. With
+  `sandbox.required = true`, unavailability is a hard block. Invalid profiles
+  and unexpected setup errors remain fail-closed.
 
 ### 5.6 Audit log
 
 - Append-only JSONL at `~/.aegis/audit.jsonl`; the file is only appended to.
 - Each entry is an `AuditEntry` (typed enum: `Decision` / `Watch`).
-- A `sandbox_status` field (`active` / `unavailable` / `not_configured`); the
-  legacy `sandbox_active` boolean is mirrored for backward compatibility.
+- A `sandbox_status` field (`active` / `unavailable` / `not_configured` /
+  `not_attempted`); the legacy `sandbox_active` boolean is mirrored where its
+  older tri-state can represent the status.
 - Audit integrity chain: SHA-256 hash chain, mode `ChainSha256` enabled **by default**
   (opt-out, not opt-in).
 - **Concurrent writes:** appends are serialized with an advisory file lock

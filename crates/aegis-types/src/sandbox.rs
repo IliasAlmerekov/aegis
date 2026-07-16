@@ -2,19 +2,21 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Whether an OS-level sandbox profile was applied to an executed command.
+/// Factual confinement state for an intercepted command's execution path.
 ///
-/// Recorded in every audit entry so that a *sandbox bypass* — a command that
-/// ran without confinement because the sandbox was configured but could not be
-/// applied — is a first-class, queryable audit event (ROADMAP 6.4).
+/// Recorded in every audit entry so optional unconfined fallback, required
+/// blocking, disabled configuration, and pre-preparation stops stay distinct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxStatus {
-    /// A sandbox profile was applied to the executed command.
+    /// A configured confined launch path was prepared.
     Active,
-    /// A sandbox was configured but could not be applied; the command ran
-    /// unconfined. This is the audited "sandbox bypass" event.
+    /// Sandbox infrastructure was unavailable. An optional command may use an
+    /// unconfined fallback; a required command is blocked.
     Unavailable,
+    /// A sandbox was configured, but no confined or fallback launch path was
+    /// prepared for this invocation.
+    NotAttempted,
     /// No sandbox was configured for this invocation.
     #[default]
     #[serde(alias = "NotConfigured")]
@@ -27,12 +29,13 @@ impl SandboxStatus {
     /// only understand the boolean keep working.
     ///
     /// `Active` → `Some(true)`, `Unavailable` → `Some(false)`,
-    /// `NotConfigured` → `None`.
+    /// `NotAttempted` / `NotConfigured` → `None` because the legacy field
+    /// cannot distinguish those states.
     pub fn as_legacy_active(self) -> Option<bool> {
         match self {
             SandboxStatus::Active => Some(true),
             SandboxStatus::Unavailable => Some(false),
-            SandboxStatus::NotConfigured => None,
+            SandboxStatus::NotAttempted | SandboxStatus::NotConfigured => None,
         }
     }
 }
@@ -68,7 +71,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_active_round_trips_through_from() {
+    fn legacy_active_round_trips_representable_statuses_through_from() {
         for status in [
             SandboxStatus::Active,
             SandboxStatus::Unavailable,
@@ -80,6 +83,10 @@ mod tests {
 
     #[test]
     fn serializes_to_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&SandboxStatus::NotAttempted).unwrap(),
+            "\"not_attempted\""
+        );
         assert_eq!(
             serde_json::to_string(&SandboxStatus::NotConfigured).unwrap(),
             "\"not_configured\""

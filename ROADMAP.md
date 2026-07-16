@@ -489,9 +489,9 @@ a human-readable error with line numbers; the hot path shows no regression on
 
 ## Phase 6 — Sandboxing Layer
 
-**Goal:** move Aegis from "block risky decisions" to "restrict capabilities at the
-OS level." An approved command runs, but within a sandbox that limits what it can
-actually do. This is the architecture used by codex for all tool executions.
+**Goal:** add an optional best-effort write/network guardrail around approved
+commands. This Sandbox is not a confidentiality boundary and does not replace
+Aegis' heuristic decision guardrail.
 
 ### 6.1 Linux — bubblewrap + Landlock
 
@@ -527,10 +527,12 @@ to a follow-up task.
 
 ### 6.4 Sandbox bypass is an audit event
 
-If the sandbox cannot be applied (kernel version too old, missing capabilities,
-unsupported platform), Aegis logs a `SandboxUnavailable` audit entry and proceeds
-without sandboxing. The user can configure `sandbox.required = true` to turn
-unavailability into a hard block.
+If Sandbox infrastructure cannot be applied (kernel version too old, missing
+capabilities, unsupported platform), Aegis records
+`sandbox_status = "unavailable"`, warns on the active Shell stderr or Watch NDJSON
+channel, and proceeds unconfined only when optional. The user can configure
+`sandbox.required = true` to turn unavailability into a hard block. Invalid
+profiles and unexpected setup errors fail closed rather than degrading.
 
 **Done when:** `cargo test --workspace` passes with sandbox enabled on
 `ubuntu-latest` and `macos-latest`; a command that attempts to write outside the

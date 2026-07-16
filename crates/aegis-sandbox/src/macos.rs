@@ -2,8 +2,8 @@
 
 use std::ffi::{OsStr, OsString};
 
-use crate::support::{is_forced_sandbox_unavailable, run_unavailable_result, warn_sandbox_bypass};
-use crate::{SandboxConfig, SandboxError, SandboxResult};
+use crate::support::{is_forced_sandbox_unavailable, run_unavailable_result};
+use crate::{PreparedSandboxCommand, SandboxConfig, SandboxError, SandboxResult};
 
 // ── Public-to-crate entry points ──────────────────────────────────────────────
 
@@ -27,14 +27,7 @@ pub(crate) fn run(config: &SandboxConfig, cmd: &str) -> Result<SandboxResult, Sa
     if is_forced_sandbox_unavailable() || !is_sandbox_exec_available() {
         return run_unavailable_result(config.required);
     }
-    let profile = match build_seatbelt_profile(config) {
-        Ok(p) => p,
-        Err(_) if !config.required => {
-            warn_sandbox_bypass();
-            return Ok(SandboxResult::Unavailable);
-        }
-        Err(e) => return Err(e),
-    };
+    let profile = build_seatbelt_profile(config)?;
     // The profile was already validated by sandbox_available_for() and by
     // exec_true_in_profile() in the caller path. Stderr is inherited so the
     // user sees any sandbox-exec diagnostics directly. We do not re-inspect
@@ -52,34 +45,40 @@ pub(crate) fn prepare_for_exec(
     config: &SandboxConfig,
     program: &OsStr,
     args: &[OsString],
-) -> Result<std::process::Command, SandboxError> {
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    prepare(config, program, args)
+}
+
+pub(crate) fn prepare_for_spawn(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    prepare(config, program, args)
+}
+
+fn prepare(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    let profile = build_seatbelt_profile(config)?;
     if is_forced_sandbox_unavailable() || !is_sandbox_exec_available() {
         if config.required {
             return Err(SandboxError::Required);
         }
-        warn_sandbox_bypass();
         let mut cmd = std::process::Command::new(program);
         cmd.args(args);
-        return Ok(cmd);
+        return Ok(PreparedSandboxCommand::unavailable(cmd));
     }
-    // sandbox_available_for() already validated: binary present, profile builds
-    // cleanly, and exec_true_in_profile() passed. Callers in shell_flow.rs gate
-    // prepare_for_exec() on that result, so no re-probing is needed here.
-    // The only remaining error path is TOCTOU (sandbox disappears between the
-    // availability check and this call), which is unavoidable in exec-based design.
-    let profile = match build_seatbelt_profile(config) {
-        Ok(p) => p,
-        Err(_) if !config.required => {
-            warn_sandbox_bypass();
-            let mut cmd = std::process::Command::new(program);
-            cmd.args(args);
-            return Ok(cmd);
-        }
-        Err(e) => return Err(e),
-    };
+    if !exec_true_in_profile(&profile) {
+        return Err(SandboxError::SetupFailed(
+            "sandbox-exec rejected the configured profile".to_string(),
+        ));
+    }
     let mut cmd = std::process::Command::new("/usr/bin/sandbox-exec");
     cmd.arg("-p").arg(&profile).arg(program).args(args);
-    Ok(cmd)
+    Ok(PreparedSandboxCommand::active(cmd))
 }
 
 // ── macOS Seatbelt profile builder ───────────────────────────────────────────
@@ -175,7 +174,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::support::set_force_sandbox_unavailable;
-    use crate::support::test_helpers::{ForceUnavailableGuard, WarnCounter};
+    use crate::support::test_helpers::ForceUnavailableGuard;
     use crate::{
         SandboxConfig, SandboxError, SandboxExecutor, SandboxProfile, SandboxResult,
         sandbox_available_for,
@@ -368,7 +367,7 @@ mod tests {
         let cmd = result.expect("checked above");
         // The program must NOT be sandbox-exec — it should be a direct command.
         assert_ne!(
-            cmd.get_program(),
+            cmd.command.get_program(),
             OsStr::new("sandbox-exec"),
             "prepare_for_exec must return a direct (non-sandbox-exec) command when sandbox is unavailable"
         );
@@ -555,7 +554,7 @@ mod tests {
             super::prepare_for_exec(&SandboxConfig::default(), OsStr::new("/usr/bin/true"), &[])
                 .expect("prepare_for_exec must succeed when sandbox_available_for returned true");
         assert_eq!(
-            cmd.get_program(),
+            cmd.command.get_program(),
             "/usr/bin/sandbox-exec",
             "returned command must be sandbox-exec when sandbox is available"
         );
@@ -572,7 +571,7 @@ mod tests {
             super::prepare_for_exec(&SandboxConfig::default(), OsStr::new("/usr/bin/true"), &[])
                 .expect("prepare_for_exec must succeed");
         // Use spawn+wait instead of exec() so the test process is not replaced.
-        let status = cmd.status().expect("spawned command must run");
+        let status = cmd.command.status().expect("spawned command must run");
         assert!(status.success(), "sandboxed /usr/bin/true must exit 0");
     }
 
@@ -591,7 +590,7 @@ mod tests {
         let mut cmd =
             super::prepare_for_exec(&SandboxConfig::default(), OsStr::new("/bin/sh"), &args)
                 .expect("prepare_for_exec must succeed");
-        let status = cmd.status().expect("spawned command must run");
+        let status = cmd.command.status().expect("spawned command must run");
         assert!(
             !status.success(),
             "write to /tmp must be blocked when allow_write is empty"
@@ -611,30 +610,9 @@ mod tests {
         let cmd = super::prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[])
             .expect("must return Ok when required=false and sandbox unavailable");
         assert_ne!(
-            cmd.get_program(),
+            cmd.command.get_program(),
             OsStr::new("/usr/bin/sandbox-exec"),
             "must return direct command (not sandbox-exec) when forced unavailable"
         );
-    }
-
-    /// The audit status (`Unavailable`) is computed separately from the live
-    /// `WARN`, so this guards that the exec path actually emits the warning when
-    /// it bypasses — keeping the live signal consistent with the audit record.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn prepare_for_exec_warns_on_bypass_when_forced_unavailable() {
-        use std::ffi::OsStr;
-        set_force_sandbox_unavailable(true);
-        let _guard = ForceUnavailableGuard;
-        let cfg = SandboxConfig {
-            required: false,
-            ..Default::default()
-        };
-        let counter = WarnCounter::default();
-        let count = counter.counter();
-        tracing::subscriber::with_default(counter, || {
-            let _ = super::prepare_for_exec(&cfg, OsStr::new("/usr/bin/true"), &[]);
-        });
-        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

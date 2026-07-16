@@ -338,6 +338,7 @@ fn transports_route_policy_through_planning_module() {
         "src/shell_flow.rs",
         "src/watch/mod.rs",
         "src/watch/runner.rs",
+        "src/watch/sandbox.rs",
         "src/watch/protocol.rs",
         "src/install/mod.rs",
         "src/install/hook.rs",
@@ -352,6 +353,22 @@ fn transports_route_policy_through_planning_module() {
             "I4: transports must not call evaluate_policy directly — route through planning::*",
         );
     }
+}
+
+/// Watch persists across commands, so synchronous platform preparation probes
+/// must run off the Tokio worker that owns the control loop.
+#[test]
+fn watch_sandbox_preparation_does_not_block_the_async_control_loop() {
+    let source = read_production("src/watch/sandbox.rs");
+
+    assert!(
+        source.contains("async fn prepare_watch_command"),
+        "Watch Sandbox preparation must expose an async boundary"
+    );
+    assert!(
+        source.contains("tokio::task::spawn_blocking"),
+        "Watch Sandbox preparation must move synchronous platform probes to the blocking pool"
+    );
 }
 
 // ── §7 File size budgets (simple hardcoded table) ─────────────────────────────

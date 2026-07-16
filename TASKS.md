@@ -229,9 +229,16 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   docs state that the optional `Sandbox` is a write/network guardrail add-on, not
   a confidentiality boundary. Making confinement mandatory or narrowing all read
   access is not required by the 1.0 product contract.
-- **Status:** **Open** — no longer coupled to H9 or ADR-016 recovery.
+- **Status:** **Partial** — implemented and locally verified; the checkbox
+  remains open until all required PR CI contexts pass.
 - **Traceability:** [plan](docs/plans/2026-07-14-m1-sandbox-degradation-contract.md);
-  [ADR-003](docs/adr/adr-003-aegis-is-a-heuristic-guardrail-not-a-sandbox.md).
+  [ADR-003](docs/adr/adr-003-aegis-is-a-heuristic-guardrail-not-a-sandbox.md);
+  [ADR-021](docs/adr/adr-021-sandbox-preparation-reports-the-actual-execution-path.md);
+  [Shell lifecycle tests](src/shell_flow/sandbox_lifecycle_tests.rs);
+  [Watch lifecycle tests](src/watch/sandbox.rs);
+  [async architecture contract](tests/architecture_boundaries.rs);
+  [package contract](tests/release_docs.rs);
+  [docs contract](tests/contracts_docs.rs).
 
 ### [ ] M2 — Untrusted custom regexes lack resource limits
 

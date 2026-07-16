@@ -6,7 +6,9 @@
 //! that is not Linux or macOS, the sandbox is always unavailable.
 
 use crate::support::run_unavailable_result;
-use crate::{SandboxConfig, SandboxError, SandboxResult};
+use std::ffi::{OsStr, OsString};
+
+use crate::{PreparedSandboxCommand, SandboxConfig, SandboxError, SandboxResult};
 
 pub(crate) fn sandbox_available_for(config: &SandboxConfig) -> bool {
     let _ = config;
@@ -15,4 +17,33 @@ pub(crate) fn sandbox_available_for(config: &SandboxConfig) -> bool {
 
 pub(crate) fn run(config: &SandboxConfig, _cmd: &str) -> Result<SandboxResult, SandboxError> {
     run_unavailable_result(config.required)
+}
+
+pub(crate) fn prepare_for_exec(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    prepare(config, program, args)
+}
+
+pub(crate) fn prepare_for_spawn(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    prepare(config, program, args)
+}
+
+fn prepare(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    if config.required {
+        return Err(SandboxError::Required);
+    }
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    Ok(PreparedSandboxCommand::unavailable(command))
 }

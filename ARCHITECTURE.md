@@ -8,8 +8,7 @@
 > map). §7's "Current breaches" table cites `src/snapshot/*.rs` files that were
 > moved into `crates/aegis-snapshot` and split. The per-file LoC budget quoted
 > here (1500/2000) is superseded by the **800**-line budget in `ROADMAP.md`
-> §3.1 / `CONVENTION.md`. The `aegis-sandbox` layer (bwrap + Landlock /
-> sandbox-exec) is not yet described below. Treat crate-level boundaries and
+> §3.1 / `CONVENTION.md`. Treat crate-level boundaries and
 > invariants as authoritative; treat `src/...` file paths as needing
 > verification against the tree until this document is revised.
 >
@@ -65,8 +64,9 @@ corruption and inconsistent edits.
 
 ### What Aegis is NOT
 
-- Not a sandbox. Approved commands run with the full privileges of the calling
-  process. Aegis prevents _decisions_, not _capabilities_.
+- The command guardrail is not a confidentiality boundary. An optional Sandbox
+  write/network guardrail can constrain approved commands, but does not promise
+  to hide readable files or secrets.
 - Not a network service or resident control plane. There is no server and no
   long-lived daemon; integrations are direct local CLI invocations plus
   stdin/stdout protocols.
@@ -245,14 +245,19 @@ Three transports share the `InterceptionPlan` shape but differ in how they
 collect input and emit output:
 
 - **`shell_flow::run_planned_shell_command`** — shell-wrapper execution path.
-  - `Execute` → snapshot → audit → `exec_command` (replaces process).
-  - `RequiresApproval` → snapshot → `ui::confirm::show_confirmation` → audit →
-    exec or `EXIT_DENIED`.
+  - `Execute` → snapshot → Sandbox `prepare_for_exec` → audit → optional warning
+    → process replacement.
+  - `RequiresApproval` → `ui::confirm::show_confirmation` → snapshot → any
+    Recovery override → Sandbox preparation → audit → optional warning → exec,
+    or `EXIT_DENIED`.
   - `Block` → `ui::confirm::show_policy_block` or `show_confirmation` depending
     on `BlockReason` → audit → `EXIT_BLOCKED`.
 - **`watch::run`** — `aegis watch` NDJSON loop.
   - Reads `InputFrame { cmd, cwd?, interactive?, source?, id? }` from stdin.
-  - Writes `OutputFrame ∈ {Stdout, Stderr, Result, Error}` to stdout.
+  - Writes `OutputFrame ∈ {Warning, Stdout, Stderr, Result, Error}` to stdout.
+  - Sandbox `prepare_for_spawn` never applies Landlock to the persistent Watch
+    parent. Optional unavailability emits `sandbox_status = "unavailable"`
+    before child output; `sandbox.required = true` produces a blocked result.
   - Prompts are drawn on **TTY directly** (not stdout — stdout is the frame
     channel) via `ui::confirm::show_*_via_tty`.
   - `MAX_FRAME_BYTES = 1 MiB`, `CHANNEL_CAPACITY = 64`.
@@ -456,8 +461,10 @@ main ─▶ shell_compat::parse_invocation_mode
                                              └─▶ shell_flow::run_planned_shell_command(plan)
                                                  ├─▶ snapshot (if SnapshotPlan::Required)
                                                  ├─▶ ui::confirm::show_confirmation (if RequiresApproval)
+                                                 ├─▶ Sandbox prepare_for_exec
                                                  ├─▶ audit append via RuntimeContext
-                                                 └─▶ shell_compat::exec_command  OR  exit 2/3/4
+                                                 ├─▶ optional active-channel warning
+                                                 └─▶ prepared exec  OR  exit 2/3/4
 ```
 
 ### 3.2 Watch mode — `aegis watch`
@@ -469,7 +476,9 @@ main ─▶ cli_dispatch::run_cli
          ├─▶ parse InputFrame (reject if > MAX_FRAME_BYTES)
          ├─▶ planning::prepare_and_plan (transport = Watch)
          ├─▶ prompt via ui::confirm::show_*_via_tty (TTY, not stdout)
-         ├─▶ snapshot + audit + spawn child
+         ├─▶ snapshot + Sandbox prepare_for_spawn + audit
+         ├─▶ optional OutputFrame::Warning
+         ├─▶ spawn prepared child
          ├─▶ pump child stdout/stderr as OutputFrame::{Stdout,Stderr}
          └─▶ emit OutputFrame::Result { decision, exit_code }
 ```

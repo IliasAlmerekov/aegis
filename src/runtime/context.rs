@@ -86,7 +86,7 @@ pub struct AuditWriteOptions<'a> {
     pub allowlist_effective: bool,
     /// Whether CI was detected for this invocation.
     pub ci_detected: bool,
-    /// Whether a sandbox profile was applied, bypassed, or not configured.
+    /// Factual confinement state for this command.
     pub sandbox_status: SandboxStatus,
 }
 
@@ -98,6 +98,8 @@ pub struct WatchAuditContext<'a> {
     pub allowlist_effective: bool,
     /// Whether CI was detected for this invocation.
     pub ci_detected: bool,
+    /// Factual Sandbox status for this Watch command.
+    pub sandbox_status: SandboxStatus,
     /// Origin label for the watch-mode source.
     pub source: Option<String>,
     /// Current working directory at the time of invocation.
@@ -327,7 +329,7 @@ impl RuntimeContext {
                     allowlist_match: watch.allowlist_match,
                     allowlist_effective: watch.allowlist_effective,
                     ci_detected: watch.ci_detected,
-                    sandbox_status: SandboxStatus::NotConfigured,
+                    sandbox_status: watch.sandbox_status,
                 },
                 None,
             )
@@ -356,7 +358,7 @@ impl RuntimeContext {
                     allowlist_match: watch.allowlist_match,
                     allowlist_effective: watch.allowlist_effective,
                     ci_detected: watch.ci_detected,
-                    sandbox_status: SandboxStatus::NotConfigured,
+                    sandbox_status: watch.sandbox_status,
                 },
                 Some(degradation),
             )

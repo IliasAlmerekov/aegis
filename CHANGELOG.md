@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Security
+
+- Optional Sandbox degradation is now visible and auditable on every execution surface: Shell warns on stderr, Watch emits protocol-safe warning or required-block diagnostics without blocking its Tokio worker, Audit records the prepared path including `NotAttempted`, `aegis-sandbox` remains locally packageable with its versioned foundation dependency, and `sandbox.required = true` remains fail closed; public docs define the write/network guardrail and preparation/exec error contracts without claiming confidentiality (ADR-021, M1).
+
 ### Fixed
 
 - Audit initialization now tolerates another same-user process winning creation of an owner-only Audit directory while still rejecting symlinks, non-directories, wrong owners, and non-`0700` modes; the cross-platform Recovery PTY integration waits for the visible prompt and keeps BSD `script` input open until the child exits, preventing VEOF from overtaking its queued one-time response on macOS (ADR-016, ADR-020, H9).

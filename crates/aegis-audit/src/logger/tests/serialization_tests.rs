@@ -203,6 +203,25 @@ fn not_configured_omits_legacy_boolean() {
 }
 
 #[test]
+fn not_attempted_serializes_without_legacy_boolean() {
+    let entry = AuditEntry::new(
+        "ls",
+        RiskLevel::Safe,
+        vec![],
+        Decision::Denied,
+        vec![],
+        None,
+        None,
+    )
+    .with_sandbox_status(SandboxStatus::NotAttempted);
+
+    let json = serde_json::to_value(&entry).unwrap();
+
+    assert_eq!(json["sandbox_status"], "not_attempted");
+    assert!(json.get("sandbox_active").is_none());
+}
+
+#[test]
 fn legacy_sandbox_active_false_deserializes_as_bypass() {
     let dir = TempDir::new().unwrap();
     let logger = AuditLogger::new(dir.path().join("audit.jsonl"));

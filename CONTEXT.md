@@ -193,17 +193,24 @@ _Avoid_: enable flag, kill switch
 
 **Sandbox**:
 An OS-level confinement profile optionally applied to an approved command before it
-executes. A best-effort guardrail add-on, not a security boundary.
+executes. A best-effort write/network guardrail add-on, not a security or
+confidentiality boundary; it does not promise that file reads or secrets are
+hidden from the command.
 _Avoid_: jail, container
 
 **Sandbox status**:
-Whether confinement was applied (`SandboxStatus`), recorded in every audit entry:
-`Active`, `Unavailable`, `NotConfigured`.
+The confinement path selected during command preparation (`SandboxStatus`),
+recorded in every audit entry: `Active`, `Unavailable`, `NotConfigured`, or
+`NotAttempted`. `Active` means the confined launch path was prepared, not that a
+later OS-level exec or spawn succeeded. `NotConfigured` means Sandbox was
+disabled; `NotAttempted` means it was enabled but neither a confined nor
+fallback launch path was used, including fail-closed preparation errors.
 _Avoid_: sandbox state
 
 **Sandbox bypass**:
-The audited event where a sandbox was configured but could not be applied, so the
-command ran unconfined (`SandboxStatus::Unavailable`).
+Optional execution through the prepared unconfined fallback after Sandbox
+infrastructure was unavailable (`SandboxStatus::Unavailable`). Required
+unavailability blocks instead and is not a Sandbox bypass.
 _Avoid_: sandbox failure, escape
 
 ## Snapshot & Audit

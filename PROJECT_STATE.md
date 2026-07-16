@@ -23,6 +23,15 @@
 
 ## Last session (2026-07-16)
 
+- **M1 implemented, skeptic-clean, and locally verified; required PR CI pending.**
+  Shell and Watch derive Audit status and active-channel diagnostics from typed
+  Sandbox preparation; Watch moves synchronous capability probes to Tokio's
+  blocking pool; optional unavailability warns before execution; required
+  unavailability blocks; and earlier/fail-closed stops record `NotAttempted`.
+  Public/config/threat/architecture docs define the write/network guardrail and
+  residual confidentiality risk. Exact package replay, workspace tests, clippy,
+  fmt, audit/deny, rustdoc, cross-target checks, and two-round review passed.
+  M1 stays Partial/unchecked until required PR CI passes (ADR-021).
 - **PR #129 CI follow-up verified locally; CI rerun pending.** Concurrent Audit
   initialization now accepts only a safe same-user `0700` directory when
   another process wins creation, and the Recovery PTY integration waits for the
@@ -256,6 +265,10 @@ opt-in `starlark-policy` feature.
 
 ## Open decisions / blockers
 
+- **M1 historical commit note:** merged commit `f726c08` mixed the initial
+  dependency fragment into a rename-only change without the required TASKS
+  reference. Current runtime/package corrections are clean; changing that
+  historical commit would require a separate explicitly approved rewrite.
 - **Current security order** (`TASKS.md`): H6 → H7a → H7b; H9; M3a; M4 → M7;
   M9; M1; M2 → M5; H5 → M8; then P3. This is dependency/risk order, not a
   calendar sprint.

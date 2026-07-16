@@ -26,6 +26,10 @@ use super::protocol::{
     InputFrame, MAX_FRAME_BYTES, OutputDecision, OutputFrame, ReadLineResult, emit_frame,
     read_bounded_line,
 };
+use super::sandbox::{
+    WatchExecution, append_watch_execution_audit, complete_watch_approved_execution,
+    emit_watch_audit_error, prepare_watch_command, sandbox_status_before_preparation,
+};
 
 /// mpsc channel capacity for the stdout/stderr pump tasks.
 const CHANNEL_CAPACITY: usize = 64;
@@ -377,78 +381,67 @@ async fn run_watch_plan_with_recovery_prompt<F>(
                 &snapshots,
             ) {
                 let recovery_decision = recovery_prompt();
-                let final_decision = match recovery_decision {
-                    RecoveryPromptDecision::RunOnceWithoutRecovery => Decision::Approved,
-                    RecoveryPromptDecision::Deny => Decision::Denied,
-                };
-                if let Err(err) = context.append_watch_audit_entry_with_recovery_degradation(
-                    plan.assessment(),
-                    final_decision,
-                    &snapshots,
-                    plan.explanation(),
-                    WatchAuditContext {
-                        allowlist_match: plan.decision_context().allowlist_match(),
-                        allowlist_effective: plan.policy_decision().allowlist_effective,
-                        ci_detected,
-                        source: frame.source.clone(),
-                        cwd: frame.cwd.clone(),
-                        id: id.clone(),
-                    },
-                    degradation,
-                ) {
-                    if emit_frame(&OutputFrame::Error {
-                        id: id.clone(),
-                        exit_code: 4,
-                        message: format!("audit log write failed: {err}"),
-                    })
-                    .is_err()
-                    {
-                        std::process::exit(4);
+                match recovery_decision {
+                    RecoveryPromptDecision::RunOnceWithoutRecovery => {
+                        complete_watch_approved_execution(
+                            WatchExecution {
+                                frame: &frame,
+                                context,
+                                plan: &plan,
+                                ci_detected,
+                                cwd: &cwd,
+                                snapshots: &snapshots,
+                                recovery_degradation: Some(degradation),
+                            },
+                            Decision::Approved,
+                        )
+                        .await;
+                        return;
                     }
-                    return;
-                }
-                if final_decision == Decision::Denied {
-                    if emit_frame(&OutputFrame::Result {
-                        id,
-                        decision: OutputDecision::Denied,
-                        exit_code: 2,
-                    })
-                    .is_err()
-                    {
-                        std::process::exit(4);
+                    RecoveryPromptDecision::Deny => {
+                        let execution = WatchExecution {
+                            frame: &frame,
+                            context,
+                            plan: &plan,
+                            ci_detected,
+                            cwd: &cwd,
+                            snapshots: &snapshots,
+                            recovery_degradation: Some(degradation),
+                        };
+                        if let Err(err) = append_watch_execution_audit(
+                            &execution,
+                            Decision::Denied,
+                            sandbox_status_before_preparation(context),
+                        ) {
+                            emit_watch_audit_error(&id, &err);
+                            return;
+                        }
+                        if emit_frame(&OutputFrame::Result {
+                            id,
+                            decision: OutputDecision::Denied,
+                            exit_code: 2,
+                        })
+                        .is_err()
+                        {
+                            std::process::exit(4);
+                        }
+                        return;
                     }
-                    return;
                 }
-                execute_and_emit(&frame.cmd, &cwd, id).await;
-                return;
             }
-
-            if let Err(err) = context.append_watch_audit_entry(
-                plan.assessment(),
-                runtime_decision,
-                &snapshots,
-                plan.explanation(),
-                WatchAuditContext {
-                    allowlist_match: plan.decision_context().allowlist_match(),
-                    allowlist_effective: plan.policy_decision().allowlist_effective,
+            complete_watch_approved_execution(
+                WatchExecution {
+                    frame: &frame,
+                    context,
+                    plan: &plan,
                     ci_detected,
-                    source: frame.source.clone(),
-                    cwd: frame.cwd.clone(),
-                    id: id.clone(),
+                    cwd: &cwd,
+                    snapshots: &snapshots,
+                    recovery_degradation: None,
                 },
-            ) {
-                if emit_frame(&OutputFrame::Error {
-                    id: id.clone(),
-                    exit_code: 4,
-                    message: format!("audit log write failed: {err}"),
-                })
-                .is_err()
-                {
-                    std::process::exit(4);
-                }
-                return;
-            }
-            execute_and_emit(&frame.cmd, &cwd, id).await;
+                runtime_decision,
+            )
+            .await;
         }
         Decision::Denied => {
             if !append_watch_audit_with_empty_snapshots(
@@ -557,6 +550,7 @@ fn append_watch_audit_with_empty_snapshots(
             allowlist_match: plan.decision_context().allowlist_match(),
             allowlist_effective: plan.policy_decision().allowlist_effective,
             ci_detected,
+            sandbox_status: sandbox_status_before_preparation(context),
             source: frame.source.clone(),
             cwd: frame.cwd.clone(),
             id: id.clone(),
@@ -641,23 +635,39 @@ fn report_watch_setup_failure(plan: &SetupFailurePlan) {
 /// Spawn the child command, stream its output as NDJSON frames, and emit
 /// a final result frame.
 async fn execute_and_emit(cmd: &str, cwd: &std::path::Path, id: Option<String>) {
+    let (command, _) = match prepare_watch_command(cmd, None).await {
+        Ok(prepared) => prepared,
+        Err(err) => {
+            if emit_frame(&OutputFrame::Error {
+                id,
+                exit_code: 4,
+                message: format!("failed to prepare child: {err}"),
+            })
+            .is_err()
+            {
+                std::process::exit(4);
+            }
+            return;
+        }
+    };
+    execute_prepared_and_emit(command, cwd, id).await;
+}
+
+pub(super) async fn execute_prepared_and_emit(
+    mut command: std::process::Command,
+    cwd: &std::path::Path,
+    id: Option<String>,
+) {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
     use tokio::process::Command;
 
-    let shell = std::env::var_os("AEGIS_REAL_SHELL")
-        .or_else(|| std::env::var_os("SHELL"))
-        .unwrap_or_else(|| "/bin/sh".into());
-
-    let mut child = match Command::new(&shell)
-        .arg("-c")
-        .arg(cmd)
+    command
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
+        .stderr(std::process::Stdio::piped());
+    let mut child = match Command::from(command).spawn() {
         Ok(c) => c,
         Err(e) => {
             if emit_frame(&OutputFrame::Error {

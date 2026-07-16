@@ -257,9 +257,10 @@ user = ""
 ## Sandbox
 
 Optional effect-level confinement applied before a command executes (bwrap +
-Landlock on Linux, `sandbox-exec` on macOS). Off by default; it complements the
-string classifier, which matches how a command is *spelled* rather than what it
-*does*.
+Landlock on Linux, `sandbox-exec` on macOS). It is a best-effort
+write/network guardrail add-on and not a confidentiality boundary. It complements the string
+classifier, which matches how a command is *spelled* rather than what it *does*,
+and is off by default.
 
 ```toml
 [sandbox]
@@ -272,7 +273,11 @@ allow_write = []
 - `sandbox.enabled` turns the sandbox layer on. Default `false`.
 - `sandbox.required` — when `true`, a command is blocked if the sandbox cannot be
   applied (missing `bwrap`, unsupported kernel, etc.) instead of degrading to an
-  unsandboxed run. Default `false` (degrade + audit as `SandboxUnavailable`).
+  unconfined run. Default `false`: infrastructure unavailability records
+  `sandbox_status = "unavailable"`, emits a warning on the active Shell stderr or
+  Watch NDJSON channel, and then preserves the approved decision. Invalid
+  profiles and unexpected setup errors remain fail-closed.
+  Set `sandbox.required = true` when unconfined fallback is unacceptable.
 - `sandbox.allow_write` lists paths the sandboxed process may write to. Default
   empty (no writes outside the sandbox's own scope).
 - `sandbox.allow_network` permits network access from the sandboxed process.
@@ -282,6 +287,14 @@ allow_write = []
   at the project layer, never on; and project `allow_write` is intersected with
   the base list — a project `.aegis.toml` can never widen the sandbox.
 - These fields also appear in `aegis-schema.json` under `SandboxSettings`.
+- macOS permits `file-read*` in the generated Seatbelt profile; it restricts
+  writes and network access but does not hide readable files or secrets. On
+  Linux, bwrap exposes read-only system mounts plus explicitly bound writable
+  paths. Narrowing all read access is outside the 1.0 product contract.
+- Audit distinguishes `active`, `unavailable`, `not_configured`, and
+  `not_attempted`. `not_configured` means Sandbox was disabled;
+  `not_attempted` means it was enabled but no confined or fallback command was
+  prepared because execution stopped earlier or setup failed closed.
 
 ## CI policy
 
