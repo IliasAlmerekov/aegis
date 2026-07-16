@@ -81,8 +81,15 @@ fn interactive_shell_output(home: &Path, cwd: &Path, response: &[u8]) -> Output 
         );
     }
 
-    child.stdin.as_mut().unwrap().write_all(response).unwrap();
-    drop(child.stdin.take());
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(response).unwrap();
+
+    // BSD `script` writes VEOF directly to the PTY when its stdin closes, while
+    // previously read input may still be queued. Keep the pipe open so VEOF
+    // cannot overtake the prompt response on macOS.
+    #[cfg(target_os = "linux")]
+    drop(stdin);
+
     let status = child.wait().unwrap();
     Output {
         status,

@@ -13,7 +13,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Fixed
 
-- Audit initialization now tolerates another same-user process winning creation of an owner-only Audit directory while still rejecting symlinks, non-directories, wrong owners, and non-`0700` modes; the cross-platform Recovery PTY integration waits for the visible prompt before sending its one-time response, removing the macOS BSD `script` input race (ADR-016, ADR-020, H9).
+- Audit initialization now tolerates another same-user process winning creation of an owner-only Audit directory while still rejecting symlinks, non-directories, wrong owners, and non-`0700` modes; the cross-platform Recovery PTY integration waits for the visible prompt and keeps BSD `script` input open until the child exits, preventing VEOF from overtaking its queued one-time response on macOS (ADR-016, ADR-020, H9).
 
 ### Changed
 

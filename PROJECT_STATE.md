@@ -26,9 +26,10 @@
 - **PR #129 CI follow-up verified locally; CI rerun pending.** Concurrent Audit
   initialization now accepts only a safe same-user `0700` directory when
   another process wins creation, and the Recovery PTY integration waits for the
-  visible prompt before sending input so BSD `script` cannot drop an early
-  one-time override. The original concurrency test passed 50/50 stress runs and
-  the Recovery Run-once test passed 20/20; 1475 workspace tests, clippy, fmt,
+  visible prompt and keeps BSD `script` input open until child exit so VEOF
+  cannot overtake the queued one-time override. The original concurrency test
+  passed 50/50 stress runs and the Recovery Run-once test passed 50/50; 1475
+  workspace tests, clippy, fmt,
   audit/deny, diff-check, and the Standards/Spec review passed.
 - **H9 implemented and verified locally; required PR CI pending.** Protect/Strict
   now preserve Required recovery for bounded Effect-opaque execution even when
