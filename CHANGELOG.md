@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Changed
+
+- Release publication now pins the Node.js 24-native `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2 by immutable SHA, removing the Node.js 20 deprecation annotation from future tag workflows.
+
 ## [0.6.1] — 2026-07-15
 
 ### Security
