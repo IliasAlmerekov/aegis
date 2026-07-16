@@ -124,6 +124,24 @@ Recovery degradation.
 dynamic evaluation, encoded payload, interpreter library call, package runner,
 or TOCTOU change, and does not read referenced scripts during classification.
 
+### Optional Sandbox degradation and read exposure
+
+**Threat:** An operator enables optional confinement but the platform cannot
+prepare it, or assumes confinement hides every readable file and secret.
+
+**Mitigations:** The optional Sandbox is a best-effort write/network guardrail
+add-on, not a confidentiality boundary. Shell warns on stderr and Watch emits a
+protocol warning before an optional unconfined fallback; the same command Audit
+entry records `sandbox_status = "unavailable"`. Setting
+`sandbox.required = true` blocks when infrastructure is unavailable. Invalid
+profiles and unexpected setup errors fail closed rather than falling back.
+
+**Residual risk:** macOS permits `file-read*`; Linux exposes read-only system
+mounts plus configured writable binds. A confined command may still read files
+or secrets visible through those profiles. The 1.0 contract does not narrow all
+read access, and the existing Audit integrity payload still does not hash
+`sandbox_status`.
+
 ### 3. Allowlist abuse or overreach
 
 **Threat:** An allowlist rule unintentionally suppresses approval for commands
@@ -271,7 +289,7 @@ The following properties are part of Aegis' intended contract:
 Aegis does not aim to provide:
 
 - OS-level isolation
-- syscall, filesystem, or network confinement after approval
+- mandatory syscall, filesystem, or network confinement after approval
 - perfect shell understanding
 - complete detection of obfuscated or deferred execution
 - guaranteed rollback fidelity

@@ -1,0 +1,4 @@
+# Cargo rewrites packaged path dependencies to registry requirements. Keep
+# local package validation on the unpublished workspace foundation crate.
+[patch.crates-io]
+aegis-types = { path = "crates/aegis-types" }

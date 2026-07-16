@@ -31,7 +31,7 @@ use aegis::ui::confirm::{
 };
 use aegis_types::SandboxStatus;
 
-use crate::shell_compat::{ShellLaunchOptions, exec_command};
+use crate::shell_compat::{ShellLaunchOptions, exec_prepared_command, prepare_command};
 use crate::{EXIT_BLOCKED, EXIT_DENIED, EXIT_INTERNAL};
 
 fn persist_rule(
@@ -131,7 +131,7 @@ pub(crate) fn run_planned_shell_command(
                     plan,
                     Decision::Denied,
                     &[],
-                    SandboxStatus::NotConfigured,
+                    sandbox_status_before_preparation(sandbox_config),
                 ) {
                     eprintln!("error: failed to write audit log: {err}");
                     return EXIT_INTERNAL;
@@ -146,7 +146,7 @@ pub(crate) fn run_planned_shell_command(
                 plan,
                 Decision::Blocked,
                 &[],
-                SandboxStatus::NotConfigured,
+                sandbox_status_before_preparation(sandbox_config),
             ) {
                 eprintln!("error: failed to write audit log: {err}");
                 return EXIT_INTERNAL;
@@ -178,41 +178,89 @@ fn execute_with_snapshots(
         plan.policy_decision().snapshots_required,
         &snapshots,
     ) {
-        let recovery_decision = show_recovery_override_decision();
-        let (final_decision, sandbox_status, execute) = match recovery_decision {
-            RecoveryPromptDecision::RunOnceWithoutRecovery => {
-                (Decision::Approved, sandbox_status_for(sandbox_config), true)
+        return match show_recovery_override_decision() {
+            RecoveryPromptDecision::RunOnceWithoutRecovery => complete_approved_shell_execution(
+                ShellExecution {
+                    cmd,
+                    launch,
+                    sandbox_config,
+                    prepared,
+                    plan,
+                    snapshots: &snapshots,
+                    recovery_degradation: Some(degradation),
+                },
+                Decision::Approved,
+            ),
+            RecoveryPromptDecision::Deny => {
+                if let Err(err) = append_shell_recovery_audit(
+                    prepared,
+                    plan,
+                    Decision::Denied,
+                    &snapshots,
+                    sandbox_status_before_preparation(sandbox_config),
+                    degradation,
+                ) {
+                    eprintln!("error: failed to write audit log: {err}");
+                    return EXIT_INTERNAL;
+                }
+                EXIT_DENIED
             }
-            RecoveryPromptDecision::Deny => (Decision::Denied, SandboxStatus::NotConfigured, false),
         };
-        if let Err(err) = append_shell_recovery_audit(
-            prepared,
-            plan,
-            final_decision,
-            &snapshots,
-            sandbox_status,
-            degradation,
-        ) {
-            eprintln!("error: failed to write audit log: {err}");
-            return EXIT_INTERNAL;
-        }
-        if !execute {
-            return EXIT_DENIED;
-        }
-        return exec_command(cmd, launch, sandbox_config);
     }
 
-    if let Err(err) = append_shell_audit(
+    complete_approved_shell_execution(
+        ShellExecution {
+            cmd,
+            launch,
+            sandbox_config,
+            prepared,
+            plan,
+            snapshots: &snapshots,
+            recovery_degradation: None,
+        },
+        decision,
+    )
+}
+
+struct ShellExecution<'a> {
+    cmd: &'a str,
+    launch: &'a ShellLaunchOptions,
+    sandbox_config: Option<&'a aegis_sandbox::SandboxConfig>,
+    prepared: &'a PreparedPlanner,
+    plan: &'a InterceptionPlan,
+    snapshots: &'a [SnapshotRecord],
+    recovery_degradation: Option<aegis_types::RecoveryDegradation>,
+}
+
+fn complete_approved_shell_execution(execution: ShellExecution<'_>, decision: Decision) -> i32 {
+    let ShellExecution {
+        cmd,
+        launch,
+        sandbox_config,
         prepared,
         plan,
+        snapshots,
+        recovery_degradation,
+    } = execution;
+
+    complete_shell_execution(
         decision,
-        &snapshots,
-        sandbox_status_for(sandbox_config),
-    ) {
-        eprintln!("error: failed to write audit log: {err}");
-        return EXIT_INTERNAL;
-    }
-    exec_command(cmd, launch, sandbox_config)
+        || prepare_command(cmd, launch, sandbox_config),
+        |final_decision, sandbox_status| match recovery_degradation {
+            Some(degradation) => append_shell_recovery_audit(
+                prepared,
+                plan,
+                final_decision,
+                snapshots,
+                sandbox_status,
+                degradation,
+            ),
+            None => append_shell_audit(prepared, plan, final_decision, snapshots, sandbox_status),
+        },
+        |message| eprintln!("warning: {message}"),
+        exec_prepared_command,
+        |message| eprintln!("error: {message}"),
+    )
 }
 
 fn append_shell_recovery_audit(
@@ -290,20 +338,58 @@ fn append_shell_audit(
     Ok(())
 }
 
-/// Map a sandbox config to the status recorded in the audit log.
-///
-/// `None` (no `[sandbox]` config) → `NotConfigured`; otherwise probe
-/// availability via [`aegis_sandbox::sandbox_available_for`]: available →
-/// `Active`, configured-but-unavailable → `Unavailable` (an audited bypass).
-///
-/// TOCTOU caveat: this is a separate availability probe from the one
-/// `prepare_for_exec` performs at exec time, so a sandbox that disappears (or
-/// appears) in between could make the audited status diverge from what actually
-/// happened. The source of truth should ultimately be the real
-/// `prepare_for_exec` outcome rather than this pre-probe; threading that result
-/// back into the audit entry is a known follow-up.
-fn sandbox_status_for(sandbox_config: Option<&aegis_sandbox::SandboxConfig>) -> SandboxStatus {
-    SandboxStatus::from(sandbox_config.map(aegis_sandbox::sandbox_available_for))
+/// Report an enabled Sandbox as `NotAttempted` before command preparation.
+fn sandbox_status_before_preparation(
+    sandbox_config: Option<&aegis_sandbox::SandboxConfig>,
+) -> SandboxStatus {
+    if sandbox_config.is_some() {
+        SandboxStatus::NotAttempted
+    } else {
+        SandboxStatus::NotConfigured
+    }
+}
+
+fn complete_shell_execution<C, AuditError>(
+    decision: Decision,
+    prepare: impl FnOnce() -> Result<(C, SandboxStatus), aegis_sandbox::SandboxError>,
+    append_audit: impl FnOnce(Decision, SandboxStatus) -> Result<(), AuditError>,
+    warn: impl FnOnce(&str),
+    execute: impl FnOnce(C) -> i32,
+    report_error: impl FnOnce(&str),
+) -> i32
+where
+    AuditError: std::fmt::Display,
+{
+    match prepare() {
+        Ok((command, status)) => {
+            if let Err(err) = append_audit(decision, status) {
+                report_error(&format!("failed to write audit log: {err}"));
+                return EXIT_INTERNAL;
+            }
+            if status == SandboxStatus::Unavailable {
+                warn(aegis::runtime::SANDBOX_UNAVAILABLE_MESSAGE);
+            }
+            execute(command)
+        }
+        Err(aegis_sandbox::SandboxError::Required) => {
+            if let Err(err) = append_audit(Decision::Blocked, SandboxStatus::Unavailable) {
+                report_error(&format!("failed to write audit log: {err}"));
+                return EXIT_INTERNAL;
+            }
+            report_error(aegis::runtime::SANDBOX_REQUIRED_UNAVAILABLE_MESSAGE);
+            EXIT_BLOCKED
+        }
+        Err(err) => {
+            if let Err(audit_err) = append_audit(Decision::Blocked, SandboxStatus::NotAttempted) {
+                report_error(&format!("failed to write audit log: {audit_err}"));
+                return EXIT_INTERNAL;
+            }
+            report_error(&format!(
+                "Sandbox setup failed; command not executed: {err}"
+            ));
+            EXIT_INTERNAL
+        }
+    }
 }
 
 fn show_block_for_plan(plan: &InterceptionPlan) {
@@ -668,3 +754,6 @@ mod snapshot_ordering_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod sandbox_lifecycle_tests;

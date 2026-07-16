@@ -40,6 +40,15 @@ fn prepared_with_audit_path(audit_path: PathBuf) -> PreparedPlanner {
     PreparedPlanner::Ready(Box::new(context))
 }
 
+fn prepared_with_optional_sandbox(audit_path: PathBuf) -> PreparedPlanner {
+    let mut config = AegisConfig::default();
+    config.sandbox.enabled = true;
+    let context =
+        RuntimeContext::new_with_audit_path(config, tokio::runtime::Handle::current(), audit_path)
+            .unwrap();
+    PreparedPlanner::Ready(Box::new(context))
+}
+
 async fn effect_opaque_plan(
     prepared: &PreparedPlanner,
     workspace: &TempDir,
@@ -120,4 +129,22 @@ async fn watch_recovery_prompt_run_once_executes_and_audits_degradation() {
     let entry = read_audit_entry(&audit_path);
     assert_eq!(entry["decision"], "Approved");
     assert_eq!(entry["recovery_degradation"], "no_snapshot_available");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn watch_recovery_deny_records_enabled_sandbox_as_not_attempted() {
+    let workspace = TempDir::new().unwrap();
+    let audit_dir = TempDir::new().unwrap();
+    let audit_path = audit_dir.path().join("audit.jsonl");
+    fs::write(workspace.path().join("run.sh"), "printf ran > executed\n").unwrap();
+    let prepared = prepared_with_optional_sandbox(audit_path.clone());
+    let (frame, plan) = effect_opaque_plan(&prepared, &workspace).await;
+
+    run_watch_plan_with_recovery_prompt(frame, &prepared, plan, false, || {
+        RecoveryPromptDecision::Deny
+    })
+    .await;
+
+    let entry = read_audit_entry(&audit_path);
+    assert_eq!(entry["sandbox_status"], "not_attempted");
 }

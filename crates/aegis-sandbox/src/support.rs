@@ -1,9 +1,8 @@
-//! Shared sandbox support: test-injection hook and bypass helpers.
+//! Shared sandbox support and test-injection hook.
 //!
 //! Platform modules (`linux`, `macos`, `windows`, `unsupported`) route their
 //! "sandbox unavailable" code paths through [`run_unavailable_result`] and
-//! [`warn_sandbox_bypass`] so the behavior and `tracing` target stay consistent
-//! across targets.
+//! [`run_unavailable_result`] so typed behavior stays consistent across targets.
 
 use crate::{SandboxError, SandboxResult};
 
@@ -39,21 +38,8 @@ pub(crate) fn run_unavailable_result(required: bool) -> Result<SandboxResult, Sa
     if required {
         Err(SandboxError::Required)
     } else {
-        warn_sandbox_bypass();
         Ok(SandboxResult::Unavailable)
     }
-}
-
-/// Emit a structured warning when a configured sandbox is bypassed.
-///
-/// A bypass means the command will run unconfined because the sandbox could
-/// not be applied and `required = false`. The audit log records this as
-/// `SandboxStatus::Unavailable`; this `tracing` event surfaces it live.
-pub(crate) fn warn_sandbox_bypass() {
-    tracing::warn!(
-        target: "aegis::sandbox",
-        "sandbox unavailable; proceeding without confinement (set sandbox.required = true to make this a hard block)"
-    );
 }
 
 // ── Shared test helpers ────────────────────────────────────────────────────────
@@ -74,38 +60,6 @@ pub(crate) mod test_helpers {
             super::set_force_sandbox_unavailable(false);
         }
     }
-
-    /// Minimal `tracing::Subscriber` that counts WARN events on the
-    /// `aegis::sandbox` target, so tests can assert a bypass was reported.
-    #[derive(Clone, Default)]
-    pub(crate) struct WarnCounter(std::sync::Arc<std::sync::atomic::AtomicUsize>);
-
-    impl WarnCounter {
-        /// Clone the inner counter handle so tests can read the tally outside
-        /// the `tracing::subscriber::with_default` closure.
-        pub(crate) fn counter(&self) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
-            self.0.clone()
-        }
-    }
-
-    impl tracing::Subscriber for WarnCounter {
-        fn enabled(&self, _meta: &tracing::Metadata<'_>) -> bool {
-            true
-        }
-        fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-            tracing::span::Id::from_u64(1)
-        }
-        fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
-        fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
-        fn event(&self, event: &tracing::Event<'_>) {
-            let meta = event.metadata();
-            if *meta.level() == tracing::Level::WARN && meta.target() == "aegis::sandbox" {
-                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
-        }
-        fn enter(&self, _span: &tracing::span::Id) {}
-        fn exit(&self, _span: &tracing::span::Id) {}
-    }
 }
 
 // ── Common (platform-agnostic) tests ───────────────────────────────────────────
@@ -113,7 +67,6 @@ pub(crate) mod test_helpers {
 #[cfg(test)]
 mod tests {
     use crate::support::run_unavailable_result;
-    use crate::support::test_helpers::WarnCounter;
     use crate::{SandboxConfig, SandboxError, SandboxExecutor, SandboxProfile, SandboxResult};
 
     // ── SandboxConfig defaults ────────────────────────────────────────────────
@@ -162,28 +115,6 @@ mod tests {
             run_unavailable_result(true),
             Err(SandboxError::Required)
         ));
-    }
-
-    // ── Sandbox bypass is an audit/log event (ROADMAP 6.4) ────────────────────
-
-    #[test]
-    fn bypass_emits_warning_when_not_required() {
-        let counter = WarnCounter::default();
-        let count = counter.counter();
-        tracing::subscriber::with_default(counter, || {
-            let _ = run_unavailable_result(false);
-        });
-        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn hard_block_does_not_emit_bypass_warning() {
-        let counter = WarnCounter::default();
-        let count = counter.counter();
-        tracing::subscriber::with_default(counter, || {
-            let _ = run_unavailable_result(true);
-        });
-        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     // ── SandboxError::Display ─────────────────────────────────────────────────

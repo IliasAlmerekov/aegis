@@ -108,8 +108,7 @@ impl AuditEntry {
         self
     }
 
-    /// Record whether a sandbox profile was applied, bypassed, or not
-    /// configured for this execution.
+    /// Record the factual confinement state for this command.
     pub fn with_sandbox_status(mut self, status: SandboxStatus) -> Self {
         self.as_base_mut().sandbox_status = status;
         self

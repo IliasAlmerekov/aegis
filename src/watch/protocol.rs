@@ -2,6 +2,7 @@
 
 use std::io::Write;
 
+use aegis_types::SandboxStatus;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
 
@@ -47,6 +48,18 @@ pub enum OutputDecision {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum OutputFrame {
+    /// Active-channel warning emitted before an unconfined fallback child.
+    Warning {
+        /// Correlation ID from the input frame.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Stable machine-readable diagnostic code.
+        code: &'static str,
+        /// Factual Sandbox status for the prepared child command.
+        sandbox_status: SandboxStatus,
+        /// Stable human-readable diagnostic message.
+        message: &'static str,
+    },
     /// Base64-encoded stdout chunk from the child process.
     Stdout {
         /// Correlation ID from the input frame.
@@ -72,6 +85,23 @@ pub enum OutputFrame {
         decision: OutputDecision,
         /// Shell exit code (0 if allowed, non-zero otherwise).
         exit_code: i32,
+    },
+    /// Final blocked result carrying required Sandbox diagnostics.
+    #[serde(rename = "result")]
+    SandboxResult {
+        /// Correlation ID from the input frame.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Final Aegis decision for this command.
+        decision: OutputDecision,
+        /// Blocked exit code.
+        exit_code: i32,
+        /// Stable machine-readable diagnostic code.
+        code: &'static str,
+        /// Factual Sandbox status observed during preparation.
+        sandbox_status: SandboxStatus,
+        /// Stable human-readable diagnostic message.
+        message: &'static str,
     },
     /// Protocol or unrecoverable error.
     Error {
@@ -305,6 +335,48 @@ mod tests {
         };
         let json = serde_json::to_string(&frame).unwrap();
         assert!(!json.contains("\"id\""), "id must be absent when None");
+    }
+
+    #[test]
+    fn sandbox_unavailable_warning_serializes_as_protocol_frame() {
+        let frame = OutputFrame::Warning {
+            id: Some("sandbox-1".to_string()),
+            code: crate::runtime::SANDBOX_UNAVAILABLE_CODE,
+            sandbox_status: aegis_types::SandboxStatus::Unavailable,
+            message: crate::runtime::SANDBOX_UNAVAILABLE_MESSAGE,
+        };
+
+        let value = serde_json::to_value(frame).unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "type": "warning",
+                "id": "sandbox-1",
+                "code": "sandbox_unavailable",
+                "sandbox_status": "unavailable",
+                "message": "Sandbox unavailable; proceeding without confinement. Set sandbox.required = true to block execution."
+            })
+        );
+    }
+
+    #[test]
+    fn required_sandbox_block_serializes_diagnostics_on_result() {
+        let frame = OutputFrame::SandboxResult {
+            id: Some("sandbox-2".to_string()),
+            decision: OutputDecision::Blocked,
+            exit_code: 3,
+            code: crate::runtime::SANDBOX_REQUIRED_UNAVAILABLE_CODE,
+            sandbox_status: SandboxStatus::Unavailable,
+            message: crate::runtime::SANDBOX_REQUIRED_UNAVAILABLE_MESSAGE,
+        };
+
+        let value = serde_json::to_value(frame).unwrap();
+
+        assert_eq!(value["type"], "result");
+        assert_eq!(value["code"], "sandbox_required_unavailable");
+        assert_eq!(value["sandbox_status"], "unavailable");
+        assert_eq!(value["exit_code"], 3);
     }
 
     #[test]

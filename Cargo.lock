@@ -120,9 +120,9 @@ dependencies = [
 name = "aegis-sandbox"
 version = "0.6.1"
 dependencies = [
+ "aegis-types",
  "libc",
  "thiserror 1.0.69",
- "tracing",
 ]
 
 [[package]]

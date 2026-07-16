@@ -1,8 +1,8 @@
 //! Sandboxing layer for Aegis.
 //!
-//! Provides [`SandboxConfig`], [`SandboxProfile`], [`SandboxExecutor`],
-//! [`SandboxResult`], and [`SandboxError`] for running commands inside a
-//! sandbox on supported platforms:
+//! Provides typed, presentation-free preparation through
+//! [`PreparedSandboxCommand`] plus the legacy [`SandboxExecutor`] interface on
+//! supported platforms:
 //! - **Linux**: bwrap + Landlock
 //! - **macOS**: Seatbelt (`sandbox-exec`)
 //!
@@ -11,13 +11,12 @@
 //!
 //! Platform-specific implementation lives in a private `platform` module alias
 //! that resolves to `linux.rs`, `macos.rs`, or `unsupported.rs` depending on the
-//! build target. Shared helpers (forced-unavailable test hook, bypass warning)
-//! live in `support.rs`.
+//! build target. Shared test support lives in `support.rs`.
 
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::ffi::{OsStr, OsString};
+use aegis_types::SandboxStatus;
 
 mod support;
 
@@ -87,13 +86,73 @@ pub enum SandboxResult {
     Unavailable,
 }
 
+/// A command prepared for the selected confinement path.
+///
+/// `status` describes the command stored in `command`. Preparation never
+/// renders user-facing output or applies process-wide restrictions.
+#[derive(Debug)]
+pub struct PreparedSandboxCommand {
+    /// The confined or direct command that the caller may execute or spawn.
+    pub command: std::process::Command,
+    /// Factual Sandbox status for the prepared command.
+    pub status: SandboxStatus,
+    #[cfg(target_os = "linux")]
+    exec_config: Option<SandboxConfig>,
+}
+
+impl PreparedSandboxCommand {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn active(
+        command: std::process::Command,
+        #[cfg(target_os = "linux")] exec_config: Option<SandboxConfig>,
+    ) -> Self {
+        Self {
+            command,
+            status: SandboxStatus::Active,
+            #[cfg(target_os = "linux")]
+            exec_config,
+        }
+    }
+
+    fn unavailable(command: std::process::Command) -> Self {
+        Self {
+            command,
+            status: SandboxStatus::Unavailable,
+            #[cfg(target_os = "linux")]
+            exec_config: None,
+        }
+    }
+
+    /// Apply exec-only restrictions immediately before process replacement.
+    ///
+    /// Watch callers must not call this method because it may restrict the
+    /// current process on Linux.
+    ///
+    /// This method does not return when process replacement succeeds. It
+    /// returns [`SandboxError::Execution`] if deferred Linux restrictions
+    /// cannot be applied, or [`SandboxError::Io`] if the operating-system
+    /// `exec` call fails.
+    #[cfg(unix)]
+    pub fn exec(mut self) -> SandboxError {
+        #[cfg(target_os = "linux")]
+        if let Some(config) = self.exec_config.as_ref()
+            && let Err(err) = platform::apply_landlock_restrictions(config)
+        {
+            return err;
+        }
+
+        use std::os::unix::process::CommandExt;
+        SandboxError::Io(self.command.exec())
+    }
+}
+
 // ── Public availability query ─────────────────────────────────────────────────
 
-/// Return `true` when the sandbox infrastructure is available for `config`.
+/// Return `true` when a diagnostic availability probe succeeds for `config`.
 ///
-/// This is a lightweight check used by callers to record audit state
-/// without forking. Native Windows and other non-Linux/non-macOS targets
-/// always return `false`; Windows users should run Aegis inside WSL2/Linux.
+/// This probe is not authoritative for execution or Audit; callers must use
+/// the status returned by [`prepare_for_exec`] or [`prepare_for_spawn`]. Native
+/// Windows and other unsupported targets always return `false`.
 pub fn sandbox_available_for(config: &SandboxConfig) -> bool {
     platform::sandbox_available_for(config)
 }
@@ -121,18 +180,37 @@ impl SandboxExecutor {
 /// Prepare a [`std::process::Command`] suitable for POSIX `exec()` that wraps
 /// `program` and `args` inside the sandbox described by `config`.
 ///
-/// On Linux when the sandbox is available, applies Landlock filesystem
-/// restrictions to the current process (inherited across exec), then returns
-/// a bwrap command. When unavailable and `required` is `false`, returns a
-/// direct command. When unavailable and `required` is `true`, returns
+/// On Linux, Landlock is deferred until [`PreparedSandboxCommand::exec`] so
+/// preparation cannot restrict the caller before its Audit append. When
+/// unavailable and `required` is `false`, returns a direct command with
+/// `SandboxStatus::Unavailable`. Required unavailability returns
 /// `Err(SandboxError::Required)`.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+///
+/// Returns [`SandboxError::Required`] when required infrastructure is
+/// unavailable, [`SandboxError::Execution`] when configured paths or profile
+/// construction fail, and [`SandboxError::SetupFailed`] when a platform
+/// launcher rejects the prepared profile.
 pub fn prepare_for_exec(
     config: &SandboxConfig,
     program: &OsStr,
     args: &[OsString],
-) -> Result<std::process::Command, SandboxError> {
+) -> Result<PreparedSandboxCommand, SandboxError> {
     platform::prepare_for_exec(config, program, args)
+}
+
+/// Prepare a child command without applying process-wide restrictions.
+///
+/// This is the spawn-safe entry point for persistent callers such as Watch.
+/// Returns [`SandboxError::Required`] when required infrastructure is
+/// unavailable, [`SandboxError::Execution`] when configured paths or profile
+/// construction fail, and [`SandboxError::SetupFailed`] when a platform
+/// launcher rejects the prepared profile.
+pub fn prepare_for_spawn(
+    config: &SandboxConfig,
+    program: &OsStr,
+    args: &[OsString],
+) -> Result<PreparedSandboxCommand, SandboxError> {
+    platform::prepare_for_spawn(config, program, args)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

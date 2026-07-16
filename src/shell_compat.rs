@@ -3,6 +3,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use aegis_types::SandboxStatus;
 use clap::Parser;
 
 use crate::{Cli, EXIT_INTERNAL};
@@ -170,50 +171,65 @@ pub(crate) fn exec_command(
     launch: &ShellLaunchOptions,
     sandbox: Option<&aegis_sandbox::SandboxConfig>,
 ) -> i32 {
-    let shell = resolve_shell();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if let Some(sb_config) = sandbox {
-            let shell_args: Vec<std::ffi::OsString> =
-                std::iter::once(std::ffi::OsString::from(launch.command_flag(&shell)))
-                    .chain(std::iter::once(std::ffi::OsString::from(cmd)))
-                    .chain(launch.positional_args.iter().cloned())
-                    .collect();
-            match aegis_sandbox::prepare_for_exec(sb_config, shell.as_os_str(), &shell_args) {
-                Ok(mut command) => {
-                    command
-                        .stdin(Stdio::inherit())
-                        .stdout(Stdio::inherit())
-                        .stderr(Stdio::inherit());
-                    let err = command.exec();
-                    eprintln!("error: failed to exec sandbox: {err}");
-                    return EXIT_INTERNAL;
-                }
-                Err(e) => {
-                    eprintln!("error: sandbox unavailable: {e}");
-                    return EXIT_INTERNAL;
-                }
-            }
+    match prepare_command(cmd, launch, sandbox) {
+        Ok((prepared, _)) => exec_prepared_command(prepared),
+        Err(err) => {
+            eprintln!("error: sandbox setup failed: {err}");
+            EXIT_INTERNAL
         }
+    }
+}
 
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        let _ = sandbox;
+pub(crate) enum PreparedShellCommand {
+    Direct(Command),
+    Sandboxed(aegis_sandbox::PreparedSandboxCommand),
+}
 
-        let mut command = Command::new(&shell);
-        command
-            .arg(launch.command_flag(&shell))
-            .arg(cmd)
-            .args(&launch.positional_args)
+pub(crate) fn prepare_command(
+    cmd: &str,
+    launch: &ShellLaunchOptions,
+    sandbox: Option<&aegis_sandbox::SandboxConfig>,
+) -> Result<(PreparedShellCommand, SandboxStatus), aegis_sandbox::SandboxError> {
+    let shell = resolve_shell();
+    let shell_args: Vec<OsString> = std::iter::once(OsString::from(launch.command_flag(&shell)))
+        .chain(std::iter::once(OsString::from(cmd)))
+        .chain(launch.positional_args.iter().cloned())
+        .collect();
+
+    if let Some(config) = sandbox {
+        let mut prepared = aegis_sandbox::prepare_for_exec(config, shell.as_os_str(), &shell_args)?;
+        prepared
+            .command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-        let err = command.exec();
+        let status = prepared.status;
+        return Ok((PreparedShellCommand::Sandboxed(prepared), status));
+    }
 
-        eprintln!("error: failed to exec shell {}: {err}", shell.display());
+    let mut command = Command::new(&shell);
+    command
+        .args(&shell_args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    Ok((
+        PreparedShellCommand::Direct(command),
+        SandboxStatus::NotConfigured,
+    ))
+}
+
+pub(crate) fn exec_prepared_command(prepared: PreparedShellCommand) -> i32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = match prepared {
+            PreparedShellCommand::Direct(mut command) => {
+                aegis_sandbox::SandboxError::Io(command.exec())
+            }
+            PreparedShellCommand::Sandboxed(command) => command.exec(),
+        };
+        eprintln!("error: failed to exec shell: {err}");
         EXIT_INTERNAL
     }
 
@@ -221,27 +237,21 @@ pub(crate) fn exec_command(
     {
         #[cfg(windows)]
         {
-            let _ = (cmd, launch, sandbox);
+            let _ = prepared;
             eprintln!("error: native Windows is unsupported; run Aegis inside WSL2/Linux instead");
             return EXIT_INTERNAL;
         }
 
         #[cfg(not(windows))]
         {
-            let _ = sandbox;
-
-            let mut command = Command::new(&shell);
-            command
-                .arg(launch.command_flag(&shell))
-                .arg(cmd)
-                .args(&launch.positional_args)
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
+            let mut command = match prepared {
+                PreparedShellCommand::Direct(command) => command,
+                PreparedShellCommand::Sandboxed(prepared) => prepared.command,
+            };
             match command.status() {
                 Ok(status) => status.code().unwrap_or(EXIT_INTERNAL),
                 Err(err) => {
-                    eprintln!("error: failed to spawn shell {}: {err}", shell.display());
+                    eprintln!("error: failed to spawn shell: {err}");
                     EXIT_INTERNAL
                 }
             }

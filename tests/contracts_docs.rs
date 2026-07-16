@@ -102,6 +102,102 @@ fn h9_public_docs_distinguish_required_recovery_from_best_effort_snapshots() {
 }
 
 #[test]
+fn m1_docs_define_visible_optional_sandbox_degradation_without_confidentiality_claims() {
+    let readme = fs::read_to_string(repo_path("README.md")).unwrap();
+    let config_schema = fs::read_to_string(repo_path("docs/config-schema.md")).unwrap();
+    let threat_model = fs::read_to_string(repo_path("docs/threat-model.md")).unwrap();
+    let prd = fs::read_to_string(repo_path("PRD.md")).unwrap();
+    let roadmap = fs::read_to_string(repo_path("ROADMAP.md")).unwrap();
+    let architecture = fs::read_to_string(repo_path("ARCHITECTURE.md")).unwrap();
+
+    for contents in [&readme, &config_schema, &threat_model] {
+        assert!(contents.contains("write/network guardrail"));
+        assert!(contents.contains("not a confidentiality boundary"));
+    }
+    for contents in [&config_schema, &prd, &roadmap, &architecture] {
+        assert!(contents.contains("sandbox_status = \"unavailable\""));
+        assert!(contents.contains("sandbox.required = true"));
+    }
+    assert!(config_schema.contains("macOS permits `file-read*`"));
+    assert!(config_schema.contains("read-only system mounts"));
+    assert!(architecture.contains("prepare_for_spawn"));
+    assert!(!prd.contains("`WARN` is emitted on the\n  `aegis::sandbox` target"));
+
+    for contents in [
+        &readme,
+        &config_schema,
+        &threat_model,
+        &prd,
+        &roadmap,
+        &architecture,
+    ] {
+        let lower = contents.to_ascii_lowercase();
+        for forbidden in [
+            "provides a confidentiality boundary",
+            "guarantees confidentiality",
+            "provides complete read isolation",
+            "all file reads are blocked",
+            "hides all readable files",
+            "hides all secrets",
+        ] {
+            assert!(
+                !lower.contains(forbidden),
+                "Sandbox docs must not claim `{forbidden}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn m1_sandbox_api_docs_define_failure_and_non_return_contracts() {
+    let source = fs::read_to_string(repo_path("crates/aegis-sandbox/src/lib.rs")).unwrap();
+    let plan = fs::read_to_string(repo_path(
+        "docs/plans/2026-07-14-m1-sandbox-degradation-contract.md",
+    ))
+    .unwrap();
+
+    let exec_docs = source
+        .split("pub fn exec")
+        .next()
+        .and_then(|prefix| prefix.rsplit("/// Apply exec-only restrictions").next())
+        .expect("PreparedSandboxCommand::exec docs must exist");
+    assert!(exec_docs.contains("does not return when process replacement succeeds"));
+    assert!(exec_docs.contains("SandboxError::Execution"));
+    assert!(exec_docs.contains("SandboxError::Io"));
+
+    let prepare_exec_docs = source
+        .split("pub fn prepare_for_exec")
+        .next()
+        .and_then(|prefix| prefix.rsplit("/// Prepare a").next())
+        .expect("prepare_for_exec docs must exist");
+    for error in [
+        "SandboxError::Required",
+        "SandboxError::Execution",
+        "SandboxError::SetupFailed",
+    ] {
+        assert!(prepare_exec_docs.contains(error));
+    }
+
+    let prepare_spawn_docs = source
+        .split("pub fn prepare_for_spawn")
+        .next()
+        .and_then(|prefix| prefix.rsplit("/// Prepare a child").next())
+        .expect("prepare_for_spawn docs must exist");
+    for error in [
+        "SandboxError::Required",
+        "SandboxError::Execution",
+        "SandboxError::SetupFailed",
+    ] {
+        assert!(prepare_spawn_docs.contains(error));
+    }
+
+    assert!(
+        !plan.contains("Sandbox state"),
+        "M1 plan must use the canonical term `Sandbox status`"
+    );
+}
+
+#[test]
 fn readme_links_to_contract_docs() {
     let readme = fs::read_to_string(repo_path("README.md")).expect("README.md must exist");
     assert!(
