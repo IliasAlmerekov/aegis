@@ -419,6 +419,7 @@ fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
             ci_detected: false,
             sandbox_status: SandboxStatus::NotConfigured,
         },
+        None,
     );
 
     let outcome = entry
@@ -493,6 +494,7 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
             ci_detected: false,
             sandbox_status: SandboxStatus::NotConfigured,
         },
+        None,
     );
 
     let base = entry.as_base();
@@ -552,6 +554,7 @@ fn build_audit_entry_records_effect_opaque_and_backstop_state_from_runtime_facts
             ci_detected: false,
             sandbox_status: SandboxStatus::NotConfigured,
         },
+        Some(aegis_types::RecoveryDegradation::NoSnapshotAvailable),
     );
 
     let base = entry.as_base();
@@ -569,6 +572,10 @@ fn build_audit_entry_records_effect_opaque_and_backstop_state_from_runtime_facts
         base.confinement_required,
         Some(false),
         "audit must record the v1 confinement state (optional strict tier not engaged)"
+    );
+    assert_eq!(
+        base.recovery_degradation,
+        Some(aegis_types::RecoveryDegradation::NoSnapshotAvailable)
     );
 }
 
@@ -618,6 +625,7 @@ fn build_audit_entry_records_plain_safe_command_without_backstops() {
             ci_detected: false,
             sandbox_status: SandboxStatus::NotConfigured,
         },
+        None,
     );
 
     let base = entry.as_base();

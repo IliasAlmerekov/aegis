@@ -18,6 +18,7 @@ fn aegis_watch_in(home: &Path, cwd: &Path, input: &[u8]) -> std::process::Output
         .arg("watch")
         .env("AEGIS_REAL_SHELL", "/bin/sh")
         .env("AEGIS_CI", "0")
+        .env("AEGIS_FORCE_NO_TTY", "1")
         .env("HOME", home)
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -66,6 +67,98 @@ fn safe_command_emits_result_approved() {
     assert_eq!(result["decision"], "approved");
     assert_eq!(result["exit_code"], 0);
     assert_eq!(result["id"], "1");
+}
+
+fn init_git_repo(path: &Path) {
+    let init = Command::new("git")
+        .arg("init")
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    let add = Command::new("git")
+        .args(["add", "."])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(add.status.success());
+    let commit = Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@aegis.dev",
+            "-c",
+            "user.name=Aegis Test",
+            "commit",
+            "-m",
+            "init",
+        ])
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(commit.status.success());
+}
+
+#[test]
+fn watch_without_tty_denies_required_recovery_degradation_before_execution() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let marker = cwd.path().join("executed");
+    fs::write(cwd.path().join("run.sh"), "printf ran > executed\n").unwrap();
+
+    let output = aegis_watch_in(
+        home.path(),
+        cwd.path(),
+        b"{\"cmd\":\"sh ./run.sh\",\"id\":\"degraded\"}\n",
+    );
+
+    let frames = parse_frames(&output.stdout);
+    let result = frames
+        .iter()
+        .find(|frame| frame["type"] == "result")
+        .expect("degraded command must emit a result frame");
+    assert_eq!(result["decision"], "denied");
+    assert_eq!(result["exit_code"], 2);
+    assert!(!marker.exists(), "degraded Watch command must not execute");
+
+    let contents = fs::read_to_string(home.path().join(".aegis").join("audit.jsonl")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(entry["decision"], "Denied");
+    assert_eq!(entry["recovery_degradation"], "no_snapshot_available");
+}
+
+#[test]
+fn watch_executes_effect_opaque_command_when_required_snapshot_is_ready() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let marker = cwd.path().join("executed");
+    fs::write(cwd.path().join("run.sh"), "printf ran > executed\n").unwrap();
+    fs::write(cwd.path().join("state.txt"), "before\n").unwrap();
+    init_git_repo(cwd.path());
+    fs::write(cwd.path().join("state.txt"), "changed\n").unwrap();
+
+    let output = aegis_watch_in(
+        home.path(),
+        cwd.path(),
+        b"{\"cmd\":\"sh ./run.sh\",\"id\":\"ready\"}\n",
+    );
+
+    let frames = parse_frames(&output.stdout);
+    let result = frames
+        .iter()
+        .find(|frame| frame["type"] == "result")
+        .expect("ready command must emit a result frame");
+    assert_eq!(result["decision"], "approved");
+    assert_eq!(result["exit_code"], 0);
+    assert!(marker.exists());
+
+    let contents = fs::read_to_string(home.path().join(".aegis").join("audit.jsonl")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert!(
+        entry["snapshots"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    );
+    assert!(entry.get("recovery_degradation").is_none());
 }
 
 #[test]

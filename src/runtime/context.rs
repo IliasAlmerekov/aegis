@@ -19,7 +19,7 @@ use crate::interceptor::scanner::{Assessment, Scanner};
 use crate::snapshot::{SnapshotRecord, SnapshotRegistry, SnapshotRegistryConfig};
 #[cfg(feature = "starlark-policy")]
 use aegis_starlark::load_starlark_policy;
-use aegis_types::SandboxStatus;
+use aegis_types::{RecoveryDegradation, SandboxStatus};
 
 use super::user::detect_effective_user;
 
@@ -117,6 +117,17 @@ impl RuntimeContext {
     pub fn new(config: AegisConfig, handle: Handle) -> Result<Self, AegisError> {
         let policy_path = starlark_policy_path();
         Self::new_with_policy_path(config, handle, policy_path.as_deref())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_with_audit_path(
+        config: AegisConfig,
+        handle: Handle,
+        audit_path: std::path::PathBuf,
+    ) -> Result<Self, AegisError> {
+        let mut context = Self::new_with_policy_path(config, handle, None)?;
+        context.audit_logger = AuditLogger::new(audit_path);
+        Ok(context)
     }
 
     /// Build a runtime context with an explicit policy path override.
@@ -268,7 +279,29 @@ impl RuntimeContext {
         explanation: &CommandExplanation,
         options: AuditWriteOptions<'_>,
     ) -> Result<(), AegisError> {
-        let entry = self.build_audit_entry(assessment, decision, snapshots, explanation, options);
+        let entry =
+            self.build_audit_entry(assessment, decision, snapshots, explanation, options, None);
+        Ok(self.audit_logger.append(entry)?)
+    }
+
+    /// Append one degraded-recovery audit entry.
+    pub fn append_audit_entry_with_recovery_degradation(
+        &self,
+        assessment: &Assessment,
+        decision: Decision,
+        snapshots: &[SnapshotRecord],
+        explanation: &CommandExplanation,
+        options: AuditWriteOptions<'_>,
+        degradation: RecoveryDegradation,
+    ) -> Result<(), AegisError> {
+        let entry = self.build_audit_entry(
+            assessment,
+            decision,
+            snapshots,
+            explanation,
+            options,
+            Some(degradation),
+        );
         Ok(self.audit_logger.append(entry)?)
     }
 
@@ -296,6 +329,36 @@ impl RuntimeContext {
                     ci_detected: watch.ci_detected,
                     sandbox_status: SandboxStatus::NotConfigured,
                 },
+                None,
+            )
+            .with_watch_context(watch.source, watch.cwd, watch.id);
+
+        Ok(self.audit_logger.append(entry)?)
+    }
+
+    /// Append a Watch audit entry for a degraded Required recovery attempt.
+    pub fn append_watch_audit_entry_with_recovery_degradation(
+        &self,
+        assessment: &Assessment,
+        decision: Decision,
+        snapshots: &[SnapshotRecord],
+        explanation: &CommandExplanation,
+        watch: WatchAuditContext<'_>,
+        degradation: RecoveryDegradation,
+    ) -> Result<(), AegisError> {
+        let entry = self
+            .build_audit_entry(
+                assessment,
+                decision,
+                snapshots,
+                explanation,
+                AuditWriteOptions {
+                    allowlist_match: watch.allowlist_match,
+                    allowlist_effective: watch.allowlist_effective,
+                    ci_detected: watch.ci_detected,
+                    sandbox_status: SandboxStatus::NotConfigured,
+                },
+                Some(degradation),
             )
             .with_watch_context(watch.source, watch.cwd, watch.id);
 
@@ -309,6 +372,7 @@ impl RuntimeContext {
         snapshots: &[SnapshotRecord],
         explanation: &CommandExplanation,
         options: AuditWriteOptions<'_>,
+        recovery_degradation: Option<RecoveryDegradation>,
     ) -> AuditEntry {
         let allowlist_pattern = (options.allowlist_effective)
             .then(|| options.allowlist_match.map(|m| m.pattern.clone()))
@@ -317,7 +381,7 @@ impl RuntimeContext {
             .then(|| options.allowlist_match.map(|m| m.reason.clone()))
             .flatten();
 
-        AuditEntry::new(
+        let entry = AuditEntry::new(
             assessment.command.raw.clone(),
             assessment.risk,
             assessment.matched.iter().map(Into::into).collect(),
@@ -348,7 +412,12 @@ impl RuntimeContext {
         // the engine today); when confinement becomes policy-driven, thread it
         // through `PolicyExplanation` alongside `snapshots_required`.
         .with_effect_opaque(assessment.effect_opaque)
-        .with_required_backstops(explanation.policy.snapshots_required, false)
+        .with_required_backstops(explanation.policy.snapshots_required, false);
+
+        match recovery_degradation {
+            Some(degradation) => entry.with_recovery_degradation(degradation),
+            None => entry,
+        }
     }
 }
 

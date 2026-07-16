@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Fixed
+
+- Audit initialization now tolerates another same-user process winning creation of an owner-only Audit directory while still rejecting symlinks, non-directories, wrong owners, and non-`0700` modes; the cross-platform Recovery PTY integration waits for the visible prompt and keeps BSD `script` input open until the child exits, preventing VEOF from overtaking its queued one-time response on macOS (ADR-016, ADR-020, H9).
+
 ### Changed
 
 - Release publication now pins the Node.js 24-native `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2 by immutable SHA, removing the Node.js 20 deprecation annotation from future tag workflows.
@@ -19,6 +23,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Security
 
+- H9 required recovery now survives missing Snapshot-plugin availability: bounded ADR-016 Effect-opaque execution denies without a TTY when no required Snapshot is created, offers only a visible one-time interactive Recovery override, records `no_snapshot_available` with the final Audit decision, and keeps ordinary non-opaque Danger Snapshots best-effort (ADR-016, H9).
 - H7b audit hardening now creates Unix Audit directories/artifacts with owner-only modes, rejects unsafe final-component targets through descriptor-bound no-follow opens, preflights every managed rotation slot, and stages gzip archives before commit; non-Unix and parent-entry/durability limits remain explicit (ADR-020, H7b).
 - H7a follow-up: SQLite Rollback now preserves the caller-owned live database mode, unsafe Snapshot-store metadata reads yield the typed permission rejection, and a stale Supabase manifest temp is bypassed with a fresh secure reservation (ADR-019, H7a).
 - H7a snapshot artifacts now use owner-only Unix modes (`0700` directories and `0600` files); unsafe Snapshot store leaves are tightened or rejected before sensitive writes, while non-Unix behavior deliberately makes no POSIX-mode claim (ADR-019, H7a).
@@ -42,6 +47,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Changed
 
+- Locked the remaining H9 ADR-016 design: bounded Effect-opaque execution requires at least one Snapshot independently of plugin availability, non-interactive degradation denies, and interactive execution needs a non-persistable one-time Recovery override; ordinary non-opaque Danger snapshots remain best-effort (ADR-016, H9).
 - Locked the H7b audit-artifact hardening design: Unix owner-only artifacts,
   target-level no-follow, tighten-if-owned migration, whole-rotation preflight,
   staged gzip commit, and explicit parent/non-Unix/durability limits; the

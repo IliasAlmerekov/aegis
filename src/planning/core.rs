@@ -471,4 +471,28 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn effect_opaque_safe_command_plans_required_recovery_without_plugins() {
+        let context = context(Mode::Protect, SnapshotPolicy::Selective);
+        let outcome = super::plan_with_context(
+            &context,
+            super::PlanningRequest {
+                command: "sh ./cleanup.sh",
+                cwd_state: CwdState::Resolved(std::path::PathBuf::from(".")),
+                transport: ExecutionTransport::Shell,
+                ci_detected: false,
+            },
+        );
+
+        let PlanningOutcome::Planned(plan) = outcome else {
+            panic!("effect-opaque command must produce a normal plan");
+        };
+        assert_eq!(
+            plan.snapshot_plan(),
+            SnapshotPlan::Required {
+                applicable_plugins: Vec::new(),
+            }
+        );
+    }
 }

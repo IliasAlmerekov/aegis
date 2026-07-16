@@ -128,7 +128,7 @@ pub enum CiPolicy {
     Allow,
 }
 
-/// Controls when and how snapshot plugins run before dangerous commands.
+/// Controls when and how Snapshot plugins run for planned recovery.
 ///
 /// - `None`      — never snapshot.
 /// - `Selective` — only plugins enabled by `auto_snapshot_git` /

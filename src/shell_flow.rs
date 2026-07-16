@@ -21,12 +21,13 @@ use aegis::interceptor::parser::{extract_prefix, split_tokens};
 #[cfg(test)]
 use aegis::planning::evaluate_policy_rules;
 use aegis::planning::{CwdState, ExecutionDisposition, InterceptionPlan, PreparedPlanner};
-use aegis::runtime::AuditWriteOptions;
 #[cfg(test)]
 use aegis::runtime::RuntimeContext;
+use aegis::runtime::{AuditWriteOptions, RecoveryStatus, recovery_status};
 use aegis::snapshot::SnapshotRecord;
 use aegis::ui::confirm::{
-    PromptDecision, show_confirmation, show_confirmation_decision, show_policy_block,
+    PromptDecision, RecoveryPromptDecision, show_confirmation, show_confirmation_decision,
+    show_policy_block, show_recovery_override_decision,
 };
 use aegis_types::SandboxStatus;
 
@@ -172,6 +173,35 @@ fn execute_with_snapshots(
     sandbox_config: Option<&aegis_sandbox::SandboxConfig>,
 ) -> i32 {
     let snapshots = create_snapshots_for_plan(prepared, plan, verbose);
+    if let Some(RecoveryStatus::Degraded(degradation)) = recovery_status(
+        plan.assessment().effect_opaque,
+        plan.policy_decision().snapshots_required,
+        &snapshots,
+    ) {
+        let recovery_decision = show_recovery_override_decision();
+        let (final_decision, sandbox_status, execute) = match recovery_decision {
+            RecoveryPromptDecision::RunOnceWithoutRecovery => {
+                (Decision::Approved, sandbox_status_for(sandbox_config), true)
+            }
+            RecoveryPromptDecision::Deny => (Decision::Denied, SandboxStatus::NotConfigured, false),
+        };
+        if let Err(err) = append_shell_recovery_audit(
+            prepared,
+            plan,
+            final_decision,
+            &snapshots,
+            sandbox_status,
+            degradation,
+        ) {
+            eprintln!("error: failed to write audit log: {err}");
+            return EXIT_INTERNAL;
+        }
+        if !execute {
+            return EXIT_DENIED;
+        }
+        return exec_command(cmd, launch, sandbox_config);
+    }
+
     if let Err(err) = append_shell_audit(
         prepared,
         plan,
@@ -183,6 +213,32 @@ fn execute_with_snapshots(
         return EXIT_INTERNAL;
     }
     exec_command(cmd, launch, sandbox_config)
+}
+
+fn append_shell_recovery_audit(
+    prepared: &PreparedPlanner,
+    plan: &InterceptionPlan,
+    decision: Decision,
+    snapshots: &[SnapshotRecord],
+    sandbox_status: SandboxStatus,
+    degradation: aegis_types::RecoveryDegradation,
+) -> Result<(), aegis::error::AegisError> {
+    if let PreparedPlanner::Ready(context) = prepared {
+        return context.append_audit_entry_with_recovery_degradation(
+            plan.assessment(),
+            decision,
+            snapshots,
+            plan.explanation(),
+            AuditWriteOptions {
+                allowlist_match: plan.decision_context().allowlist_match(),
+                allowlist_effective: plan.policy_decision().allowlist_effective,
+                ci_detected: plan.decision_context().ci_detected(),
+                sandbox_status,
+            },
+            degradation,
+        );
+    }
+    Ok(())
 }
 
 fn create_snapshots_for_plan(

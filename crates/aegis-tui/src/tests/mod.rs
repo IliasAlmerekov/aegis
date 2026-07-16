@@ -1,4 +1,5 @@
 pub(crate) use crate::block_screen::render_policy_block;
+pub use crate::recovery_screen::{RecoveryPromptDecision, show_recovery_override_with_input};
 pub(crate) use crate::shared::{build_highlighted_command, sorted_highlight_ranges_for_tests};
 pub use crate::stdout_renderer::PromptDecision;
 pub use crate::stdout_renderer::show_confirmation_with_input;
@@ -192,5 +193,6 @@ pub fn strip_ansi(s: &str) -> String {
 mod block_tests;
 mod danger_tests;
 mod decision_tests;
+mod recovery_tests;
 mod render_tests;
 mod warn_tests;

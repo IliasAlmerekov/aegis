@@ -22,14 +22,20 @@ Aegis is a Rust CLI that sits between an AI agent and your real shell. It checks
 
 | Level | What happens |
 |-------|-------------|
-| **Safe** | Runs immediately — no delay, no prompt |
+| **Safe** | Runs immediately unless bounded effect-opaque Required recovery degrades |
 | **Warn** | Pauses and asks for your approval |
-| **Danger** | Takes a best-effort snapshot, then asks |
+| **Danger** | Asks first, then attempts configured Snapshots before execution |
 | **Block** | Refused outright — no prompt |
 
 > [!NOTE]
 > Aegis is a heuristic guardrail, not a sandbox or privilege boundary.
 > See [`docs/threat-model.md`](docs/threat-model.md) for the full security model.
+
+Bounded **Effect-opaque execution** such as `sh ./cleanup.sh` stays on its normal
+`RiskLevel`, but Protect/Strict requires at least one configured Snapshot before
+it runs. If none is created, non-interactive execution denies and an interactive
+user sees only **Run once without recovery** or **Deny**. Aegis does not inspect the referenced script, and a successful Snapshot is still not a complete backup
+or universal undo.
 
 ---
 
@@ -86,7 +92,7 @@ AI agents can move fast and run destructive commands by mistake:
 - drop databases
 - publish or push something unintended
 
-Aegis adds a human checkpoint before damage happens. It also keeps an append-only audit log and can take best-effort snapshots before dangerous commands run.
+Aegis adds a human checkpoint before damage happens. It also keeps an append-only audit log, can take best-effort Snapshots for dangerous commands, and requires recovery for bounded effect-opaque execution unless the trusted recovery policy opts out.
 
 ---
 
@@ -198,6 +204,10 @@ AI agent command
                real shell executes only
                what you approved
 ```
+
+Effect opacity is a separate axis: a bounded effect-opaque command that would
+otherwise execute must create a required Snapshot, receive a one-time Recovery
+override, or deny.
 
 ![Aegis command flow](src/assets/howitwork.png)
 

@@ -13,7 +13,7 @@
 
 ## Active branch
 
-`main` (Node.js 24 release-workflow follow-up staged on `ci/node24-actions`)
+`agent/h9-required-recovery` (PR #129)
 
 ## Last updated
 
@@ -23,6 +23,24 @@
 
 ## Last session (2026-07-16)
 
+- **PR #129 CI follow-up verified locally; CI rerun pending.** Concurrent Audit
+  initialization now accepts only a safe same-user `0700` directory when
+  another process wins creation, and the Recovery PTY integration waits for the
+  visible prompt and keeps BSD `script` input open until child exit so VEOF
+  cannot overtake the queued one-time override. The original concurrency test
+  passed 50/50 stress runs and the Recovery Run-once test passed 50/50; 1475
+  workspace tests, clippy, fmt,
+  audit/deny, diff-check, and the Standards/Spec review passed.
+- **H9 implemented and verified locally; required PR CI pending.** Protect/Strict
+  now preserve Required recovery for bounded Effect-opaque execution even when
+  no Snapshot plugin applies. Zero created Snapshots deny without a TTY or use a
+  visible, non-persistable one-time Recovery override; Shell and Watch share the
+  typed Recovery status and Audit records `no_snapshot_available` with the final
+  decision. Audit/`SnapshotPolicy::None` remain opt-outs and ordinary non-opaque
+  Danger Snapshots remain best-effort. Public/config/threat-model docs and the
+  generated schema match ADR-016. TDD, Standards/Spec review, two-round skeptic
+  confirmation, workspace tests, clippy, fmt, audit/deny, and diff-check passed
+  locally. H9 stays Partial/unchecked until all required PR CI contexts pass.
 - **Release publication migrated to Node.js 24-native actions; PR CI pending.**
   `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2
   are pinned by immutable commit SHA, and the release-workflow contract rejects
@@ -238,11 +256,11 @@ opt-in `starlark-policy` feature.
 
 ## Open decisions / blockers
 
-- **H7b closure blocker:** implementation and local gates are clean; required
-  PR CI must pass before the `TASKS.md` checkbox is closed.
 - **Current security order** (`TASKS.md`): H6 → H7a → H7b; H9; M3a; M4 → M7;
   M9; M1; M2 → M5; H5 → M8; then P3. This is dependency/risk order, not a
   calendar sprint.
+- **H7b closure blocker:** implementation and local gates are clean; required
+  PR CI must pass before the `TASKS.md` checkbox is closed.
 - **P1 open contract:** H5 aligns public wording with an unkeyed local `Audit
   integrity chain`; H6 proves snapshot path containment; H7a protects snapshot
   artifact modes; H7b hardens audit modes and symlink opens; H9 finishes only

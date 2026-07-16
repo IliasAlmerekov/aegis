@@ -169,7 +169,7 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
 - **Traceability:** [plan](docs/plans/2026-07-14-h7a-snapshot-artifact-permissions.md);
   [ADR-019](docs/adr/adr-019-owner-only-snapshot-artifact-permissions.md).
 
-### [ ] H7b — Audit artifacts follow unsafe paths and inherit broad permissions
+### [x] H7b — Audit artifacts follow unsafe paths and inherit broad permissions
 
 - **Finding:** audit log, rotation, and lock-file creation rely on ordinary
   `OpenOptions`/`create_dir_all`, allowing broad modes and symlink-following on
@@ -208,11 +208,12 @@ the project Definition of Done in `~/.agents/ENGINEERING_GATES.md` is satisfied.
   reason; threat-model/config/public docs match ADR-016. No new risk
   level, script-file inspection, filesystem `stat()` on the hot path, or package
   runner expansion is introduced.
-- **Status:** **Partial** — ADR-016 iterations 1–3 landed and were verified in
-  `8dd5392`; degradation UX/fail-closed behavior and public-doc alignment remain.
+- **Status:** **Partial** — iterations 4–5 are implemented and locally verified;
+  the checkbox remains open until all required PR CI contexts pass.
 - **Traceability:** [plan](docs/plans/2026-07-09-h9-effect-opaque-recovery-backstop.md);
   [ADR-016](docs/adr/adr-016-effect-opaque-execution-uses-recovery-backstops.md);
-  commit `8dd5392`.
+  iterations 1–3 commit `8dd5392`; [Shell tests](tests/recovery_degradation.rs);
+  [Watch tests](tests/watch_mode.rs); [docs tests](tests/contracts_docs.rs).
 
 ---
 

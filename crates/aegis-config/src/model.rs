@@ -294,26 +294,26 @@ pub struct AegisConfig {
     pub(crate) audit_retention_files_source: Option<ConfigSourceLayer>,
     /// Maximum risk level the allow-list may auto-approve in Protect/Strict mode.
     pub allowlist_override_level: AllowlistOverrideLevel,
-    /// Controls which snapshot plugins run before dangerous commands.
+    /// Controls which Snapshot plugins run for planned recovery.
     pub snapshot_policy: SnapshotPolicy,
-    /// Enable Git snapshots before dangerous commands.
+    /// Enable Git when a command's Snapshot plan requests it.
     pub auto_snapshot_git: bool,
-    /// Enable Docker container snapshots before dangerous commands.
+    /// Enable Docker when a command's Snapshot plan requests it.
     pub auto_snapshot_docker: bool,
-    /// Enable PostgreSQL snapshots before dangerous commands.
+    /// Enable PostgreSQL when a command's Snapshot plan requests it.
     pub auto_snapshot_postgres: bool,
     /// PostgreSQL connection details used when snapshotting is enabled.
     pub postgres_snapshot: PostgresSnapshotConfig,
-    /// Enable MySQL snapshots before dangerous commands.
+    /// Enable MySQL when a command's Snapshot plan requests it.
     pub auto_snapshot_mysql: bool,
     /// MySQL connection details used when snapshotting is enabled.
     pub mysql_snapshot: MysqlSnapshotConfig,
-    /// Enable Supabase snapshots before dangerous commands.
+    /// Enable Supabase when a command's Snapshot plan requests it.
     pub auto_snapshot_supabase: bool,
     /// Supabase snapshot provider settings used when snapshotting is enabled.
     /// Layered config replaces this provider config as a whole.
     pub supabase_snapshot: SupabaseSnapshotConfig,
-    /// Enable SQLite snapshots before dangerous commands.
+    /// Enable SQLite when a command's Snapshot plan requests it.
     pub auto_snapshot_sqlite: bool,
     /// Path to a SQLite database file, relative to the current working
     /// directory or absolute.

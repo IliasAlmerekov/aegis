@@ -289,16 +289,133 @@ fn effect_opaque_recovery_respects_snapshot_policy_none_opt_out() {
 }
 
 #[test]
-fn effect_opaque_recovery_requires_applicable_plugins() {
-    // No applicable snapshot plugin means no recovery is possible, so the
-    // engine must not request a snapshot it cannot create (avoids a
-    // fail-closed loop when the working tree has no snapshot backend).
+fn effect_opaque_recovery_remains_required_without_applicable_plugins() {
     let decision = evaluate_effect_opaque(RiskLevel::Safe, SnapshotPolicy::Full, &[]);
+    assert!(decision.snapshots_required);
+}
+#[test]
+fn strict_effect_opaque_recovery_remains_required_without_applicable_plugins() {
+    let assessment = Assessment {
+        risk: RiskLevel::Safe,
+        effect_opaque: true,
+        matched: Vec::new(),
+        highlight_ranges: Vec::new(),
+        command: CommandParser::parse("sh ./cleanup.sh"),
+    };
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Strict,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Block,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Full,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
 
-    assert!(
-        !decision.snapshots_required,
-        "effect-opaque recovery must not fire without an applicable plugin"
-    );
+    assert!(decision.snapshots_required);
+}
+#[test]
+fn audit_policy_rule_allow_does_not_reactivate_effect_opaque_recovery() {
+    let assessment = Assessment {
+        risk: RiskLevel::Safe,
+        effect_opaque: true,
+        matched: Vec::new(),
+        highlight_ranges: Vec::new(),
+        command: CommandParser::parse("sh ./cleanup.sh"),
+    };
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Audit,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Full,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &["git"],
+        },
+        rules: PolicyRulesResult {
+            matched: true,
+            decision: Some(aegis_types::PolicyRuleDecision::Allow),
+            justification: None,
+        },
+    });
+
+    assert!(!decision.snapshots_required);
+}
+#[test]
+fn policy_rule_allow_cannot_waive_effect_opaque_recovery() {
+    let assessment = Assessment {
+        risk: RiskLevel::Safe,
+        effect_opaque: true,
+        matched: Vec::new(),
+        highlight_ranges: Vec::new(),
+        command: CommandParser::parse("sh ./cleanup.sh"),
+    };
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult {
+            matched: true,
+            decision: Some(aegis_types::PolicyRuleDecision::Allow),
+            justification: None,
+        },
+    });
+
+    assert!(decision.snapshots_required);
+}
+#[test]
+fn protect_warn_allowlist_cannot_waive_effect_opaque_recovery() {
+    let assessment = Assessment {
+        risk: RiskLevel::Warn,
+        effect_opaque: true,
+        matched: Vec::new(),
+        highlight_ranges: Vec::new(),
+        command: CommandParser::parse("sh ./cleanup.sh"),
+    };
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: true },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert!(decision.snapshots_required);
 }
 
 #[test]
