@@ -62,7 +62,6 @@ fn run_safe_command(home: &Path, workspace: &Path, command: &str) -> Output {
         .current_dir(workspace)
         .args(["-c", command])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .output()
         .unwrap()
 }
@@ -122,8 +121,9 @@ fn concurrent_writers_do_not_corrupt_audit_log() {
         let output = handle.join().unwrap();
         assert!(
             output.status.success(),
-            "writer failed with status {:?}",
-            output.status.code()
+            "writer failed with status {:?}: stderr=\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 

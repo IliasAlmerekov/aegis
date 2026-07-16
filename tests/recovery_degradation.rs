@@ -1,7 +1,10 @@
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -26,6 +29,8 @@ fn single_quote(value: &str) -> String {
 }
 
 fn interactive_shell_output(home: &Path, cwd: &Path, response: &[u8]) -> Output {
+    const PROMPT: &[u8] = b"Run once without recovery?";
+
     let mut command = Command::new("script");
     command
         .env("AEGIS_REAL_SHELL", "/bin/sh")
@@ -54,8 +59,65 @@ fn interactive_shell_output(home: &Path, cwd: &Path, response: &[u8]) -> Output 
         .args(["-c", "sh ./run.sh"]);
 
     let mut child = command.spawn().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (prompt_sender, prompt_receiver) = mpsc::channel();
+    let stdout_reader = capture_until_prompt(stdout, PROMPT, prompt_sender.clone());
+    let stderr_reader = capture_until_prompt(stderr, PROMPT, prompt_sender);
+
+    if prompt_receiver
+        .recv_timeout(Duration::from_secs(10))
+        .is_err()
+    {
+        let _ = child.kill();
+        let status = child.wait().unwrap();
+        let stdout = stdout_reader.join().unwrap();
+        let stderr = stderr_reader.join().unwrap();
+        panic!(
+            "recovery prompt was not observed (status {:?}): stdout=\n{}\nstderr=\n{}",
+            status.code(),
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+    }
+
     child.stdin.as_mut().unwrap().write_all(response).unwrap();
-    child.wait_with_output().unwrap()
+    drop(child.stdin.take());
+    let status = child.wait().unwrap();
+    Output {
+        status,
+        stdout: stdout_reader.join().unwrap(),
+        stderr: stderr_reader.join().unwrap(),
+    }
+}
+
+fn capture_until_prompt<R>(
+    mut reader: R,
+    prompt: &'static [u8],
+    prompt_sender: mpsc::Sender<()>,
+) -> thread::JoinHandle<Vec<u8>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        let mut prompt_reported = false;
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(length) => {
+                    output.extend_from_slice(&buffer[..length]);
+                    if !prompt_reported && output.windows(prompt.len()).any(|part| part == prompt) {
+                        prompt_reported = true;
+                        let _ = prompt_sender.send(());
+                    }
+                }
+                Err(error) => panic!("failed to read PTY transcript: {error}"),
+            }
+        }
+        output
+    })
 }
 
 fn read_single_audit_entry(home: &Path) -> Value {
@@ -105,7 +167,13 @@ fn noninteractive_required_recovery_degradation_denies_before_child_execution() 
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(!marker.exists(), "degraded command must not execute");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("No required Snapshot was created"));
@@ -171,7 +239,13 @@ fn interactive_recovery_run_once_executes_and_records_human_approval() {
 
     let output = interactive_shell_output(home.path(), workspace.path(), b"r\n");
 
-    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout=\n{}\nstderr=\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(marker.exists());
     let entry = read_single_audit_entry(home.path());
     assert_eq!(entry["decision"], "Approved");

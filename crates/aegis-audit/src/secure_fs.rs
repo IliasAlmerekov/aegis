@@ -15,8 +15,6 @@ pub(crate) fn create_parent_directories(path: &Path) -> Result<()> {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
-
         match fs::symlink_metadata(parent) {
             Ok(metadata) => {
                 validate_parent(parent, &metadata)?;
@@ -29,29 +27,50 @@ pub(crate) fn create_parent_directories(path: &Path) -> Result<()> {
         let mut missing = missing_parent_components(parent)?;
         missing.reverse();
         for directory in missing {
-            let mut builder = fs::DirBuilder::new();
-            builder.mode(0o700);
-            builder.create(&directory)?;
-            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
-                .map_err(|error| insecure(&directory, &error.to_string()))?;
-            let metadata = fs::symlink_metadata(&directory)
-                .map_err(|error| insecure(&directory, &error.to_string()))?;
-            validate_parent(&directory, &metadata)?;
-            let mode = metadata.permissions().mode() & 0o777;
-            if metadata.uid() != effective_uid() || mode != 0o700 {
-                return Err(insecure(
-                    &directory,
-                    &format!(
-                        "created audit directory is not owner-only (uid {}, mode {mode:04o})",
-                        metadata.uid()
-                    ),
-                ));
-            }
+            create_missing_directory(&directory)?;
         }
     }
 
     #[cfg(not(unix))]
     fs::create_dir_all(parent)?;
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_missing_directory(directory: &Path) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700);
+    let created = match builder.create(directory) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => return Err(AuditError::Io(error)),
+    };
+
+    let metadata =
+        fs::symlink_metadata(directory).map_err(|error| insecure(directory, &error.to_string()))?;
+    validate_parent(directory, &metadata)?;
+
+    if created {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|error| insecure(directory, &error.to_string()))?;
+    }
+
+    let metadata =
+        fs::symlink_metadata(directory).map_err(|error| insecure(directory, &error.to_string()))?;
+    validate_parent(directory, &metadata)?;
+    let mode = metadata.permissions().mode() & 0o777;
+    if metadata.uid() != effective_uid() || mode != 0o700 {
+        return Err(insecure(
+            directory,
+            &format!(
+                "audit directory is not owner-only (uid {}, mode {mode:04o})",
+                metadata.uid()
+            ),
+        ));
+    }
 
     Ok(())
 }
@@ -293,6 +312,34 @@ fn insecure(path: &Path, detail: &str) -> AuditError {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concurrent_directory_creation_accepts_an_existing_safe_directory() {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+        let temporary = tempfile::TempDir::new().unwrap();
+        let directory = temporary.path().join("audit");
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+
+        create_missing_directory(&directory).unwrap();
+    }
+
+    #[test]
+    fn concurrent_directory_creation_rejects_an_existing_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::TempDir::new().unwrap();
+        let target = temporary.path().join("target");
+        let directory = temporary.path().join("audit");
+        fs::create_dir(&target).unwrap();
+        symlink(&target, &directory).unwrap();
+
+        let error = create_missing_directory(&directory).unwrap_err();
+        assert!(error.to_string().contains("symlink"));
+    }
 
     #[test]
     fn metadata_policy_rejects_another_owner_even_for_root() {

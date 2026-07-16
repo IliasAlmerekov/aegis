@@ -11,6 +11,10 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Fixed
+
+- Audit initialization now tolerates another same-user process winning creation of an owner-only Audit directory while still rejecting symlinks, non-directories, wrong owners, and non-`0700` modes; the cross-platform Recovery PTY integration waits for the visible prompt before sending its one-time response, removing the macOS BSD `script` input race (ADR-016, ADR-020, H9).
+
 ### Changed
 
 - Release publication now pins the Node.js 24-native `actions/download-artifact` v8.0.1 and `softprops/action-gh-release` v3.0.2 by immutable SHA, removing the Node.js 20 deprecation annotation from future tag workflows.
