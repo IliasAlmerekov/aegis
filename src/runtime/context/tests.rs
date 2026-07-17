@@ -382,6 +382,7 @@ fn append_audit_entry_enriches_explanation_with_runtime_outcome() {
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: vec![ExplainedPatternMatch {
                 id: "FS-001".to_string(),
                 risk: RiskLevel::Danger,
@@ -457,6 +458,7 @@ fn append_audit_entry_preserves_allowlist_context_fields() {
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: vec![ExplainedPatternMatch {
                 id: "FS-001".to_string(),
                 risk: RiskLevel::Danger,
@@ -522,6 +524,7 @@ fn build_audit_entry_records_effect_opaque_and_backstop_state_from_runtime_facts
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: Vec::new(),
         },
         policy: PolicyExplanation {
@@ -594,6 +597,7 @@ fn build_audit_entry_records_plain_safe_command_without_backstops() {
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: Vec::new(),
         },
         policy: PolicyExplanation {

@@ -9,6 +9,7 @@
 //! (the scanner, parser, policy engine, audit logger) lives in the crates that
 //! depend on this one.
 
+mod analysis;
 mod assessment;
 mod command;
 mod decision;
@@ -19,7 +20,12 @@ mod risk;
 mod sandbox;
 mod snapshot;
 
-pub use assessment::{Assessment, DecisionSource, HighlightRange, MatchResult};
+pub use analysis::{
+    AnalysisProvenance, AnalysisStatus, ByteSpan, DegradationReason, DetectedOperation,
+    DetectionMechanism, DetectionSource, MatchEvidence, OperandCertainty, OperationKind,
+    OperationModifiers, SourceOrigin, TargetAnalysis,
+};
+pub use assessment::{Assessment, AssessmentBasis, DecisionSource, HighlightRange, MatchResult};
 pub use command::{InlineScript, ParsedCommand};
 pub use decision::Decision;
 pub use pattern::{Category, Pattern, PatternSource, PatternToken, PrefixPattern};

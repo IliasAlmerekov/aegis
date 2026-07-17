@@ -35,6 +35,7 @@ pub fn build_explanation_from_plan(
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: assessment
                 .matched
                 .iter()
@@ -153,7 +154,9 @@ mod tests {
     use crate::interceptor::RiskLevel;
     use crate::interceptor::parser::Parser;
     use crate::interceptor::patterns::{Category, Pattern, PatternSource};
-    use crate::interceptor::scanner::{DecisionSource, MatchResult};
+    use crate::interceptor::scanner::{
+        AssessmentBasis, DecisionSource, DetectionSource, MatchEvidence, MatchResult,
+    };
     use crate::planning::CwdState;
     use crate::snapshot::SnapshotRecord;
 
@@ -169,6 +172,9 @@ mod tests {
             scan: ScanExplanation {
                 highest_risk: RiskLevel::Warn,
                 decision_source: DecisionSource::BuiltinPattern,
+                basis: AssessmentBasis::Decisive {
+                    match_ids: vec!["GIT-001".to_string()],
+                },
                 matched_patterns: vec![ExplainedPatternMatch {
                     id: "GIT-001".to_string(),
                     risk: RiskLevel::Warn,
@@ -215,6 +221,9 @@ mod tests {
                     }),
                     matched_text: "rm -rf".to_string(),
                     highlight_range: None,
+                    evidence: MatchEvidence::RegexPattern {
+                        source: DetectionSource::Builtin,
+                    },
                 },
                 MatchResult {
                     pattern: Arc::new(Pattern {
@@ -229,6 +238,9 @@ mod tests {
                     }),
                     matched_text: "curl | sh".to_string(),
                     highlight_range: None,
+                    evidence: MatchEvidence::RegexPattern {
+                        source: DetectionSource::Custom,
+                    },
                 },
             ],
             highlight_ranges: vec![],
@@ -262,6 +274,18 @@ mod tests {
             explanation.scan.decision_source,
             DecisionSource::CustomPattern
         );
+        // Slice F (narrow): the richer `Assessment basis` is carried alongside
+        // the v1 `decision_source` projection. Only FS-001 is at the max
+        // (Danger) risk, so the basis retains exactly that one decisive ID;
+        // the lower-risk USR-001 match is excluded. The v1 projection
+        // (CustomPattern, because USR-001 is custom) is unchanged.
+        assert_eq!(explanation.scan.basis, assessment.basis(),);
+        match &assessment.basis() {
+            AssessmentBasis::Decisive { match_ids } => {
+                assert_eq!(match_ids, &vec!["FS-001".to_string()]);
+            }
+            other => panic!("expected Decisive basis, got {other:?}"),
+        }
         assert_eq!(explanation.scan.matched_patterns[0].id, "FS-001");
         assert_eq!(
             explanation.scan.matched_patterns[1].matched_text,
@@ -331,6 +355,9 @@ mod tests {
             scan: ScanExplanation {
                 highest_risk: RiskLevel::Warn,
                 decision_source: DecisionSource::BuiltinPattern,
+                basis: AssessmentBasis::Decisive {
+                    match_ids: vec!["PKG-001".to_string()],
+                },
                 matched_patterns: vec![ExplainedPatternMatch {
                     id: "PKG-001".to_string(),
                     risk: RiskLevel::Warn,

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::nested::RecursiveScanLimit;
 use crate::patterns::{Category, Pattern, PatternSource};
 use aegis_parser::ParsedCommand;
-use aegis_types::RiskLevel;
+use aegis_types::{DetectionSource, MatchEvidence, RiskLevel};
 
 pub use aegis_types::{Assessment, DecisionSource, MatchResult};
 
@@ -230,6 +230,12 @@ fn uncertain_match(
         }),
         matched_text: String::new(),
         highlight_range: None,
+        // The synthetic scan-limit marker is `Pattern`-family (regex-shaped),
+        // not a `Token-prefix rule` or Language-aware rule, so it maps to the
+        // `RegexPattern` mechanism with a built-in source.
+        evidence: MatchEvidence::RegexPattern {
+            source: DetectionSource::Builtin,
+        },
     }
 }
 

@@ -5,6 +5,6 @@
 //! remain stable while the workspace split (Phase 4) is in progress.
 
 pub use aegis_scanner::{
-    Assessment, DecisionSource, HighlightRange, MatchResult, PatternToken, PrefixPattern,
-    PrefixRule, Scanner,
+    Assessment, AssessmentBasis, DecisionSource, DetectionMechanism, DetectionSource,
+    HighlightRange, MatchEvidence, MatchResult, PatternToken, PrefixPattern, PrefixRule, Scanner,
 };

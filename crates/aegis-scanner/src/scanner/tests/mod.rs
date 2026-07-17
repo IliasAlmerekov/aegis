@@ -3,7 +3,7 @@ pub use std::sync::Arc;
 pub use crate::patterns::{Category, Pattern, PatternSet, PatternSource};
 pub use crate::scanner::*;
 pub use aegis_parser::{Parser, top_level_pipelines};
-pub use aegis_types::RiskLevel;
+pub use aegis_types::{DetectionMechanism, DetectionSource, MatchEvidence, RiskLevel};
 
 #[cfg(test)]
 fn scanner() -> Scanner {
@@ -25,6 +25,9 @@ fn test_match_result(matched_text: &str, start: usize, end: usize) -> MatchResul
         }),
         matched_text: matched_text.to_string(),
         highlight_range: Some(HighlightRange { start, end }),
+        evidence: MatchEvidence::RegexPattern {
+            source: DetectionSource::Builtin,
+        },
     }
 }
 
@@ -57,7 +60,9 @@ fn assert_assessment_matches_pattern(cmd: &str, expected_risk: RiskLevel, expect
 
 mod advanced;
 mod basic;
+mod compatibility;
 mod edge_cases;
 mod effect_opaque;
 mod h3_followups;
 mod h3_gaps;
+mod match_evidence;
