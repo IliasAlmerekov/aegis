@@ -36,6 +36,32 @@ These items are launch blockers for the current public line:
 - [x] Threat-model and limitation language is visible, honest, and easy to
       find.
 
+### Language-aware analysis 1.0 gate (ADR-022)
+
+These items remain unchecked until runtime implementation and qualification are
+verified; the ADR and implementation plan alone do not satisfy the gate.
+
+- [ ] The additive analysis foundation preserves existing Scanner results,
+      starts no worker on the no-source safe path, and keeps that path under
+      2 ms.
+- [ ] The ephemeral parsing worker, source reader, recursive queue, typed
+      degradation, Policy/TUI/Watch/Hook/CI behavior, and Audit v1/v2
+      compatibility pass their production qualification matrix.
+- [ ] Python is production-qualified and included in every official release
+      target.
+- [ ] JavaScript is production-qualified and included in every official release
+      target.
+- [ ] TypeScript is production-qualified and included in every official release
+      target.
+- [ ] Shell/Bash is production-qualified and included in every official release
+      target.
+- [ ] The pinned Tree-sitter runtime and grammar manifest pass license,
+      supply-chain, ABI, corpus, fuzz, binary-size, memory, latency, and all-four-
+      target release gates.
+- [ ] Documentation states the residual dynamic-code, dependency, encoding,
+      TOCTOU, privacy, and unsupported-language limits without implying program
+      verification or sandbox guarantees.
+
 ## GitHub Release asset validation
 
 - [ ] `.github/workflows/release.yml` includes all four supported release assets:

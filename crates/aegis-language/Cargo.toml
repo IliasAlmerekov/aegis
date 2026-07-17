@@ -1,0 +1,36 @@
+[package]
+name = "aegis-language"
+version = "0.6.2"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT"
+repository = "https://github.com/IliasAlmerekov/aegis-shellguard"
+homepage = "https://github.com/IliasAlmerekov/aegis-shellguard"
+documentation = "https://docs.rs/aegis-language"
+description = "Language-aware analysis foundation for Aegis — isolated Tree-sitter worker boundary, grammar manifest, and detected-operation adapters (ADR-022)."
+
+[dependencies]
+thiserror = "1"
+tree-sitter = "0.26.11"
+tree-sitter-bash = "0.25.1"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# Iteration 0 RED #3: a benchmark harness that fails if a no-source command
+# starts the language worker. The bench asserts Outcome::NotStarted inside its
+# iteration body, so a regression that makes a no-source command start the
+# worker panics the bench (non-zero exit) and fails the CI perf job.
+[[bench]]
+name = "no_source_bench"
+harness = false
+
+# Iteration 0 GREEN measurement: parse latency per foundation grammar. A
+# measurement (not asserting) bench — parses one representative inline-source
+# snippet per grammar so the recorded latency reflects the slow-path cost.
+[[bench]]
+name = "parse_latency_bench"
+harness = false

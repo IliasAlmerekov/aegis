@@ -541,6 +541,52 @@ applied for every executed command.
 
 ---
 
+## Pre-1.0 Milestone L1 — Language-aware analysis
+
+**Goal:** add a bounded, production-qualified semantic slow path for source that
+agents pass to interpreters, without replacing the shell Scanner or regressing
+the no-source safe-command hot path.
+
+Architecture and trade-offs are fixed by
+[`ADR-022`](docs/adr/adr-022-language-aware-analysis-is-an-additive-isolated-stage.md).
+The test-first delivery sequence is in
+[`docs/plans/2026-07-16-language-aware-analysis.md`](docs/plans/2026-07-16-language-aware-analysis.md).
+
+### L1.1 Shared foundation
+
+- [ ] Common Detection rule, typed Match evidence, Detected operation,
+      Assessment basis, Analysis provenance, and typed degradation model.
+- [ ] Ephemeral self-spawned parsing worker with a versioned, bounded pipe
+      protocol and no worker filesystem/subprocess access.
+- [ ] Async catch-only Script source inspection, heredoc/stdin routing, bounded
+      cwd tracking, and recursive cross-language target queue.
+- [ ] Audit schema v2 compatibility, consolidated confirmation UX, Policy/CI
+      integration, config ratchets, privacy tests, fuzzing, and benchmarks.
+- [ ] Pinned Tree-sitter runtime and grammar manifest pass license,
+      supply-chain, ABI, corpus, and all-target release qualification.
+
+### L1.2 Pre-1.0 adapters
+
+- [ ] Python is production-qualified and default-on.
+- [ ] JavaScript is production-qualified and default-on.
+- [ ] TypeScript is production-qualified and default-on.
+- [ ] Shell/Bash is production-qualified and default-on.
+
+### L1.3 Staged 1.x coverage
+
+Go, PHP, Ruby, PowerShell, Perl, and Lua remain explicit 1.x adapters. Each stays
+unsupported until it independently passes the same grammar, semantics, worker,
+privacy, fuzz, benchmark, audit, interface, and four-target release gates. There
+is no big-bang enablement and no runtime grammar download fallback.
+
+**Done when:** the shared foundation and all four pre-1.0 adapters pass the
+qualification matrix, official binaries contain the same pinned grammar set on
+both Linux musl and both macOS architectures, the no-source safe path remains
+under 2 ms without starting a worker, and the L1 section in
+`docs/release-readiness.md` is complete.
+
+---
+
 ## Phase 7 — Release Readiness
 
 **Goal:** complete the launch checklist in `docs/release-readiness.md` and ship
@@ -571,4 +617,5 @@ a 1.0 release.
 | 4     | Multi-Crate Workspace | 9 core crates (11 total w/ starlark+sandbox); DAG   |
 | 5     | Policy DSL            | Typed TOML rules + optional Starlark               |
 | 6     | Sandboxing Layer      | bwrap/Landlock/Seatbelt on approved commands       |
+| L1    | Language-aware analysis | Foundation + Python, JavaScript, TypeScript, Bash |
 | 7     | Release Readiness     | 1.0 ships                                          |

@@ -19,11 +19,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+mod common;
+use common::{assert_no_dep, repo_root};
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn read_file(relative: &str) -> String {
     fs::read_to_string(repo_root().join(relative))
@@ -482,35 +481,9 @@ fn public_api_surface_is_stable() {
 }
 
 // ── Workspace crate dependency DAG ───────────────────────────────────────────
-
-/// Reads a workspace member's `Cargo.toml` and returns its `[dependencies]`
-/// section as a single string (lowercased) for substring checks.
-fn crate_deps_section(crate_name: &str) -> String {
-    let path = repo_root()
-        .join("crates")
-        .join(crate_name)
-        .join("Cargo.toml");
-    let content = fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
-    // Extract from [dependencies] onward so we don't accidentally match the
-    // [package] description field.
-    let lower = content.to_lowercase();
-    if let Some(start) = lower.find("[dependencies]") {
-        lower[start..].to_string()
-    } else {
-        String::new()
-    }
-}
-
-/// Asserts that a workspace crate does NOT list a forbidden dependency.
-fn assert_no_dep(crate_name: &str, forbidden: &str) {
-    let deps = crate_deps_section(crate_name);
-    assert!(
-        !deps.contains(&forbidden.to_lowercase()),
-        "architecture boundary violated: `{crate_name}` must not depend on `{forbidden}` \
-         (dependency DAG enforced by tests/architecture_boundaries.rs)"
-    );
-}
+//
+// `assert_no_dep` / `crate_deps_section` / `repo_root` live in `tests/common`
+// and are shared with `tests/aegis_language_boundary.rs`.
 
 #[test]
 fn aegis_parser_must_not_depend_on_aegis_audit() {

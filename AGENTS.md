@@ -143,6 +143,8 @@ Never add a `Co-Authored-By` trailer or other attribution footer.
 - Do not put business logic in `main.rs`.
 - Do not use `regex` in the scanner's quick first pass — Aho-Corasick only.
 - Do not block the main thread during subprocess calls — use `tokio`.
-- Do not add dependencies that require a C build step.
+- Do not add dependencies that require a C build step, except for the pinned
+  Tree-sitter runtime and production-qualified generated grammars under ADR-022.
+  This is a narrow exception, not permission for general native dependencies.
 - Do not use `once_cell` — use `std::sync::LazyLock` (stable since Rust 1.80).
 - Do not `.unwrap()`/`.expect()` on a production path — see `CONVENTION.md`.

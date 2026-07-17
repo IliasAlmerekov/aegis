@@ -27,6 +27,7 @@ env:
   RUST_TOOLCHAIN: 1.94.0
   CARGO_AUDIT_VERSION: 0.22.1
   CARGO_DENY_VERSION: 0.19.0
+  CROSS_VERSION: 0.2.5
   CARGO_FUZZ_VERSION: 0.13.1
 
 jobs:
@@ -160,6 +161,66 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # ADR-022 §8 / Iteration 0 RED #2: the qualified grammar set must be
+  # identical — and present — across the four official release targets. This
+  # job compiles `aegis-language`'s *tests* for each target (`--tests`, not just
+  # the crate): the test suite pulls in `grammar_smoke`, which references all
+  # four foundation grammars, so a grammar that fails to link on a target is
+  # caught here. It compiles tests rather than the release binary because the
+  # shipping binary does not depend on the language crate yet (runtime wiring
+  # lands in Iteration 3+); once it does, this job should build the full release
+  # binary for each target. Cross targets (musl) cannot *execute* the tests, so
+  # this proves link-presence on all four targets; runtime parse-presence stays
+  # host-only (proven by `grammar_smoke` in the quality job). Same heavy-job
+  # gate as build-macos: macOS runners and cross toolchains are expensive, so
+  # this only runs on PRs targeting main, the weekly schedule, and manual runs.
+  # The cross approach mirrors release.yml (`cross` for musl, native `cargo
+  # build` on Intel/ARM macOS).
+  cross-matrix:
+    name: Cross build (${{ matrix.target }})
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+          # Pinned rather than macos-latest so a runner-image bump never
+          # silently changes what a release is built on (see release.yml).
+          - target: x86_64-apple-darwin
+            os: macos-26-intel
+            use_cross: false
+          - target: aarch64-apple-darwin
+            os: macos-26
+            use_cross: false
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.target }}
+          cache-key-prefix: cross-${{ matrix.target }}-
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --version ${{ env.CROSS_VERSION }} --locked
+
+      - name: Cross build aegis-language tests (musl, link-presence)
+        if: matrix.use_cross
+        run: cross build --tests --target ${{ matrix.target }} -p aegis-language
+
+      - name: Native build aegis-language tests (macOS, link-presence)
+        if: "!matrix.use_cross"
+        run: cargo build --tests --target ${{ matrix.target }} -p aegis-language
+
   # Heavy/slow job (bench + criterion). Full-fidelity run is only needed
   # before it lands on main or on the weekly schedule — same gate as
   # build-macos above.
@@ -179,6 +240,22 @@ jobs:
 
       - name: cargo bench --bench scanner_bench
         run: cargo bench --bench scanner_bench
+
+      # ADR-022 Iteration 0 RED #3: a no-source command must not start the
+      # language worker or perform filesystem metadata calls. The bench asserts
+      # Outcome::NotStarted inside its iteration body, so a regression that
+      # makes a no-source command start the worker panics and fails this job.
+      # The contract is also pinned by a fast `tests/no_source.rs` test in the
+      # quality job; this harness keeps the no-source path on the perf wall.
+      - name: cargo bench --bench no_source_bench -p aegis-language
+        run: cargo bench --bench no_source_bench -p aegis-language
+
+      # ADR-022 Iteration 0 GREEN measurement: parse latency per foundation
+      # grammar. A measurement (not asserting) bench — parses one
+      # representative inline-source snippet per grammar so the recorded latency
+      # reflects the slow-path cost an inline interpreter target would pay.
+      - name: cargo bench --bench parse_latency_bench -p aegis-language
+        run: cargo bench --bench parse_latency_bench -p aegis-language
 
       - name: Evaluate benchmark policy
         run: |
