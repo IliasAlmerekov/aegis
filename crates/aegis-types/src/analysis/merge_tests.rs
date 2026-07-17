@@ -173,6 +173,29 @@ fn merge_dedups_language_matches_sharing_a_baseline_id() {
 }
 
 #[test]
+fn merge_id_collision_still_raises_risk_to_the_language_match() {
+    // Asymmetric direction of the dedup: a language Match sharing a baseline id
+    // carries a HIGHER risk than the baseline Match. The duplicate id must not
+    // appear twice in `matched` (dedup), but its risk must still raise the
+    // merged `RiskLevel` (ADR-022 §1 "later analysis may raise RiskLevel"; the
+    // merge doc pins risk as the max of baseline and every language-match risk).
+    let b = baseline(
+        RiskLevel::Warn,
+        vec![baseline_match("FS-001", RiskLevel::Warn)],
+    );
+    let l = language(
+        AnalysisStatus::Complete,
+        vec![language_match("FS-001", RiskLevel::Danger)],
+        vec![],
+    );
+    let merged = merge_analysis(&b, &l);
+    // Dedup holds: the id appears exactly once.
+    assert_eq!(ids(&merged), vec!["FS-001".to_string()]);
+    // …but the higher-risk language detection is not lost.
+    assert_eq!(merged.risk, RiskLevel::Danger);
+}
+
+#[test]
 fn merge_dedup_never_loses_a_higher_language_risk() {
     // Asymmetric direction of the id-collision case above: baseline Warn +
     // a same-id language Match at Danger. The dedup still retains only the
