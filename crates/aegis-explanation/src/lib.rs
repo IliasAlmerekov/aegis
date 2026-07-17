@@ -4,7 +4,7 @@ pub use aegis_policy::{BlockReason, ExecutionTransport, PolicyAction, PolicyRati
 
 use aegis_config::ConfigSourceLayer;
 use aegis_config::Mode;
-use aegis_types::{DecisionSource, RiskLevel};
+use aegis_types::{AssessmentBasis, DecisionSource, RiskLevel};
 use serde::{Deserialize, Serialize};
 
 /// Descriptive explanation assembled from existing planning and runtime facts.
@@ -25,8 +25,18 @@ pub struct CommandExplanation {
 pub struct ScanExplanation {
     /// Highest risk observed in the scanner assessment.
     pub highest_risk: RiskLevel,
-    /// High-level source of the assessment.
+    /// High-level source of the assessment — the v1 compatibility projection.
+    /// Retained so existing explanation/audit consumers keep their field; the
+    /// richer successor is `basis` (ADR-022 §4, §10).
     pub decision_source: DecisionSource,
+    /// What produced the decision, expressed as the decisive `Match`es — every
+    /// `Match` at the assessment's maximum `RiskLevel`, or `Fallback` when
+    /// nothing matched (`AssessmentBasis`, ADR-022 §4). Carried in-memory
+    /// alongside `decision_source`; `#[serde(skip)]` keeps it out of the v1
+    /// audit JSONL so existing logs deserialize byte-for-byte. Iteration 2
+    /// (Audit v2) promotes this to a persisted, v2-compat field.
+    #[serde(skip)]
+    pub basis: AssessmentBasis,
     /// Pattern matches preserved for explanation output.
     pub matched_patterns: Vec<ExplainedPatternMatch>,
 }

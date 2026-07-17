@@ -44,6 +44,51 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - Parse-latency benchmark: `benches/parse_latency_bench.rs` measures per-grammar
   parse latency on one representative inline-source snippet per foundation
   grammar (ADR-022 Iteration 0 GREEN measurement), wired into the CI perf job.
+- Language-aware analysis common Detection- rule + evidence data model in
+  `aegis-types` (new `analysis` module): `DetectionMechanism`
+  (`RegexPattern`/`TokenPrefixRule`/`LanguageRule`), `DetectionSource`,
+  `OperandCertainty` (`Known`<`Partial`<`Dynamic`, ordered), `OperationKind`,
+  `OperationModifiers`, `DetectedOperation`, `SourceOrigin`, `ByteSpan`,
+  `AnalysisProvenance` (metadata only — no source body/snippet/AST/value, pinned
+  by a serialization-boundary privacy test), `AnalysisStatus`
+  (`NotApplicable`<`Complete`<`Degraded`, ordered), `DegradationReason` (the
+  seven ADR-022 §4 buckets), `TargetAnalysis`, and `MatchEvidence` (type-state
+  enum: variant encodes mechanism, `LanguageRule` always carries operation +
+  provenance). Zero-I/O, no Tree-sitter, no parser-crate dependency (ADR-022 §4,
+  L1 Iteration 1 RED #1).
+- `Assessment::basis()` returns the new `AssessmentBasis` — every decisive Match
+  at the Assessment's maximum `RiskLevel`, or `Fallback` only when no rule
+  matched (ADR-022 §4). The legacy `Assessment::decision_source()` is retained
+  unchanged for v1 compatibility projection (L1 Iteration 1 RED #2).
+- Scanner compatibility fixtures (`crates/aegis-scanner/src/scanner/tests/
+  compatibility.rs`): hand-verified golden corpus pinning the current
+  `Assessment` contract (risk, key matched pattern ID, `DecisionSource`,
+  `effect_opaque`) across Safe / Danger-regex / Warn-prefix / Block-regex /
+  effect-opaque-Safe / inline-extracted-Danger cases, derived from the built-in
+  pattern definitions as an independent source of truth — a guardrail for the
+  later Pattern→Detection evidence refactor (ADR-022 §4, L1 Iteration 1 RED #4).
+- Every scanner `Match` now carries typed `MatchEvidence` identifying its
+  detection mechanism and source (ADR-022 §4, L1 Iteration 1 Slice D).
+  `MatchResult.evidence` is populated by the scanner at construction —
+  `RegexPattern` for regex `Pattern` and pipeline-semantic matches,
+  `TokenPrefixRule` for `Token-prefix rule` matches — with a new
+  `From<PatternSource> for DetectionSource` mapping the legacy per-pattern
+  source onto the common per-Match source. The field is internal: it is not
+  projected into the v1 JSON `matched_patterns` or audit `MatchedPattern`
+  output, so classifications and public output are byte-for-byte unchanged
+  (pinned by the Slice A compatibility fixtures + `full_pipeline_json`).
+  `aegis-scanner` and the root `interceptor::scanner` re-export the analysis
+  types (`MatchEvidence`, `DetectionMechanism`, `DetectionSource`,
+  `AssessmentBasis`) so consumers reach them through the existing path.
+- `ScanExplanation` (aegis-explanation) now carries `basis: AssessmentBasis`
+  alongside the v1 `decision_source` projection (ADR-022 §4, L1 Iteration 1
+  Slice F-narrow). Populated via `Assessment::basis()` in
+  `build_explanation_from_plan` and the shell-flow explanation builder. The
+  field is `#[serde(skip)]` with `Default for AssessmentBasis = Fallback`, so
+  it is available in memory but NOT persisted into the v1 audit JSONL —
+  existing audit entries deserialize byte-for-byte and the integrity chain is
+  preserved; Iteration 2 (Audit v2) promotes it to a persisted, v2-compat
+  field. The v1 `decision_source` string/label and JSON output are unchanged.
 
 ### Changed
 
@@ -70,6 +115,18 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 - Duplicated boundary-test helpers extracted to `tests/common/mod.rs`, shared
   by `tests/architecture_boundaries.rs` and `tests/aegis_language_boundary.rs`,
   removing the drift risk between the two `assert_no_dep` copies.
+- `CONTEXT.md` gains a `## Language-aware analysis` glossary section for the
+  terms now backed by implemented types (Detection rule, Detection mechanism,
+  Detection source, Match evidence, Detected operation, Operand certainty,
+  Analysis status, Analysis degradation, Degradation reason, Analysis
+  provenance, Source origin, Target analysis, Assessment basis, Decisive
+  Match), and the `Decision source` entry cross-references `Assessment basis`
+  as its successor (ADR-022 §4, L1 Iteration 1 review-fix #1).
+- `AssessmentBasis` derives `schemars::JsonSchema` (consistency with the other
+  audit-persistable analysis types) and shares the `"kind"` serde discriminator
+  tag with `MatchEvidence`, so the two new audit enums land with one
+  convention; the domain terms live in the variant values and the
+  `DetectionMechanism`/`mechanism()` projection (L1 Iteration 1 review-fix #2/#4).
 - The Iteration 0 REVIEW GATE is honestly **open on one item**: `cargo audit`
   (no tree-sitter/criterion advisories), `cargo deny check`, and license review
   pass, and the four release builds are CI-gated, but the grammar security

@@ -531,6 +531,7 @@ fn test_command_explanation(
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: assessment
                 .matched
                 .iter()

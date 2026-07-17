@@ -62,6 +62,9 @@ pub fn explanation_with_match_text(matched_text: &str) -> CommandExplanation {
         scan: ScanExplanation {
             highest_risk: RiskLevel::Danger,
             decision_source: aegis_scanner::DecisionSource::BuiltinPattern,
+            basis: aegis_scanner::AssessmentBasis::Decisive {
+                match_ids: vec!["FS-001".to_string()],
+            },
             matched_patterns: vec![ExplainedPatternMatch {
                 id: "FS-001".to_string(),
                 risk: RiskLevel::Danger,

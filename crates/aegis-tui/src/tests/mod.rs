@@ -14,7 +14,10 @@ use aegis_explanation::{
     ExecutionTransport, PolicyAction, PolicyExplanation, PolicyRationale, ScanExplanation,
 };
 use aegis_parser::Parser;
-use aegis_types::{Assessment, Category, HighlightRange, MatchResult, Pattern, PatternSource};
+use aegis_types::{
+    Assessment, Category, DetectionSource, HighlightRange, MatchEvidence, MatchResult, Pattern,
+    PatternSource,
+};
 use aegis_types::{RiskLevel, SnapshotRecord};
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -39,6 +42,9 @@ pub fn make_match(
         }),
         matched_text: String::new(),
         highlight_range: None,
+        evidence: MatchEvidence::RegexPattern {
+            source: DetectionSource::Builtin,
+        },
     }
 }
 
@@ -63,6 +69,9 @@ pub fn make_match_with_justification(
         }),
         matched_text: String::new(),
         highlight_range: None,
+        evidence: MatchEvidence::RegexPattern {
+            source: DetectionSource::Builtin,
+        },
     }
 }
 
@@ -86,6 +95,9 @@ pub fn make_match_with_text(
         }),
         matched_text: matched_text.to_string(),
         highlight_range: None,
+        evidence: MatchEvidence::RegexPattern {
+            source: DetectionSource::Builtin,
+        },
     }
 }
 
@@ -113,6 +125,9 @@ pub fn make_match_with_text_and_range(
             start,
             end: start + matched_text.len(),
         }),
+        evidence: MatchEvidence::RegexPattern {
+            source: DetectionSource::Builtin,
+        },
     }
 }
 
@@ -123,6 +138,7 @@ pub fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) ->
         highlight_ranges: sorted_highlight_ranges_for_tests(cmd, &matches),
         matched: matches,
         command: Parser::parse(cmd),
+        analysis: None,
     }
 }
 
@@ -136,6 +152,7 @@ pub fn make_explanation(
         scan: ScanExplanation {
             highest_risk: assessment.risk,
             decision_source: assessment.decision_source(),
+            basis: assessment.basis(),
             matched_patterns: Vec::new(),
         },
         policy: PolicyExplanation {

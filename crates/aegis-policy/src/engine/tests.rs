@@ -16,6 +16,21 @@ fn assessment(risk: RiskLevel) -> Assessment {
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("terraform destroy -target=module.prod.api"),
+        analysis: None,
+    }
+}
+
+/// An effect-opaque `sh ./cleanup.sh`-shaped assessment at the given `risk`
+/// (ADR-016). Shared by the effect-opaque recovery tests below, which only
+/// ever vary `risk`.
+fn effect_opaque_assessment(risk: RiskLevel) -> Assessment {
+    Assessment {
+        risk,
+        effect_opaque: true,
+        matched: Vec::new(),
+        highlight_ranges: Vec::new(),
+        command: CommandParser::parse("sh ./cleanup.sh"),
+        analysis: None,
     }
 }
 
@@ -110,13 +125,7 @@ fn audit_mode_opts_out_of_effect_opaque_recovery() {
     // under `Audit`, even with snapshots configured and a plugin available.
     // (Standards #1 still records `effect_opaque=true` on the audit entry; the
     // recovery decision itself is declined here.)
-    let assessment = Assessment {
-        risk: RiskLevel::Safe,
-        effect_opaque: true,
-        matched: Vec::new(),
-        highlight_ranges: Vec::new(),
-        command: CommandParser::parse("sh ./cleanup.sh"),
-    };
+    let assessment = effect_opaque_assessment(RiskLevel::Safe);
     let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Audit,
@@ -232,13 +241,7 @@ fn evaluate_effect_opaque(
     applicable_snapshot_plugins: &[&'static str],
 ) -> PolicyDecision {
     use super::super::types::PolicyRulesResult;
-    let assessment = Assessment {
-        risk,
-        effect_opaque: true,
-        matched: Vec::new(),
-        highlight_ranges: Vec::new(),
-        command: CommandParser::parse("sh ./cleanup.sh"),
-    };
+    let assessment = effect_opaque_assessment(risk);
     evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Protect,
@@ -295,13 +298,7 @@ fn effect_opaque_recovery_remains_required_without_applicable_plugins() {
 }
 #[test]
 fn strict_effect_opaque_recovery_remains_required_without_applicable_plugins() {
-    let assessment = Assessment {
-        risk: RiskLevel::Safe,
-        effect_opaque: true,
-        matched: Vec::new(),
-        highlight_ranges: Vec::new(),
-        command: CommandParser::parse("sh ./cleanup.sh"),
-    };
+    let assessment = effect_opaque_assessment(RiskLevel::Safe);
     let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Strict,
@@ -324,13 +321,7 @@ fn strict_effect_opaque_recovery_remains_required_without_applicable_plugins() {
 }
 #[test]
 fn audit_policy_rule_allow_does_not_reactivate_effect_opaque_recovery() {
-    let assessment = Assessment {
-        risk: RiskLevel::Safe,
-        effect_opaque: true,
-        matched: Vec::new(),
-        highlight_ranges: Vec::new(),
-        command: CommandParser::parse("sh ./cleanup.sh"),
-    };
+    let assessment = effect_opaque_assessment(RiskLevel::Safe);
     let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Audit,
@@ -357,13 +348,7 @@ fn audit_policy_rule_allow_does_not_reactivate_effect_opaque_recovery() {
 }
 #[test]
 fn policy_rule_allow_cannot_waive_effect_opaque_recovery() {
-    let assessment = Assessment {
-        risk: RiskLevel::Safe,
-        effect_opaque: true,
-        matched: Vec::new(),
-        highlight_ranges: Vec::new(),
-        command: CommandParser::parse("sh ./cleanup.sh"),
-    };
+    let assessment = effect_opaque_assessment(RiskLevel::Safe);
     let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Protect,
@@ -390,13 +375,7 @@ fn policy_rule_allow_cannot_waive_effect_opaque_recovery() {
 }
 #[test]
 fn protect_warn_allowlist_cannot_waive_effect_opaque_recovery() {
-    let assessment = Assessment {
-        risk: RiskLevel::Warn,
-        effect_opaque: true,
-        matched: Vec::new(),
-        highlight_ranges: Vec::new(),
-        command: CommandParser::parse("sh ./cleanup.sh"),
-    };
+    let assessment = effect_opaque_assessment(RiskLevel::Warn);
     let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Protect,

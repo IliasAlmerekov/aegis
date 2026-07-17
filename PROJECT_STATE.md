@@ -21,6 +21,117 @@
 
 ---
 
+## Last session (2026-07-17) — L1 Iteration 1 foundation (slices A+B+C)
+
+- **Iteration 1 A+B+C done via TDD; D/E/F deferred to later sessions.** Scope
+  was confirmed with the user up front (A+B+C — compatibility fixtures + new
+  zero-I/O analysis types + `Assessment::basis`; not adapting Pattern-backed
+  Matches to the Detection model and not migrating `DecisionSource` consumers,
+  both of which touch ~6 files and carry the byte-for-byte REVIEW GATE risk).
+  Seams confirmed before any test per the TDD skill.
+- **Slice A (RED #4 — compatibility fixtures):** new
+  `crates/aegis-scanner/src/scanner/tests/compatibility.rs` pins the *current*
+  `Assessment` contract (risk, key matched pattern ID, `DecisionSource`,
+  `effect_opaque`) for a hand-verified 6-case corpus (Safe / Danger-regex /
+  Warn-prefix / Block-regex / effect-opaque-Safe / inline-extracted-Danger).
+  Expected values are derived from `patterns.toml` + `patterns/builtins_a.rs`
+  (independent source of truth), not from running the scanner; all 4 tests
+  green on first run, confirming the hand-derivation. Guardrail for the later
+  Pattern→Detection evidence refactor.
+- **Slice B (RED #1 — new `analysis` module in `aegis-types`):** introduced
+  the common Detection rule + evidence data model in a new
+  `crates/aegis-types/src/analysis.rs`, built in four vertical red-green cycles
+  (leaf enums → `DetectedOperation` → `AnalysisProvenance`/`TargetAnalysis` →
+  `MatchEvidence`): `DetectionMechanism`, `DetectionSource`, `OperandCertainty`
+  (Ord: Known<Partial<Dynamic), `OperationKind`, `OperationModifiers`,
+  `DetectedOperation`, `SourceOrigin`, `ByteSpan`, `AnalysisProvenance`
+  (metadata only — a serialization-boundary privacy test asserts no
+  body/snippet/AST/value/contents keys leak), `AnalysisStatus` (Ord:
+  NotApplicable<Complete<Degraded, so `max` = worst), `DegradationReason` (the
+  seven ADR-022 §4 buckets, non_exhaustive), `TargetAnalysis`, `MatchEvidence`
+  (type-state enum — variant encodes mechanism; `LanguageRule` always carries
+  operation+provenance; impossible states unconstructable) with
+  `mechanism()`/`source()` accessors. 17 module tests. Zero-I/O, deps still only
+  serde/schemars — REVIEW GATE met (no Tree-sitter, no parser-crate arrow).
+- **Slice C (RED #2 — Assessment basis):** `AssessmentBasis` enum
+  (`Fallback` | `Decisive { match_ids }`, serde `tag = "kind"`) + new
+  `Assessment::basis()` returning every decisive Match at the Assessment's max
+  `RiskLevel`, or `Fallback` only when no rule matched. `decision_source()` is
+  **retained unchanged** for v1 compatibility (Slice F migration is deferred, so
+  the Slice A fixtures and all existing `DecisionSource` consumers stay green).
+  6 basis tests, including the property that distinguishes basis from
+  `DecisionSource`: it retains *every* equally-decisive Match ID (the singular
+  label collapsed that), and that a matched Safe-risk rule is Decisive, not
+  Fallback.
+- **Slice D (GREEN — Pattern/Token-prefix → Detection evidence model):** every
+  `MatchResult` now carries `evidence: MatchEvidence`. The scanner populates it
+  at construction — `RegexPattern` for regex `full_scan`, pipeline-semantic, and
+  the synthetic scan-limit matches; `TokenPrefixRule` for `prefix_scan` — with a
+  new `From<PatternSource> for DetectionSource` mapping. The field is internal
+  (not projected into v1 JSON `matched_patterns` or audit `MatchedPattern`), so
+  classifications + public output are unchanged — pinned by the Slice A fixtures
+  (still green) + `full_pipeline_json`. `aegis-scanner` + root
+  `interceptor::scanner` re-export the analysis types so consumers reach them
+  via the existing path. 4 mechanism tests in
+  `scanner::tests::match_evidence` (regex vs token-prefix vs inline-extracted;
+  every match carries evidence). Updated ~9 `MatchResult` construction sites
+  (scanner, explanation, tui tests).
+- **Slice F-narrow (GREEN — `basis` alongside `decision_source`):** `ScanExplanation`
+  gains `basis: AssessmentBasis`, populated via `assessment.basis()` in
+  `build_explanation_from_plan` + the shell-flow builder; the v1
+  `decision_source` projection is retained. The field is `#[serde(skip)]` with
+  `Default for AssessmentBasis = Fallback` — a deliberate safety choice: the
+  explanation is cloned into the audit entry (`build_audit_entry`), so a
+  *required* `basis` would have broken deserialization of v1 audit logs (no
+  basis) and the integrity chain. `#[serde(skip)]` keeps the v1 audit JSONL
+  byte-for-byte unchanged (basis in-memory only; Iteration 2 promotes it to a
+  persisted v2 field). 11 `ScanExplanation` test construction sites updated.
+  Verified: `full_pipeline_json` + `audit_integrity` (13 passed) — public JSON
+  `decision_source` string + audit chain preserved.
+- **E (monotonic merge) deferred** — there are no language-analysis results to
+  merge yet (those arrive Iterations 6-8); E stays open.
+- **Verified (A+B+C+D+F):** `cargo test --workspace` = 1548 passed / 93 suites /
+  0 failed; workspace `clippy --all-targets -- -D warnings` clean; `fmt --all
+  --check` clean; `cargo test -p aegis-types` = 40, `aegis-scanner` lib = 168
+  (incl. 4 compatibility + 4 match-evidence), `aegis-audit` = 77,
+  `full_pipeline_json` + `audit_integrity` = 13. One pre-existing environmental
+  flake (`supabase … rollback_uses_manifest_target_as_source_of_truth`,
+  ETXTBSY/`Text file busy` under concurrent WSL2 compilation) passes in
+  isolation and is unrelated to these additive types.
+- **Verified:** `cargo test -p aegis-types` = 34 passed; `aegis-scanner` lib =
+  164 (incl. 4 compatibility); `aegis-snapshot` lib = 157; workspace
+  `cargo clippy --all-targets -- -D warnings` clean; `cargo fmt --all --check`
+  clean; full `cargo test --workspace` green except one pre-existing
+  environmental flake (`supabase::runtime::tests::rollback_uses_manifest_target_as_source_of_truth`
+  — `pg_restore: Text file busy (os error 26)` / ETXTBSY under concurrent
+  compilation on WSL2), which passes in isolation and is unrelated to these
+  additive data types. No production runtime is wired (the worker, source
+  router, adapters, and the Pattern→Detection + DecisionSource→basis consumer
+  migrations are D/E/F, still open).
+- **Review-fix round (Standards + Spec; Spec clean, 1 hard + 4 judgement-calls
+  addressed).** #1 (hard, ubiquitous-language): `CONTEXT.md` now carries a new
+  `## Language-aware analysis` glossary section with the 14 terms now backed by
+  implemented types (Detection rule, Detection mechanism, Detection source,
+  Match evidence, Detected operation, Operand certainty, Analysis status,
+  Analysis degradation, Degradation reason, Analysis provenance, Source
+  origin, Target analysis, Assessment basis, Decisive Match), via the
+  `domain-modeling` skill; `Decision source` cross-references `Assessment
+  basis` as its successor. The prior Iter-0 session had deliberately reverted
+  these terms as "not yet implemented"; they are now, so the rule ("update
+  CONTEXT.md in the same change, do not batch") is satisfied. #2:
+  `AssessmentBasis` now derives `schemars::JsonSchema` (consistency with the
+  other audit-persistable analysis types). #4: the two new audit enums
+  (`AssessmentBasis`, `MatchEvidence`) share the `"kind"` serde discriminator
+  tag; domain terms live in the variant values + the `DetectionMechanism` /
+  `mechanism()` projection. #5: trimmed the stream-of-consciousness
+  `OperationModifiers` serde comment to its conclusion. #3 (speculative
+  generality / `DetectionMechanism` duplication) left as a documented
+  watch-item — ADR-dictated foundation + projection, not a defect. Verified:
+  `cargo test --workspace` = 1544 passed / 93 suites / 0 failed, clippy/fmt
+  clean, `contracts_docs` 13 passed.
+
+---
+
 ## Last session (2026-07-17)
 
 - **Iteration 0 second review-fix round (Standards + Spec) — triaged, not

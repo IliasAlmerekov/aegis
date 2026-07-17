@@ -18,6 +18,7 @@ use crate::error::ScannerError;
 #[cfg(test)]
 use crate::nested::MAX_NESTED_SCAN_DEPTH;
 use crate::patterns::{Pattern, PatternSet, PatternSource};
+use aegis_types::{DetectionSource, MatchEvidence};
 
 pub use crate::patterns::{PatternToken, PrefixRule};
 pub use assessment::{Assessment, DecisionSource, MatchResult};
@@ -246,6 +247,9 @@ impl Scanner {
                 start: m.start(),
                 end: m.end(),
             }),
+            evidence: MatchEvidence::RegexPattern {
+                source: DetectionSource::from(pattern.source),
+            },
         })
     }
 

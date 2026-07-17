@@ -137,7 +137,98 @@ _Avoid_: hit, finding
 **Decision source**:
 What produced an assessment (`DecisionSource`): `BuiltinPattern`, `CustomPattern`, or
 `Fallback` (nothing matched → assessed `Safe`). Distinct from the final `Decision`.
+The singular label is retained as a compatibility projection; `Assessment basis` is
+the richer successor that retains every decisive `Match` rather than one.
 _Avoid_: origin, cause
+
+## Language-aware analysis
+
+**Detection rule**:
+The common contract every detection mechanism exposes before 1.0 — a regex
+`Pattern`, a `Token-prefix rule`, or a built-in Language-aware rule. Each `Match`
+identifies which mechanism fired and whether the rule is built in or custom
+(ADR-022 §4).
+_Avoid_: detection signature, rule (reserve "rule" for `Token-prefix rule` / `Policy rule`)
+
+**Detection mechanism**:
+Which of the three mechanisms produced a `Match` — regex `Pattern`,
+`Token-prefix rule`, or Language-aware rule (`DetectionMechanism`).
+_Avoid_: match type, rule kind
+
+**Detection source**:
+Whether a `Detection rule` is built into Aegis or came from user config
+(`DetectionSource`). Distinct from `PatternSource`, which lives on the legacy
+`Pattern` struct.
+_Avoid_: rule origin
+
+**Match evidence**:
+The typed record every `Match` carries — its `Detection mechanism`,
+`Detection source`, and (for Language-aware rules) the `Detected operation` and
+`Analysis provenance` (`MatchEvidence`).
+_Avoid_: match detail, match info
+
+**Detected operation**:
+A language-neutral operation a language adapter emits — operation kind (delete,
+overwrite, code execution, …), modifiers (recursive / forced / destructive),
+and `Operand certainty` — rather than assigning `RiskLevel` directly from an API
+spelling. A shared classifier maps it to `Category` / `RiskLevel` (ADR-022 §3).
+_Avoid_: detected action, finding
+
+**Operand certainty**:
+How completely a `Detected operation`'s operand is statically known: `Known`,
+`Partial`, or `Dynamic` (`OperandCertainty`). A `Dynamic` operand is never
+evidence of safety — it records `Analysis degradation` in addition to the
+visible operation (ADR-022 §3, §7).
+_Avoid_: operand confidence, resolution level
+
+**Analysis status**:
+The per-target state of language-aware analysis: `NotApplicable`, `Complete`, or
+`Degraded` (`AnalysisStatus`). Ordered by increasing degradation, so the worst
+target drives the merged `Assessment` (ADR-022 §4).
+_Avoid_: analysis state, result status
+
+**Analysis degradation**:
+Language-aware analysis ran but could not fully resolve a target — typed by a
+`Degradation reason` and never authorizing auto-execution. Prior `Match`es and
+earlier target results are retained (ADR-022 §4, §5).
+_Avoid_: analysis warning, analysis failure
+
+**Degradation reason**:
+A typed reason `Analysis degradation` occurred — unsupported or unavailable
+grammar, incomplete syntax, unsafe or unavailable source, unsupported
+encoding, a size/count/depth/timeout limit, dynamic source or cwd, or a
+worker/protocol failure (`DegradationReason`).
+_Avoid_: degradation cause
+
+**Analysis provenance**:
+The metadata record of where a language-aware result came from — language,
+`Source origin`, rule ID, `Detected operation`, file path, source hash, span,
+`Operand certainty`, `Analysis status`, `Degradation reason`. Metadata only: it
+must never persist source body, full snippet, imported source, variable value,
+or syntax tree (ADR-022 §10).
+_Avoid_: analysis metadata, evidence origin
+
+**Source origin**:
+Where a language-aware analysis target's source came from — `Inline`,
+`Heredoc`, `ScriptFile`, `Stdin`, or `Pipe` (`SourceOrigin`).
+_Avoid_: source type, input kind
+
+**Target analysis**:
+The per-target language-aware result — `Analysis status`, `Degradation
+reason`s, and `Analysis provenance` (`TargetAnalysis`).
+_Avoid_: target result, per-file analysis
+
+**Assessment basis**:
+What produced the final interception decision, expressed as the decisive
+`Match`es — every `Match` at the `Assessment`'s maximum `RiskLevel`, or
+`Fallback` when nothing matched (`AssessmentBasis`). Replaces the singular
+`Decision source` (ADR-022 §4).
+_Avoid_: decision basis
+
+**Decisive Match**:
+A `Match` whose `RiskLevel` equals the `Assessment`'s maximum; the `Assessment
+basis` retains every such `Match`, not just one.
+_Avoid_: primary match, winning match
 
 ## Policy
 

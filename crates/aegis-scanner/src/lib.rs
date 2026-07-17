@@ -15,7 +15,10 @@ mod nested;
 mod patterns;
 mod scanner;
 
-pub use aegis_types::{Category, Pattern, PatternSource, PatternToken, PrefixPattern};
+pub use aegis_types::{
+    AssessmentBasis, Category, DetectionMechanism, DetectionSource, MatchEvidence, Pattern,
+    PatternSource, PatternToken, PrefixPattern,
+};
 pub use error::ScannerError;
 pub use patterns::{PatternSet, PrefixRule};
 pub use scanner::{Assessment, DecisionSource, HighlightRange, MatchResult, Scanner};

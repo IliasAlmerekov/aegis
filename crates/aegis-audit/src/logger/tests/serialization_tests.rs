@@ -6,6 +6,9 @@ fn audit_entry_serializes_nested_explanation_sections() {
         scan: ScanExplanation {
             highest_risk: RiskLevel::Danger,
             decision_source: aegis_scanner::DecisionSource::BuiltinPattern,
+            basis: aegis_scanner::AssessmentBasis::Decisive {
+                match_ids: vec!["FS-001".to_string()],
+            },
             matched_patterns: vec![ExplainedPatternMatch {
                 id: "FS-001".to_string(),
                 risk: RiskLevel::Danger,
@@ -102,6 +105,9 @@ fn audit_entry_keeps_existing_top_level_fields_for_backward_compatibility() {
         scan: ScanExplanation {
             highest_risk: RiskLevel::Danger,
             decision_source: aegis_scanner::DecisionSource::BuiltinPattern,
+            basis: aegis_scanner::AssessmentBasis::Decisive {
+                match_ids: vec!["FS-001".to_string()],
+            },
             matched_patterns: vec![ExplainedPatternMatch {
                 id: "FS-001".to_string(),
                 risk: RiskLevel::Danger,

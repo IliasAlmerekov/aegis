@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::patterns::PrefixRule;
 use crate::scanner::MatchResult;
+use aegis_types::{DetectionSource, MatchEvidence};
 
 impl PrefixRule {
     /// Check whether `tokens` matches this rule's prefix pattern.
@@ -51,6 +52,9 @@ impl PrefixRule {
             }),
             matched_text: consumed,
             highlight_range: None,
+            evidence: MatchEvidence::TokenPrefixRule {
+                source: DetectionSource::from(self.source),
+            },
         }
     }
 
