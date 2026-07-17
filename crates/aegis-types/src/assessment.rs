@@ -96,6 +96,15 @@ pub struct Assessment {
     pub highlight_ranges: Vec<HighlightRange>,
     /// The parsed representation of the original command string.
     pub command: ParsedCommand,
+    /// Language-aware analysis summary, set by [`crate::merge_analysis`] when a
+    /// language result is merged into this `Assessment` (ADR-022 §1, §5). `None`
+    /// on a baseline-only scanner `Assessment`. Orthogonal to `risk`:
+    /// degradation may coexist with `Safe` and never authorizes auto-execution.
+    /// `Assessment` itself does not derive `Serialize`/`Deserialize` (it holds
+    /// `MatchResult`, which carries a non-serializable `Arc<Pattern>`); v1/v2
+    /// audit projection is a separate explicit mapping (Iteration 2), so this
+    /// field needs no `#[serde(skip)]`.
+    pub analysis: Option<crate::analysis::AnalysisSummary>,
 }
 
 impl Assessment {
@@ -199,6 +208,7 @@ mod basis_tests {
             matched: matches,
             highlight_ranges: Vec::<HighlightRange>::new(),
             command: empty_command(),
+            analysis: None,
         }
     }
 

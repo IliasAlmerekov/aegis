@@ -254,6 +254,7 @@ mod tests {
             matched: Vec::new(),
             highlight_ranges: Vec::new(),
             command: CommandParser::parse(cmd),
+            analysis: None,
         }
     }
 

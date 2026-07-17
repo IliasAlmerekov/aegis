@@ -81,6 +81,7 @@ impl Scanner {
                 matched: vec![],
                 highlight_ranges: vec![],
                 command,
+                analysis: None,
             };
         }
 
@@ -167,6 +168,7 @@ impl Scanner {
             matched,
             highlight_ranges,
             command,
+            analysis: None,
         }
     }
 }
@@ -209,6 +211,7 @@ fn uncertain_assessment(
         matched,
         highlight_ranges,
         command,
+        analysis: None,
     }
 }
 

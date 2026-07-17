@@ -21,9 +21,10 @@ mod sandbox;
 mod snapshot;
 
 pub use analysis::{
-    AnalysisProvenance, AnalysisStatus, ByteSpan, DegradationReason, DetectedOperation,
-    DetectionMechanism, DetectionSource, MatchEvidence, OperandCertainty, OperationKind,
-    OperationModifiers, SourceOrigin, TargetAnalysis,
+    AnalysisProvenance, AnalysisStatus, AnalysisSummary, ByteSpan, DegradationReason,
+    DetectedOperation, DetectionMechanism, DetectionSource, LanguageAnalysisResult, MatchEvidence,
+    OperandCertainty, OperationKind, OperationModifiers, SourceOrigin, TargetAnalysis,
+    merge_analysis,
 };
 pub use assessment::{Assessment, AssessmentBasis, DecisionSource, HighlightRange, MatchResult};
 pub use command::{InlineScript, ParsedCommand};

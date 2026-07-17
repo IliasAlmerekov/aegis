@@ -138,6 +138,7 @@ pub fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) ->
         highlight_ranges: sorted_highlight_ranges_for_tests(cmd, &matches),
         matched: matches,
         command: Parser::parse(cmd),
+        analysis: None,
     }
 }
 
