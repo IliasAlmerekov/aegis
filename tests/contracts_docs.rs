@@ -375,3 +375,33 @@ fn docs_should_document_explicit_shell_proxy_setup() {
         "README must document how to undo shell-proxy setup with `aegis setup-shell --remove`"
     );
 }
+
+#[test]
+fn docs_grammar_manifest_records_l1_foundation_provenance() {
+    // ADR-022 §8: the release ships a grammar manifest of versions, provenance,
+    // and licenses. This locks the human-readable manifest against silent drift
+    // from the L1 foundation set (ADR-022 §9) and the four required release
+    // targets. The machine-readable form is validated by `aegis-language`.
+    let path = repo_path("docs/language-grammar-manifest.md");
+    let contents = fs::read_to_string(&path).expect("docs/language-grammar-manifest.md must exist");
+
+    for needle in [
+        "tree-sitter-python",
+        "tree-sitter-javascript",
+        "tree-sitter-typescript",
+        "tree-sitter-bash",
+        "0.25.0",
+        "0.23.2",
+        "0.25.1",
+        "MIT",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ] {
+        assert!(
+            contents.contains(needle),
+            "language grammar manifest must record `{needle}`"
+        );
+    }
+}

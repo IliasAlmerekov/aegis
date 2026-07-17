@@ -9,20 +9,161 @@
 
 ## Current version
 
-`0.6.2` — pre-1.0, targeting `1.0.0` (release prepared; tag pending)
+`0.6.2` — pre-1.0, targeting `1.0.0` (tagged `v0.6.2`)
 
 ## Active branch
 
-`chore/prepare-v0.6.2`
+`main`
 
 ## Last updated
 
-2026-07-16
+2026-07-17
 
 ---
 
+## Last session (2026-07-17)
+
+- **Iteration 0 second review-fix round (Standards + Spec) — triaged, not
+  blanket-applied.** The one uncontested hard finding: `CLAUDE.md` still banned
+  all C-build deps and omitted Tree-sitter from its approved-deps table while
+  `AGENTS.md`/`CONVENTION.md` already carried the ADR-022 exception (shotgun
+  surgery) — `CLAUDE.md` is now synced (narrow `aegis-language`-scoped exception
+  + a Tree-sitter approved-deps row). CONTEXT.md finding: kept the deliberate
+  HEAD revert (plan "not a design scratchpad") and instead softened
+  `aegis-language/src/lib.rs` so it no longer presents the Iteration-5
+  "detected operation" term as canonical. Test hygiene: the duplicated
+  `NO_SOURCE` corpus is extracted to `tests/common/no_source_corpus.rs`, shared
+  by `tests/no_source.rs` (module) and `benches/no_source_bench.rs` (`include!`)
+  so the test and bench can't drift. Spec completeness in
+  `docs/language-grammar-manifest.md`: added the full build-input / native-C /
+  transitive-dependency inventory and a rejected-grammars/targets table (wasm
+  feature, TSX dialect, 1.x languages, non-musl/Windows targets, with reasons);
+  `deny.toml` header now records that the Tree-sitter chain is in the default
+  graph and license-covered. `docs/performance-baseline.md` §7 replaces the
+  plan's hypothesis budget table with accepted final Iteration-0 defaults, each
+  tagged measured / ceiling-adopted / tune-on-wiring (peak-RSS stays the only
+  Iter-3 deferral). Router edge cases from the review were checked and判定 as
+  correct-for-prototype (empty first `-c` is genuinely no executable source under
+  Python semantics), not bugs. Verified: `aegis-language` 20 tests + boundary 2,
+  `contracts_docs` 13, clippy `-D warnings` clean, fmt clean, `cargo deny check`
+  ok.
+- **L1 Iteration 0 — all four RED slices done via TDD; GREEN pending review.**
+  New `aegis-language` crate (12th lib, 13th workspace member) owns the
+  Tree-sitter boundary per ADR-022. Slice 1 (RED #1 manifest contract):
+  `manifest` module with `GrammarEntry`, `validate_entry`/`validate_manifest`,
+  rejecting an unpinned grammar, missing license, ABI outside the pinned
+  runtime's compatible range, or a grammar absent from the L1 release set; 7
+  contract tests. Slice 2 (RED #2a host build + grammar smoke): pinned
+  `tree-sitter 0.26.11` + `tree-sitter-{python 0.25.0, javascript 0.25.0,
+  typescript 0.23.2, bash 0.25.1}` via crates.io SemVer; all five resolve to a
+  single `tree-sitter-language 0.1.7` (no duplicate versions); `SourceLanguage`
+  + parse-only `parse()` helper; `BUILTIN_MANIFEST` with provenance; 5 parse/ABI
+  tests. TypeScript grammar 0.23.2 is ABI 14 (not 15) — runtime accepts it as
+  backwards-compatible (ABI 13–15), so the validator uses the
+  `MIN_COMPATIBLE..=LANGUAGE_VERSION` range (more-correct ADR-022 §8 adherence,
+  not a boundary change). `docs/language-grammar-manifest.md` records
+  versions/provenance/licenses; a `contracts_docs` needle test locks it. Slice
+  3 (RED #2b 4-target cross-compile release matrix): `RELEASE_TARGETS` const +
+  contract test; `cross-matrix` CI job (cross 0.2.5 for musl x86_64/aarch64,
+  native `cargo build` on macos-26-intel/macos-26 for darwin) builds
+  `-p aegis-language` under the heavy gate, mirroring `release.yml`. Slice 4
+  (RED #3 no-source must not start worker): `router::source_targets` detects
+  inline interpreter source (`python3 -c`, `bash`/`sh -c`, `node -e`) with no
+  filesystem access; in-process parse-only `worker::analyze` returns
+  `Outcome::NotStarted` for no-source commands; `tests/no_source.rs` contract
+  test + `benches/no_source_bench.rs` criterion harness assert `NotStarted`
+  (panic on regression), wired into the CI perf job. Verified: 1513 workspace
+  tests, clippy `-D warnings`, fmt, `cargo deny check`
+  (advisories/bans/licenses/sources ok), `cargo audit` (no new advisories from
+  tree-sitter or the criterion dev-dep — only the pre-existing starlark-policy
+  opt-in set), no-source bench ~109 ns/command. No production runtime (bounded
+  worker process, source routing, adapters) is wired yet — those are
+  Iterations 3–8.
+- **Iteration 0 code-review fixes (Standards + Spec).** Closed the four hard
+  Standards findings and the two Spec findings from the slice review:
+  (1) `CONVENTION.md` §3 updated — 11→12 lib crates (13 workspace members),
+  `aegis-language` named, its boundary sentence corrected (now asserted by
+  tests). (2) The aegis-language architectural boundary is now pinned by code,
+  not just a doc comment: new `tests/aegis_language_boundary.rs` enforces both
+  directions (no workspace crate may depend on `aegis-language`; `aegis-language`
+  may not depend on any workspace crate — ADR-022 §4). Each direction was proven
+  RED by temporarily adding a forbidden dep, then reverted to GREEN. It lives in
+  its own file because `tests/architecture_boundaries.rs` sits at its 800-line
+  budget. (3) `ARCHITECTURE.md` §2.9 added — documents the `aegis-language`
+  boundary, layout, and Iteration-0 scope. (4) `CONVENTION.md` §6 approved-deps
+  list extended with `tree-sitter 0.26.11` + the four L1 grammars, scoped to
+  `aegis-language` only (ADR-022 §8). Spec (b): `CONTEXT.md` reverted to HEAD —
+  it had added Iteration 1/9 glossary terms (Detected operation, Operand
+  certainty, Analysis provenance, Detection rule, Assessment basis, Language-aware
+  rule, Analysis override, etc.) with no implementation under them, violating the
+  plan's "not a design scratchpad" rule; the shipped `DecisionSource`/`MatchResult`
+  terms are restored. Spec (a): `docs/performance-baseline.md` now records the
+  Iteration 0 no-source latency budget (~1.03 µs/iter, ~103 ns/command, measured
+  2026-07-17) and explicitly defers peak-memory (to Iteration 3's ephemeral
+  worker) and binary-size (the crate is not yet linked into the `aegis` binary;
+  the 4-target release matrix is the Iteration 0 size gate) with rationale —
+  deferred, not omitted. Verified: 1515 workspace tests, clippy `-D warnings`,
+  fmt, `cargo deny check` ok, no-source bench ~103 ns/command.
+- **Iteration 0 re-review (adversarial pass) — 0 hard Standards violations, 0
+  scope creep; 3 Spec gate items were real and are now addressed or honestly
+  deferred, not "closed and verified" as the prior summary overclaimed.** (a)
+  Measurement coverage: the plan GREEN list has six measurement bullets, only
+  ~1.5 were covered. Added `benches/parse_latency_bench.rs` (criterion,
+  measurement) parsing one representative inline snippet per foundation grammar
+  — measured 2026-07-17 (mean): Python ~43 µs, JavaScript ~25 µs, TypeScript
+  ~27 µs, Bash ~18 µs; wired into the CI perf job. Rewrote the
+  `docs/performance-baseline.md` Iteration-0 section to cover all six bullets
+  (clean-build requirements, binary growth = 0 bytes since the crate is not
+  linked, parse latency measured, peak worker RSS deferred to Iteration 3's
+  ephemeral worker, startup cost deferred to Iteration 3, all-target build
+  parity exercised by cross-matrix) and added a REVIEW GATE status table. (a)
+  "adapters present on all targets": the cross-matrix CI job now compiles
+  `--tests -p aegis-language` per target (not just the crate), so `grammar_smoke`
+  — which references all four grammars — links on each of the four targets;
+  honestly documented as link-presence (cross targets can't execute; runtime
+  parse-presence is host-only in the quality job). (a) REVIEW GATE: `cargo
+  audit` run 2026-07-17 (6 advisories, all pre-existing in the opt-in
+  starlark-policy chain — none in tree-sitter/criterion), `cargo deny check`
+  green, license review done (manifest + `deny.toml`); the grammar security
+  corpus is the one OPEN gate item, honestly deferred — required before
+  `aegis-language` is linked into the shipping binary (it is not linked yet, so
+  this is not a v0.6.x release blocker). (c) Dropped the unverifiable
+  "consistent with prior ~109 ns" comparison in performance-baseline.md (kept
+  the measured number + reproducible bench command + date). (c) Pin weakness:
+  `validate_entry` only rejects empty/`*` versions, weaker than ADR-022 §8's
+  "pinned version"; added `builtin_manifest_versions_match_cargo_lock_pins`
+  proving each manifest version equals the exact `Cargo.lock` pin (proven RED
+  by a manifest/lock mismatch, reverted to GREEN). Smell fixes: extracted the
+  duplicated `assert_no_dep`/`crate_deps_section`/`repo_root` helpers to
+  `tests/common/mod.rs` (shared by both boundary test files; shrinks
+  `architecture_boundaries.rs` to 767 lines); added
+  `builtin_manifest_provenance_is_complete` enforcing the plan-mandated
+  inventory fields (crate_name, upstream, license, version) so they are not
+  inert (proven RED by blanking a field, reverted to GREEN). Verified: 1517
+  workspace tests, clippy `-D warnings`, fmt, `cargo deny check` ok, parse
+  latency + no-source benches measured.
+- **Operational note (not a code change):** running an effect-opaque command
+  (`python3 <file>.py`, any interpreter-on-script) under the aegis shell proxy
+  triggers the H9 required-recovery git snapshot, whose backend
+  (`crates/aegis-snapshot/src/git.rs`) is `git stash push --include-untracked`;
+  it moves uncommitted work — including untracked files — into a stash and
+  does not auto-restore it. This destroyed the session's uncommitted work twice
+  before the trigger was traced via `~/.aegis/audit.jsonl`. Recover with
+  `git stash apply stash@{0}`; avoid the trigger by using only `cargo`/`git`/
+  `grep`/Read/Write/Edit for ad-hoc checks. Recorded in agent memory.
+
 ## Last session (2026-07-16)
 
+- **Language-aware analysis planned; runtime not implemented.** ADR-022 records
+  an additive Tree-sitter slow path isolated in an ephemeral worker, catch-only
+  source inspection, typed degradation, and per-language production
+  qualification. Roadmap milestone L1 and its release-readiness gate require the
+  shared foundation plus Python, JavaScript, TypeScript, and Shell/Bash before
+  1.0; Go, PHP, Ruby, PowerShell, Perl, and Lua are staged 1.x adapters. The
+  detailed red-green plan is `docs/plans/2026-07-16-language-aware-analysis.md`;
+  Standards/Spec review and bounded skeptic verification were completed, 16
+  focused docs contract tests passed, changed-line diff-check and local-link/new-
+  file whitespace checks passed, and no product-runtime gate was claimed.
 - **v0.6.2 release prepared; tag pending.** Version bumped to `0.6.2` across
   the workspace (`Cargo.toml` + all crates + `Cargo.lock`), npm `package.json`,
   README (badge, `--tag v0.6.2` install line), `tests/npm_package.rs`,

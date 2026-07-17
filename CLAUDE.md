@@ -198,8 +198,14 @@ Aegis is a lightweight Rust CLI that acts as a `$SHELL` proxy, intercepting AI a
 | Async trait methods     | `async-trait 0.1`                |
 | Structured logging      | `tracing` + `tracing-subscriber` |
 | Benchmarks              | `criterion 0.5`                  |
+| Language-aware parsing  | `tree-sitter 0.26.11` + pinned grammars (`aegis-language` only) |
 
 Do not add new dependencies without a clear justification. Prefer stdlib when sufficient.
+
+The Tree-sitter row is the sole sanctioned native-C build input and is scoped to
+`aegis-language` (ADR-022 §8): `tree-sitter-python 0.25.0`,
+`tree-sitter-javascript 0.25.0`, `tree-sitter-typescript 0.23.2`, and
+`tree-sitter-bash 0.25.1`. No other crate may depend on Tree-sitter.
 
 **Explicitly prohibited dependencies:**
 
@@ -446,7 +452,10 @@ Scope is optional. Keep the subject line under 72 characters. Body explains _why
 - Do not use `regex` in the quick scan (first pass) — only Aho-Corasick.
 - Do not block the main thread during subprocess calls — use `tokio`.
 - Do not write to stdout in library modules — use `tracing` events.
-- Do not add dependencies that bring in C build steps (keep the binary portable).
+- Do not add dependencies that bring in C build steps (keep the binary portable),
+  except for the pinned Tree-sitter runtime and production-qualified generated
+  grammars under ADR-022. This is a narrow exception scoped to `aegis-language`,
+  not permission for general native dependencies.
 - Do not change the `RiskLevel` order — it is semantically ordered by severity.
 - Do not use `once_cell` — use `std::sync::LazyLock` (stable since Rust 1.80).
 - Do not write `async fn` in a trait without `#[async_trait]` — it will not compile as `dyn Trait`.

@@ -441,6 +441,37 @@ Both protocols are public contracts. Changing them is a breaking change.
 - **`src/error.rs`** — `AegisError` via `thiserror`. Library modules return
   `Result<T, AegisError>`; CLI glue may use `anyhow`.
 
+### 2.9 Language-aware analysis boundary — `crates/aegis-language/`
+
+The focused workspace boundary that owns Tree-sitter parsing, the grammar
+manifest, and (in later iterations) language adapters that emit
+language-neutral detected operations. Per ADR-022 it is an **additive slow
+path**: it never replaces the shell `Scanner` and never regresses the
+no-source safe-command hot path. Parsing runs in an ephemeral worker process
+(no daemon, no plugin loader, no network service). It is the only crate
+permitted to pull in the narrowly scoped native C toolchain — the pinned
+Tree-sitter runtime plus the four production-qualified L1 grammars
+(Python/JavaScript/TypeScript/Shell-Bash) — and it must **not** be depended on
+by `aegis-types` or any other workspace member (ADR-022 §4; enforced by
+`tests/architecture_boundaries.rs`).
+```
+crates/aegis-language/
+├── src/
+│   ├── lib.rs        crate root + public re-exports
+│   ├── language.rs   SourceLanguage enum + parse() (Tree-sitter host smoke)
+│   ├── manifest.rs   grammar-manifest qualification contract (Iteration 0 RED #1)
+│   ├── router.rs     prototype inline-source detector (no filesystem access)
+│   └── worker.rs     parse-only worker experiment (Outcome::NotStarted / Parsed)
+├── tests/no_source.rs   no-source contract (Iteration 0 RED #3)
+└── benches/no_source_bench.rs  bench harness that fails if a no-source command
+                                 starts the worker (Iteration 0 RED #3)
+```
+Iteration 0 ships only the grammar-manifest qualification contract, the host
+parse smoke, the 4-target cross-compile release matrix, and the no-source
+contract. The bounded ephemeral worker, file/heredoc targets, adapters, and
+policy integration land in later iterations of the L1 plan. Until then the
+crate is not wired into `src/` orchestration.
+
 ---
 
 ## 3. Request Lifecycles

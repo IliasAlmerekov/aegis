@@ -11,6 +11,86 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Added
+
+- `aegis-language` crate skeleton with the release grammar manifest
+  qualification contract: it rejects an unpinned grammar, missing license,
+  Tree-sitter ABI outside the pinned runtime's compatible range, or a grammar
+  absent from the L1 release set; the four foundation grammars (Python,
+  JavaScript, TypeScript, Shell/Bash) are pinned via crates.io SemVer, statically
+  linked, and parse-qualified on the host build against the live Tree-sitter
+  runtime ABI; `docs/language-grammar-manifest.md` records provenance, versions,
+  and licenses (ADR-022 §8/§9, L1 Iteration 0).
+- Minimal parse-only language worker experiment and no-source contract: an
+  in-process `aegis-language` router detects analyzable inline interpreter
+  source (`python3 -c`, `bash`/`sh -c`, `node -e`) without filesystem access,
+  and the parse-only worker does not start for no-source commands; a contract
+  test plus a criterion benchmark harness assert `Outcome::NotStarted` for a
+  no-source corpus, failing CI if a no-source command ever starts the worker
+  (ADR-022, L1 Iteration 0 RED #3).
+- Architectural boundary tests for `aegis-language`: `tests/aegis_language_boundary.rs`
+  pins both ADR-022 §4 directions in code — no workspace crate may depend on
+  `aegis-language`, and `aegis-language` may not depend on any workspace crate
+  (only the pinned Tree-sitter runtime, the four L1 grammars, and `thiserror`).
+  Each direction was proven RED by injecting a forbidden dep, then reverted to
+  GREEN (ADR-022, L1 Iteration 0).
+- Manifest pin and provenance contract tests: `builtin_manifest_versions_match_cargo_lock_pins`
+  proves each grammar manifest version equals the exact `Cargo.lock` pin
+  (closing the gap where `validate_entry` only rejects empty/`*` versions, not
+  caret ranges — ADR-022 §8), and `builtin_manifest_provenance_is_complete`
+  enforces that the plan-mandated inventory fields (crate_name, upstream,
+  license, version) are populated so they are not inert. Each was proven RED by
+  a temporary manifest break, then reverted to GREEN (ADR-022, L1 Iteration 0).
+- Parse-latency benchmark: `benches/parse_latency_bench.rs` measures per-grammar
+  parse latency on one representative inline-source snippet per foundation
+  grammar (ADR-022 Iteration 0 GREEN measurement), wired into the CI perf job.
+
+### Changed
+
+- `CONVENTION.md` §3 and §6, `ARCHITECTURE.md` §2.9, and
+  `docs/performance-baseline.md` updated to reflect `aegis-language`: 11→12 lib
+  crates (13 workspace members), the `aegis-language` boundary asserted by
+  tests, `tree-sitter 0.26.11` + the four L1 grammars added to the approved-dep
+  list (scoped to `aegis-language` only, ADR-022 §8), and the Iteration 0
+  no-source latency budget recorded (~103 ns/command) with peak-memory and
+  binary-size budgets explicitly deferred to the iterations that wire the
+  ephemeral worker and link the crate (ADR-022, L1 Iteration 0).
+- `docs/performance-baseline.md` Iteration-0 section rewritten to cover all six
+  GREEN measurement bullets (clean-build requirements, binary growth = 0,
+  parse latency measured, peak worker RSS deferred, startup cost deferred,
+  all-target build parity exercised) and add a REVIEW GATE status table; the
+  unverifiable "consistent with prior ~109 ns" comparison was dropped in favor
+  of the measured number plus a reproducible bench command (ADR-022, L1
+  Iteration 0).
+- The `cross-matrix` CI job now compiles `--tests -p aegis-language` per target
+  (not just the crate) so `grammar_smoke`, which references all four grammars,
+  links on each of the four release targets — proving link-presence on all
+  targets, with runtime parse-presence staying host-only (ADR-022 §8, L1
+  Iteration 0 RED #2).
+- Duplicated boundary-test helpers extracted to `tests/common/mod.rs`, shared
+  by `tests/architecture_boundaries.rs` and `tests/aegis_language_boundary.rs`,
+  removing the drift risk between the two `assert_no_dep` copies.
+- The Iteration 0 REVIEW GATE is honestly **open on one item**: `cargo audit`
+  (no tree-sitter/criterion advisories), `cargo deny check`, and license review
+  pass, and the four release builds are CI-gated, but the grammar security
+  corpus is not yet built. It is required before `aegis-language` is linked
+  into the shipping binary (not yet linked), so it is not a v0.6.x release
+  blocker (ADR-022, L1 Iteration 0).
+- Accepted the design for the planned pre-1.0 Language-aware analysis milestone:
+  an additive, isolated Tree-sitter stage with catch-only source inspection, typed
+  degradation, four-language foundation qualification, and staged 1.x adapter
+  rollout; no analyzer runtime is implemented yet (ADR-022, L1).
+
+### Fixed
+
+- `CONTEXT.md` no longer ahead of the implementation: it had added Iteration 1/9
+  glossary terms (Detected operation, Operand certainty, Analysis provenance,
+  Detection rule, Assessment basis, Language-aware rule, Analysis override, and
+  related scaffolding) with no code under them, against the plan's "not a design
+  scratchpad" rule. Reverted to the shipped vocabulary (`DecisionSource`,
+  `MatchResult`); language-aware terms will enter the glossary in the iterations
+  that implement them (ADR-022, L1 Iteration 0).
+
 ## [0.6.2] — 2026-07-16
 
 ### Security

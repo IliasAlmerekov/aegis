@@ -60,7 +60,7 @@ These rules are non-negotiable.
 
 The repository is a Cargo workspace. The `aegis` binary crate lives at the
 root and depends on focused library crates under `crates/` (Phase 4 of
-`ROADMAP.md`). Extraction is complete — all 11 crates are live:
+`ROADMAP.md`). Extraction is complete — all 12 library crates are live:
 `aegis-types` (zero-dep foundation), `aegis-parser` (shell tokenizer +
 `PrefixPattern` matcher), `aegis-scanner` (`Scanner`, `PatternSet`, built-in
 patterns), `aegis-policy` (pure `PolicyEngine`), `aegis-config` (config model,
@@ -68,12 +68,17 @@ loader, validation, schema, `amend`), `aegis-explanation` (`CommandExplanation`
 and related types), `aegis-tui` (crossterm confirmation dialog), `aegis-snapshot`
 (six snapshot backends), `aegis-audit` (`AuditLogger`, append-only JSONL with
 optional hash-chain integrity), `aegis-starlark` (Starlark policy DSL loader
-for `~/.aegis/policy.star`), and `aegis-sandbox` (bwrap + Landlock on Linux,
-sandbox-exec on macOS; opt-in execution confinement). Dependency arrows flow
-inward toward `aegis-types`; no library crate may depend on the root binary
-crate. DAG boundaries for the first nine are enforced by
-`tests/architecture_boundaries.rs`; `aegis-sandbox` is covered by
-`tests/platform_scope.rs` and `aegis-starlark` is not yet asserted in either.
+for `~/.aegis/policy.star`), `aegis-sandbox` (bwrap + Landlock on Linux,
+sandbox-exec on macOS; opt-in execution confinement), and `aegis-language`
+(the focused Tree-sitter boundary for language-aware analysis — an additive
+slow path that owns the grammar manifest and parsing; ADR-022). Dependency
+arrows flow inward toward `aegis-types`; no library crate may depend on the
+root binary crate. DAG boundaries for the first nine core crates plus the
+`aegis-language` leaf are enforced by `tests/architecture_boundaries.rs`
+(`aegis-language` must not be depended on by any other workspace member, and
+must not itself depend on any other workspace member — ADR-022 §4);
+`aegis-sandbox` is covered by `tests/platform_scope.rs`, and `aegis-starlark`
+is not yet asserted in either.
 
 Current module responsibilities:
 
@@ -149,6 +154,14 @@ Approved dependency categories currently include:
 - `tracing`
 - `tracing-subscriber`
 - `criterion`
+- `tree-sitter` (0.26.11) — Tree-sitter runtime; **only** `aegis-language` may
+  depend on it (ADR-022 §8). It is the sole sanctioned native-C build input.
+- `tree-sitter-python` (0.25.0), `tree-sitter-javascript` (0.25.0),
+  `tree-sitter-typescript` (0.23.2), `tree-sitter-bash` (0.25.1) — the four
+  L1-foundation production-qualified grammars; **only** `aegis-language` may
+  depend on them. A grammar is added here only after independent qualification
+  (license, maintainer, transitive deps, upstream corpus, fuzzing, all-target
+  release builds — ADR-022 §5).
 
 Dependency rules:
 
@@ -156,6 +169,9 @@ Dependency rules:
 - Do not add new dependencies without clear justification.
 - `once_cell` is banned; use `std::sync::LazyLock`.
 - Avoid dependencies that add unnecessary portability or build complexity.
+- Native C build inputs are forbidden except for the pinned Tree-sitter runtime
+  and production-qualified generated grammars governed by ADR-022. Any other
+  native dependency requires a separate ADR and supported-target build evidence.
 - Supply-chain health is part of project correctness, not an optional extra.
 
 ## 7. Configuration and Audit Contracts

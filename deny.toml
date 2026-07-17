@@ -3,6 +3,12 @@
 # transitive crates (atomic-polyfill, derivative, fxhash, paste) are reachable
 # only via the optional starlark-policy feature and are excluded from the default
 # graph, so no advisory findings are present here.
+#
+# The Tree-sitter chain added by `aegis-language` (tree-sitter, the four pinned
+# grammars, tree-sitter-language, streaming-iterator, and the `cc` build driver —
+# see docs/language-grammar-manifest.md) IS in the default graph. All of it is
+# MIT / Apache-2.0, covered by the [licenses] allow-list below, so `cargo deny
+# check` stays green with no per-crate exception needed (ADR-022 §8).
 [advisories]
 
 [licenses]

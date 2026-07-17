@@ -30,6 +30,7 @@ members = [
     "crates/aegis-snapshot",
     "crates/aegis-starlark",
     "crates/aegis-sandbox",
+    "crates/aegis-language",
 ]
 # The cargo-fuzz crate is built standalone by `cargo fuzz` with its own
 # sanitizer flags; it must not be pulled into the main workspace.
