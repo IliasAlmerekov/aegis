@@ -1,18 +1,136 @@
-//! Minimal parse-only worker experiment (Iteration 0).
+//! Minimal parse-only worker experiment (Iteration 0) plus the bounded
+//! ephemeral worker dispatch loop (Iteration 3).
 //!
-//! Parses the inline source of detected targets with the matching Tree-sitter
-//! grammar. It is **parse-only**: no filesystem access, no subprocess, no
-//! daemon, no socket (ADR-022). For no-source commands it does not start at
-//! all — [`analyze`] returns [`Outcome::NotStarted`] — and therefore performs
-//! zero filesystem metadata calls.
-//!
-//! The bounded ephemeral worker process (length-bounded framing, crash/hang
-//! isolation, typed degradation) lands in Iteration 3; this in-process helper
-//! exists to prove the no-source contract and that the four foundation grammars
+//! The Iteration 0 [`analyze`] helper is an in-process parse-only experiment
+//! that proves the no-source contract and that the four foundation grammars
 //! parse inline source on the host build.
+//!
+//! The Iteration 3 [`run`] dispatch loop is what the real ephemeral worker
+//! process runs: it reads length-bounded versioned request frames
+//! ([`crate::protocol`]), parses the supplied source bytes with the matching
+//! Tree-sitter grammar, and writes one response frame per request. It is
+//! **parse-only**: no filesystem access, no subprocess, no daemon, no socket
+//! (ADR-022 §2). A bounded sequence of requests is served for one intercepted
+//! command, then the loop force-exits.
+//!
+//! Worker failures (a malformed frame, a truncated trailing frame, a read or
+//! write error) stop the loop with a typed [`RunOutcome`]; the parent process
+//! converts those into `DegradationReason::WorkerFailure` while retaining
+//! baseline and prior target results (ADR-022 §2, §4).
+
+use std::io::{Read, Write};
 
 use crate::language::{self, SourceLanguage};
+use crate::protocol::{self, Request, Response};
 use crate::router::{self, SourceTarget};
+
+/// The maximum number of requests one worker session will serve before
+/// force-stopping (ADR-022 §2: a bounded sequence for one intercepted command).
+///
+/// This is a worker-side safety cap, deliberately above any realistic
+/// single-command target count (the parent's own budgets in ADR-022 §7 bound
+/// the real target set); it exists so a runaway or hostile parent cannot keep
+/// the worker alive indefinitely.
+pub const MAX_REQUESTS_PER_SESSION: u32 = 64;
+
+/// Why the worker dispatch loop stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcome {
+    /// The reader reached end-of-input with no bytes left — the clean, expected
+    /// end of a session (the parent closed its write end).
+    EndOfInput,
+    /// The session served its bounded quota of requests and force-stopped.
+    MaxRequestsReached,
+    /// A partial frame was left in the buffer when the reader hit end-of-input:
+    /// the parent sent a truncated frame then closed. A worker failure.
+    TruncatedFrame,
+    /// A frame decoded as malformed (bad magic, version, kind, payload). A
+    /// worker failure — the protocol carries no error-response variant, so the
+    /// worker stops and the parent degrades.
+    MalformedFrame,
+    /// A read from the request stream failed. A worker failure.
+    ReadFailed,
+    /// Writing a response frame failed (the parent closed its read end early).
+    /// A worker failure.
+    WriteFailed,
+}
+
+/// Run the worker dispatch loop over `reader` / `writer`, serving up to
+/// [`MAX_REQUESTS_PER_SESSION`] Parse requests then stopping.
+pub fn run<R: Read, W: Write>(reader: R, writer: W) -> RunOutcome {
+    run_with_limit(reader, writer, MAX_REQUESTS_PER_SESSION)
+}
+
+/// Run the worker dispatch loop with an explicit request cap, for tests that
+/// exercise the force-exit bound without sending 64+ frames.
+pub(crate) fn run_with_limit<R: Read, W: Write>(
+    mut reader: R,
+    mut writer: W,
+    max_requests: u32,
+) -> RunOutcome {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let mut served: u32 = 0;
+    loop {
+        match protocol::decode_request(&buf) {
+            Ok(Some(frame)) => {
+                // A complete request arrived: drop it from the buffer and serve it.
+                buf.drain(..frame.consumed);
+                let response = handle_request(&frame.message);
+                // A Response payload is ≤ 4 bytes, so encode never fails here;
+                // treat the impossible Oversized as a session-ending write failure
+                // (no panic, no malformed frame on the wire).
+                let encoded = match protocol::encode_response(frame.request_id, &response) {
+                    Ok(bytes) => bytes,
+                    Err(_) => return RunOutcome::WriteFailed,
+                };
+                if writer.write_all(&encoded).is_err() || writer.flush().is_err() {
+                    return RunOutcome::WriteFailed;
+                }
+                served += 1;
+                if served >= max_requests {
+                    return RunOutcome::MaxRequestsReached;
+                }
+            }
+            Ok(None) => match reader.read(&mut chunk) {
+                Ok(0) => {
+                    // End of input. A clean session ends with an empty buffer;
+                    // leftover bytes mean the parent sent a truncated frame.
+                    return if buf.is_empty() {
+                        RunOutcome::EndOfInput
+                    } else {
+                        RunOutcome::TruncatedFrame
+                    };
+                }
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                Err(_) => return RunOutcome::ReadFailed,
+            },
+            Err(_) => return RunOutcome::MalformedFrame,
+        }
+    }
+}
+
+/// Parse the source carried by a [`Request`] and produce the matching
+/// [`Response`]. The worker parses only the supplied bytes (ADR-022 §2).
+fn handle_request(request: &Request) -> Response {
+    let Request::Parse { language, source } = request;
+    // The parent is responsible for the UTF-8 encoding contract (ADR-022 §7);
+    // bytes that are not valid UTF-8 cannot be parsed here, so the worker
+    // reports a parse failure and the parent degrades.
+    let source_str = match std::str::from_utf8(source) {
+        Ok(s) => s,
+        Err(_) => return Response::ParseFailed,
+    };
+    match language::parse(*language, source_str) {
+        Ok(tree) => Response::Parsed {
+            // `has_error()` reports whether the tree contains any ERROR node.
+            // A finer-grained count is a classifier concern (Iteration 5); the
+            // worker only reports whether the parse was clean.
+            error_count: u32::from(tree.root_node().has_error()),
+        },
+        Err(_) => Response::ParseFailed,
+    }
+}
 
 /// The outcome of a parse-only worker experiment on one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,4 +176,226 @@ fn count_parseable(targets: Vec<SourceTarget>) -> usize {
 /// Parse `source` as `language`, returning whether it produced a tree.
 fn parses(language: SourceLanguage, source: &str) -> bool {
     language::parse(language, source).is_ok()
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::protocol::{self, DecodedFrame, Request, Response};
+
+    /// Encode a sequence of requests into one byte buffer the worker can read.
+    fn encode_requests(requests: &[(u32, Request)]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for (id, req) in requests {
+            buf.extend_from_slice(
+                &protocol::encode_request(*id, req).expect("test source encodes"),
+            );
+        }
+        buf
+    }
+
+    /// Decode every response frame the worker wrote, in order.
+    fn decode_responses(buf: &[u8]) -> Vec<DecodedFrame<Response>> {
+        let mut out = Vec::new();
+        let mut rest = buf;
+        while let Some(frame) = protocol::decode_response(rest)
+            .expect("worker output must be a sequence of well-formed response frames")
+        {
+            let consumed = frame.consumed;
+            out.push(frame);
+            rest = &rest[consumed..];
+        }
+        out
+    }
+
+    fn parse_request(language: SourceLanguage, source: &[u8]) -> Request {
+        Request::Parse {
+            language,
+            source: source.to_vec(),
+        }
+    }
+
+    #[test]
+    fn run_serves_one_clean_parse_request_and_stops_at_end_of_input() {
+        let requests = encode_requests(&[(1, parse_request(SourceLanguage::Python, b"print(1)"))]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(
+            responses.len(),
+            1,
+            "one request must yield exactly one response"
+        );
+        assert_eq!(responses[0].request_id, 1);
+        assert_eq!(
+            responses[0].message,
+            Response::Parsed { error_count: 0 },
+            "clean Python source must parse with zero errors"
+        );
+    }
+
+    #[test]
+    fn run_serves_a_bounded_sequence_then_stops_at_end_of_input() {
+        let requests = encode_requests(&[
+            (10, parse_request(SourceLanguage::Python, b"x = 1")),
+            (11, parse_request(SourceLanguage::Bash, b"echo hi")),
+            (
+                12,
+                parse_request(SourceLanguage::JavaScript, b"const x = 1;"),
+            ),
+        ]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(
+            responses.iter().map(|f| f.request_id).collect::<Vec<_>>(),
+            vec![10, 11, 12],
+            "responses must be served in request order"
+        );
+        for f in &responses {
+            assert_eq!(
+                f.message,
+                Response::Parsed { error_count: 0 },
+                "each clean snippet must parse with zero errors"
+            );
+        }
+    }
+
+    #[test]
+    fn run_force_exits_after_the_request_cap_without_serving_the_extra() {
+        // Cap at 2; send 3. Only the first two may be served.
+        let requests = encode_requests(&[
+            (1, parse_request(SourceLanguage::Python, b"a = 1")),
+            (2, parse_request(SourceLanguage::Python, b"b = 2")),
+            (3, parse_request(SourceLanguage::Python, b"c = 3")),
+        ]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run_with_limit(reader, &mut output, 2);
+        assert_eq!(outcome, RunOutcome::MaxRequestsReached);
+
+        let responses = decode_responses(&output);
+        assert_eq!(
+            responses.iter().map(|f| f.request_id).collect::<Vec<_>>(),
+            vec![1, 2],
+            "the third request past the cap must not be served"
+        );
+    }
+
+    #[test]
+    fn run_stops_on_a_malformed_frame_without_serving_it() {
+        // A valid first frame, then a frame with bad magic.
+        let mut buf = encode_requests(&[(1, parse_request(SourceLanguage::Python, b"x = 1"))]);
+        buf.extend_from_slice(b"XXXX\x01\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00");
+        let reader = std::io::Cursor::new(buf);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::MalformedFrame);
+
+        let responses = decode_responses(&output);
+        assert_eq!(
+            responses.len(),
+            1,
+            "only the well-formed first request is served before the malformed frame"
+        );
+    }
+
+    #[test]
+    fn run_reports_a_truncated_trailing_frame_as_a_worker_failure() {
+        // A valid frame followed by a partial header (5 bytes, not a full frame).
+        let mut buf = encode_requests(&[(1, parse_request(SourceLanguage::Python, b"x = 1"))]);
+        buf.extend_from_slice(b"AELW\x01");
+        let reader = std::io::Cursor::new(buf);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::TruncatedFrame);
+
+        let responses = decode_responses(&output);
+        assert_eq!(
+            responses.len(),
+            1,
+            "the complete first request is still served"
+        );
+    }
+
+    #[test]
+    fn run_reports_parse_failed_for_invalid_utf8_source() {
+        // 0xFF is not valid UTF-8; the parent owns the encoding contract, so
+        // the worker cannot parse these bytes and reports ParseFailed.
+        let requests = encode_requests(&[(7, parse_request(SourceLanguage::Python, b"\xFF\xFE"))]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(
+            responses[0].message,
+            Response::ParseFailed,
+            "invalid UTF-8 source must yield ParseFailed, not a panic"
+        );
+    }
+
+    #[test]
+    fn run_reports_a_nonzero_error_count_for_incomplete_syntax() {
+        // `def f(` is incomplete Python: the grammar still produces a tree, but
+        // it contains an ERROR node, so error_count must be nonzero.
+        let requests = encode_requests(&[(9, parse_request(SourceLanguage::Python, b"def f("))]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        assert!(
+            matches!(responses[0].message, Response::Parsed { error_count } if error_count > 0),
+            "incomplete syntax must parse to a tree with a nonzero error count"
+        );
+    }
+
+    #[test]
+    fn run_serves_a_clean_parse_for_each_foundation_grammar() {
+        let snippets: &[(SourceLanguage, &[u8])] = &[
+            (SourceLanguage::Python, b"print(1)"),
+            (SourceLanguage::JavaScript, b"console.log(1);"),
+            (SourceLanguage::TypeScript, b"let x: number = 1;"),
+            (SourceLanguage::Bash, b"echo hi"),
+        ];
+        let requests: Vec<(u32, Request)> = snippets
+            .iter()
+            .enumerate()
+            .map(|(i, (lang, src))| (i as u32, parse_request(*lang, src)))
+            .collect();
+        let encoded = encode_requests(&requests);
+        let reader = std::io::Cursor::new(encoded);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), snippets.len());
+        for f in &responses {
+            assert_eq!(
+                f.message,
+                Response::Parsed { error_count: 0 },
+                "each foundation grammar must parse its clean snippet with zero errors"
+            );
+        }
+    }
 }

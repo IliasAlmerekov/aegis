@@ -4,6 +4,8 @@
 //! intercepting AI agent commands and requiring human confirmation before
 //! destructive operations.
 
+/// Parent-side language analysis orchestration (worker client).
+pub mod analysis;
 /// Append-only audit recorder and integrity checker.
 pub mod audit;
 /// Configuration loading, validation, and layered merge.

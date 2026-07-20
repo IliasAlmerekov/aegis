@@ -11,8 +11,66 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Fixed
+
+- Language-worker protocol/client hardening (ADR-022 §2, L1 Iteration 3
+  re-review): the encoder is now fallible (`encode_request`/`encode_response`
+  return `Result<Vec<u8>, EncodeError>`) so an oversized source is rejected as
+  `EncodeError::Oversized` instead of `.expect()`-panicking (no `.expect()` in
+  production); the 1 MiB source ceiling is now legal — `MAX_SOURCE_BYTES = 1
+  MiB` and `MAX_FRAME_PAYLOAD = MAX_SOURCE_BYTES + 1` budget the 1-byte language
+  tag, so a 1 MiB source round-trips instead of being rejected as oversized
+  (off-by-one fixed); the parent client propagates the stdin `flush()` error
+  instead of dropping it (`let _ = flush` → typed `WorkerError::Io`), so a flush
+  failure no longer masquerades as a read `Timeout`; `Worker::analyze` closes
+  stdin after sending and reaps the child, and a worker that responds fully then
+  exits non-zero degrades the whole session as `WorkerError::NonZeroExit`
+  (previously silently reported as success); the `--internal-language-worker`
+  flag literal is now a single shared `aegis::analysis::INTERNAL_LANGUAGE_WORKER
+  _FLAG` const (no comment-only "kept in sync" duplication). 8 regression tests
+  added across `aegis-language` and the parent client; `language_protocol` fuzz
+  still panic-free (7.9M runs).
+
 ### Added
 
+- Language-worker protocol and bounded ephemeral worker (ADR-022 §2, L1
+  Iteration 3): a pure, length-bounded, versioned request/response framing
+  layer in `aegis-language::protocol` — magic `AELW`, version 1, `request_id`
+  correlation, disjoint request/response kind tags, a 1 MiB payload ceiling
+  (ADR-022 §7), and `Ok(None)` for incomplete frames vs `Err` for malformed
+  (bad magic, unsupported version, oversized, invalid kind, invalid payload).
+  The only `Request` variant is `Parse { language, source }`; the wire format
+  encodes no way to ask the worker for a path read or subprocess (pinned by an
+  exhaustive kind-tag test). 15 framing tests.
+- The ephemeral worker dispatch loop (`aegis-language::worker::run`) reads
+  request frames, parses the supplied bytes with the pinned Tree-sitter
+  grammar, and writes one `Response::{Parsed,ParseFailed}` frame per request,
+  serving a bounded sequence (≤ `MAX_REQUESTS_PER_SESSION`) then force-exiting.
+  It is parse-only — no filesystem, subprocess, daemon, or socket — and every
+  stop reason is typed (`RunOutcome`). 8 in-process dispatch tests.
+- An undocumented `--internal-language-worker` CLI mode: `aegis` re-execs
+  itself into the worker, delegating immediately to `aegis-language::worker::run`
+  over stdin/stdout before any clap parsing or Tokio runtime construction, so
+  the worker process stays minimal. 5 integration tests spawn the real binary
+  over pipes — clean round-trip, stdout writes only frame bytes (no noise),
+  clean exit on stdin close, and non-zero exit on a malformed frame.
+- The parent language-worker client (`aegis::analysis::worker_client`): spawns
+  the worker, frames requests/responses, correlates responses by `request_id`
+  in send order under a per-session deadline, and converts every worker
+  failure (timeout, early close, protocol noise, duplicate response,
+  out-of-order response, unexpected id, I/O error) into a typed `WorkerError`
+  that maps to `DegradationReason::WorkerFailure`, retaining responses already
+  received when a failure ends the session. Hybrid tests: real subprocess for
+  clean round-trip / non-zero exit / stdout noise, `tokio::io::duplex` mocks
+  for timeout / duplicate / out-of-order / unexpected / partial-prior-results.
+  9 client tests. (Wiring into an `Assessment` is deferred to the Iteration 1
+  monotonic merge + Iteration 4 source routing.)
+- `fuzz/fuzz_targets/language_protocol.rs`: fuzzes the protocol decoders on
+  arbitrary bytes; both decoders are panic-free (return `Ok(None)` or `Err`),
+  verified by a 7.8M-iteration smoke run (ADR-022 §2, L1 Iteration 3 REVIEW
+  GATE).
+- `aegis-language` is now a dependency of the root `aegis` binary; `analysis`
+  added to the `src/lib.rs` public API surface (`ARCHITECTURE.md §8` updated).
 - `aegis-language` crate skeleton with the release grammar manifest
   qualification contract: it rejects an unpinned grammar, missing license,
   Tree-sitter ABI outside the pinned runtime's compatible range, or a grammar

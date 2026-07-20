@@ -25,6 +25,7 @@ dependencies = [
  "aegis-audit",
  "aegis-config",
  "aegis-explanation",
+ "aegis-language",
  "aegis-parser",
  "aegis-policy",
  "aegis-sandbox",

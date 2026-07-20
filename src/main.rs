@@ -274,9 +274,18 @@ const EXIT_DENIED: i32 = 2;
 /// The command matched a `Block`-level pattern and was hard-stopped.
 const EXIT_BLOCKED: i32 = 3;
 /// Aegis/config failure prevented execution or validation from succeeding.
-const EXIT_INTERNAL: i32 = 4;
+pub(crate) const EXIT_INTERNAL: i32 = 4;
 
 fn main() {
+    // The internal language-worker mode short-circuits before clap parsing
+    // and Tokio runtime construction: the worker is a minimal, synchronous,
+    // parse-only process and must not pay for either (ADR-022 §2). The flag
+    // literal is owned by `aegis::analysis::INTERNAL_LANGUAGE_WORKER_FLAG` so
+    // the detector here and the spawner in the client cannot drift.
+    if std::env::args().any(|a| a == aegis::analysis::INTERNAL_LANGUAGE_WORKER_FLAG) {
+        process::exit(cli_dispatch::run_internal_language_worker());
+    }
+
     let invocation = match shell_compat::parse_invocation_mode() {
         Ok(invocation) => invocation,
         Err(message) => {

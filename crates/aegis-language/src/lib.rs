@@ -22,9 +22,13 @@
 
 pub mod language;
 pub mod manifest;
+pub mod protocol;
 pub mod router;
 pub mod worker;
 
 pub use language::{ParseError, SourceLanguage, parse};
+pub use protocol::{
+    DecodeError, DecodedFrame, EncodeError, MAX_FRAME_PAYLOAD, MAX_SOURCE_BYTES, Request, Response,
+};
 pub use router::SourceTarget;
-pub use worker::{Outcome, analyze};
+pub use worker::{Outcome, RunOutcome, analyze, run};
