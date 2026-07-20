@@ -33,6 +33,50 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- Source-target router and catch-only script-file reader (ADR-022 §6, L1
+  Iteration 4 slices 1-4): `src/analysis/router::route` resolves analyzable
+  source in an intercepted command — explicit interpreter, versioned-basename
+  normalization (`python3.11` → `python3`), trusted-alias program names,
+  argv script-file arguments, direct execution of a path verified by shebang
+  (`./script.py` with `#!/usr/bin/env python3`), quoted/expanding heredocs
+  and here-strings (expansions/substitutions degrade rather than being
+  evaluated), a narrowly-proven `printf '%s' <literal> | interpreter`
+  pipeline, and a literal top-level `cd -- <path> &&` cwd rebase (any other
+  `cd` form degrades a relative target instead of resolving against the
+  wrong directory) — reusing `aegis-parser`'s production tokenizer and
+  `Effective program` resolution throughout (so launcher-prefix stacking like
+  `sudo timeout 5 python3 -c …` is handled once, not duplicated). An exact
+  registry match always takes precedence over a conflicting alias entry.
+  `src/analysis/source_reader::read_script_file` performs the actual bounded,
+  catch-only file read: rejects symlinks/FIFOs/sockets/directories without
+  following them, bounds reads to the configured limit without a full-file
+  read on oversized files, strips a UTF-8 BOM, rejects invalid UTF-8, and
+  records only a SHA-256 hash — never the source itself. `aegis-config`
+  wiring for script-file budgets/trusted aliases and same-command
+  heredoc-to-file reuse remain later slices.
+
+### Fixed
+
+- Language-worker protocol/client hardening (ADR-022 §2, L1 Iteration 3
+  re-review): the encoder is now fallible (`encode_request`/`encode_response`
+  return `Result<Vec<u8>, EncodeError>`) so an oversized source is rejected as
+  `EncodeError::Oversized` instead of `.expect()`-panicking (no `.expect()` in
+  production); the 1 MiB source ceiling is now legal — `MAX_SOURCE_BYTES = 1
+  MiB` and `MAX_FRAME_PAYLOAD = MAX_SOURCE_BYTES + 1` budget the 1-byte language
+  tag, so a 1 MiB source round-trips instead of being rejected as oversized
+  (off-by-one fixed); the parent client propagates the stdin `flush()` error
+  instead of dropping it (`let _ = flush` → typed `WorkerError::Io`), so a flush
+  failure no longer masquerades as a read `Timeout`; `Worker::analyze` closes
+  stdin after sending and reaps the child, and a worker that responds fully then
+  exits non-zero degrades the whole session as `WorkerError::NonZeroExit`
+  (previously silently reported as success); the `--internal-language-worker`
+  flag literal is now a single shared `aegis::analysis::INTERNAL_LANGUAGE_WORKER
+  _FLAG` const (no comment-only "kept in sync" duplication). 8 regression tests
+  added across `aegis-language` and the parent client; `language_protocol` fuzz
+  still panic-free (7.9M runs).
+
+### Added
+
 - Language-worker protocol and bounded ephemeral worker (ADR-022 §2, L1
   Iteration 3): a pure, length-bounded, versioned request/response framing
   layer in `aegis-language::protocol` — magic `AELW`, version 1, `request_id`

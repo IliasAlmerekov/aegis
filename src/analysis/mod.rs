@@ -1,11 +1,17 @@
-//! Parent-side language analysis orchestration (ADR-022 §2, L1 Iteration 3).
+//! Parent-side language analysis orchestration (ADR-022 §2/§6, L1 Iterations
+//! 3-4).
 //!
 //! The parent process owns async orchestration: spawning the ephemeral worker,
 //! framing requests/responses, enforcing deadlines, and converting worker
 //! failures into typed degradation. The worker subprocess itself and the
-//! framing protocol live in the `aegis-language` crate; this module is the
-//! client the rest of the binary will call after source routing (Iteration 4).
+//! framing protocol live in the `aegis-language` crate. [`router`] resolves
+//! which parts of an intercepted command are analyzable source (Iteration 4);
+//! wiring its output into [`worker_client`] and merging results into an
+//! `Assessment` remains a later slice.
 
+pub mod heredoc;
+pub mod router;
+pub mod source_reader;
 pub mod worker_client;
 
 pub use worker_client::{

@@ -21,7 +21,90 @@
 
 ---
 
-## Last session (2026-07-20) — L1 Iteration 3 (worker protocol, slices 1-4)
+## Last session (2026-07-20) — L1 Iteration 4 slices 1-4 (source routing)
+
+- **Iteration 4 (Source target routing and catch-only reads) slices 1-4 done
+  via TDD; heredoc-to-file reuse and `aegis-config` budget/alias wiring
+  deferred.** Scope for slice 1 was confirmed with the user up front per the
+  TDD skill (the plan bundles five distinct concerns into one iteration);
+  slices 2-4 continued in the same session at the user's request ("do all
+  slices, then I make code review").
+- **Architecture correction caught before writing code (slice 1):** the
+  plan's candidate file `crates/aegis-language/src/router.rs` cannot host the
+  production router — `tests/aegis_language_boundary.rs` (ADR-022 §4) forbids
+  `aegis-language` from depending on any workspace crate, including
+  `aegis-parser`, whose tokenizer/`Effective program` resolution the router
+  needs to reuse. The production router lives instead at
+  `src/analysis/router.rs` in the root `aegis` crate (already depends on both);
+  the Iteration-0 `aegis_language::router` prototype is untouched and still
+  backs `aegis_language::worker::analyze`'s own no-source contract test/bench.
+- **Slice 1 (interpreter/runner registry, in `router::route`):** reuses
+  `aegis_parser::split_tokens` + `effective_token_slices` (replacing the
+  Iteration-0 prototype's ad hoc `shell_words`/fixed-prefix-list helpers), so
+  launcher-prefix stacking (`sudo timeout 5 python3 -c …`, `env FOO=bar
+  python3 -c …`) is handled by the same production logic the scanner uses.
+  Versioned-basename normalization (`python3.11` → `python3`, `node20` →
+  `node`) and trusted-alias resolution (`("py", "python3")`) are caller-
+  supplied parameters — not yet wired to `aegis-config` (deferred). An exact
+  registry match always wins over a conflicting alias (ADR-022 §6 precedence).
+- **`src/analysis/source_reader.rs` (new, 10 tests):** async, catch-only
+  `read_script_file` — `symlink_metadata` pre-check + post-open re-check
+  reject symlinks/FIFOs/sockets/directories without following them (no
+  `O_NOFOLLOW`, since that needs a new `libc`-family dependency outside the
+  approved list; the accepted residual TOCTOU race is documented in the
+  module doc, consistent with ADR-022 §6's "successful read never waives
+  Effect-opaque"). Bounds reads to `limit_bytes + 1` so oversized files are
+  caught without a full read; strips a UTF-8 BOM; rejects invalid UTF-8;
+  records a SHA-256 hash (metadata only, never persisted source).
+- **Slice 2 (script-file/shebang routing, in `router.rs`):** `RoutedTarget`
+  gained `ScriptFile { language, path }` (an argv file target) and
+  `DirectExec { path }` (a path-like program token with no known interpreter,
+  e.g. `./script.py`) — `resolve()` reads `DirectExec` and only treats it as a
+  target if `verified_shebang_language` matches the first line (env or direct
+  form); no `PATH`/`--version`/content-guessing probes (ADR-022 §6).
+- **Slice 3 (heredoc/here-string/literal-producer stdin, new
+  `src/analysis/heredoc.rs`):** quoted heredocs are exact source; unquoted
+  heredocs/here-strings are literal only when they contain no `$`/backtick
+  expansion syntax, otherwise `RoutedTarget::Dynamic` degradation (never
+  evaluated). A real bug was caught by the RED step here: the tokenizer has
+  no heredoc-boundary awareness, so heredoc *body* words were being
+  misdetected as trailing script-file arguments until the heredoc/here-string
+  check was reordered ahead of the bare-file-argument scan. Also added:
+  two-stage pipeline routing (`producer | interpreter`) — only `printf '%s'
+  <literal>` is a narrowly-proven literal producer (ADR-022 §6); every other
+  producer degrades as `Dynamic` rather than being evaluated or guessed at.
+- **Slice 4 (`cd` tracking, in `router.rs`):** only a literal top-level
+  `cd -- <path> &&` prefix rebases a relative `ScriptFile`/`DirectExec` path;
+  any other `cd` form (no `--`, command substitution, no trailing `&&`)
+  degrades a relative target as `Dynamic` rather than resolving against the
+  wrong directory. A relative `DirectExec` after an unresolved `cd` is dropped
+  outright (no language to attach a degradation to, and misleading evidence
+  from the wrong file is worse than none) — a documented, narrow gap.
+- **Test-hygiene:** `src/analysis/router.rs` hit the 800-line file-size budget
+  (`tests/file_size_budget.rs`) after slice 4; its `#[cfg(test)] mod tests`
+  was extracted to `src/analysis/router_tests.rs` via `#[path = ...]`,
+  matching the project's existing pattern for this budget.
+- **Deferred (documented, not silently dropped):** same-command heredoc-to-file
+  reuse (`cat > script.py <<'EOF' … && python3 script.py` still re-reads the
+  file from disk rather than reusing the in-memory heredoc body — arguably
+  more accurate anyway, since `tee`/redirection semantics can differ from the
+  heredoc body); `aegis-config` fields for script-file budgets and trusted
+  global aliases (`route`/`resolve` still take caller-supplied parameters);
+  wiring `router`/`resolve` output into `worker_client`/`Assessment` (still
+  blocked on the Iteration 1 merge function's actual language-result input,
+  which only exists once an adapter — Iteration 6+ — produces one); a direct
+  Effect-opaque/Required-recovery regression test (there is no production
+  code path yet that lets a language-aware result influence `effect_opaque`,
+  so a test today would be synthetic — same reasoning as Iteration 2's
+  deferred rendering slice).
+- **Verified:** `cargo test --workspace` = 1660 passed / 96 suites / 0 failed
+  (+40 tests this session); `cargo clippy --all-targets -- -D warnings` clean;
+  `cargo fmt --all --check` clean; `tests/aegis_language_boundary.rs` and
+  `tests/file_size_budget.rs` both green.
+
+---
+
+## Prior session (2026-07-20) — L1 Iteration 3 (worker protocol, slices 1-4)
 
 - **Iteration 3 (Worker protocol and failure isolation) done via TDD; the
   Iteration 1 monotonic merge + Iteration 4 source routing are the remaining
