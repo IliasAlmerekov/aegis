@@ -85,6 +85,16 @@ pub(super) struct AuditIntegrityPayload<'a> {
     pub(super) cwd: Option<&'a str>,
     pub(super) id: Option<&'a str>,
     pub(super) transport: Option<&'a str>,
+    // ADR-022 §10 Audit v2 fields. `skip_serializing_if = "Option::is_none"`
+    // means a legacy v1 entry (basis/analysis `None`) serializes the payload
+    // byte-for-byte identical to the pre-v2 form, so its hash is unchanged and
+    // mixed v1/v2 logs verify. A v2 entry includes them, so tampering basis or
+    // analysis breaks the chain. Typed Match evidence and detection IDs are
+    // covered transitively via `matched_patterns` above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) basis: Option<&'a aegis_types::AssessmentBasis>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) analysis: Option<&'a aegis_types::AnalysisSummary>,
 }
 
 pub(super) fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) -> Result<String> {
@@ -121,6 +131,8 @@ pub(super) fn compute_entry_hash(entry: &AuditEntry, prev_hash: Option<&str>) ->
         cwd,
         id,
         transport,
+        basis: base.basis.as_ref(),
+        analysis: base.analysis.as_ref(),
     };
 
     let canonical = serde_json::to_vec(&payload).map_err(|err| {

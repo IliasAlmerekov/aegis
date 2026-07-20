@@ -57,6 +57,12 @@ impl AuditEntry {
             snapshots_required: Some(false),
             confinement_required: Some(false),
             recovery_degradation: None,
+            // Audit v2 fields default to `None` here; the runtime audit builder
+            // (`RuntimeContext::build_audit_entry`) populates them from the
+            // assessment. A freshly-`new` entry is therefore v1-shaped, which
+            // tests rely on to represent a legacy v1 line.
+            basis: None,
+            analysis: None,
         })
     }
 
@@ -142,6 +148,22 @@ impl AuditEntry {
     /// created so the degradation is a first-class, queryable audit event.
     pub fn with_recovery_degradation(mut self, degradation: RecoveryDegradation) -> Self {
         self.as_base_mut().recovery_degradation = Some(degradation);
+        self
+    }
+
+    /// Persist the Assessment basis (ADR-022 §10, Audit v2). Always set on
+    /// fresh runtime entries so the presence of `basis` marks a v2 line;
+    /// legacy v1 lines deserialize with `basis = None`.
+    pub fn with_basis(mut self, basis: aegis_types::AssessmentBasis) -> Self {
+        self.as_base_mut().basis = Some(basis);
+        self
+    }
+
+    /// Persist the language-aware analysis summary (ADR-022 §10, Audit v2).
+    /// `None` (no language analysis ran) leaves the field absent, which is the
+    /// valid v2 shape for a baseline-only entry.
+    pub fn with_analysis(mut self, analysis: Option<aegis_types::AnalysisSummary>) -> Self {
+        self.as_base_mut().analysis = analysis;
         self
     }
 

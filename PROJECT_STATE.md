@@ -17,7 +17,96 @@
 
 ## Last updated
 
-2026-07-17
+2026-07-20
+
+---
+
+## Last session (2026-07-20) — L1 Iteration 2 (Audit v2, slices 1-3)
+
+- **Iteration 2 (Audit v2 and explanation contracts) slices 1-3 done via TDD;
+  slice 4 (rendering) deferred.** Scope confirmed with the user up front per the
+  TDD skill: schema-core (mixed v1/v2 JSONL fixtures + privacy + compatibility
+  projection), defer the TUI consolidated-confirmation rendering slice since no
+  real degradation-bearing assessments exist until Iterations 6-8 (it would be
+  synthetic and the most drift-prone). Seams: the `AuditEntry` JSONL
+  serialization boundary, `AuditLogger` query/rotation/integrity over mixed
+  logs, the v2 optional fields, the source-privacy boundary, and v1 projection
+  compatibility.
+- **Slice 1 (RED #1 + GREEN) — v2 schema + mixed-log integrity:** new
+  `crates/aegis-audit/tests/audit_v2.rs` drives the v2 schema by hand-written
+  v1 + v2 JSONL fixtures (independent of the Rust struct under test).
+  `DecisionEntry` gained `basis: Option<AssessmentBasis>` and `analysis:
+  Option<AnalysisSummary>`; `MatchedPattern` gained typed `evidence:
+  Option<MatchEvidence>` and a stable `detection_id: Option<String>`. All four
+  are `#[serde(default, skip_serializing_if = "Option::is_none")]` on both
+  `AuditEntryFlat` and `AuditIntegrityPayload`, so a v1 line (all v2 `None`)
+  serializes byte-for-byte identical to the pre-v2 form — its hash is unchanged
+  and mixed v1/v2 logs verify without rewriting old lines or versioning
+  `chain_alg` (the safe path; the plan's "hash the exact serialized entry form"
+  is satisfied in spirit — v2 fields are covered by the chain — without the
+  chain_alg-versioning change that would break all v1 logs, which contradicts
+  "preserve mixed-log verification"). Fresh runtime entries populate `basis`
+  from `Assessment::basis()` and `analysis` from `assessment.analysis` via new
+  `with_basis`/`with_analysis` builders in `build_audit_entry`; each matched
+  pattern carries `MatchResult.evidence` + pattern id via `From<&MatchResult>`.
+  5 tests: v2 round-trip preserves basis/analysis/evidence/detection_id; v1
+  line deserializes with every v2 field absent; mixed v1/v2 log verifies and
+  tampering v2 `basis` breaks the chain (proves v2 fields are in the payload);
+  mixed-log query returns both; mixed-log rotation into archive verifies.
+- **Slice 2 (RED #2 + GREEN) — source-privacy boundary:** two guard tests pin
+  ADR-022 §10 at the audit JSONL surface (composing with the `AnalysisProvenance`
+  privacy test in `aegis-types`). `v2_audit_entry_persists_only_allowed_provenance_fields`
+  asserts the `LanguageRule` provenance carries EXACTLY the 10 metadata-only
+  allowed fields (language, source_origin, rule_id, operation, file_path,
+  source_hash, span, certainty, status, degradation_reason) — an allowlist, so
+  any leaky extra field fails. `v2_audit_entry_serializes_no_source_body_snippet_ast_or_value_keys`
+  recursively scans every key and rejects a denylist of source-content names
+  (source_body, snippet, ast, syntax_tree, imported_source, value, code, …).
+  These are guards (the invariant holds by construction — `AnalysisProvenance`
+  has no leaky fields), pinning the boundary so a future field addition cannot
+  silently leak.
+- **Slice 3 (RED #3 + GREEN) — compatibility projection:** `v2_entry_still_projects_v1_matched_patterns_and_pattern_ids`
+  proves a v2 entry carries the v1 `pattern_ids` + per-pattern v1 fields
+  (id/risk/description/safe_alt/category/matched_text/source) ALONGSIDE the v2
+  `evidence`/`detection_id` (additive, not replacing).
+  `v1_only_log_remains_queryable_through_v2_aware_codebase` proves a v1-only log
+  stays queryable and that v2 fields stay `None` on v1-shaped entries (never
+  silently back-filled).
+- **Slice 4 (rendering) deferred** — ADR-022 §5 consolidated-confirmation
+  rendering of multiple decisive Matches + one degradation; no real
+  degradation assessments until Iter 6-8, so it would be synthetic.
+- **Verified:** `cargo test --workspace` = 1566 passed / 94 suites / 0 failed;
+  `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt
+  --all --check` clean; `aegis-audit` lib + tests = 82 + 9 audit_v2;
+  `audit_integrity` + `full_pipeline_audit` + `full_pipeline_json` = 23 passed
+  (v1 byte-for-byte + integrity chain preserved). No production runtime
+  wiring of `analysis` (always `None` until language adapters merge results in
+  Iter 6-8); `basis` + `evidence`/`detection_id` ARE populated for every fresh
+  real entry now. `docs/threat-model.md` updated to record that Audit v2 fields
+  are covered by the chain (skip-if-none) and carry metadata only.
+- **Review-fix round (Standards + Spec; 0 hard Standards, 4 minor judgement
+  calls left, 2 Spec items addressed).** Standards judgement calls (Data Clump
+  around basis/analysis, Shotgun Surgery across 8+ files, duplicated
+  `evidence/detection_id/basis/analysis: None` fixture boilerplate, and
+  speculative-generality on `detection_id`) — all minor/stylistic per the
+  reviewer, left as-is except the last, which overlaps Spec (c). Spec (c)
+  `detection_id` was a trivial mirror of `pattern_id` whose projection test
+  passed by construction: fixed via TDD — `From<&MatchResult>` now derives
+  `detection_id` from evidence (`LanguageRule` → `provenance.rule_id`,
+  fallback to pattern id when absent; regex/token-prefix → pattern id), driven
+  by a RED test with a `LanguageRule` whose `rule_id` deliberately differs from
+  the pattern id (3 detection_id tests in `audit_v2.rs`; both branches
+  exercised). Spec REVIEW GATE "no source content reaches JSONL, Watch output,
+  error reports, or tracing" — the worst Spec finding — resolved as an honest
+  deferral, not vacuous guard tests: v2 fields flow only to audit JSONL this
+  iteration; Watch `OutputFrame` carries only decision/exit_code/sandbox_status/
+  base64 child chunks (no matched_patterns/evidence/basis/analysis), and
+  error/tracing don't project v2, so there is no leak path today; the
+  multi-surface gate becomes meaningful in Iter 9 when Watch/TUI/error become
+  v2-aware, documented in `docs/threat-model.md`. The slice-4 rendering gap and
+  the "short in-memory TUI snippet" were already deferred by the user's scope
+  decision. Verified: `cargo test --workspace` = 1569 passed / 94 suites / 0
+  failed, clippy `-D warnings` clean, fmt clean.
 
 ---
 

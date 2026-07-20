@@ -170,6 +170,15 @@ pub struct DecisionEntry {
     /// Why a required recovery backstop was not available, when it was not
     /// (ADR-016). `None` when no degradation occurred or on pre-ADR-016 lines.
     pub recovery_degradation: Option<RecoveryDegradation>,
+    /// Assessment basis — the decisive Match IDs at the entry's maximum
+    /// `RiskLevel`, or `Fallback` when nothing matched (ADR-022 §10, Audit v2).
+    /// `None` on legacy v1 lines (absent v2 fields identify a legacy line);
+    /// fresh entries populate it from `Assessment::basis()`.
+    pub basis: Option<aegis_types::AssessmentBasis>,
+    /// Language-aware analysis summary — overall status and typed degradation
+    /// reasons, orthogonal to `RiskLevel` (ADR-022 §5, §10, Audit v2). `None`
+    /// on legacy v1 lines and on fresh entries with no language analysis.
+    pub analysis: Option<aegis_types::AnalysisSummary>,
 }
 
 /// Watch-mode audit entry.
@@ -281,6 +290,16 @@ struct AuditEntryFlat {
     confinement_required: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     recovery_degradation: Option<RecoveryDegradation>,
+    // ADR-022 §10 Audit v2 fields. `#[serde(default)]` reads absent fields back
+    // as `None` so a legacy v1 line (no v2 fields) stays distinct from a v2
+    // line that explicitly records a value; `skip_serializing_if = "Option::is_none"`
+    // keeps v1 entries byte-for-byte identical to the pre-v2 form, so their
+    // integrity hash is unchanged and mixed v1/v2 logs verify without rewriting
+    // old lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    basis: Option<aegis_types::AssessmentBasis>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis: Option<aegis_types::AnalysisSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -325,6 +344,8 @@ impl From<AuditEntryFlat> for AuditEntry {
             snapshots_required: flat.snapshots_required,
             confinement_required: flat.confinement_required,
             recovery_degradation: flat.recovery_degradation,
+            basis: flat.basis,
+            analysis: flat.analysis,
         };
         if is_watch {
             AuditEntry::Watch(WatchEntry {
@@ -376,6 +397,8 @@ impl From<&AuditEntry> for AuditEntryFlat {
             snapshots_required: base.snapshots_required,
             confinement_required: base.confinement_required,
             recovery_degradation: base.recovery_degradation,
+            basis: base.basis.clone(),
+            analysis: base.analysis.clone(),
             source,
             cwd,
             id,
@@ -491,6 +514,17 @@ pub struct MatchedPattern {
     /// Origin of this pattern in the runtime set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<PatternSource>,
+    /// Typed detection evidence identifying this match's mechanism and source
+    /// (ADR-022 §10, Audit v2). Absent on legacy v1 lines; fresh entries
+    /// populate it from `MatchResult.evidence`. Covered by the integrity chain
+    /// because the payload serializes `matched_patterns` directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<aegis_types::MatchEvidence>,
+    /// Stable detection ID for this match (ADR-022 §10, Audit v2). Absent on
+    /// legacy v1 lines; fresh entries mirror the pattern id today, leaving room
+    /// for a future detection-stable identifier distinct from the v1 pattern id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detection_id: Option<String>,
 }
 
 /// Stable audit representation of one snapshot created before execution.
@@ -562,7 +596,32 @@ impl From<&MatchResult> for MatchedPattern {
             category: Some(m.pattern.category),
             matched_text: Some(m.matched_text.clone()),
             source: Some(m.pattern.source),
+            // Audit v2: persist typed evidence and a stable detection ID. The
+            // detection ID is the stable identifier of THIS detection: a
+            // Language-aware rule's provenance rule id (distinct from the v1
+            // pattern id), falling back to the pattern id when the rule id is
+            // absent; a regex / token-prefix match's pattern id. The typed
+            // evidence carries the mechanism and, for language rules, the
+            // detected operation + metadata-only provenance (ADR-022 §10).
+            evidence: Some(m.evidence.clone()),
+            detection_id: Some(detection_id_for(m)),
         }
+    }
+}
+
+/// Derive the stable detection ID for a `MatchResult` (ADR-022 §10).
+///
+/// A `LanguageRule` carries its own stable rule id in `AnalysisProvenance`; when
+/// present it is the detection ID (and differs from the v1 pattern id). When the
+/// rule id is absent, or for regex / token-prefix matches, the detection ID is
+/// the pattern id — the stable identifier for those mechanisms.
+fn detection_id_for(m: &MatchResult) -> String {
+    match &m.evidence {
+        aegis_types::MatchEvidence::LanguageRule { provenance, .. } => provenance
+            .rule_id
+            .clone()
+            .unwrap_or_else(|| m.pattern.id.to_string()),
+        _ => m.pattern.id.to_string(),
     }
 }
 

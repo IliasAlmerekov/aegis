@@ -52,6 +52,8 @@ fn audit_entry_serializes_nested_explanation_sections() {
             category: Some(Category::Filesystem),
             matched_text: Some("rm -rf".to_string()),
             source: Some(PatternSource::Builtin),
+            evidence: None,
+            detection_id: None,
         }],
         Decision::Approved,
         vec![AuditSnapshot {
@@ -92,6 +94,8 @@ fn audit_entry_keeps_existing_top_level_fields_for_backward_compatibility() {
             category: Some(Category::Filesystem),
             matched_text: Some("rm -rf".to_string()),
             source: Some(PatternSource::Builtin),
+            evidence: None,
+            detection_id: None,
         }],
         Decision::Approved,
         vec![AuditSnapshot {

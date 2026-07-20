@@ -89,6 +89,24 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
   existing audit entries deserialize byte-for-byte and the integrity chain is
   preserved; Iteration 2 (Audit v2) promotes it to a persisted, v2-compat
   field. The v1 `decision_source` string/label and JSON output are unchanged.
+- Audit schema v2 optional fields on `aegis-audit`: `DecisionEntry` gains
+  `basis: Option<AssessmentBasis>` and `analysis: Option<AnalysisSummary>`;
+  `MatchedPattern` gains typed `evidence: Option<MatchEvidence>` and a stable
+  `detection_id: Option<String>` (ADR-022 §10, L1 Iteration 2). All are
+  `#[serde(default, skip_serializing_if = "Option::is_none")]`, so a legacy v1
+  line (absent v2 fields) deserializes with them as `None` and serializes
+  byte-for-byte identical to the pre-v2 form. Fresh runtime entries populate
+  `basis` from `Assessment::basis()` and `analysis` from `Assessment::analysis`,
+  and each matched pattern carries its `MatchResult.evidence` + a stable
+  detection id derived from the evidence (`LanguageRule` → provenance rule id,
+  falling back to the pattern id; regex/token-prefix → pattern id).
+  `matched_patterns` and `pattern_ids` remain as v1 compatibility
+  projections alongside the v2 fields. The integrity payload covers the v2
+  fields (skip-if-none), so v1 hashes are unchanged and mixed v1/v2 logs verify
+  without rewriting old lines or versioning `chain_alg`; tampering any v2 field
+  breaks the chain. Pinned by `crates/aegis-audit/tests/audit_v2.rs` (v1/v2
+  round-trip, mixed-log deserialize/query/rotation/integrity, source-privacy
+  allowlist + denylist, and v1 projection compatibility).
 
 ### Changed
 

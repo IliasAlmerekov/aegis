@@ -136,6 +136,8 @@ fn test_audit_entry_json_round_trip() -> Result<(), Box<dyn std::error::Error>> 
         category: None,
         matched_text: None,
         source: None,
+        evidence: None,
+        detection_id: None,
     };
     let entry = AuditEntry::new(
         "rm -rf /",
