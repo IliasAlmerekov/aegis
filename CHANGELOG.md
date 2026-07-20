@@ -11,6 +11,30 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Added
+
+- Source-target router and catch-only script-file reader (ADR-022 §6, L1
+  Iteration 4 slices 1-4): `src/analysis/router::route` resolves analyzable
+  source in an intercepted command — explicit interpreter, versioned-basename
+  normalization (`python3.11` → `python3`), trusted-alias program names,
+  argv script-file arguments, direct execution of a path verified by shebang
+  (`./script.py` with `#!/usr/bin/env python3`), quoted/expanding heredocs
+  and here-strings (expansions/substitutions degrade rather than being
+  evaluated), a narrowly-proven `printf '%s' <literal> | interpreter`
+  pipeline, and a literal top-level `cd -- <path> &&` cwd rebase (any other
+  `cd` form degrades a relative target instead of resolving against the
+  wrong directory) — reusing `aegis-parser`'s production tokenizer and
+  `Effective program` resolution throughout (so launcher-prefix stacking like
+  `sudo timeout 5 python3 -c …` is handled once, not duplicated). An exact
+  registry match always takes precedence over a conflicting alias entry.
+  `src/analysis/source_reader::read_script_file` performs the actual bounded,
+  catch-only file read: rejects symlinks/FIFOs/sockets/directories without
+  following them, bounds reads to the configured limit without a full-file
+  read on oversized files, strips a UTF-8 BOM, rejects invalid UTF-8, and
+  records only a SHA-256 hash — never the source itself. `aegis-config`
+  wiring for script-file budgets/trusted aliases and same-command
+  heredoc-to-file reuse remain later slices.
+
 ### Fixed
 
 - Language-worker protocol/client hardening (ADR-022 §2, L1 Iteration 3
