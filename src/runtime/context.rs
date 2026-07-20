@@ -414,7 +414,13 @@ impl RuntimeContext {
         // the engine today); when confinement becomes policy-driven, thread it
         // through `PolicyExplanation` alongside `snapshots_required`.
         .with_effect_opaque(assessment.effect_opaque)
-        .with_required_backstops(explanation.policy.snapshots_required, false);
+        .with_required_backstops(explanation.policy.snapshots_required, false)
+        // ADR-022 §10 (Audit v2): persist Assessment basis (always, marking this
+        // a v2 line) and the language-aware analysis summary (only when a
+        // language result was merged). Typed Match evidence + detection IDs are
+        // carried per-pattern via `From<&MatchResult>` above.
+        .with_basis(assessment.basis())
+        .with_analysis(assessment.analysis.clone());
 
         match recovery_degradation {
             Some(degradation) => entry.with_recovery_degradation(degradation),

@@ -52,6 +52,7 @@ aegis-audit = { version = "0.6.2", path = "crates/aegis-audit" }
 aegis-snapshot = { version = "0.6.2", path = "crates/aegis-snapshot" }
 aegis-starlark = { version = "0.6.2", path = "crates/aegis-starlark", optional = true }
 aegis-sandbox = { version = "0.6.2", path = "crates/aegis-sandbox" }
+aegis-language = { version = "0.6.2", path = "crates/aegis-language" }
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive", "env"] }
 thiserror = "1"

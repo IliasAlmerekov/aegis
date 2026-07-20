@@ -27,6 +27,8 @@ pub fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
             category: None,
             matched_text: None,
             source: None,
+            evidence: None,
+            detection_id: None,
         }],
         pattern_ids: vec![format!("PAT-{index:03}")],
         decision: match index % 4 {
@@ -54,6 +56,8 @@ pub fn entry(index: usize, risk: RiskLevel) -> AuditEntry {
         snapshots_required: Some(false),
         confinement_required: Some(false),
         recovery_degradation: None,
+        basis: None,
+        analysis: None,
     })
 }
 

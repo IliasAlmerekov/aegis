@@ -22,6 +22,11 @@ fuzz/corpus/parser/*
 !fuzz/corpus/parser/unterminated-heredoc.txt
 !fuzz/corpus/parser/inline-python.txt
 !fuzz/corpus/parser/nested-shell.txt
+# The language-protocol fuzz corpus is binary (framed bytes — no UTF-8 seed is
+# possible), so unlike the parser text seeds it is not tracked. The fuzzer
+# regenerates coverage from scratch; the audit-integrity wording guard rejects
+# tracked non-UTF-8 files.
+fuzz/corpus/language_protocol/
 docs/claude-source-borrowings.md
 docs/CODEX-*.md
 docs/tickets/

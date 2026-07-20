@@ -200,6 +200,35 @@ with write access to `audit.jsonl` could flip a recorded `unavailable` back to
 verifying under the original layout. See the note on `AuditIntegrityPayload` in
 `crates/aegis-audit/src/logger/integrity.rs`.
 
+**Audit v2 fields are covered by the chain.** The Audit schema v2 additions
+(ADR-022 §10) — Assessment `basis`, language-aware `analysis` summary, typed
+Match `evidence`, and stable `detection_id` — were added to
+`AuditIntegrityPayload` with `skip_serializing_if = "Option::is_none"`. A legacy
+v1 entry (all v2 fields `None`) serializes the payload byte-for-byte identical
+to the pre-v2 form, so its hash is unchanged and mixed v1/v2 logs verify without
+rewriting old lines or versioning `chain_alg`. A v2 entry includes the fields in
+the payload, so tampering `basis`, `analysis`, or any per-pattern `evidence` /
+`detection_id` invalidates the chain. The v2 fields carry metadata only
+(language, source origin, rule id, operation, file path, source hash, span,
+certainty, status, degradation reason) — never script contents, full snippets,
+imported source, variable values, or syntax trees (pinned by the audit privacy
+tests in `crates/aegis-audit/tests/audit_v2.rs`).
+
+**Iteration-2 surface scope.** The v2 fields flow only to the audit JSONL
+surface this iteration (`AuditEntry` via `RuntimeContext::build_audit_entry`).
+The Watch NDJSON `OutputFrame` carries only the decision, exit code, sandbox
+status, and base64 child stdout/stderr chunks — it does not project
+`matched_patterns`, `evidence`, `basis`, `analysis`, or `explanation`, so there
+is no v2 leak path to Watch output today. Error-report frames and `tracing`
+events likewise do not project the v2 fields. ADR-022 §10's multi-surface
+REVIEW GATE ("no source content reaches JSONL, Watch output, error reports, or
+tracing") is therefore satisfied for the v2 additions by construction; the
+Watch / TUI / error / tracing surfaces only become v2-aware in Iteration 9
+(policy + UX integration), at which point per-surface privacy guards are added
+alongside the projection. A short in-memory source snippet for TUI display
+(ADR-022 §10, "TUI-only") is likewise deferred to Iteration 9 — it must never
+reach the audit log, and the audit privacy tests pin that invariant now.
+
 ### 5. Snapshot failure or false recovery expectations
 
 **Threat:** Operators assume every dangerous command is recoverable or confuse

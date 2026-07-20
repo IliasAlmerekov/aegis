@@ -441,6 +441,7 @@ fn public_api_surface_is_stable() {
     let src = read_file("src/lib.rs");
 
     let expected: BTreeSet<&str> = [
+        "analysis",
         "audit",
         "config",
         "decision",

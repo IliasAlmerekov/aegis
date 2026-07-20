@@ -17,7 +17,194 @@
 
 ## Last updated
 
-2026-07-17
+2026-07-20
+
+---
+
+## Last session (2026-07-20) — L1 Iteration 3 (worker protocol, slices 1-4)
+
+- **Iteration 3 (Worker protocol and failure isolation) done via TDD; the
+  Iteration 1 monotonic merge + Iteration 4 source routing are the remaining
+  blockers on wiring client results into an `Assessment`.** Scope and seams
+  confirmed with the user up front per the TDD skill: framing + worker
+  subprocess + parent client (expanded from framing-only); seams — the pure
+  `aegis-language::protocol` encode/decode boundary, the `worker::run`
+  dispatch loop (in-process + real subprocess), and the `aegis::analysis::
+  worker_client` parent client (real subprocess for happy/crash/non-zero/
+  noise, `tokio::io::duplex` mocks for timeout/duplicate/out-of-order/
+  unexpected/partial-prior-results).
+- **Slice 1 (framing, 15 tests):** new `crates/aegis-language/src/protocol.rs`
+  — pure length-bounded versioned request/response framing. Magic `AELW`,
+  version 1, `request_id` u32 LE, kind u8 (disjoint request `0x01..=0x7F` /
+  response `0x80..=0xFF`), payload_len u32 LE, 15-byte header. `MAX_FRAME
+ _PAYLOAD` = 1 MiB (ADR-022 §7). `decode_request`/`decode_response` return
+  `Ok(None)` for incomplete frames, `Err(DecodeError::{BadMagic,
+  UnsupportedVersion, Oversized, InvalidKind, InvalidPayload})` for malformed.
+  Driven RED→GREEN per check: round-trip + known-good hand-derived bytes →
+  bad-magic → version → oversized → invalid-kind (response-tag-as-request) →
+  response codec (Parsed/ParseFailed) → pinning (truncated→None, unknown-lang
+  →Err, Parsed-wrong-length→Err) + the "no path-read / no subprocess" property
+  pinned by an exhaustive 256-kind-tag loop (only `Parse` accepted). Shared
+  `decode_header` factored for both decoders.
+- **Slice 2 (worker dispatch, 8 tests):** `aegis-language::worker::run` /
+  `run_with_limit` read frames, parse supplied bytes with the matching
+  Tree-sitter grammar (`handle_request` → `Response::Parsed{error_count}` via
+  `root_node().has_error()`, or `ParseFailed` on no-tree / invalid UTF-8),
+  write one response per request, force-exit at `MAX_REQUESTS_PER_SESSION`
+  (64). Pure std::io over `R: Read, W: Write`; `RunOutcome` types every stop
+  reason (EndOfInput / MaxRequestsReached / TruncatedFrame / MalformedFrame /
+  ReadFailed / WriteFailed). In-process tests via `Cursor` + `Vec<u8>`:
+  clean parse, bounded sequence, force-exit at cap, malformed stops without
+  serving, truncated trailing frame, ParseFailed on invalid UTF-8, nonzero
+  error_count on incomplete syntax, all four foundation grammars.
+- **Slice 3 (worker CLI mode + real subprocess, 5 tests):** undocumented
+  `--internal-language-worker` flag, checked in `main()` before clap parsing
+  and Tokio runtime construction (worker stays minimal — no runtime). `cli_
+  dispatch::run_internal_language_worker` locks stdin/stdout, delegates to
+  `aegis_language::worker::run`, maps clean outcomes → exit 0 / failures →
+  `EXIT_INTERNAL`. `tests/language_worker.rs` spawns the real `aegis` binary:
+  clean round-trip, stdout writes only frame bytes (no noise), clean exit on
+  stdin close, non-zero exit on a malformed frame, bounded sequence. Root
+  `aegis` crate now depends on `aegis-language`.
+- **Slice 4 (parent client, 9 tests):** `src/analysis/worker_client.rs` (new
+  `pub mod analysis` in `src/lib.rs`). `analyze<R: AsyncRead, W: AsyncWrite>`
+  sends all request frames, reads responses under a `tokio::time::timeout`
+  deadline, correlates strictly in send order by `request_id`, and on any
+  failure (Timeout / Closed / ProtocolNoise / DuplicateResponse / OutOfOrder
+  / UnexpectedResponse / Io) retains responses already received and marks the
+  remaining targets with the failure. `WorkerError: From<WorkerError> for
+  DegradationReason::WorkerFailure`. `Worker::spawn` re-execs `aegis` (or
+  `current_exe` in production wiring). Hybrid tests confirmed: real subprocess
+  (clean round-trip, non-zero exit, stdout noise) + duplex mocks (timeout,
+  duplicate, out-of-order, unexpected id, partial prior results on early EOF,
+  clean multi-target correlation).
+- **REVIEW GATE:** `fuzz/fuzz_targets/language_protocol.rs` fuzzes both
+  decoders — 7.8M-iteration smoke run, no panic, coverage 87. No daemon,
+  socket, network, temp source file, or inherited command-exec path: the
+  worker is parse-only std::io over stdin/stdout and the protocol encodes no
+  path-read/subprocess request. The no-source safe path is untouched —
+  `no_source_bench` still 1.06 µs (< 2 ms).
+- **Architecture:** `analysis` added to `src/lib.rs` public surface;
+  `ARCHITECTURE.md §8` updated (module list + ADR-022 note + review date).
+  `public_api_surface_is_stable` boundary test updated.
+- **Re-review (skeptic round 1) fix round:** 7 of 8 findings fixed via TDD
+  (L6 dropped as an overstated, already-disclosed deferral). L2 — encoder is
+  fallible (`encode_request`/`encode_response` → `Result<Vec<u8>, EncodeError>`,
+  const-asserted `as u32`, no `.expect()` in production). L3 — 1 MiB source
+  ceiling is now legal: `MAX_SOURCE_BYTES = 1 MiB`, `MAX_FRAME_PAYLOAD =
+  MAX_SOURCE_BYTES + 1` (budgets the lang tag; the off-by-one that rejected a
+  1 MiB source is fixed). L1 — parent `send_requests` propagates the stdin
+  `flush()` error as `WorkerError::Io` instead of `let _ =` (no longer
+  masquerades as `Timeout`). L7+L8 — `Worker::analyze` closes stdin after sending
+  and reaps the child (ADR-022 §2 ephemeral); on a non-zero exit after the
+  session it degrades the whole session as `WorkerError::NonZeroExit`
+  (previously a "responds-fully-then-exits-nonzero" worker was silently reported
+  as success). L4 — `--internal-language-worker` flag is a single shared
+  `aegis::analysis::INTERNAL_LANGUAGE_WORKER_FLAG` const (main.rs + worker_client
+  no longer duplicate it). L5 — dropped the `clone_worker_error` helper (its
+  "not Clone" comment was stale; `WorkerError` derives `Clone`) and use
+  `err.clone()` so the `Io` variant is exercised. 8 regression tests added.
+- **Verified:** `cargo test --workspace` = 1614 passed / 96 suites / 0 failed
+  (+45 tests since the Iteration 3 start: 15 framing + 8 dispatch + 5 subprocess
+  + 9 client + 8 re-review regressions); workspace `clippy --all-targets
+  -- -D warnings` clean; `fmt --all --check` clean; `no_source_bench` 938 ns
+  (< 2 ms); `language_protocol` fuzz 7.9M runs panic-free.
+- **Deferred:** wiring `worker_client` results into an `Assessment` (monotonic
+  merge with baseline + prior target results) — depends on Iteration 1 E
+  (merge function) and Iteration 4 (source routing that produces targets);
+  worker-dispatcher fuzzing beyond the decoder; the Iteration 3 "test proving
+  the worker cannot request a path read or subprocess" is pinned at the
+  protocol level (exhaustive kind-tag loop) — a subprocess-level fs-sandbox
+  test is a future hardening option.
+
+---
+
+## Prior session (2026-07-20) — L1 Iteration 2 (Audit v2, slices 1-3)
+
+- **Iteration 2 (Audit v2 and explanation contracts) slices 1-3 done via TDD;
+  slice 4 (rendering) deferred.** Scope confirmed with the user up front per the
+  TDD skill: schema-core (mixed v1/v2 JSONL fixtures + privacy + compatibility
+  projection), defer the TUI consolidated-confirmation rendering slice since no
+  real degradation-bearing assessments exist until Iterations 6-8 (it would be
+  synthetic and the most drift-prone). Seams: the `AuditEntry` JSONL
+  serialization boundary, `AuditLogger` query/rotation/integrity over mixed
+  logs, the v2 optional fields, the source-privacy boundary, and v1 projection
+  compatibility.
+- **Slice 1 (RED #1 + GREEN) — v2 schema + mixed-log integrity:** new
+  `crates/aegis-audit/tests/audit_v2.rs` drives the v2 schema by hand-written
+  v1 + v2 JSONL fixtures (independent of the Rust struct under test).
+  `DecisionEntry` gained `basis: Option<AssessmentBasis>` and `analysis:
+  Option<AnalysisSummary>`; `MatchedPattern` gained typed `evidence:
+  Option<MatchEvidence>` and a stable `detection_id: Option<String>`. All four
+  are `#[serde(default, skip_serializing_if = "Option::is_none")]` on both
+  `AuditEntryFlat` and `AuditIntegrityPayload`, so a v1 line (all v2 `None`)
+  serializes byte-for-byte identical to the pre-v2 form — its hash is unchanged
+  and mixed v1/v2 logs verify without rewriting old lines or versioning
+  `chain_alg` (the safe path; the plan's "hash the exact serialized entry form"
+  is satisfied in spirit — v2 fields are covered by the chain — without the
+  chain_alg-versioning change that would break all v1 logs, which contradicts
+  "preserve mixed-log verification"). Fresh runtime entries populate `basis`
+  from `Assessment::basis()` and `analysis` from `assessment.analysis` via new
+  `with_basis`/`with_analysis` builders in `build_audit_entry`; each matched
+  pattern carries `MatchResult.evidence` + pattern id via `From<&MatchResult>`.
+  5 tests: v2 round-trip preserves basis/analysis/evidence/detection_id; v1
+  line deserializes with every v2 field absent; mixed v1/v2 log verifies and
+  tampering v2 `basis` breaks the chain (proves v2 fields are in the payload);
+  mixed-log query returns both; mixed-log rotation into archive verifies.
+- **Slice 2 (RED #2 + GREEN) — source-privacy boundary:** two guard tests pin
+  ADR-022 §10 at the audit JSONL surface (composing with the `AnalysisProvenance`
+  privacy test in `aegis-types`). `v2_audit_entry_persists_only_allowed_provenance_fields`
+  asserts the `LanguageRule` provenance carries EXACTLY the 10 metadata-only
+  allowed fields (language, source_origin, rule_id, operation, file_path,
+  source_hash, span, certainty, status, degradation_reason) — an allowlist, so
+  any leaky extra field fails. `v2_audit_entry_serializes_no_source_body_snippet_ast_or_value_keys`
+  recursively scans every key and rejects a denylist of source-content names
+  (source_body, snippet, ast, syntax_tree, imported_source, value, code, …).
+  These are guards (the invariant holds by construction — `AnalysisProvenance`
+  has no leaky fields), pinning the boundary so a future field addition cannot
+  silently leak.
+- **Slice 3 (RED #3 + GREEN) — compatibility projection:** `v2_entry_still_projects_v1_matched_patterns_and_pattern_ids`
+  proves a v2 entry carries the v1 `pattern_ids` + per-pattern v1 fields
+  (id/risk/description/safe_alt/category/matched_text/source) ALONGSIDE the v2
+  `evidence`/`detection_id` (additive, not replacing).
+  `v1_only_log_remains_queryable_through_v2_aware_codebase` proves a v1-only log
+  stays queryable and that v2 fields stay `None` on v1-shaped entries (never
+  silently back-filled).
+- **Slice 4 (rendering) deferred** — ADR-022 §5 consolidated-confirmation
+  rendering of multiple decisive Matches + one degradation; no real
+  degradation assessments until Iter 6-8, so it would be synthetic.
+- **Verified:** `cargo test --workspace` = 1566 passed / 94 suites / 0 failed;
+  `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt
+  --all --check` clean; `aegis-audit` lib + tests = 82 + 9 audit_v2;
+  `audit_integrity` + `full_pipeline_audit` + `full_pipeline_json` = 23 passed
+  (v1 byte-for-byte + integrity chain preserved). No production runtime
+  wiring of `analysis` (always `None` until language adapters merge results in
+  Iter 6-8); `basis` + `evidence`/`detection_id` ARE populated for every fresh
+  real entry now. `docs/threat-model.md` updated to record that Audit v2 fields
+  are covered by the chain (skip-if-none) and carry metadata only.
+- **Review-fix round (Standards + Spec; 0 hard Standards, 4 minor judgement
+  calls left, 2 Spec items addressed).** Standards judgement calls (Data Clump
+  around basis/analysis, Shotgun Surgery across 8+ files, duplicated
+  `evidence/detection_id/basis/analysis: None` fixture boilerplate, and
+  speculative-generality on `detection_id`) — all minor/stylistic per the
+  reviewer, left as-is except the last, which overlaps Spec (c). Spec (c)
+  `detection_id` was a trivial mirror of `pattern_id` whose projection test
+  passed by construction: fixed via TDD — `From<&MatchResult>` now derives
+  `detection_id` from evidence (`LanguageRule` → `provenance.rule_id`,
+  fallback to pattern id when absent; regex/token-prefix → pattern id), driven
+  by a RED test with a `LanguageRule` whose `rule_id` deliberately differs from
+  the pattern id (3 detection_id tests in `audit_v2.rs`; both branches
+  exercised). Spec REVIEW GATE "no source content reaches JSONL, Watch output,
+  error reports, or tracing" — the worst Spec finding — resolved as an honest
+  deferral, not vacuous guard tests: v2 fields flow only to audit JSONL this
+  iteration; Watch `OutputFrame` carries only decision/exit_code/sandbox_status/
+  base64 child chunks (no matched_patterns/evidence/basis/analysis), and
+  error/tracing don't project v2, so there is no leak path today; the
+  multi-surface gate becomes meaningful in Iter 9 when Watch/TUI/error become
+  v2-aware, documented in `docs/threat-model.md`. The slice-4 rendering gap and
+  the "short in-memory TUI snippet" were already deferred by the user's scope
+  decision. Verified: `cargo test --workspace` = 1569 passed / 94 suites / 0
+  failed, clippy `-D warnings` clean, fmt clean.
 
 ---
 
@@ -507,18 +694,28 @@ Multi-crate Cargo workspace. Binary crate (`aegis`) at root depends on:
 - `crates/aegis-audit` — AuditLogger, append-only JSONL with optional hash-chain integrity
 - `crates/aegis-starlark` — opt-in Starlark policy evaluation (behind `starlark-policy`)
 - `crates/aegis-sandbox` — bwrap + Landlock (Linux) / sandbox-exec (macOS) execution confinement
+- `crates/aegis-language` — Tree-sitter runtime + four L1 grammars, the
+  language-worker protocol/framing, and the bounded parse-only worker dispatch
+  (ADR-022; the only crate permitted native C build input)
+
+The root `aegis` binary also exposes `src/analysis/` — the parent-side
+language-worker client (`worker_client`) that spawns the ephemeral
+`aegis --internal-language-worker` subprocess and frames requests/responses
+(ADR-022 §2, L1 Iteration 3).
 
 Eleven crates total. DAG boundaries for the first nine are enforced by
 `tests/architecture_boundaries.rs`; `aegis-sandbox` is covered separately by
 `tests/platform_scope.rs`, and `aegis-starlark` is not yet asserted in either
 (gap). Architectural rationale for the shape of this workspace lives in
-`docs/adr/` (ADR-001 through ADR-016; `ADR-009` is intentionally absent,
+`docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-15 H7b slice: `cargo fmt --check` and clippy are clean;
-`cargo test --workspace` = 1445 passed / 0 failed (87 suites). `cargo audit` /
-`cargo deny check` pass aside from the pre-existing allowed advisories under the
-opt-in `starlark-policy` feature.
+As of the 2026-07-20 L1 Iteration 3 slice (post re-review fixes): `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1614 passed / 0
+failed (96 suites). `cargo audit` / `cargo deny check` pass aside from the
+pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
+no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is
+panic-free over 7.9M runs.
 
 ---
 

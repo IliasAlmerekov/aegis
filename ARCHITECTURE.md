@@ -747,6 +747,7 @@ to other files as they are brought into compliance.
 `src/lib.rs` currently re-exports these modules:
 
 ```rust
+pub mod analysis;
 pub mod audit;
 pub mod config;
 pub mod decision;
@@ -765,6 +766,14 @@ pub mod watch;
 **Rule.** Aegis is primarily a binary. The library surface exists for tests
 and for future embedders. Changes to any type exported from these modules
 require a corresponding ADR note. Prefer narrowing exports to broadening them.
+
+`analysis` (added L1 Iteration 3, ADR-022) is the parent-side language-worker
+client: it spawns the ephemeral `aegis --internal-language-worker` subprocess
+and frames requests/responses over pipes. The worker logic and Tree-sitter
+runtime live in the `aegis-language` crate; this module owns only async
+orchestration and the `WorkerError → DegradationReason::WorkerFailure`
+mapping. Wiring its results into an `Assessment` lands with the Iteration 1
+monotonic merge and Iteration 4 source routing.
 
 ---
 
@@ -797,5 +806,5 @@ require a corresponding ADR note. Prefer narrowing exports to broadening them.
 
 ---
 
-_Last reviewed: 2026-05-28. When editing this file, update the review date
+_Last reviewed: 2026-07-20. When editing this file, update the review date
 and note any invariants you added, removed, or changed._
