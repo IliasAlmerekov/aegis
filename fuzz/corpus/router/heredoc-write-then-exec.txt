@@ -1,0 +1,3 @@
+cat > script.py <<'EOF' && python3 script.py
+print(1)
+EOF

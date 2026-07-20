@@ -266,6 +266,88 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[cfg(unix)]
+    async fn concurrent_symlink_swap_race_never_panics_or_corrupts_content() {
+        // Race-oriented stress test for the documented residual TOCTOU gap
+        // (module doc above): a background thread repeatedly swaps `path`
+        // between a regular file (content A) and a symlink to a different
+        // regular file (content B) via an atomic `rename`, while many
+        // concurrent `read_script_file` calls race against it. This does not
+        // close the race (accepted per ADR-022 §6), and — because the swap
+        // is atomic — it cannot deterministically force a read to land in
+        // the exact pre-open/post-open window either; it demonstrates
+        // robustness under heavy concurrent path mutation in general (no
+        // panic/hang, and every successful read returns exactly one of the
+        // two known-good contents, never a truncated or mixed byte
+        // sequence), not a guarantee that this specific run exercised the
+        // narrow TOCTOU interleaving itself.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("script.py");
+        let other = dir.path().join("other.py");
+        let content_a = "print('a')\n";
+        let content_b = "print('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')\n";
+        std::fs::write(&other, content_b).unwrap();
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let swap_stop = std::sync::Arc::clone(&stop);
+        let swap_path = path.clone();
+        let swap_other = other.clone();
+        let swap_content_a = content_a.to_string();
+        let swapper = std::thread::spawn(move || {
+            // Each swap prepares the new state at a staging path, then
+            // `rename`s it over `swap_path` — an atomic replace on Unix, so a
+            // concurrent reader only ever sees the fully-old or fully-new
+            // state, never a partially-written file (which would be a
+            // harness artifact, not the symlink-swap race under test).
+            let staging = swap_path.with_extension("staging");
+            let mut toggle = false;
+            while !swap_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                if toggle {
+                    let _ = std::fs::remove_file(&staging);
+                    let _ = std::os::unix::fs::symlink(&swap_other, &staging);
+                } else {
+                    let _ = std::fs::write(&staging, &swap_content_a);
+                }
+                let _ = std::fs::rename(&staging, &swap_path);
+                toggle = !toggle;
+            }
+        });
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(300);
+        let mut observed_ok = 0;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                read_script_file(&path, 1024),
+            )
+            .await
+            {
+                Ok(Ok(result)) => {
+                    assert!(
+                        result.source == content_a || result.source == content_b,
+                        "a successful read must return one of the two known-good contents, \
+                         never a corrupted mix: got {:?}",
+                        result.source
+                    );
+                    observed_ok += 1;
+                }
+                Ok(Err(_)) => {
+                    // A rejected read (e.g. caught mid-swap) is an
+                    // acceptable, documented outcome.
+                }
+                Err(_) => panic!("read_script_file hung under the concurrent-swap race"),
+            }
+        }
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        swapper.join().unwrap();
+        assert!(
+            observed_ok > 0,
+            "expected at least some reads to succeed during the race window"
+        );
+    }
+
     #[tokio::test]
     #[cfg(unix)]
     async fn fifo_is_rejected_as_not_a_regular_file() {

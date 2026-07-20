@@ -18,11 +18,12 @@
 //! Slice 1 (explicit interpreter, versioned-basename normalization,
 //! trusted-alias resolution), slice 2 (script-file argv routing, verified
 //! shebang, direct-exec-by-shebang), slice 3 (heredoc/here-string/
-//! literal-producer stdin, via [`crate::analysis::heredoc`]), and slice 4
-//! (literal top-level `cd -- <path> &&` tracking) are in scope.
-//! Heredoc-created-file reuse (same-command heredoc-to-file linking) and
-//! `aegis-config` budget/trusted-alias wiring land in later slices per
-//! `docs/plans/2026-07-16-language-aware-analysis.md`.
+//! literal-producer stdin, via [`crate::analysis::heredoc`]), slice 4
+//! (literal top-level `cd -- <path> &&` tracking), and the deferred
+//! same-command heredoc-to-file reuse ([`heredoc_write_then_exec_reuse`],
+//! narrowly scoped to `cat > PATH`/`tee PATH <<HEREDOC && <interp> PATH`) are
+//! in scope. `aegis-config` budget/trusted-alias wiring lands in a later
+//! slice per `docs/plans/2026-07-16-language-aware-analysis.md`.
 
 use std::path::{Path, PathBuf};
 
@@ -220,6 +221,10 @@ fn apply_cwd(target: RoutedTarget, cwd: &CwdRoute) -> Option<RoutedTarget> {
 }
 
 fn route_after_cd(command: &str, trusted_aliases: &[(&str, &str)]) -> Vec<RoutedTarget> {
+    if let Some(targets) = heredoc_write_then_exec_reuse(command, trusted_aliases) {
+        return targets;
+    }
+
     let owned_tokens = aegis_parser::split_tokens(command);
     if owned_tokens.is_empty() {
         return Vec::new();
@@ -343,6 +348,101 @@ fn stdin_target(language: SourceLanguage, route: StdinRoute) -> RoutedTarget {
     match route {
         StdinRoute::Literal(source) => RoutedTarget::Inline { language, source },
         StdinRoute::Dynamic(reason) => RoutedTarget::Dynamic { language, reason },
+    }
+}
+
+/// Detect the narrow `<write-cmd> <<HEREDOC && <interp> <path>` shape (the
+/// `&&`-chained exec lives on the same physical line as the heredoc redirect
+/// — real shell grammar reads the heredoc body starting on the *next* line,
+/// terminated by a bare delimiter line, regardless of what follows the
+/// redirect on the opening line) and reuse the already-in-hand heredoc body
+/// instead of routing a `ScriptFile` that would re-read the identical content
+/// from disk.
+///
+/// Recognized exactly: a write command of `cat > PATH` or `tee PATH` before
+/// the heredoc marker, exactly one top-level `&&` after it (checked by
+/// rejecting any further separator token in the exec part), and a second
+/// segment that is exactly `<interpreter> PATH` (no flags, no other
+/// arguments) naming the identical literal path. Any other shape — no `&&`
+/// chain, `;`/`||` instead, a mismatched path, or extra exec-segment tokens —
+/// is not recognized here and falls through to the existing routing above,
+/// per `docs/plans/2026-07-16-language-aware-analysis.md` Iteration 4.
+fn heredoc_write_then_exec_reuse(
+    command: &str,
+    trusted_aliases: &[(&str, &str)],
+) -> Option<Vec<RoutedTarget>> {
+    let first_line = command.lines().next()?;
+    let (before_marker, after_marker) = split_at_heredoc_marker(first_line)?;
+    let write_path = heredoc_write_target(before_marker)?;
+
+    let exec_part = after_marker.trim_start().strip_prefix("&&")?.trim_start();
+    if exec_part.is_empty() {
+        return None;
+    }
+    let exec_tokens = aegis_parser::split_tokens(exec_part);
+    if exec_tokens
+        .iter()
+        .any(|tok| matches!(tok.as_str(), ";" | "&&" | "||" | "|"))
+    {
+        // A further top-level separator means this is not the narrow
+        // exactly-two-segment shape this reuse is scoped to.
+        return None;
+    }
+    let exec_refs: Vec<&str> = exec_tokens.iter().map(String::as_str).collect();
+    let slice = aegis_parser::effective_token_slices(&exec_refs)
+        .into_iter()
+        .next()?;
+    if slice.tokens.len() != 2 || Path::new(slice.tokens[1]) != write_path {
+        return None;
+    }
+    let interp = resolve_interpreter(slice.program, trusted_aliases)?;
+
+    let heredoc_body = aegis_parser::extract_heredoc_bodies(command)
+        .into_iter()
+        .next()?;
+    let route = heredoc::classify(heredoc_body.body, heredoc_body.is_nowdoc);
+    Some(vec![stdin_target(interp.language, route)])
+}
+
+/// Split `line` at its first heredoc marker (`<<WORD`, `<<'WORD'`, or the
+/// `<<-` tab-stripping variants), returning the text before the marker and
+/// the text immediately after it (which, per shell grammar, is still part of
+/// the same command line — e.g. a `&&`-chained command).
+///
+/// Mirrors the marker grammar of `aegis-parser`'s private
+/// `find_heredoc_marker` exactly (no double-quoted delimiter form; an
+/// unquoted delimiter word is bounded by the first non-alphanumeric,
+/// non-underscore character, matching real shell word lexing — a
+/// metacharacter like `&` terminates it without needing whitespace) so the
+/// two do not silently diverge on which markers they recognize.
+fn split_at_heredoc_marker(line: &str) -> Option<(&str, &str)> {
+    let start = line.find("<<")?;
+    let before = &line[..start];
+    let after_prefix = line[start + 2..]
+        .strip_prefix('-')
+        .unwrap_or(&line[start + 2..]);
+    let rest = after_prefix.trim_start();
+    if let Some(after_quote) = rest.strip_prefix('\'') {
+        let end = after_quote.find('\'')?;
+        return Some((before, &after_quote[end + 1..]));
+    }
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    Some((before, &rest[end..]))
+}
+
+/// Recognize a literal `cat > PATH` or `tee PATH` write target — the text
+/// before the heredoc marker on its opening line.
+fn heredoc_write_target(before_marker: &str) -> Option<PathBuf> {
+    let tokens = aegis_parser::split_tokens(before_marker.trim());
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    match refs.as_slice() {
+        ["cat", ">", path] | ["tee", path] => Some(PathBuf::from(*path)),
+        _ => None,
     }
 }
 

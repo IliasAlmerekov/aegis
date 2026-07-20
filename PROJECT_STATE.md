@@ -21,7 +21,7 @@
 
 ---
 
-## Last session (2026-07-20) — L1 Iteration 4 slices 1-4 (source routing)
+## Last session (2026-07-20) — L1 Iteration 4 slices 1-4 + REVIEW GATE (source routing)
 
 - **Iteration 4 (Source target routing and catch-only reads) slices 1-4 done
   via TDD; heredoc-to-file reuse and `aegis-config` budget/alias wiring
@@ -84,23 +84,106 @@
   (`tests/file_size_budget.rs`) after slice 4; its `#[cfg(test)] mod tests`
   was extracted to `src/analysis/router_tests.rs` via `#[path = ...]`,
   matching the project's existing pattern for this budget.
-- **Deferred (documented, not silently dropped):** same-command heredoc-to-file
-  reuse (`cat > script.py <<'EOF' … && python3 script.py` still re-reads the
-  file from disk rather than reusing the in-memory heredoc body — arguably
-  more accurate anyway, since `tee`/redirection semantics can differ from the
-  heredoc body); `aegis-config` fields for script-file budgets and trusted
-  global aliases (`route`/`resolve` still take caller-supplied parameters);
-  wiring `router`/`resolve` output into `worker_client`/`Assessment` (still
-  blocked on the Iteration 1 merge function's actual language-result input,
-  which only exists once an adapter — Iteration 6+ — produces one); a direct
-  Effect-opaque/Required-recovery regression test (there is no production
-  code path yet that lets a language-aware result influence `effect_opaque`,
-  so a test today would be synthetic — same reasoning as Iteration 2's
-  deferred rendering slice).
-- **Verified:** `cargo test --workspace` = 1660 passed / 96 suites / 0 failed
-  (+40 tests this session); `cargo clippy --all-targets -- -D warnings` clean;
+- **Follow-up (same session, via TDD): same-command heredoc-to-file reuse.**
+  `router::route` no longer silently drops `cat > PATH <<HEREDOC && <interp>
+  PATH` (or `tee PATH <<HEREDOC && …`) — it now reuses the in-memory heredoc
+  body (`heredoc::classify`, promoted to `pub(crate)`) instead of routing a
+  `ScriptFile` read of a file that, before this command finishes executing,
+  doesn't exist on disk yet. Scope confirmed with the user up front: narrowly
+  exactly `cat > PATH`/`tee PATH` immediately before the heredoc marker,
+  exactly one top-level `&&` after it (rejects any further `;`/`&&`/`||`/`|`
+  token in the exec part), and an exec segment that is exactly `<interpreter>
+  PATH` (no flags, identical literal path) — any other shape falls back to
+  today's routing. Caught mid-slice: real shell grammar puts the `&&`-chained
+  command on the *same physical line* as the heredoc redirect (the marker
+  only changes where the body starts on the *next* line), not after the
+  closing delimiter — the first RED test used the wrong shell syntax and was
+  corrected before GREEN. `code-review` (Standards + Spec) flagged that the
+  new `split_at_heredoc_marker` re-derived heredoc-marker grammar already
+  private in `aegis-parser::embedded_scripts::find_heredoc_marker`, and had
+  diverged from it (accepted a `<<"WORD"` double-quoted form the real parser
+  doesn't, and used a whitespace-only word boundary instead of the real
+  alphanumeric/underscore one — silently mis-splitting a marker glued
+  directly to `&&` with no space, e.g. `<<EOF&&python3 x.py`, which is valid
+  shell since `&` is a metacharacter that terminates a bareword without
+  whitespace). Fixed via a further RED/GREEN cycle: `split_at_heredoc_marker`
+  now mirrors `find_heredoc_marker`'s exact grammar (no double-quote form,
+  alphanumeric/underscore word boundary). 7 new tests (positive `cat`/`tee`
+  reuse, dynamic-body degradation, mismatched-path/no-chained-exec/
+  third-segment fallback negatives, glued-marker regression).
+- **Follow-up (same session, via TDD): `aegis-config` budget/alias wiring.**
+  New `language_analysis` `AegisConfig` section (`crates/aegis-config/src/
+  model/rules.rs`): `script_file_limit_bytes: u64` (default 256 KiB, clamped
+  to a non-configurable `LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES` = 1
+  MiB at every layer — Project may additionally only lower it, never raise);
+  `trusted_aliases: Vec<TrustedAlias>` — a Global-layer-only concept (ADR-022
+  §6 "trusted global aliases only"): Project-layer entries are dropped
+  entirely rather than merged, mirroring the existing `sandbox.allow_write`
+  ratchet pattern in `model/ratchet.rs`. Semantic validation added to
+  `AegisConfig::validate()` (via `rules::validate_trusted_aliases`, moved
+  there to hold the 800-line file-size budget after the addition): rejects
+  empty alias/canonical fields, an alias mapping a program to itself, and
+  duplicate aliases. `docs/config-schema.md` and `aegis-schema.json`
+  regenerated. 13 new tests in `crates/aegis-config/src/model/tests/
+  language_analysis.rs`. `code-review` (Standards + Spec) flagged that the
+  `trusted_aliases` ratchet-warning branch bypassed the shared
+  `ratchet_trusted_aliases`/`push_ratchet_warning` helpers (diverging from
+  the module's own stated invariant) and that `CONTEXT.md` wasn't updated for
+  the two new domain terms this introduced — both fixed (warning branch now
+  reuses the shared helper, with a regression test pinning that repeating an
+  identical trusted set no longer spuriously warns; `CONTEXT.md` gained
+  **Trusted global alias** and **Script-file limit** entries under
+  "Language-aware analysis"). `router::route`/`resolve` still take
+  caller-supplied parameters unchanged — there is still no production call
+  site to wire the new config fields into (per the Iteration 3/4 notes
+  above); this slice only adds the config plumbing itself.
+- **Follow-up (same session, via TDD): Iteration 4 REVIEW GATE.** New
+  `fuzz/fuzz_targets/router.rs` fuzzes `router::route`/
+  `verified_shebang_language` for panic-freedom (200k local runs,
+  panic-free) — the first fuzz coverage of the router's hand-rolled
+  string-slicing (`split_at_heredoc_marker`, `heredoc_write_target`); 7
+  hand-crafted corpus seeds under `fuzz/corpus/router/` (one per illustrative
+  shape: explicit interpreter, script-file argument through launcher
+  prefixes, direct-exec, `cat`/`tee` heredoc-to-file reuse, a marker glued
+  directly to `&&`, `cd`-prefix + pipeline), `.gitignore`-allowlisted the
+  same way as the existing `parser` corpus (the fuzzer's own generated
+  corpus files are wholesale-ignored). Two tests in `router_tests.rs` pin
+  that `route()` returns an identical routed target whether or not the
+  target path's parent directories exist — a black-box behavioral proxy for
+  "no filesystem access", not independent proof of zero syscalls (the actual
+  guarantee is structural: `route`/`route_after_cd` are synchronous with no
+  `fs`/I/O import; only `resolve_one` calls `source_reader::
+  read_script_file`). A race-oriented stress test in `source_reader.rs`
+  (`#[cfg(unix)]`, multi-thread `#[tokio::test]`) runs many concurrent
+  `read_script_file` calls against a background thread atomically swapping a
+  path between a regular file and a symlink to a different file (via
+  write-to-staging + `rename`), asserting no panic/hang and that every
+  successful read returns exactly one of the two known-good contents, never
+  a corrupted/mixed byte sequence — this demonstrates robustness under heavy
+  concurrent path mutation, not a guarantee that the exact pre-open/post-open
+  TOCTOU window was hit (the underlying race remains an accepted, documented
+  residual risk per ADR-022 §6). `code-review` (Standards clean; Spec) noted
+  the "confirm no fs access" claim should be described as behavioral
+  evidence rather than proof, and that the fuzz corpus initially under-covered
+  the `tee`-write and glued-marker forms the unit tests already covered —
+  both addressed (comments reworded for precision; 2 more corpus seeds
+  added). Platform scope: Linux only this session (macOS is a separate CI
+  job, not exercisable here).
+- **Deferred (documented, not silently dropped):** wiring `router`/`resolve`
+  output into `worker_client`/`Assessment` (still blocked on the Iteration 1
+  merge function's actual language-result input, which only exists once an
+  adapter — Iteration 6+ — produces one); a direct Effect-opaque/Required-
+  recovery regression test (there is no production code path yet that lets a
+  language-aware result influence `effect_opaque`, so a test today would be
+  synthetic — same reasoning as Iteration 2's deferred rendering slice); a
+  macOS run of the new race-oriented test (Linux only this session).
+- **Verified:** `cargo test --workspace` = 1694 passed / 96 suites / 0 failed
+  (+34 tests this session across all follow-ups); `cargo clippy --all-targets
+  -- -D warnings` clean (root workspace); `cargo +nightly clippy --all-targets
+  -- -D warnings` clean (`fuzz/` crate, excluded from the root workspace);
   `cargo fmt --all --check` clean; `tests/aegis_language_boundary.rs` and
-  `tests/file_size_budget.rs` both green.
+  `tests/file_size_budget.rs` both green; the new race test passed 5/5
+  repeated local runs.
 
 ---
 
@@ -793,12 +876,13 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-20 L1 Iteration 3 slice (post re-review fixes): `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1614 passed / 0
+As of the 2026-07-20 L1 Iteration 4 REVIEW GATE follow-up: `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1694 passed / 0
 failed (96 suites). `cargo audit` / `cargo deny check` pass aside from the
 pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
 no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is
-panic-free over 7.9M runs.
+panic-free over 7.9M runs; the new `router` fuzz target is panic-free over
+200k local runs.
 
 ---
 

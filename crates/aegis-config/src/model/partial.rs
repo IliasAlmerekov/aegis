@@ -6,12 +6,16 @@ use serde::Deserialize;
 use crate::error::ConfigError;
 
 use super::migration::migrate_deprecated_allowlist_in_file;
-use super::ratchet::{ratchet_allow_write, ratchet_bool_loosen, ratchet_bool_tighten};
+use super::ratchet::{
+    ratchet_allow_write, ratchet_bool_loosen, ratchet_bool_tighten,
+    ratchet_script_file_limit_bytes, ratchet_trusted_aliases,
+};
 use super::serde_helpers::{deserialize_allowlist_rules, deserialize_optional_config_version};
 use super::{
     AllowlistOverrideLevel, AllowlistRule, AuditIntegrityMode, BlockRule, CiPolicy,
-    ConfigSourceLayer, DockerScope, Mode, MysqlSnapshotConfig, PolicyRule, PostgresSnapshotConfig,
-    SandboxSettings, SnapshotPolicy, SupabaseSnapshotConfig, UserPattern,
+    ConfigSourceLayer, DockerScope, LanguageAnalysisConfig, Mode, MysqlSnapshotConfig, PolicyRule,
+    PostgresSnapshotConfig, SandboxSettings, SnapshotPolicy, SupabaseSnapshotConfig, TrustedAlias,
+    UserPattern,
 };
 
 type Result<T> = std::result::Result<T, ConfigError>;
@@ -77,6 +81,43 @@ impl PartialSandboxSettings {
     }
 }
 
+/// Partial view of [`LanguageAnalysisConfig`] used during layered config merge.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct PartialLanguageAnalysisConfig {
+    script_file_limit_bytes: Option<u64>,
+    trusted_aliases: Option<Vec<TrustedAlias>>,
+}
+
+impl PartialLanguageAnalysisConfig {
+    pub(super) fn merge_into(
+        self,
+        base: LanguageAnalysisConfig,
+        source_layer: ConfigSourceLayer,
+    ) -> LanguageAnalysisConfig {
+        LanguageAnalysisConfig {
+            script_file_limit_bytes: ratchet_script_file_limit_bytes(
+                base.script_file_limit_bytes,
+                self.script_file_limit_bytes,
+                source_layer,
+            ),
+            trusted_aliases: ratchet_trusted_aliases(
+                &base.trusted_aliases,
+                self.trusted_aliases.as_ref(),
+                source_layer,
+            ),
+        }
+    }
+
+    pub(super) fn script_file_limit_bytes(&self) -> Option<u64> {
+        self.script_file_limit_bytes
+    }
+
+    pub(super) fn trusted_aliases(&self) -> Option<Vec<TrustedAlias>> {
+        self.trusted_aliases.clone()
+    }
+}
+
 /// Partial config used for layered merging.
 /// Scalar fields are `Option` so we can distinguish "not set" from "set to
 /// the default value". Vec fields default to empty and are concatenated across
@@ -116,6 +157,7 @@ pub(super) struct PartialConfig {
     pub(super) rules: Vec<PolicyRule>,
     pub(super) sandbox: PartialSandboxSettings,
     pub(super) prune: PartialPruneConfig,
+    pub(super) language_analysis: PartialLanguageAnalysisConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -157,5 +199,13 @@ impl PartialConfig {
 
     pub(super) fn sandbox_allow_write(&self) -> Option<Vec<PathBuf>> {
         self.sandbox.allow_write()
+    }
+
+    pub(super) fn language_analysis_script_file_limit_bytes(&self) -> Option<u64> {
+        self.language_analysis.script_file_limit_bytes()
+    }
+
+    pub(super) fn language_analysis_trusted_aliases(&self) -> Option<Vec<TrustedAlias>> {
+        self.language_analysis.trusted_aliases()
     }
 }

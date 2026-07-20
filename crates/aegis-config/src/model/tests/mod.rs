@@ -10,6 +10,7 @@ pub use tempfile::TempDir;
 pub use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 mod deser;
+mod language_analysis;
 mod merge;
 mod migration;
 mod prune;

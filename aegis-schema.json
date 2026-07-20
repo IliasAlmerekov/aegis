@@ -95,6 +95,14 @@
         "name_patterns": []
       }
     },
+    "language_analysis": {
+      "description": "Language-aware analysis script-file and trusted-alias budgets.",
+      "$ref": "#/$defs/LanguageAnalysisConfig",
+      "default": {
+        "script_file_limit_bytes": 262144,
+        "trusted_aliases": []
+      }
+    },
     "mode": {
       "description": "Operating mode: `Protect`, `Audit`, or `Strict`.",
       "$ref": "#/$defs/Mode",
@@ -425,6 +433,28 @@
         }
       ]
     },
+    "LanguageAnalysisConfig": {
+      "description": "Language-aware analysis script-file and trusted-alias budgets (ADR-022 §6).\n\n`script_file_limit_bytes` is bounded by\n[`LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES`] at every layer; project\nconfig may additionally only lower it, never raise it. `trusted_aliases` is\na Global-layer-only concept (\"trusted global aliases only\", ADR-022 §6) —\nproject-layer entries are dropped entirely rather than merged, since a\nproject must never be able to introduce a new trusted interpreter alias.",
+      "type": "object",
+      "properties": {
+        "script_file_limit_bytes": {
+          "description": "Maximum bytes read from a routed script file.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 262144,
+          "minimum": 0
+        },
+        "trusted_aliases": {
+          "description": "Trusted global aliases mapping a wrapper program name to the canonical\nregistry interpreter it stands in for.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TrustedAlias"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "Mode": {
       "description": "Aegis operating mode.",
       "oneOf": [
@@ -730,6 +760,25 @@
         }
       },
       "additionalProperties": false
+    },
+    "TrustedAlias": {
+      "description": "A trusted global alias for the Language-aware analysis interpreter\nregistry (ADR-022 §6) — e.g. a wrapper script name that should be treated\nas a stand-in for a canonical registry interpreter.",
+      "type": "object",
+      "properties": {
+        "alias": {
+          "description": "The alias program name as it appears in a command (e.g. `\"py\"`).",
+          "type": "string"
+        },
+        "canonical": {
+          "description": "The canonical registry program name it stands in for (e.g. `\"python3\"`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "canonical"
+      ]
     },
     "UserPattern": {
       "description": "A user-defined pattern loaded from `aegis.toml`.",

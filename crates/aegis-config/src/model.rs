@@ -37,7 +37,8 @@ mod template;
 
 pub use enums::{AllowlistOverrideLevel, AuditIntegrityMode, CiPolicy, Mode, SnapshotPolicy};
 pub use rules::{
-    AllowlistRule, AuditConfig, BlockRule, PolicyPatternToken, PolicyRule, PolicyRuleDecision,
+    AllowlistRule, AuditConfig, BlockRule, LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES,
+    LanguageAnalysisConfig, PolicyPatternToken, PolicyRule, PolicyRuleDecision, TrustedAlias,
     UserPattern, WhenClause,
 };
 
@@ -331,6 +332,8 @@ pub struct AegisConfig {
     pub sandbox: SandboxSettings,
     /// Snapshot prune retention settings.
     pub prune: PruneConfig,
+    /// Language-aware analysis script-file and trusted-alias budgets.
+    pub language_analysis: LanguageAnalysisConfig,
 }
 
 impl Default for AegisConfig {
@@ -393,6 +396,7 @@ impl AegisConfig {
             rules: Vec::new(),
             sandbox: SandboxSettings::default(),
             prune: PruneConfig::default(),
+            language_analysis: LanguageAnalysisConfig::default(),
         }
     }
 
@@ -661,6 +665,9 @@ impl AegisConfig {
                     .or(base.prune.max_count_per_provider),
                 max_age_days: overlay.prune.max_age_days.or(base.prune.max_age_days),
             },
+            language_analysis: overlay
+                .language_analysis
+                .merge_into(base.language_analysis, allowlist_layer),
         }
     }
 
@@ -701,6 +708,8 @@ impl AegisConfig {
                 rule.pattern
             )));
         }
+
+        rules::validate_trusted_aliases(&self.language_analysis.trusted_aliases)?;
 
         crate::validate::validate_policy_rules(&self.rules)
             .map_err(|(index, err)| ConfigError::Config(format!("rules[{index}]: {err}")))?;

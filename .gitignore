@@ -22,6 +22,14 @@ fuzz/corpus/parser/*
 !fuzz/corpus/parser/unterminated-heredoc.txt
 !fuzz/corpus/parser/inline-python.txt
 !fuzz/corpus/parser/nested-shell.txt
+fuzz/corpus/router/*
+!fuzz/corpus/router/explicit-interpreter.txt
+!fuzz/corpus/router/script-file-argument.txt
+!fuzz/corpus/router/direct-exec.txt
+!fuzz/corpus/router/heredoc-write-then-exec.txt
+!fuzz/corpus/router/heredoc-tee-then-exec.txt
+!fuzz/corpus/router/heredoc-marker-glued-to-chain.txt
+!fuzz/corpus/router/cd-prefix-and-pipeline.txt
 # The language-protocol fuzz corpus is binary (framed bytes — no UTF-8 seed is
 # possible), so unlike the parser text seeds it is not tracked. The fuzzer
 # regenerates coverage from scratch; the audit-integrity wording guard rejects

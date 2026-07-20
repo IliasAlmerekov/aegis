@@ -1,0 +1,1 @@
+cd -- /tmp/proj && printf '%s' 'print(1)' | python3

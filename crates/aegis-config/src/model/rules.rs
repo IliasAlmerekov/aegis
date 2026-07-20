@@ -7,6 +7,9 @@ pub use aegis_types::PolicyRuleDecision;
 use aegis_types::{Category, Pattern, PatternSource, RiskLevel};
 
 use super::AuditIntegrityMode;
+use crate::error::ConfigError;
+
+type Result<T> = std::result::Result<T, ConfigError>;
 
 /// A single token in a typed policy rule pattern.
 ///
@@ -200,6 +203,82 @@ impl Default for AuditConfig {
             integrity_mode: AuditIntegrityMode::ChainSha256,
         }
     }
+}
+
+/// A trusted global alias for the Language-aware analysis interpreter
+/// registry (ADR-022 §6) — e.g. a wrapper script name that should be treated
+/// as a stand-in for a canonical registry interpreter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TrustedAlias {
+    /// The alias program name as it appears in a command (e.g. `"py"`).
+    pub alias: String,
+    /// The canonical registry program name it stands in for (e.g. `"python3"`).
+    pub canonical: String,
+}
+
+/// Non-configurable hard ceiling for
+/// `language_analysis.script_file_limit_bytes` (ADR-022 §6) — 1 MiB, enforced
+/// at every config layer.
+pub const LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES: u64 = 1024 * 1024;
+
+/// Default `language_analysis.script_file_limit_bytes` (ADR-022 §6) — 256 KiB.
+const LANGUAGE_ANALYSIS_SCRIPT_FILE_DEFAULT_BYTES: u64 = 256 * 1024;
+
+/// Language-aware analysis script-file and trusted-alias budgets (ADR-022 §6).
+///
+/// `script_file_limit_bytes` is bounded by
+/// [`LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES`] at every layer; project
+/// config may additionally only lower it, never raise it. `trusted_aliases` is
+/// a Global-layer-only concept ("trusted global aliases only", ADR-022 §6) —
+/// project-layer entries are dropped entirely rather than merged, since a
+/// project must never be able to introduce a new trusted interpreter alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct LanguageAnalysisConfig {
+    /// Maximum bytes read from a routed script file.
+    pub script_file_limit_bytes: u64,
+    /// Trusted global aliases mapping a wrapper program name to the canonical
+    /// registry interpreter it stands in for.
+    pub trusted_aliases: Vec<TrustedAlias>,
+}
+
+impl Default for LanguageAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            script_file_limit_bytes: LANGUAGE_ANALYSIS_SCRIPT_FILE_DEFAULT_BYTES,
+            trusted_aliases: Vec::new(),
+        }
+    }
+}
+
+/// Validate `language_analysis.trusted_aliases` entries: neither field may be
+/// empty or whitespace-only, an alias must not map a program to itself, and
+/// no two entries may share the same `alias` (ADR-022 §6).
+pub(super) fn validate_trusted_aliases(aliases: &[TrustedAlias]) -> Result<()> {
+    let mut seen_aliases = std::collections::HashSet::with_capacity(aliases.len());
+    for entry in aliases {
+        if entry.alias.trim().is_empty() || entry.canonical.trim().is_empty() {
+            return Err(ConfigError::Config(
+                "language_analysis.trusted_aliases entries must have non-empty alias and \
+                 canonical fields"
+                    .to_string(),
+            ));
+        }
+        if entry.alias == entry.canonical {
+            return Err(ConfigError::Config(format!(
+                "language_analysis.trusted_aliases alias '{}' must not map a program to itself",
+                entry.alias
+            )));
+        }
+        if !seen_aliases.insert(entry.alias.as_str()) {
+            return Err(ConfigError::Config(format!(
+                "language_analysis.trusted_aliases contains a duplicate alias '{}'",
+                entry.alias
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
