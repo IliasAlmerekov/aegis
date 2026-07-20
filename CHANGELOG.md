@@ -11,6 +11,26 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Fixed
+
+- Language-worker protocol/client hardening (ADR-022 §2, L1 Iteration 3
+  re-review): the encoder is now fallible (`encode_request`/`encode_response`
+  return `Result<Vec<u8>, EncodeError>`) so an oversized source is rejected as
+  `EncodeError::Oversized` instead of `.expect()`-panicking (no `.expect()` in
+  production); the 1 MiB source ceiling is now legal — `MAX_SOURCE_BYTES = 1
+  MiB` and `MAX_FRAME_PAYLOAD = MAX_SOURCE_BYTES + 1` budget the 1-byte language
+  tag, so a 1 MiB source round-trips instead of being rejected as oversized
+  (off-by-one fixed); the parent client propagates the stdin `flush()` error
+  instead of dropping it (`let _ = flush` → typed `WorkerError::Io`), so a flush
+  failure no longer masquerades as a read `Timeout`; `Worker::analyze` closes
+  stdin after sending and reaps the child, and a worker that responds fully then
+  exits non-zero degrades the whole session as `WorkerError::NonZeroExit`
+  (previously silently reported as success); the `--internal-language-worker`
+  flag literal is now a single shared `aegis::analysis::INTERNAL_LANGUAGE_WORKER
+  _FLAG` const (no comment-only "kept in sync" duplication). 8 regression tests
+  added across `aegis-language` and the parent client; `language_protocol` fuzz
+  still panic-free (7.9M runs).
+
 ### Added
 
 - Source-target router and catch-only script-file reader (ADR-022 §6, L1
