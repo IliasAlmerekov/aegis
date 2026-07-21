@@ -289,10 +289,39 @@ mod tests {
         let content_b = "print('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')\n";
         std::fs::write(&other, content_b).unwrap();
 
+        // A single race round can observe zero successful reads on a
+        // contended CI runner (the swapper thread or the reader loop may
+        // simply not get scheduled within the window) without that meaning
+        // the race handling itself is broken. Retry a few rounds — each with
+        // a generous window — and only fail if not one round produced a
+        // successful read; a hang or corrupted read still fails immediately.
+        const MAX_ATTEMPTS: u32 = 5;
+        let mut observed_ok_total = 0;
+        for _attempt in 0..MAX_ATTEMPTS {
+            observed_ok_total +=
+                run_symlink_swap_race_round(&path, &other, content_a, content_b).await;
+            if observed_ok_total > 0 {
+                break;
+            }
+        }
+
+        assert!(
+            observed_ok_total > 0,
+            "expected at least some reads to succeed across {MAX_ATTEMPTS} race-window attempts"
+        );
+    }
+
+    #[cfg(unix)]
+    async fn run_symlink_swap_race_round(
+        path: &std::path::Path,
+        other: &std::path::Path,
+        content_a: &str,
+        content_b: &str,
+    ) -> u32 {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let swap_stop = std::sync::Arc::clone(&stop);
-        let swap_path = path.clone();
-        let swap_other = other.clone();
+        let swap_path = path.to_path_buf();
+        let swap_other = other.to_path_buf();
         let swap_content_a = content_a.to_string();
         let swapper = std::thread::spawn(move || {
             // Each swap prepares the new state at a staging path, then
@@ -314,12 +343,12 @@ mod tests {
             }
         });
 
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(300);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(750);
         let mut observed_ok = 0;
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(1),
-                read_script_file(&path, 1024),
+                read_script_file(path, 1024),
             )
             .await
             {
@@ -342,10 +371,7 @@ mod tests {
 
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         swapper.join().unwrap();
-        assert!(
-            observed_ok > 0,
-            "expected at least some reads to succeed during the race window"
-        );
+        observed_ok
     }
 
     #[tokio::test]

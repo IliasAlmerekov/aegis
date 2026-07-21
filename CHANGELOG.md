@@ -13,6 +13,11 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Fixed
 
+- Made `concurrent_symlink_swap_race_never_panics_or_corrupts_content`
+  (`source_reader.rs`) tolerant of contended CI runners: widened the race
+  window and retried up to 5 rounds before failing on zero observed
+  successful reads, instead of asserting on a single 300ms attempt.
+
 - Language-worker protocol/client hardening (ADR-022 §2, L1 Iteration 3
   re-review): the encoder is now fallible (`encode_request`/`encode_response`
   return `Result<Vec<u8>, EncodeError>`) so an oversized source is rejected as
