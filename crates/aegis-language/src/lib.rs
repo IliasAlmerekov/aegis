@@ -21,7 +21,9 @@
 //! land in later iterations of the L1 plan.
 
 pub mod language;
+pub mod languages;
 pub mod manifest;
+pub mod operation;
 pub mod protocol;
 pub mod router;
 pub mod worker;

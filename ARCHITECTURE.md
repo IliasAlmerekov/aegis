@@ -767,13 +767,24 @@ pub mod watch;
 and for future embedders. Changes to any type exported from these modules
 require a corresponding ADR note. Prefer narrowing exports to broadening them.
 
-`analysis` (added L1 Iteration 3, ADR-022) is the parent-side language-worker
-client: it spawns the ephemeral `aegis --internal-language-worker` subprocess
-and frames requests/responses over pipes. The worker logic and Tree-sitter
-runtime live in the `aegis-language` crate; this module owns only async
-orchestration and the `WorkerError → DegradationReason::WorkerFailure`
-mapping. Wiring its results into an `Assessment` lands with the Iteration 1
-monotonic merge and Iteration 4 source routing.
+`analysis` (added L1 Iteration 3, ADR-022) is the parent-side language-analysis
+surface in the root crate. It composes, in order of the L1 iterations:
+`worker_client` — the async client that spawns the ephemeral
+`aegis --internal-language-worker` subprocess and frames requests/responses
+over pipes, mapping `WorkerError → DegradationReason::WorkerFailure`
+(Iteration 3); `router` / `source_reader` / `heredoc` — source-target routing
+and catch-only reads (Iteration 4); `queue` / `recursive` — the parent-owned
+recursive work queue and the cross-language execution-sink invariant
+(Iteration 5); and `mapping` — the in-process conversion of an adapter's
+`aegis_language` operation vocabulary into `aegis_types` analysis vocabulary,
+composed through the shared classifier and sink invariant into a
+`LanguageAnalysisResult` (Iteration 6). The Tree-sitter runtime, the
+language-worker protocol, and the per-language adapters live in the
+`aegis-language` crate; the `aegis_types::analysis` shared types and the
+`classify` / `language_match` / `merge_analysis` pure functions live in
+`aegis-types`. Wiring a `LanguageAnalysisResult` into an `Assessment` uses the
+Iteration 1 monotonic `merge_analysis`; the parent → worker → adapter → mapping
+→ merge runtime path is a later slice.
 
 ---
 
