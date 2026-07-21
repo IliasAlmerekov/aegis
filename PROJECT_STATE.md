@@ -21,7 +21,71 @@
 
 ---
 
-## Last session (2026-07-21, cont.) — L1 Iteration 6 (Python adapter + root mapping, slices 1-2)
+## Last session (2026-07-21, cont. 2) — L1 Iteration 6 Slice A (worker/protocol Analyze wiring)
+
+- **Iteration 6 Slice A done via TDD — the ephemeral worker now runs the
+  language adapter and returns a full `AdapterResult`, satisfying ADR-022 §2
+  ("Tree-sitter parsing and language adapters run in a self-spawned, ephemeral
+  worker process").** Scope confirmed with the user up front (Slice A = protocol
+  carries `AdapterResult` + worker runs the adapter; the parent-side
+  route→worker→map→queue→`merge_analysis` end-to-end wiring stays Slice B).
+  Chosen protocol form: new `Request::Analyze` / `Response::Analyzed` /
+  `Response::UnsupportedLanguage` variants, with `Parse` / `Parsed` /
+  `ParseFailed` retained unchanged.
+- **Protocol surface (`crates/aegis-language/src/protocol.rs`):** added
+  `Request::Analyze { language, source }` (kind `0x02`, same `[lang_u8][source]`
+  payload shape as `Parse` so the 1 MiB source ceiling and the "no path read /
+  no subprocess" property carry over), `Response::Analyzed { result:
+  AdapterResult }` (kind `0x83`, payload = the hand-rolled
+  `encode_adapter_result`/`decode_adapter_result` codec from Iteration 6
+  cycle 1 — the protocol just frames it, and decode propagates the codec's
+  precise `DecodeError::InvalidPayload` reasons directly), and
+  `Response::UnsupportedLanguage` (kind `0x84`, empty payload). The shared
+  `[lang_u8][source]` decode was factored into `decode_lang_source_payload`
+  (single source of truth for both request kinds); `language_to_wire`/
+  `wire_to_language` stay `pub(crate)` so `operation.rs` reuses them. Updated
+  the two exhaustive-kind-tag tests: requests now accept `Parse`+`Analyze`;
+  responses accept `Parsed`+`ParseFailed`+`Analyzed`+`UnsupportedLanguage`.
+- **Worker dispatch (`crates/aegis-language/src/worker.rs`):** `handle_request`
+  routes `Analyze` to a new `analyze_source` helper — Python → `python::analyze`
+  framed as `Analyzed`; the other foundation grammars (no adapter wired yet) →
+  `UnsupportedLanguage` (the parent maps this to a degradation reason, not a
+  clean parse); invalid-UTF-8 source (the adapter takes a `&str`, and the
+  parent owns the encoding contract per ADR-022 §7) →
+  `Analyzed { result: AdapterResult { operations: [], parse_errors: 1 } }`.
+  `Parse` behavior is unchanged.
+- **Test seam:** the `dispatch_tests` module's `run`-loop end-to-end harness
+  (encode `Request` → `run` → decode `Response`) was extended with three
+  Analyze tests: Python `os.remove('x')` → `Analyzed` with `parse_errors == 0`
+  and non-empty operations (pins that dispatch reached the adapter, not its
+  exact output — that is the adapter's own contract); JavaScript →
+  `UnsupportedLanguage`; Python invalid-UTF-8 → `Analyzed` with one parse error
+  and no operations.
+- **Budget / boundary hygiene:** `operation.rs` hit the 800-line file-size
+  budget after the cycle-1 codec; its `#[cfg(test)] mod tests` was extracted to
+  `crates/aegis-language/src/operation_tests.rs` via `#[cfg(test)] #[path =
+  "..."] mod tests;` — the same pattern `protocol.rs` already uses. No new
+  dependencies; `aegis-language` stays a workspace leaf (only thiserror + the
+  pinned Tree-sitter runtime) — `tests/aegis_language_boundary.rs` still green.
+- **Verified:** `cargo test --workspace` = 1797 passed / 97 suites / 0 failed
+  (+19 this slice: 11 codec earlier in Iteration 6 + 8 protocol/worker here);
+  workspace `cargo clippy --all-targets -- -D warnings` clean; `cargo fmt --all
+  --check` clean; `tests/aegis_language_boundary.rs` and
+  `tests/file_size_budget.rs` green; new/changed files under the 800-line
+  budget (protocol 359, operation 487, operation_tests 358, worker 478). Hot
+  path untouched (all additive `aegis-language` slow path), so no scanner
+  bench run was required.
+- **Deferred (documented, not silently dropped):** Slice B — wiring the
+  parent `worker_client` to send `Request::Analyze`, map `Analyzed`/
+  `UnsupportedLanguage` via the existing in-process `map_adapter_result`, feed
+  recursive targets into the `AnalysisQueue`, and `merge_analysis` into the
+  `Assessment` (the in-process pipeline test already pins the contract this
+  wiring will rely on); bounded symbol resolution; the broader corpora /
+  full-pipeline fixtures and the Iteration 6 qualification gate.
+
+---
+
+## Prior session (2026-07-21, cont.) — L1 Iteration 6 (Python adapter + root mapping, slices 1-2)
 
 - **Iteration 6 (Python qualification) slices 1-2 done via TDD; worker/protocol
   wiring, bounded symbol resolution, and the broader corpora/full-pipeline
@@ -1051,8 +1115,8 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-21 L1 Iteration 6 follow-up: `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1778 passed / 0
+As of the 2026-07-21 L1 Iteration 6 Slice A follow-up: `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1797 passed / 0
 failed (97 suites). `cargo audit` / `cargo deny check` pass aside from the
 pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
 no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is

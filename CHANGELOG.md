@@ -13,6 +13,21 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 6 Slice A: the ephemeral language worker now runs the language
+  adapter and returns a full `AdapterResult`, satisfying ADR-022 §2
+  ("Tree-sitter parsing and language adapters run in a self-spawned, ephemeral
+  worker process"). The worker protocol gained `Request::Analyze` /
+  `Response::Analyzed { result }` / `Response::UnsupportedLanguage` (kind tags
+  `0x02` / `0x83` / `0x84`; `Parse`/`Parsed`/`ParseFailed` retained). An
+  `Analyze` request for Python dispatches to `python::analyze` and frames the
+  result as `Analyzed`; the other foundation grammars (no adapter yet) return
+  `UnsupportedLanguage`; invalid-UTF-8 source returns `Analyzed` with one parse
+  error and no operations (the adapter takes a `&str`; the parent owns the
+  encoding contract, ADR-022 §7). The `Analyzed` payload is the hand-rolled
+  packed little-endian `AdapterResult` codec, framed as-is by the versioned
+  pipe protocol. The parent-side route→worker→map→queue→`merge_analysis`
+  end-to-end wiring (Slice B) remains deferred.
+
 - L1 Iteration 6 (slices 1-2): first production-qualified language adapter
   (Python) and the root mapping that composes its output through the shared
   classifier and cross-language execution-sink invariant — ADR-022 §2/§3/§7.
