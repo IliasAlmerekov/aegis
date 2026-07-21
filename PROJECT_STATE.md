@@ -17,11 +17,100 @@
 
 ## Last updated
 
-2026-07-20
+2026-07-21
 
 ---
 
-## Last session (2026-07-20) — L1 Iteration 4 slices 1-4 + REVIEW GATE (source routing)
+## Last session (2026-07-21) — L1 Iteration 5 (shared classifier + recursive queue + sink invariant)
+
+- **Iteration 5 (Shared operation classifier and recursive queue) done via
+  TDD — slices 1-3; bounded symbol resolution deferred.** Scope and seams
+  confirmed with the user up front per the TDD skill (the plan bundles four
+  concerns into one iteration; resolution is per-adapter AST work with no
+  adapters until Iterations 6-8, so it would be synthetic today — same
+  reasoning as Iteration 4's deferred slices).
+- **Architecture correction (same shape as Iteration 4's `router.rs`):** the
+  plan's candidate files `crates/aegis-language/src/classifier.rs` and
+  `crates/aegis-language/src/queue.rs` are not buildable as written —
+  `aegis-language` may not depend on any workspace crate
+  (`tests/aegis_language_boundary.rs`, ADR-022 §4), but the classifier
+  consumes `DetectedOperation`/`OperationKind` and produces
+  `Category`/`RiskLevel`/`Match` (all `aegis-types`), and the queue is
+  parent-owned (manages `RoutedTarget`/`TargetAnalysis`). The classifier
+  therefore lives in `aegis-types` (pure fn, like the already-collocated
+  `merge_analysis`); the queue and sink invariant live in the root `aegis`
+  crate's `src/analysis/` (which depends on both `aegis-types` and
+  `aegis-language`).
+- **Slice 1 — classifier (`crates/aegis-types/src/analysis/classifier.rs`,
+  21 tests):** pure `classify(&DetectedOperation) -> Classification`
+  + `language_match(...)` builder producing a `MatchResult` with
+  `MatchEvidence::LanguageRule`. Language-neutral matrix over all nine
+  `OperationKind`s + recursive/forced/destructive-mode modifiers, with
+  stable `LANG-*` rule ids (distinct from the shell scanner's `FS-001`-style
+  ids). `FilesystemDelete` branches on modifiers (recursive → Danger
+  `LANG-FS-DEL-R`, recursive+forced → `LANG-FS-DEL-RF`, forced → Warn
+  `LANG-FS-DEL-F`, plain → Warn `LANG-FS-DEL`); overwrite, chmod, device
+  write, destructive DB, `CodeExecution`, cloud/container/package map to
+  their `Category` + risk. REVIEW GATE invariants pinned by tests: the
+  classifier **never** returns `RiskLevel::Block` (language-aware Matches
+  are non-`Block` by ADR-022 §5); risk is **certainty-independent** (a
+  `Dynamic` operand never lowers risk below `Known` — certainty governs
+  recursive enqueueing/degradation, which is the queue's job); `CodeExecution`
+  always classifies `Danger` regardless of certainty; `OperationKind` is
+  matched exhaustively so a new variant forces a classification here.
+  Re-exported at `aegis_types::{Classification, classify, language_match}`.
+- **Slice 2 — recursive work queue (`src/analysis/queue.rs`, 14 tests):**
+  parent-owned `AnalysisQueue` deduplicated by `(language, source_hash)`
+  (the hash is hex SHA-256 of the post-BOM-strip source, matching
+  `source_reader`'s format for BOM-free sources so an inline and a
+  BOM-free script-file target over the same body collapse; a BOM-prefixed
+  script file hashes differently because `source_reader` hashes raw bytes
+  pre-strip — see `QueueTarget.source_hash` doc). `QueueBudget::
+  L1_DEFAULT` carries the ADR-022 §7 ceilings (depth 8, aggregate 1 MiB;
+  `max_targets` = 16, chosen > `max_depth` so a linear depth-8 chain is
+  bounded by depth, the meaningful recursion guard, not by count; deadline
+  is caller-set, `None` in the default). `push` returns `PushOutcome`
+  (`Accepted` / `DuplicateSkipped` / `DepthExceeded` / `CountExceeded` /
+  `BytesExceeded` / `DeadlineExceeded`); every cap maps to
+  `DegradationReason::LimitExceeded` while dedup records no degradation
+  (already-analyzed, never new work). Dedup runs first, so a cycle (a nested
+  target with the same `(lang, hash)` as an ancestor) is broken without
+  degradation. Cross-language nesting (same bytes, different language) is a
+  distinct target, not a duplicate.
+- **Slice 3 — cross-language execution-sink invariant
+  (`src/analysis/recursive.rs`, 10 tests):** `handle_sink` composes the
+  classifier + queue. A recognized process/shell/eval sink **always** emits
+  its `CodeExecution` Match (ADR-022 §3/§7 REVIEW GATE — retained regardless
+  of payload certainty). A `Known` literal payload additionally becomes a
+  bounded recursive `QueueTarget` at `parent_depth + 1`, parsed as the
+  payload's own language (cross-language: a Python sink can enqueue a
+  JavaScript target). A dynamic, partial, or encoded payload records
+  `DegradationReason::DynamicSource` and enqueues nothing — the payload is
+  never evaluated or decoded (decode-to-eval shape, ADR-022 §7).
+  Degradation is orthogonal to `RiskLevel` (ADR-022 §5): a degraded sink is
+  still `Danger`, never lowered to authorize auto-execution.
+- **Deferred (documented, not silently dropped):** bounded symbol resolution
+  (direct imports, aliases, simple constants, adjacent literals, literal
+  concatenation, escapes) — per-adapter AST work; no adapters exist until
+  Iterations 6-8, so a resolution test today would be synthetic. Wiring
+  `handle_sink`/queue output into `worker_client`/`Assessment` via
+  `merge_analysis` — blocked on an adapter actually producing a
+  `LanguageAnalysisResult` (Iterations 6-8). No Effect-opaque / Required-
+  recovery regression test for the same reason (no production path yet lets
+  a language-aware result influence `effect_opaque`).
+- **Verified:** `cargo test --workspace` = 1739 passed / 96 suites / 0 failed
+  (+45 this session: 21 classifier + 14 queue + 10 invariant); workspace
+  `cargo clippy --all-targets -- -D warnings` clean; `cargo fmt --all
+  --check` clean; `tests/aegis_language_boundary.rs`,
+  `tests/architecture_boundaries.rs`, `tests/file_size_budget.rs` all green;
+  new files well under the 800-line budget (queue 220, recursive 101,
+  classifier 207). Hot path untouched (classifier is in `aegis-types` and
+  not invoked on the safe path; queue/recursive are parent-side slow path),
+  so no scanner bench run was required.
+
+---
+
+## Prior session (2026-07-20) — L1 Iteration 4 slices 1-4 + REVIEW GATE (source routing)
 
 - **Iteration 4 (Source target routing and catch-only reads) slices 1-4 done
   via TDD; heredoc-to-file reuse and `aegis-config` budget/alias wiring
@@ -876,8 +965,8 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-20 L1 Iteration 4 REVIEW GATE follow-up: `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1694 passed / 0
+As of the 2026-07-21 L1 Iteration 5 follow-up: `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1739 passed / 0
 failed (96 suites). `cargo audit` / `cargo deny check` pass aside from the
 pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
 no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is

@@ -457,3 +457,9 @@ pub fn merge_analysis(
 mod merge_tests;
 #[cfg(test)]
 mod tests;
+
+/// Shared language-aware operation classifier (plan Iteration 5, Slice 1).
+pub mod classifier;
+
+#[cfg(test)]
+mod classifier_tests;
