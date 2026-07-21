@@ -19,6 +19,9 @@ path = "../crates/aegis-scanner"
 [dependencies.aegis-language]
 path = "../crates/aegis-language"
 
+[dependencies.aegis]
+path = "../"
+
 [[bin]]
 name = "parser"
 path = "fuzz_targets/parser.rs"
@@ -42,6 +45,13 @@ bench = false
 [[bin]]
 name = "language_protocol"
 path = "fuzz_targets/language_protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "router"
+path = "fuzz_targets/router.rs"
 test = false
 doc = false
 bench = false

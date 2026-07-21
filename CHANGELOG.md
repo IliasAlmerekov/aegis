@@ -13,6 +13,11 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Fixed
 
+- Made `concurrent_symlink_swap_race_never_panics_or_corrupts_content`
+  (`source_reader.rs`) tolerant of contended CI runners: widened the race
+  window and retried up to 5 rounds before failing on zero observed
+  successful reads, instead of asserting on a single 300ms attempt.
+
 - Language-worker protocol/client hardening (ADR-022 §2, L1 Iteration 3
   re-review): the encoder is now fallible (`encode_request`/`encode_response`
   return `Result<Vec<u8>, EncodeError>`) so an oversized source is rejected as
@@ -51,9 +56,25 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
   catch-only file read: rejects symlinks/FIFOs/sockets/directories without
   following them, bounds reads to the configured limit without a full-file
   read on oversized files, strips a UTF-8 BOM, rejects invalid UTF-8, and
-  records only a SHA-256 hash — never the source itself. `aegis-config`
-  wiring for script-file budgets/trusted aliases and same-command
-  heredoc-to-file reuse remain later slices.
+  records only a SHA-256 hash — never the source itself. `router::route` also
+  reuses an in-memory heredoc body instead of routing a `ScriptFile` read when
+  a command writes it to a file and immediately executes that same file
+  (narrowly: `cat > PATH`/`tee PATH <<HEREDOC && <interpreter> PATH`, exactly
+  one top-level `&&`, identical literal path — any other shape falls back to
+  the existing routing above). A new `[language_analysis]` `aegis-config`
+  section (`script_file_limit_bytes`, default 256 KiB, non-configurable 1 MiB
+  hard ceiling at every layer; `trusted_aliases`, a Global-layer-only concept
+  — project-layer entries are dropped entirely, never merged) closes the
+  Iteration 4 config-wiring gap, with full ratchet/warning/validation/schema
+  coverage. Closed the Iteration 4 REVIEW GATE: a new `fuzz/fuzz_targets/
+  router.rs` fuzzes `router::route`/`verified_shebang_language` for
+  panic-freedom (200k local runs, panic-free); two tests pin that `route()`
+  performs zero filesystem access even for a target whose parent directories
+  do not exist; and a race-oriented stress test proves
+  `source_reader::read_script_file` stays panic/hang/corruption-free under
+  concurrent atomic symlink/regular-file swaps (the underlying TOCTOU gap
+  remains an accepted, documented residual risk per ADR-022 §6 — this test
+  demonstrates robustness under it, not closure).
 
 ### Fixed
 

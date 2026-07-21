@@ -330,6 +330,91 @@ fn pipeline_into_a_non_interpreter_yields_no_targets() {
 }
 
 #[test]
+fn heredoc_written_to_a_file_is_reused_when_the_same_command_executes_it() {
+    // `cat > FILE <<'EOF' ... EOF && <interp> FILE`: the heredoc body is
+    // already in hand, so the router must not fall back to a `ScriptFile`
+    // route that re-reads `FILE` from disk (ADR-022 §6 favors the source it
+    // already has over a redundant read).
+    let command = "cat > script.py <<'EOF' && python3 script.py\nprint(1)\nEOF";
+    let targets = route(command, &[]);
+    assert_eq!(
+        targets,
+        vec![RoutedTarget::Inline {
+            language: SourceLanguage::Python,
+            source: "print(1)".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn heredoc_written_via_tee_is_also_reused() {
+    let command = "tee script.py <<'EOF' && python3 script.py\nprint(2)\nEOF";
+    let targets = route(command, &[]);
+    assert_eq!(
+        targets,
+        vec![RoutedTarget::Inline {
+            language: SourceLanguage::Python,
+            source: "print(2)".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn heredoc_written_then_executed_with_variable_expansion_degrades_dynamically() {
+    // The reused body still goes through the same literal/dynamic
+    // classification as ordinary heredoc stdin (ADR-022 §6) — an expanding
+    // heredoc must not be silently unrouted nor treated as safe-to-evaluate.
+    let command = "cat > script.py <<EOF && python3 script.py\necho $HOME\nEOF";
+    let targets = route(command, &[]);
+    assert_eq!(
+        targets,
+        vec![RoutedTarget::Dynamic {
+            language: SourceLanguage::Python,
+            reason: DegradationReason::DynamicSource,
+        }]
+    );
+}
+
+#[test]
+fn heredoc_written_then_executed_with_a_mismatched_path_is_not_reused() {
+    // Written to `script.py` but a different file is executed — the router
+    // must not substitute the heredoc body as evidence for an unrelated file.
+    let command = "cat > script.py <<'EOF' && python3 other.py\nprint(1)\nEOF";
+    assert_eq!(route(command, &[]), Vec::new());
+}
+
+#[test]
+fn heredoc_written_to_a_file_with_no_chained_exec_falls_back_to_current_behavior() {
+    let command = "cat > script.py <<'EOF'\nprint(1)\nEOF";
+    assert_eq!(route(command, &[]), Vec::new());
+}
+
+#[test]
+fn heredoc_write_then_exec_with_a_third_chained_segment_is_not_reused() {
+    // A further top-level segment after the exec means this is not the
+    // narrow exactly-two-segment shape this reuse is scoped to.
+    let command = "cat > script.py <<'EOF' && python3 script.py && rm script.py\nprint(1)\nEOF";
+    assert_eq!(route(command, &[]), Vec::new());
+}
+
+#[test]
+fn heredoc_marker_glued_directly_to_the_chained_operator_is_still_recognized() {
+    // `&&` is a shell metacharacter — it terminates the unquoted heredoc
+    // delimiter word without needing whitespace, exactly as real shell
+    // lexing would (mirroring `aegis-parser`'s marker grammar rather than a
+    // whitespace-only boundary).
+    let command = "cat > script.py <<EOF&& python3 script.py\nprint(3)\nEOF";
+    let targets = route(command, &[]);
+    assert_eq!(
+        targets,
+        vec![RoutedTarget::Inline {
+            language: SourceLanguage::Python,
+            source: "print(3)".to_owned(),
+        }]
+    );
+}
+
+#[test]
 fn verified_shebang_env_form_resolves_language() {
     assert_eq!(
         verified_shebang_language("#!/usr/bin/env python3"),
@@ -471,6 +556,37 @@ fn direct_exec_of_a_relative_path_is_routed_pending_shebang_verification() {
         route("./script.py", &[]),
         vec![RoutedTarget::DirectExec {
             path: PathBuf::from("./script.py"),
+        }]
+    );
+}
+
+#[test]
+fn route_never_touches_the_filesystem_for_a_script_file_target() {
+    // `route` decides *what* to analyze without any filesystem access — only
+    // `resolve` (async, later) reads the file. This is structurally
+    // guaranteed (`route`/`route_after_cd` are synchronous and the module
+    // imports no `fs`/I/O API — see the `resolve_one` boundary, the only
+    // place `source_reader::read_script_file` is called). This test is a
+    // black-box behavioral pin, not independent proof of zero syscalls: a
+    // path whose parent directories do not exist yields the identical routed
+    // target as an existing file would, so a regression that starts probing
+    // the filesystem (and branches on the result) would be caught here —
+    // though a stat call whose result is silently discarded would not be.
+    assert_eq!(
+        route("python3 /this/directory/does/not/exist/script.py", &[]),
+        vec![RoutedTarget::ScriptFile {
+            language: SourceLanguage::Python,
+            path: PathBuf::from("/this/directory/does/not/exist/script.py"),
+        }]
+    );
+}
+
+#[test]
+fn route_never_touches_the_filesystem_for_a_direct_exec_target() {
+    assert_eq!(
+        route("/this/directory/does/not/exist/script", &[]),
+        vec![RoutedTarget::DirectExec {
+            path: PathBuf::from("/this/directory/does/not/exist/script"),
         }]
     );
 }

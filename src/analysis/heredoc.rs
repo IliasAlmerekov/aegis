@@ -51,7 +51,10 @@ pub fn here_string_stdin(rest_tokens: &[&str]) -> Option<StdinRoute> {
     Some(classify((*body).to_owned(), false))
 }
 
-fn classify(body: String, is_nowdoc: bool) -> StdinRoute {
+/// Classify an already-extracted heredoc/here-string body (shared with
+/// [`super::router`]'s heredoc-to-file reuse, which extracts the body itself
+/// to also recover the closing delimiter).
+pub(crate) fn classify(body: String, is_nowdoc: bool) -> StdinRoute {
     if is_nowdoc || !contains_expansion(&body) {
         StdinRoute::Literal(body)
     } else {

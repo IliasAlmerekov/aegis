@@ -230,6 +230,21 @@ A `Match` whose `RiskLevel` equals the `Assessment`'s maximum; the `Assessment
 basis` retains every such `Match`, not just one.
 _Avoid_: primary match, winning match
 
+**Trusted global alias**:
+A wrapper program name (e.g. a `py` shim) that the trusted global config layer
+maps to the canonical registry interpreter it stands in for
+(`language_analysis.trusted_aliases`, `TrustedAlias`). Global-layer only — a
+project `.aegis.toml` can never add or narrow this list; project-supplied
+entries are dropped entirely rather than merged (ADR-022 §6).
+_Avoid_: interpreter alias, program alias
+
+**Script-file limit**:
+The maximum bytes read from a routed script file
+(`language_analysis.script_file_limit_bytes`), bounded by a non-configurable
+1 MiB hard ceiling at every config layer. Project config may only lower it,
+never raise it (ADR-022 §6, §7).
+_Avoid_: script budget, file-size limit
+
 ## Policy
 
 **Mode**:

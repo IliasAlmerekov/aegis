@@ -12,10 +12,11 @@ use std::path::PathBuf;
 
 use super::partial::PartialConfig;
 use super::{
-    ConfigLayerPath, DockerScope, MysqlSnapshotConfig, PolicyRule, PolicyRuleDecision,
-    PostgresSnapshotConfig, SnapshotPolicy, SupabaseSnapshotConfig,
-    most_restrictive_allowlist_override_level, most_restrictive_ci_policy,
-    most_restrictive_integrity_mode, most_restrictive_mode, most_restrictive_snapshot_policy,
+    ConfigLayerPath, DockerScope, LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES,
+    MysqlSnapshotConfig, PolicyRule, PolicyRuleDecision, PostgresSnapshotConfig, SnapshotPolicy,
+    SupabaseSnapshotConfig, TrustedAlias, most_restrictive_allowlist_override_level,
+    most_restrictive_ci_policy, most_restrictive_integrity_mode, most_restrictive_mode,
+    most_restrictive_snapshot_policy,
 };
 use crate::allowlist::ConfigSourceLayer;
 use crate::error::ConfigError;
@@ -75,6 +76,39 @@ pub(super) fn ratchet_allow_write(
                 .cloned()
                 .collect(),
         },
+    }
+}
+
+/// Ratchet `language_analysis.script_file_limit_bytes` (ADR-022 §6): the
+/// non-configurable 1 MiB hard ceiling is clamped at every layer. Under the
+/// Project layer, the requested value is additionally bounded by the current
+/// base (never raise, only lower).
+pub(super) fn ratchet_script_file_limit_bytes(
+    base: u64,
+    overlay: Option<u64>,
+    layer: ConfigSourceLayer,
+) -> u64 {
+    let requested = overlay
+        .unwrap_or(base)
+        .min(LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => requested.min(base),
+    }
+}
+
+/// Ratchet `language_analysis.trusted_aliases` (ADR-022 §6: "trusted global
+/// aliases only"). Global layer is last-wins; a Project-layer overlay is
+/// dropped entirely (kept = base) — a project must never be able to
+/// introduce a new trusted interpreter alias.
+pub(super) fn ratchet_trusted_aliases(
+    base: &[TrustedAlias],
+    overlay: Option<&Vec<TrustedAlias>>,
+    layer: ConfigSourceLayer,
+) -> Vec<TrustedAlias> {
+    match layer {
+        ConfigSourceLayer::Global => overlay.cloned().unwrap_or_else(|| base.to_vec()),
+        ConfigSourceLayer::Project => base.to_vec(),
     }
 }
 
@@ -468,6 +502,36 @@ impl super::AegisConfig {
                     location: location.clone(),
                 });
             }
+        }
+
+        if let Some(requested) = overlay.language_analysis_script_file_limit_bytes() {
+            let kept = ratchet_script_file_limit_bytes(
+                base.language_analysis.script_file_limit_bytes,
+                Some(requested),
+                ConfigSourceLayer::Project,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "language_analysis.script_file_limit_bytes",
+                requested.to_string(),
+                kept.to_string(),
+                &location,
+            );
+        }
+
+        if let Some(requested) = overlay.language_analysis_trusted_aliases() {
+            let kept = ratchet_trusted_aliases(
+                &base.language_analysis.trusted_aliases,
+                Some(&requested),
+                ConfigSourceLayer::Project,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                "language_analysis.trusted_aliases",
+                format!("{requested:?}"),
+                format!("{kept:?}"),
+                &location,
+            );
         }
 
         for (field, base_value, requested_value) in [

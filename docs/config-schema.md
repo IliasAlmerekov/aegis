@@ -296,6 +296,35 @@ allow_write = []
   `not_attempted` means it was enabled but no confined or fallback command was
   prepared because execution stopped earlier or setup failed closed.
 
+## Language-aware analysis
+
+Budgets and trusted aliases consumed by the Language-aware analysis source
+router (ADR-022 §6). This section does not enable or disable the feature
+itself — there is deliberately no `language_analysis.enabled` toggle; the
+built-in Language-aware rules cannot be disabled or lowered by any config
+layer.
+
+```toml
+[language_analysis]
+script_file_limit_bytes = 262144
+
+[[language_analysis.trusted_aliases]]
+alias = "py"
+canonical = "python3"
+```
+
+- `script_file_limit_bytes` bounds how many bytes are read from a routed
+  script file. Default 262144 (256 KiB). Bounded by a non-configurable 1 MiB
+  hard ceiling at every layer (`LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES`).
+  Project-layer ratchet: may only lower it, never raise it above the trusted
+  global value.
+- `trusted_aliases` maps a wrapper program name (e.g. a `py` shim) to the
+  canonical registry interpreter it stands in for (e.g. `python3`). This is a
+  Global-layer-only concept ("trusted global aliases only", ADR-022 §6): a
+  project `.aegis.toml` can never add a new trusted interpreter alias —
+  project-layer entries are dropped entirely rather than merged.
+- These fields also appear in `aegis-schema.json` under `LanguageAnalysisConfig`.
+
 ## CI policy
 
 `ci_policy` is a runtime policy input, not the GitHub Actions workflow definition.
