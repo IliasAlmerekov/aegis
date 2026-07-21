@@ -13,6 +13,37 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 6 Slice C: recursive drain closes the Iteration 6 core
+  (ADR-022 §2/§7). `aegis::analysis::run` now drains the parent-owned
+  `AnalysisQueue`: inline targets seed the queue at depth 0; the drain loop pops
+  a target, spawns a fresh worker, sends one `Request::Analyze`, maps the
+  `Response` through `map_adapter_result` with the target's own `depth` and
+  `source_hash`, and pushes any literal execution-sink `recursive_targets` back
+  onto the queue until it empties or a budget cap fires (`LimitExceeded`
+  degradation recorded, ADR-022 §7). A literal `exec`/`eval` payload's nested
+  destructive op now surfaces in the merged `Assessment` alongside the top-level
+  sink match. `run`'s signature is unchanged; `map_target_result` is refactored
+  to `(LanguageAnalysisResult, Vec<QueueTarget>)` and `target_count` covers
+  top-level + recursive targets. Still NOT wired into `RuntimeContext::assess`;
+  `ScriptFile`/`DirectExec` fs reads, live-assess integration, `aegis-config`
+  budget/alias wiring, and worker reuse across pops remain deferred.
+
+- L1 Iteration 6 Slice B: parent-side language-analysis orchestration
+  (ADR-022 §2/§6). New `aegis::analysis::run` routes a command's inline source
+  targets, spawns the ephemeral worker, sends one `Request::Analyze` per inline
+  target, maps each `Response` via the existing in-process `map_adapter_result`,
+  and folds the per-target `LanguageAnalysisResult`s into the baseline
+  `Assessment` through a single aggregated `merge_analysis`. Returns
+  `Outcome::NotStarted { baseline }` (no subprocess spawned, ADR-022 §0) when
+  `route` yields no analyzable inline target, else
+  `Outcome::Analyzed { assessment, target_count }`. `worker_client::TargetRequest`
+  gained a `kind: RequestKind { Parse, Analyze }` field so the transport carries
+  `Request::Analyze` without breaking the Iteration-3 `Parse` tests.
+  `Assessment` is now `Debug`+`Clone`. This is the isolated tracer bullet proving
+  the parent ↔ worker ↔ adapter ↔ mapping ↔ merge composition with a real
+  subprocess; it is NOT yet wired into `RuntimeContext::assess`, and recursive
+  drain / `ScriptFile`/`DirectExec` fs reads / `source_hash` remain deferred.
+
 - L1 Iteration 6 Slice A: the ephemeral language worker now runs the language
   adapter and returns a full `AdapterResult`, satisfying ADR-022 §2
   ("Tree-sitter parsing and language adapters run in a self-spawned, ephemeral
@@ -25,8 +56,7 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
   error and no operations (the adapter takes a `&str`; the parent owns the
   encoding contract, ADR-022 §7). The `Analyzed` payload is the hand-rolled
   packed little-endian `AdapterResult` codec, framed as-is by the versioned
-  pipe protocol. The parent-side route→worker→map→queue→`merge_analysis`
-  end-to-end wiring (Slice B) remains deferred.
+  pipe protocol.
 
 - L1 Iteration 6 (slices 1-2): first production-qualified language adapter
   (Python) and the root mapping that composes its output through the shared

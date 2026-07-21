@@ -80,6 +80,7 @@ impl Default for AssessmentBasis {
 }
 
 /// The result of assessing a shell command through the full scanner pipeline.
+#[derive(Debug, Clone)]
 pub struct Assessment {
     /// The highest `RiskLevel` among all matched patterns (`Safe` when none matched).
     pub risk: RiskLevel,

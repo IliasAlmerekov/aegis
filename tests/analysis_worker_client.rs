@@ -15,7 +15,7 @@ use std::time::Duration;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
-use aegis::analysis::{TargetRequest, TargetResult, Worker, WorkerError, analyze};
+use aegis::analysis::{RequestKind, TargetRequest, TargetResult, Worker, WorkerError, analyze};
 use aegis_language::SourceLanguage;
 use aegis_language::protocol::{self, MAX_SOURCE_BYTES, Response};
 use aegis_types::DegradationReason;
@@ -26,6 +26,7 @@ fn req(id: u32, language: SourceLanguage, source: &[u8]) -> TargetRequest {
         request_id: id,
         language,
         source: source.to_vec(),
+        kind: RequestKind::Parse,
     }
 }
 
