@@ -21,7 +21,87 @@
 
 ---
 
-## Last session (2026-07-21) — L1 Iteration 5 (shared classifier + recursive queue + sink invariant)
+## Last session (2026-07-21, cont.) — L1 Iteration 6 (Python adapter + root mapping, slices 1-2)
+
+- **Iteration 6 (Python qualification) slices 1-2 done via TDD; worker/protocol
+  wiring, bounded symbol resolution, and the broader corpora/full-pipeline
+  fixtures deferred.** Scope confirmed with the user up front (the plan's
+  Iteration 6 bundles adapter + corpora + full-pipeline fixtures + qualification
+  gate; per the chosen scope, this session delivered the adapter, the queries,
+  the root mapping, and the in-process pipeline test — not the worker/`merge_analysis`
+  runtime wiring, which stays a later slice).
+- **Slice 1 — Python adapter + operation vocabulary
+  (`crates/aegis-language/src/operation.rs` + `src/languages/python.rs` +
+  `queries/python/calls.scm`, 77 tests in the crate):** boundary-forced parallel
+  operation vocabulary (`OperationKind` / `OperationModifiers` / `OperandCertainty`
+  / `ByteSpan` / `DetectedOperation` / `NestedTarget` / `AdapterResult`) —
+  `aegis-language` may not depend on `aegis-types` (`tests/aegis_language_boundary.rs`,
+  ADR-022 §4), so the adapter *produces* the parallel types and the root crate
+  maps them. The adapter runs the `calls.scm` Tree-sitter query for structural
+  capture and interprets each call site in typed Rust (semantic API-spelling →
+  `OperationKind` mapping is Rust, never a private copy of the shared classifier —
+  Iteration 5 REVIEW GATE). Covers `os.remove`/`shutil.rmtree` (FilesystemDelete,
+  recursive modifier), `open('w'/'a'/'x')` (FilesystemOverwrite, destructive_mode),
+  `os.chmod`/`os.chown`/`shutil.chown` (PermissionOrOwnershipChange), `eval`/`exec`
+  (CodeExecution, Python payload), `os.system`/`subprocess.run("…")` (CodeExecution,
+  Bash payload — cross-language), and dynamic operands (variable / list argv /
+  f-string → `OperandCertainty::Dynamic`, no payload). `subprocess.run([argv])` is
+  Dynamic without a payload (a literal argv list is not shell source to recurse
+  into). 30 adapter tests + 47 prior crate tests.
+- **Slice 2 — root mapping + in-process pipeline
+  (`src/analysis/mapping.rs` + `tests/language_python_pipeline.rs`, 8 pipeline
+  tests):** `map_operation` converts the parallel `aegis_language` operation into
+  `aegis_types::DetectedOperation` one-for-one (returns `Option` so a future
+  `non_exhaustive` adapter kind with no shared mapping is skipped rather than
+  mislabeled or panicked; certainty's `non_exhaustive` wildcard falls back to
+  `Dynamic` — the conservative "never evidence of safety" default). `map_adapter_result`
+  composes one adapter result into a `MappingOutcome { analysis: LanguageAnalysisResult,
+  recursive_targets: Vec<QueueTarget> }`: each op → a `LANG-*` `Match` via the
+  shared `language_match`; a `CodeExecution` sink with a literal payload
+  additionally enqueues a bounded recursive `QueueTarget` at `parent_depth + 1`
+  (payload's own language, cross-language) via `handle_sink`; a dynamic/encoded
+  payload records `DegradationReason::DynamicSource` and enqueues nothing; a
+  nonzero `parse_errors` count records `IncompleteSyntax`; status aggregates
+  monotonically (`NotApplicable < Complete < Degraded`) with deduplicated reasons.
+  Pipeline test pins: every `OperationKind` maps one-for-one (the conversion test
+  `operation.rs`'s doc promises); known exec payload → `LANG-EXEC` Match + Bash
+  recursive target at depth 1; dynamic exec → Match + `DynamicSource`, no target;
+  non-execution op → classified Match, no target; parse errors → `IncompleteSyntax`;
+  empty result → `NotApplicable`; the recursive target is accepted by the
+  parent-owned `AnalysisQueue`; `merge_analysis` lifts a baseline `Safe`
+  `Assessment` to `Danger` and carries the analysis status.
+- **Deferred (documented, not silently dropped):** wiring `map_adapter_result` +
+  the recursive queue into `worker_client` so a real intercepted command flows
+  parent → worker → adapter → mapping → `merge_analysis` (the in-process pipeline
+  test pins the contract this wiring will rely on); bounded symbol resolution
+  (direct imports, aliases, constants) — per-adapter AST work; the broader
+  inline `-c` / stdin / heredoc / named-file full-pipeline fixtures and the
+  Iteration 6 qualification gate (grammar provenance, fuzzing, all four release
+  targets, audit v1/v2, measured budgets) before Python becomes default-on.
+- **Verified:** `cargo test --workspace` = 1778 passed / 97 suites / 0 failed
+  (+39 this session: 30 Python adapter + 9 pipeline; boundary tests still green —
+  `aegis-language` depends on no workspace crate); workspace `cargo clippy
+  --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean. New files
+  under the 800-line budget (mapping 264, python 694, operation 148). Hot path
+  untouched (all additive slow-path `src/analysis/` + `aegis-language`), so no
+  scanner bench run was required.
+- **Review cycle (`code-review` → `skeptic` Verify → TDD fixes):** two-axis
+  review surfaced 2 hard Standards findings + 1 Spec finding; the skeptic
+  Verify pass confirmed 3 survivors (C1/C2/C3) and routed the rest to
+  human-decision / not-actionable / tracked-deferral. Fixes applied via TDD:
+  (C3) removed erroneous `DynamicSource` degradation for non-execution dynamic
+  operands — RED `non_exec_dynamic_operand_emits_match_without_degradation` →
+  GREEN; (C1) moved `Parser::set_language` out of the per-`analyze()` call into
+  a one-time `thread_local` init (`.expect()` now in startup init, not on a
+  per-invocation path — CONVENTION.md §5); (C2) brought the `ARCHITECTURE.md`
+  §8 `analysis` bullet into sync with the current `src/analysis/` surface.
+  Tracked deferrals (not blockers): `DatabaseDestructive` adapter coverage +
+  the corpora directory + newer-syntax tests — go with the deferred corpora /
+  qualification-gate slice.
+
+---
+
+## Prior session (2026-07-21) — L1 Iteration 5 (shared classifier + recursive queue + sink invariant)
 
 - **Iteration 5 (Shared operation classifier and recursive queue) done via
   TDD — slices 1-3; bounded symbol resolution deferred.** Scope and seams
@@ -950,13 +1030,19 @@ Multi-crate Cargo workspace. Binary crate (`aegis`) at root depends on:
 - `crates/aegis-starlark` — opt-in Starlark policy evaluation (behind `starlark-policy`)
 - `crates/aegis-sandbox` — bwrap + Landlock (Linux) / sandbox-exec (macOS) execution confinement
 - `crates/aegis-language` — Tree-sitter runtime + four L1 grammars, the
-  language-worker protocol/framing, and the bounded parse-only worker dispatch
+  language-worker protocol/framing, the bounded parse-only worker dispatch, and
+  the per-language adapters (Python qualified in L1 Iteration 6) that emit the
+  boundary-forced parallel operation vocabulary
   (ADR-022; the only crate permitted native C build input)
 
 The root `aegis` binary also exposes `src/analysis/` — the parent-side
 language-worker client (`worker_client`) that spawns the ephemeral
 `aegis --internal-language-worker` subprocess and frames requests/responses
-(ADR-022 §2, L1 Iteration 3).
+(ADR-022 §2, L1 Iteration 3), the recursive work queue and cross-language
+execution-sink invariant (Iteration 5), and the root mapping that converts an
+adapter's parallel operation vocabulary into the shared `aegis_types` analysis
+vocabulary and composes it through the shared classifier + sink invariant
+(Iteration 6, `mapping.rs`).
 
 Eleven crates total. DAG boundaries for the first nine are enforced by
 `tests/architecture_boundaries.rs`; `aegis-sandbox` is covered separately by
@@ -965,9 +1051,9 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-21 L1 Iteration 5 follow-up: `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1739 passed / 0
-failed (96 suites). `cargo audit` / `cargo deny check` pass aside from the
+As of the 2026-07-21 L1 Iteration 6 follow-up: `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1778 passed / 0
+failed (97 suites). `cargo audit` / `cargo deny check` pass aside from the
 pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
 no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is
 panic-free over 7.9M runs; the new `router` fuzz target is panic-free over

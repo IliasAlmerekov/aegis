@@ -13,6 +13,43 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 6 (slices 1-2): first production-qualified language adapter
+  (Python) and the root mapping that composes its output through the shared
+  classifier and cross-language execution-sink invariant — ADR-022 §2/§3/§7.
+  `aegis_language::languages::python::analyze` runs a `calls.scm` Tree-sitter
+  query and interprets each call site in typed Rust, emitting the
+  boundary-forced parallel operation vocabulary (`aegis_language::operation` —
+  `aegis-language` may not depend on `aegis-types`, ADR-022 §4) covering
+  filesystem delete/overwrite, permission/ownership changes, `eval`/`exec`,
+  `os.system`/`subprocess.*` execution sinks with cross-language literal
+  payloads, and dynamic operands (variable / list argv / f-string → no payload).
+  `aegis::analysis::mapping::{map_operation, map_adapter_result}` converts the
+  parallel vocabulary into `aegis_types::DetectedOperation` one-for-one and
+  composes a `MappingOutcome` (`LanguageAnalysisResult` + recursive
+  `QueueTarget`s): a `CodeExecution` sink with a literal payload enqueues a
+  bounded recursive target at `parent_depth + 1` (the payload's own language);
+  a dynamic/encoded payload records `DynamicSource` and enqueues nothing; a
+  nonzero `parse_errors` count records `IncompleteSyntax`; status aggregates
+  monotonically. Pinned by `tests/language_python_pipeline.rs` (9 tests,
+  in-process — no worker subprocess). Worker/`merge_analysis` runtime wiring,
+  bounded symbol resolution, and the full qualification gate remain deferred.
+
+### Fixed
+
+- L1 Iteration 6 review pass: the root mapping no longer records
+  `DegradationReason::DynamicSource` for a *non-execution* op whose operand is
+  dynamic (e.g. `os.remove(path)`). `DynamicSource` is "source or working
+  directory was dynamic" (ADR-022 §4); ADR-022 mandates degradation only for
+  dynamic execution-sink payloads (§3/§7) or dynamic source/cwd (§6), not for a
+  non-execution dynamic operand — the shared classifier already assigns the
+  correct risk certainty-independently. Pinned by
+  `non_exec_dynamic_operand_emits_match_without_degradation`. Also moved the
+  Python adapter's `Parser::set_language` out of the per-`analyze()` call into
+  a one-time `thread_local` init (`.expect()` now lives in startup init, not on
+  a per-invocation production path — CONVENTION.md §5), and brought the
+  `ARCHITECTURE.md` §8 `analysis` bullet into sync with the current
+  `src/analysis/` surface (worker client, routing, queue/sink invariant, mapping).
+
 - L1 Iteration 5: shared language-aware operation classifier
   (`aegis_types::classify` / `language_match`), parent-owned recursive
   analysis work queue (`aegis::analysis::queue`), and the cross-language
