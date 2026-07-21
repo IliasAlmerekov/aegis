@@ -20,6 +20,7 @@ mod risk;
 mod sandbox;
 mod snapshot;
 
+pub use analysis::classifier::{Classification, classify, language_match};
 pub use analysis::{
     AnalysisProvenance, AnalysisStatus, AnalysisSummary, ByteSpan, DegradationReason,
     DetectedOperation, DetectionMechanism, DetectionSource, LanguageAnalysisResult, MatchEvidence,

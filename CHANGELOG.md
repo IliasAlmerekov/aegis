@@ -11,6 +11,25 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ## [Unreleased]
 
+### Added
+
+- L1 Iteration 5: shared language-aware operation classifier
+  (`aegis_types::classify` / `language_match`), parent-owned recursive
+  analysis work queue (`aegis::analysis::queue`), and the cross-language
+  execution-sink invariant (`aegis::analysis::recursive::handle_sink`) —
+  ADR-022 §3/§7. The classifier maps a `DetectedOperation` to
+  `Category`/`RiskLevel`/`Match` (never `Block`; risk is certainty-independent
+  so a `Dynamic` operand never lowers it), the queue dedups targets by
+  `(language, source_hash)` with depth (8) / count / aggregate-byte (1 MiB) /
+  deadline caps, and a recognized process/shell/eval sink always emits a
+  `CodeExecution` Match plus a bounded recursive target (literal payload) or
+  `DynamicSource` degradation (dynamic/encoded payload, never evaluated or
+  decoded). The classifier lives in `aegis-types` (the plan's
+  `aegis-language/src/classifier.rs` would violate the ADR-022 §4 leaf-crate
+  boundary — same correction as Iteration 4's `router.rs`). No production
+  wiring yet; bounded symbol resolution and adapter result merging land with
+  the Iterations 6-8 adapters.
+
 ### Fixed
 
 - Made `concurrent_symlink_swap_race_never_panics_or_corrupts_content`

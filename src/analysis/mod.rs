@@ -10,6 +10,8 @@
 //! `Assessment` remains a later slice.
 
 pub mod heredoc;
+pub mod queue;
+pub mod recursive;
 pub mod router;
 pub mod source_reader;
 pub mod worker_client;
