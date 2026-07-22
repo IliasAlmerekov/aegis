@@ -21,7 +21,88 @@
 
 ---
 
-## Last session (2026-07-22, cont. 4) — L1 Iteration 7 Slice 2 (TypeScript worker wiring)
+## Last session (2026-07-22, cont. 5) — L1 Iteration 7 TypeScript corpus
+
+- **Iteration 7 TypeScript corpus done via TDD (ADR-022 §11, plan Iteration 7
+  RED step — the corpus half).** Scope and seams confirmed with the user up
+  front per the TDD skill: the public
+  `aegis_language::languages::typescript::analyze(&str) -> AdapterResult` seam,
+  unit-tested in-process via `crates/aegis-language/tests/typescript_corpus.rs`
+  (mirroring `javascript_corpus.rs`); NO real-subprocess orchestration seam —
+  the router routes no inline runner to TypeScript today, so an end-to-end TS
+  fixture would be synthetic (deferred with the TypeScript runner-routing
+  slice). This mirrors the JavaScript corpus slice exactly, minus the
+  `node -e` fixtures the JS slice had (those exist because `node -e` routes to
+  JS). It is a **characterization + regression corpus**, not a classic
+  RED→GREEN: the adapter already behaves per spec (covered by the 31 TS unit
+  tests from Slice 1), so the corpus pins existing correct behavior with
+  hand-derived expectations (independent of the adapter — not tautological).
+  The genuine RED-risk was `modern_syntax`: the pinned tree-sitter-typescript
+  0.23.2 grammar might not parse generics / arrow generics `<T,>` / `satisfies`
+  / decorators / `import type` / mapped / conditional / `infer` types at file
+  scale; it does (parse_errors == 0, no false ops) — GREEN on first run.
+- **Corpus (`crates/aegis-language/tests/corpora/typescript/`, 9 `.ts` files)
+  + harness (`tests/typescript_corpus.rs`, 9 tests):** files embedded
+  compile-time via `include_str!`; a hand-derived `ExpectedOp` manifest declares
+  per-file operation kinds, modifiers, `OperandCertainty`, parse-error count,
+  and nested payload `(language, source)`. Spans deliberately not pinned
+  (implementation detail; unit tests own span coverage). Coverage: `fs_delete`
+  (unlinkSync/rmdirSync + rmSync recursive in identifier- and string-keyed
+  shapes; first call is a `fs.unlinkSync<void>(…)` type-argument call),
+  `fs_overwrite` (writeFileSync destructive_mode vs appendFileSync), `perms`
+  (chmodSync/chownSync), `exec_shell` (child_process.exec/execSync/exec\<void\>
+  → Bash nested payloads), `exec_js` (eval + `new Function<string>(...)` →
+  JavaScript nested payloads — the shared `family` module tags `eval`/`Function`
+  as `SourceLanguage::JavaScript` regardless of the enclosing file's language),
+  `negatives` (comment/string/member-ref-without-call/unrelated-call/ESM
+  import + TS-only `import type`/interface/type alias/enum/`as const`/
+  `satisfies`/decorator → 0 ops), `dynamic_operand` (variable/cmd/template
+  interpolation/`as`-cast operand → Dynamic certainty, NO nested payload),
+  `modern_syntax` (generics, arrow generics `<T,>`, optional chaining, nullish
+  coalescing, `as const`, `satisfies`, decorators, `import type`, mapped /
+  conditional / `infer` types → parse clean, 0 ops), `malformed` (unterminated
+  call → parse_errors > 0). TS-only enrichment over the JS corpus: explicit
+  type arguments on tracked calls (`fs.unlinkSync<void>(…)`,
+  `child_process.exec<void>(…)`, `new Function<string>(…)`) and an `as`-cast
+  dynamic operand — proving those calls still capture and classify at corpus
+  scale.
+- **Verified:** `cargo test --workspace` = 1903 passed / 101 suites / 0 failed
+  (+9 this slice: 9 TS corpus tests; +1 new suite `typescript_corpus`);
+  workspace `cargo clippy --all-targets -- -D warnings` clean; `cargo fmt --all
+  --check` clean; `tests/aegis_language_boundary.rs` and
+  `tests/file_size_budget.rs` green (corpus files are `tests/` data, not `src/`,
+  so the 800-line budget does not apply). Hot path untouched (all additive
+  slow-path corpus + harness), so no scanner bench run was required.
+- **Deferred (documented, not silently dropped):** a TypeScript inline runner
+  in the router registry (`ts-node -e` / `tsx -e` / `deno eval`) +
+  trusted-alias/config wiring so real end-to-end orchestration tests (mirror of
+  the JS `node -e` fixtures) become non-synthetic; Node inline/file/stdin and
+  TypeScript runner-routing negative cases; per-adapter TS fuzz target;
+  `fs.promises.*`/callback-form variants; import/alias/constant →
+  `OperandCertainty::Partial` (bounded symbol resolution); `DatabaseDestructive`;
+  chained member calls (`a.b.c()` — `calls.scm` matches `object: (identifier)`
+  only); `ScriptFile`/`DirectExec` fs reads; live `RuntimeContext::assess`
+  wiring; audit v1/v2 projection; the all-four-targets qualification gate
+  before TypeScript becomes default-on.
+- **Loop code review (this session):** an independent reviewer scored the TS
+  corpus slice 9/10 (test quality 9/10) with one actionable Low finding — the
+  corpus harness helpers (`ExpectedOp`, `assert_ops`, `assert_clean_no_ops`,
+  `assert_malformed`, `bash_exec`) were triplicated across the JavaScript,
+  TypeScript, and Python corpora. Resolved by extracting
+  `crates/aegis-language/tests/common/corpus_harness.rs` (included via
+  `#[path]`, matching the `no_source_corpus.rs` precedent); the three corpora
+  now share assertion semantics, and language-specific payload builders
+  (`js_exec`, `python_exec`) stay local. Behavior-preserving — no expectations
+  changed. Re-verified: `cargo test --workspace` = 1903 passed / 101 suites /
+  0 failed; `cargo clippy --all-targets -p aegis-language -- -D warnings` clean;
+  `cargo fmt --all --check` clean. The reviewer's informational note (the
+  `first<number>([1])` call site in `modern_syntax` is non-tracked, so the
+  clean-parse assertion — via the `<T,>` arrow generic — is what guards TS
+  type-argument parsing, not the 0-ops line) needs no change.
+
+---
+
+## Prior session (2026-07-22, cont. 4) — L1 Iteration 7 Slice 2 (TypeScript worker wiring)
 
 - **Iteration 7 Slice 2 done via TDD — the TypeScript adapter now runs in the
   self-spawned worker, so an Analyze request for TypeScript dispatches to
