@@ -6,5 +6,10 @@
 //! staged by the L1 qualification gate; Python is the first production-qualified
 //! adapter (plan Iteration 6), JavaScript is in qualification (plan Iteration 7).
 
+// `family` is shared interpretation between the JS and TS adapters only;
+// every item inside is `pub(crate)`, so the module is `pub(crate)` too —
+// it is not part of the crate's public API surface (boundary test).
+pub(crate) mod family;
 pub mod javascript;
 pub mod python;
+pub mod typescript;

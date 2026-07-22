@@ -13,6 +13,32 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 7 Slice 1: TypeScript adapter (ADR-022 §3, plan Iteration 7 —
+  the JavaScript-family's other half). New
+  `aegis_language::languages::typescript::analyze` parses TypeScript with the
+  pinned tree-sitter-typescript 0.23.2 grammar and a new
+  `queries/typescript/calls.scm` query, then interprets call sites through the
+  shared JavaScript-family logic. The grammar-agnostic interpretation
+  (API-spelling → Detected operation, operand certainty, recursive-option
+  resolution, nested payload recovery, the call-capture query loop) was
+  extracted into a shared `aegis_language::languages::family` module that both
+  the JavaScript and TypeScript adapters call (plan Iteration 7: "share
+  JavaScript-family resolution where syntax permits, but keep grammar and span
+  handling explicit per adapter"); the JS adapter's existing unit tests + corpus
+  guard the behavior-preserving extraction. 31 TS unit tests cover one tracer
+  per operation category plus TypeScript-only syntax: calls with explicit type
+  arguments (`fs.unlinkSync<void>("x")`, `eval<string>(...)`,
+  `new Function<string>(...)` — all three `calls.scm` query patterns stay bound
+  because `type_arguments` is a separate child, not the `function`/`constructor`
+  field), destructive calls inside generic class methods, typed variable
+  operands, and interfaces / enums / type aliases
+  / `import type` / `as` / `satisfies` / decorators as negatives, plus a
+  modern-TS parse-clean case. The pinned grammar parses current TypeScript
+  (incl. `satisfies`, decorators, generics) cleanly with no false operations.
+  NOT yet wired into the worker: `analyze_source` still routes TypeScript →
+  `UnsupportedLanguage` (Slice 2 follow-up, mirroring JS); TS corpora, Node
+  file/stdin + TS runner-routing negatives, per-adapter fuzz target, and the
+  all-four-targets qualification gate remain deferred.
 - L1 Iteration 7: JavaScript adapter corpus + Node inline `-e` full-pipeline
   fixtures (ADR-022 §11, plan Iteration 7 RED). Checked-in
   positive/negative/narrowness/modern-syntax/malformed `.js` corpus under

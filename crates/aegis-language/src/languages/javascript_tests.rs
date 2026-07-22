@@ -7,7 +7,7 @@
 //! `javascript` module, so the tests reach the adapter's items directly.
 
 use super::*;
-use crate::operation::{OperandCertainty, OperationKind, OperationModifiers};
+use crate::operation::{DetectedOperation, OperandCertainty, OperationKind, OperationModifiers};
 
 /// Assert `source` yields exactly one operation and return it.
 fn one_op(source: &str) -> DetectedOperation {
