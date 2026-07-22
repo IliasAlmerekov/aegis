@@ -35,7 +35,21 @@ use aegis_types::DegradationReason;
 /// [`Worker::spawn`] appends it when re-execing the binary in worker mode.
 pub const INTERNAL_LANGUAGE_WORKER_FLAG: &str = "--internal-language-worker";
 
-/// A single parse request addressed to the worker by `request_id`.
+/// Which worker request a [`TargetRequest`] encodes on the wire.
+///
+/// `Parse` is the Iteration 3 bounded-parser round-trip (`Request::Parse`);
+/// `Analyze` is the full adapter analysis (ADR-022 §2, L1 Iteration 6,
+/// `Request::Analyze`). Both share the same payload shape (`language`,
+/// `source`); only the wire `kind` byte differs, so the transport is unified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestKind {
+    /// `Request::Parse` — the Iteration 3 bounded-parser round-trip.
+    Parse,
+    /// `Request::Analyze` — full adapter analysis (ADR-022 §2, L1 Iteration 6).
+    Analyze,
+}
+
+/// A single request addressed to the worker by `request_id`.
 #[derive(Debug, Clone)]
 pub struct TargetRequest {
     /// The correlation id used to match this request with its response.
@@ -44,6 +58,8 @@ pub struct TargetRequest {
     pub language: SourceLanguage,
     /// The original source bytes to parse.
     pub source: Vec<u8>,
+    /// Which request to encode on the wire (`Parse` or `Analyze`).
+    pub kind: RequestKind,
 }
 
 /// Why a target's analysis did not produce a clean [`Response`]. Every variant
@@ -185,14 +201,18 @@ where
 {
     let mut out = Vec::new();
     for req in requests {
-        let frame = protocol::encode_request(
-            req.request_id,
-            &Request::Parse {
+        let request = match req.kind {
+            RequestKind::Parse => Request::Parse {
                 language: req.language,
                 source: req.source.clone(),
             },
-        )
-        .map_err(|_| WorkerError::Closed)?;
+            RequestKind::Analyze => Request::Analyze {
+                language: req.language,
+                source: req.source.clone(),
+            },
+        };
+        let frame =
+            protocol::encode_request(req.request_id, &request).map_err(|_| WorkerError::Closed)?;
         out.extend_from_slice(&frame);
     }
     if out.is_empty() {

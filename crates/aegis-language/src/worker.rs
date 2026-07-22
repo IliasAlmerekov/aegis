@@ -77,9 +77,11 @@ pub(crate) fn run_with_limit<R: Read, W: Write>(
                 // A complete request arrived: drop it from the buffer and serve it.
                 buf.drain(..frame.consumed);
                 let response = handle_request(&frame.message);
-                // A Response payload is ≤ 4 bytes, so encode never fails here;
-                // treat the impossible Oversized as a session-ending write failure
-                // (no panic, no malformed frame on the wire).
+                // A `Parsed`/`ParseFailed`/`UnsupportedLanguage` payload is tiny,
+                // but an `Analyzed` payload frames a full `AdapterResult` that can
+                // exceed `MAX_FRAME_PAYLOAD` for a large analysis result; treat the
+                // resulting `Oversized` as a session-ending write failure (no panic,
+                // no malformed frame on the wire).
                 let encoded = match protocol::encode_response(frame.request_id, &response) {
                     Ok(bytes) => bytes,
                     Err(_) => return RunOutcome::WriteFailed,
@@ -110,10 +112,16 @@ pub(crate) fn run_with_limit<R: Read, W: Write>(
     }
 }
 
-/// Parse the source carried by a [`Request`] and produce the matching
-/// [`Response`]. The worker parses only the supplied bytes (ADR-022 §2).
+/// Parse or analyze the source carried by a [`Request`] and produce the
+/// matching [`Response`]. The worker parses only the supplied bytes
+/// (ADR-022 §2).
 fn handle_request(request: &Request) -> Response {
-    let Request::Parse { language, source } = request;
+    let (language, source) = match request {
+        Request::Parse { language, source } => (*language, source.as_slice()),
+        Request::Analyze { language, source } => {
+            return analyze_source(language, source);
+        }
+    };
     // The parent is responsible for the UTF-8 encoding contract (ADR-022 §7);
     // bytes that are not valid UTF-8 cannot be parsed here, so the worker
     // reports a parse failure and the parent degrades.
@@ -121,7 +129,7 @@ fn handle_request(request: &Request) -> Response {
         Ok(s) => s,
         Err(_) => return Response::ParseFailed,
     };
-    match language::parse(*language, source_str) {
+    match language::parse(language, source_str) {
         Ok(tree) => Response::Parsed {
             // `has_error()` reports whether the tree contains any ERROR node.
             // A finer-grained count is a classifier concern (Iteration 5); the
@@ -129,6 +137,42 @@ fn handle_request(request: &Request) -> Response {
             error_count: u32::from(tree.root_node().has_error()),
         },
         Err(_) => Response::ParseFailed,
+    }
+}
+
+/// Run the language adapter for an [`Request::Analyze`] and frame its result
+/// (ADR-022 §2: adapters run in the self-spawned worker).
+///
+/// Iteration 6 ships only the Python adapter; any other language yields
+/// [`Response::UnsupportedLanguage`], which the parent maps to a degradation
+/// reason. The parent owns the UTF-8 encoding contract (ADR-022 §7): bytes that
+/// are not valid UTF-8 cannot be handed to the adapter (it takes a `&str`), so
+/// the worker reports an [`Response::Analyzed`] result with one parse error
+/// and no operations — the parent maps `parse_errors` to a degradation reason
+/// rather than treating the target as clean.
+fn analyze_source(language: &SourceLanguage, source: &[u8]) -> Response {
+    let adapter = match language {
+        SourceLanguage::Python => crate::languages::python::analyze,
+        // No adapter is wired for the other foundation grammars yet; report
+        // the language as unsupported so the parent degrades rather than
+        // silently treating the target as a clean parse.
+        SourceLanguage::JavaScript | SourceLanguage::TypeScript | SourceLanguage::Bash => {
+            return Response::UnsupportedLanguage;
+        }
+    };
+    let source_str = match std::str::from_utf8(source) {
+        Ok(s) => s,
+        Err(_) => {
+            return Response::Analyzed {
+                result: crate::operation::AdapterResult {
+                    operations: Vec::new(),
+                    parse_errors: 1,
+                },
+            };
+        }
+    };
+    Response::Analyzed {
+        result: adapter(source_str),
     }
 }
 
@@ -210,6 +254,14 @@ mod dispatch_tests {
 
     fn parse_request(language: SourceLanguage, source: &[u8]) -> Request {
         Request::Parse {
+            language,
+            source: source.to_vec(),
+        }
+    }
+
+    /// Build an `Analyze` request carrying `source` for `language`.
+    fn analyze_request(language: SourceLanguage, source: &[u8]) -> Request {
+        Request::Analyze {
             language,
             source: source.to_vec(),
         }
@@ -396,6 +448,100 @@ mod dispatch_tests {
                 Response::Parsed { error_count: 0 },
                 "each foundation grammar must parse its clean snippet with zero errors"
             );
+        }
+    }
+
+    // ── Analyze dispatch (Iteration 6 Slice A) ──────────────────────────────
+
+    #[test]
+    fn run_analyzes_python_source_and_returns_an_analyzed_response() {
+        // A fully-qualified destructive call with a literal operand is in the
+        // Python adapter's Slice 1 scope, so a clean `os.remove('x')` must
+        // produce an `Analyzed` response with a clean parse (zero errors) and
+        // at least one detected operation. The exact operation shape is the
+        // adapter's own contract (pinned in `languages::python`); this test
+        // pins only that the worker *dispatched* to the adapter and framed
+        // its result.
+        let requests = encode_requests(&[(
+            21,
+            analyze_request(SourceLanguage::Python, b"os.remove('x')"),
+        )]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].request_id, 21);
+        match &responses[0].message {
+            Response::Analyzed { result } => {
+                assert_eq!(
+                    result.parse_errors, 0,
+                    "valid Python must analyze with a clean parse"
+                );
+                assert!(
+                    !result.operations.is_empty(),
+                    "a destructive call must surface at least one detected operation"
+                );
+            }
+            other => panic!("Python Analyze must yield Analyzed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_returns_unsupported_language_for_a_language_without_an_adapter() {
+        // Iteration 6 ships only the Python adapter; JavaScript (and the other
+        // foundation grammars) have no adapter yet, so an Analyze request for
+        // one must yield `UnsupportedLanguage` rather than a fallback parse or
+        // a panic. The parent maps this to a degradation reason.
+        let requests =
+            encode_requests(&[(22, analyze_request(SourceLanguage::JavaScript, b"x = 1"))]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(
+            responses[0].message,
+            Response::UnsupportedLanguage,
+            "a language with no adapter must yield UnsupportedLanguage"
+        );
+    }
+
+    #[test]
+    fn run_returns_an_analyzed_parse_error_for_invalid_utf8_python_source() {
+        // The parent owns the UTF-8 encoding contract (ADR-022 §7). Bytes that
+        // are not valid UTF-8 cannot be handed to the adapter (it takes a
+        // `&str`), so the worker reports an `Analyzed` result with a single
+        // parse error and no operations — the parent maps `parse_errors` to a
+        // degradation reason rather than treating the target as clean.
+        let requests =
+            encode_requests(&[(23, analyze_request(SourceLanguage::Python, b"\xFF\xFE"))]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        match &responses[0].message {
+            Response::Analyzed { result } => {
+                assert_eq!(
+                    result.parse_errors, 1,
+                    "invalid UTF-8 must surface as one parse error"
+                );
+                assert!(
+                    result.operations.is_empty(),
+                    "no operations may be reported for unparseable bytes"
+                );
+            }
+            other => panic!("invalid-UTF-8 Python Analyze must yield Analyzed, got {other:?}"),
         }
     }
 }

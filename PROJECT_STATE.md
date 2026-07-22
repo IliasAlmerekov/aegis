@@ -21,7 +21,192 @@
 
 ---
 
-## Last session (2026-07-21, cont.) — L1 Iteration 6 (Python adapter + root mapping, slices 1-2)
+## Last session (2026-07-21, cont. 4) — L1 Iteration 6 Slice C (recursive drain)
+
+- **Iteration 6 Slice C done via TDD — closes the Iteration 6 core deliverable:
+  the production-qualified Python adapter is now exercised end-to-end through
+  the real worker, including recursion.** `analysis::run` drains the
+  parent-owned `AnalysisQueue`: `route` → seed the queue with inline targets at
+  depth 0 → drain loop (pop → spawn a fresh worker → one `Request::Analyze` →
+  `map_adapter_result` → push any `recursive_targets` back onto the queue →
+  repeat until empty or a budget cap fires) → `aggregate` → single
+  `merge_analysis`. Recursive targets now carry the target's own `depth` and
+  `Some(source_hash)` (Slice B passed `(None, 0)` and discarded them); a literal
+  `exec`/`eval` payload's nested destructive op now actually surfaces in the
+  merged `Assessment`. `run`'s signature is unchanged, so S1/S2/S3 stayed green.
+- **Orchestration (`src/analysis/orchestrate.rs`, ~209 → ~290 lines):** `run`
+  builds `AnalysisQueue::new(QueueBudget::L1_DEFAULT)` (config wiring still
+  deferred), seeds it with `QueueTarget::new(language, source, 0)` per inline
+  target via a new `push_with_degradation` (records `LimitExceeded` when a cap
+  rejects a target — ADR-022 §7: preserve Matches already produced, record the
+  limit; duplicates/acceptances record nothing). The drain loop spawns one
+  worker per pop: `Worker::analyze` closes stdin and reaps the child every
+  session, so worker reuse across pops is a perf optimization deferred to a
+  later slice (≤ `max_targets` = 16 spawns per session, slow path). `map_target_result`
+  is refactored to `(LanguageAnalysisResult, Vec<QueueTarget>)` taking
+  `&QueueTarget`, so recursive targets land at `depth + 1` with correct
+  provenance. `target_count` is now `per_target.len()` — top-level + recursive.
+- **TDD (real-subprocess seam, `tests/analysis_orchestrate.rs`, +1 test,
+  RED → GREEN):** SC1 `python3 -c "exec('shutil.rmtree(x)')"` — the inline body
+  is a Python `exec` of a literal `shutil.rmtree(x)`; the top-level `exec` is
+  `LANG-EXEC` (Danger) and the recursive `shutil.rmtree` payload is
+  `LANG-FS-DEL-R` (Danger). Asserts BOTH matches surface, `risk >= Danger`, and
+  `target_count >= 2`. RED under Slice B (recursive target discarded → only
+  `LANG-EXEC`, count 1 — confirmed at `tests/analysis_orchestrate.rs:163`);
+  GREEN under the drain loop. S1/S2/S3 stayed green unchanged (S2's
+  `shutil.rmtree('x')` is a non-execution op → no recursive target → count 1,
+  drain exits immediately). Each test spawns the real
+  `aegis --internal-language-worker` via `env!("CARGO_BIN_EXE_aegis")`.
+- **Verified:** `cargo test --workspace` = 1801 passed / 98 suites / 0 failed
+  (+1 this slice); workspace `cargo clippy --all-targets -- -D warnings` clean;
+  `cargo fmt --all --check` clean; `tests/file_size_budget.rs`,
+  `tests/aegis_language_boundary.rs`, and `tests/contracts_docs.rs` (13) green;
+  `src/analysis/orchestrate.rs` at 297 lines (under the 800-line budget). Hot
+  path untouched (all additive async slow-path under `src/analysis/`), so no
+  scanner bench run was required.
+- **Deferred (documented, not silently dropped):** `ScriptFile`/`DirectExec`
+  fs reads via `source_reader` + `source_hash`; live `RuntimeContext::assess`
+  integration (Python results do NOT yet influence real intercepted
+  Assessments); full `aegis-config` wiring (deadline/budget/trusted-aliases);
+  worker reuse across recursive pops (perf, not correctness); the broader
+  corpora / fuzzing / audit v1/v2 projection / all-four-targets qualification
+  gate before Python becomes default-on.
+
+---
+
+## Prior session (2026-07-21, cont. 3) — L1 Iteration 6 Slice B (parent-side orchestration)
+
+- **Iteration 6 Slice B done via TDD — the parent side now drives a real
+  end-to-end analysis: route → spawn the ephemeral worker → send
+  `Request::Analyze` per inline target → map each `Response` via the existing
+  in-process `map_adapter_result` → fold the per-target `LanguageAnalysisResult`s
+  into the baseline `Assessment` via one aggregated `merge_analysis`.** Scope and
+  seams confirmed with the user up front (Slice B = orchestration function
+  `analysis::run` only, NOT wired into `RuntimeContext::assess`; recursion
+  deferred; real-subprocess seam). This is the tracer bullet proving the
+  parent ↔ worker ↔ adapter ↔ mapping ↔ merge composition before it touches the
+  hot path.
+- **Orchestration (`src/analysis/orchestrate.rs`, new, 209 lines):** `Outcome`
+  (`NotStarted { baseline }` | `Analyzed { assessment, target_count }`) and async
+  `run(command, baseline, aegis_path, trusted_aliases, deadline)`. `route` →
+  filter to `RoutedTarget::Inline` only (ScriptFile/DirectExec need async fs
+  reads — deferred; Dynamic already carries a reason — deferred); empty →
+  `NotStarted` with **no subprocess spawned** (ADR-022 §0); otherwise build one
+  `TargetRequest { kind: Analyze }` per target, `Worker::spawn(aegis_path)` (spawn
+  failure degrades every target as `WorkerFailure`), `worker.analyze(...)`,
+  `map_target_result` per `TargetResult`, `aggregate` into one
+  `LanguageAnalysisResult`, single `merge_analysis`. `merge_analysis` overwrites
+  `Assessment.analysis` with the latest result's status/reasons, so per-target
+  reasons would clobber earlier ones under a naive fold — `aggregate`
+  concatenates matches, dedups reasons, and sets status
+  (`Degraded` if any target degraded, else `Complete` if any match, else
+  `NotApplicable`) before one merge. `recursive_targets` from `map_adapter_result`
+  are documented and discarded this slice (`// deferred: recursive drain`).
+- **Per-target mapping:** `Responded(Analyzed{result})` →
+  `map_adapter_result(..., SourceOrigin::Inline, None, 0).analysis`;
+  `Responded(UnsupportedLanguage)` → `{ Degraded, [], [GrammarUnavailable] }`;
+  `Responded(Parsed|ParseFailed)` (unreachable for Analyze) → defensive
+  `{ Degraded, [], [WorkerFailure] }`; `Failed(WorkerError)` →
+  `{ Degraded, [], [WorkerFailure] }` via the existing `From<WorkerError>`.
+- **Transport (`src/analysis/worker_client.rs`):** `TargetRequest` gained a
+  `kind: RequestKind { Parse, Analyze }` field; `send_requests` encodes by `kind`
+  (`Request::Parse` unchanged, `Request::Analyze` new). Re-exported `RequestKind`
+  from `analysis/mod.rs`. The existing `tests/analysis_worker_client.rs` `req()`
+  helper was updated to set `kind: Parse` — all 13 Parse tests stayed green.
+- **Types (`crates/aegis-types/src/assessment.rs`):** added `#[derive(Debug,
+  Clone)]` to `Assessment` (every field was already `Debug`/`Clone`) so `Outcome`
+  can derive `Debug, Clone` and `NotStarted` can hand back an owned baseline.
+- **TDD (real-subprocess seam, `tests/analysis_orchestrate.rs`, 3 tests, each
+  RED → GREEN):** S1 `ls -la` → `NotStarted` with `analysis == None` (no spawn);
+  S2 `python3 -c "shutil.rmtree('x')"` → `Analyzed` with `LANG-FS-DEL-R` Match,
+  `risk >= Danger`, status `Complete` (the S2 fixture is `shutil.rmtree`, not
+  `os.remove` — the latter only reaches `LANG-FS-DEL` at `Warn`, per
+  `classifier.rs`); S3 `node -e "x"` (JavaScript, no L1 adapter) → `Analyzed` with
+  `GrammarUnavailable` degradation. Each test spawns the real
+  `aegis --internal-language-worker` via `env!("CARGO_BIN_EXE_aegis")`. S3 was a
+  genuine RED (the `UnsupportedLanguage` arm was temporarily reverted to the
+  defensive `WorkerFailure` path, re-added for GREEN).
+- **Verified:** `cargo test --workspace` = 1800 passed / 98 suites / 0 failed
+  (+3 this slice); workspace `cargo clippy --all-targets -- -D warnings` clean;
+  `cargo fmt --all --check` clean; `tests/aegis_language_boundary.rs` and
+  `tests/file_size_budget.rs` green; new/changed files under the 800-line budget
+  (orchestrate 209, worker_client 456, assessment 308). Hot path untouched (all
+  additive async slow-path under `src/analysis/`), so no scanner bench run was
+  required.
+- **Deferred (documented, not silently dropped):** recursive drain of
+  `recursive_targets` via the `AnalysisQueue` (Slice C); `ScriptFile`/`DirectExec`
+  fs reads via `source_reader` + `source_hash`; live `RuntimeContext::assess`
+  integration (Python results do NOT yet influence real intercepted Assessments);
+  full `aegis-config` wiring (deadline/budget/trusted-aliases); the broader
+  corpora / full-pipeline fixtures and the Iteration 6 qualification gate.
+
+---
+
+## Prior session (2026-07-21, cont. 2) — L1 Iteration 6 Slice A (worker/protocol Analyze wiring)
+
+- **Iteration 6 Slice A done via TDD — the ephemeral worker now runs the
+  language adapter and returns a full `AdapterResult`, satisfying ADR-022 §2
+  ("Tree-sitter parsing and language adapters run in a self-spawned, ephemeral
+  worker process").** Scope confirmed with the user up front (Slice A = protocol
+  carries `AdapterResult` + worker runs the adapter; the parent-side
+  route→worker→map→queue→`merge_analysis` end-to-end wiring stays Slice B).
+  Chosen protocol form: new `Request::Analyze` / `Response::Analyzed` /
+  `Response::UnsupportedLanguage` variants, with `Parse` / `Parsed` /
+  `ParseFailed` retained unchanged.
+- **Protocol surface (`crates/aegis-language/src/protocol.rs`):** added
+  `Request::Analyze { language, source }` (kind `0x02`, same `[lang_u8][source]`
+  payload shape as `Parse` so the 1 MiB source ceiling and the "no path read /
+  no subprocess" property carry over), `Response::Analyzed { result:
+  AdapterResult }` (kind `0x83`, payload = the hand-rolled
+  `encode_adapter_result`/`decode_adapter_result` codec from Iteration 6
+  cycle 1 — the protocol just frames it, and decode propagates the codec's
+  precise `DecodeError::InvalidPayload` reasons directly), and
+  `Response::UnsupportedLanguage` (kind `0x84`, empty payload). The shared
+  `[lang_u8][source]` decode was factored into `decode_lang_source_payload`
+  (single source of truth for both request kinds); `language_to_wire`/
+  `wire_to_language` stay `pub(crate)` so `operation.rs` reuses them. Updated
+  the two exhaustive-kind-tag tests: requests now accept `Parse`+`Analyze`;
+  responses accept `Parsed`+`ParseFailed`+`Analyzed`+`UnsupportedLanguage`.
+- **Worker dispatch (`crates/aegis-language/src/worker.rs`):** `handle_request`
+  routes `Analyze` to a new `analyze_source` helper — Python → `python::analyze`
+  framed as `Analyzed`; the other foundation grammars (no adapter wired yet) →
+  `UnsupportedLanguage` (the parent maps this to a degradation reason, not a
+  clean parse); invalid-UTF-8 source (the adapter takes a `&str`, and the
+  parent owns the encoding contract per ADR-022 §7) →
+  `Analyzed { result: AdapterResult { operations: [], parse_errors: 1 } }`.
+  `Parse` behavior is unchanged.
+- **Test seam:** the `dispatch_tests` module's `run`-loop end-to-end harness
+  (encode `Request` → `run` → decode `Response`) was extended with three
+  Analyze tests: Python `os.remove('x')` → `Analyzed` with `parse_errors == 0`
+  and non-empty operations (pins that dispatch reached the adapter, not its
+  exact output — that is the adapter's own contract); JavaScript →
+  `UnsupportedLanguage`; Python invalid-UTF-8 → `Analyzed` with one parse error
+  and no operations.
+- **Budget / boundary hygiene:** `operation.rs` hit the 800-line file-size
+  budget after the cycle-1 codec; its `#[cfg(test)] mod tests` was extracted to
+  `crates/aegis-language/src/operation_tests.rs` via `#[cfg(test)] #[path =
+  "..."] mod tests;` — the same pattern `protocol.rs` already uses. No new
+  dependencies; `aegis-language` stays a workspace leaf (only thiserror + the
+  pinned Tree-sitter runtime) — `tests/aegis_language_boundary.rs` still green.
+- **Verified:** `cargo test --workspace` = 1797 passed / 97 suites / 0 failed
+  (+19 this slice: 11 codec earlier in Iteration 6 + 8 protocol/worker here);
+  workspace `cargo clippy --all-targets -- -D warnings` clean; `cargo fmt --all
+  --check` clean; `tests/aegis_language_boundary.rs` and
+  `tests/file_size_budget.rs` green; new/changed files under the 800-line
+  budget (protocol 359, operation 487, operation_tests 358, worker 478). Hot
+  path untouched (all additive `aegis-language` slow path), so no scanner
+  bench run was required.
+- **Deferred (documented, not silently dropped):** Slice B — wiring the
+  parent `worker_client` to send `Request::Analyze`, map `Analyzed`/
+  `UnsupportedLanguage` via the existing in-process `map_adapter_result`, feed
+  recursive targets into the `AnalysisQueue`, and `merge_analysis` into the
+  `Assessment` (the in-process pipeline test already pins the contract this
+  wiring will rely on); bounded symbol resolution; the broader corpora /
+  full-pipeline fixtures and the Iteration 6 qualification gate.
+
+---
+
+## Prior session (2026-07-21, cont.) — L1 Iteration 6 (Python adapter + root mapping, slices 1-2)
 
 - **Iteration 6 (Python qualification) slices 1-2 done via TDD; worker/protocol
   wiring, bounded symbol resolution, and the broader corpora/full-pipeline
@@ -1051,13 +1236,19 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-21 L1 Iteration 6 follow-up: `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1778 passed / 0
-failed (97 suites). `cargo audit` / `cargo deny check` pass aside from the
+As of the 2026-07-21 L1 Iteration 6 Slice C close-out: `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1801 passed / 0
+failed (98 suites). `cargo audit` / `cargo deny check` pass aside from the
 pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
 no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is
-panic-free over 7.9M runs; the new `router` fuzz target is panic-free over
-200k local runs.
+panic-free over 7.9M runs; the `router` fuzz target is panic-free over
+200k local runs. **Iteration 6 core deliverable is closed**: the
+production-qualified Python adapter is exercised end-to-end through the real
+ephemeral worker, including recursive drain of literal execution-sink payloads
+(route → spawn → Analyze → map → `AnalysisQueue` drain → `merge_analysis`).
+Remaining Iteration-6 items (broader corpora, fuzzing, audit v1/v2 projection,
+all-four-targets qualification gate) and the live `RuntimeContext::assess`
+wiring stay documented deferrals.
 
 ---
 

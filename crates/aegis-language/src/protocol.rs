@@ -64,7 +64,10 @@ const _: () = assert!(MAX_FRAME_PAYLOAD <= u32::MAX as usize);
 ///
 /// `#[non_exhaustive]` so later iterations can add request kinds (e.g. a
 /// shutdown signal) without breaking serialization consumers. Iteration 3
-/// defines exactly one: parse supplied bytes as a language.
+/// defined [`Request::Parse`]; Iteration 6 adds [`Request::Analyze`] so the
+/// ephemeral worker can run the language adapter and return a full
+/// [`AdapterResult`](crate::operation::AdapterResult) (ADR-022 §2: adapters
+/// run in the self-spawned worker, not the parent).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
@@ -77,19 +80,36 @@ pub enum Request {
         /// out of the parent's command string and sent across the pipe.
         source: Vec<u8>,
     },
+    /// Analyze `source` as `language`: parse it and run the language adapter
+    /// to produce a full [`AdapterResult`](crate::operation::AdapterResult).
+    /// The payload shape is identical to [`Request::Parse`] (one language-tag
+    /// byte plus the source); only the kind tag differs, so the same 1 MiB
+    /// source ceiling and the same "no path read / no subprocess" property
+    /// apply.
+    Analyze {
+        /// The language to analyze `source` as.
+        language: SourceLanguage,
+        /// The original source bytes to analyze.
+        source: Vec<u8>,
+    },
 }
 
 impl Request {
     /// The wire-format kind tag for [`Request::Parse`].
     pub const KIND_PARSE: u8 = 0x01;
+    /// The wire-format kind tag for [`Request::Analyze`]. Disjoint from the
+    /// response tags (which live in `0x80..=0xFF`) and from
+    /// [`Request::KIND_PARSE`].
+    pub const KIND_ANALYZE: u8 = 0x02;
 }
 
 /// A worker response. The worker sends these; the parent decodes them.
 ///
 /// Iteration 3 is the bounded *parser* process — the worker reports whether
-/// the supplied bytes parsed. The shared classifier that turns a parse into
-/// `DetectedOperation` evidence lands in Iteration 5, so no operation-level
-/// response variant exists yet.
+/// the supplied bytes parsed. Iteration 6 adds the analyze surface: a full
+/// [`AdapterResult`](crate::operation::AdapterResult) for a language the worker
+/// has an adapter for, or [`Response::UnsupportedLanguage`] when it does not
+/// (ADR-022 §2: adapters run in the self-spawned worker).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Response {
@@ -101,6 +121,18 @@ pub enum Response {
     /// to [`crate::language`]'s parse-failure path, which becomes
     /// `DegradationReason::IncompleteSyntax` once merged into an `Assessment`.
     ParseFailed,
+    /// The full adapter output for an [`Request::Analyze`] the worker had a
+    /// language adapter for (ADR-022 §2). The parent maps `result` into its
+    /// language-neutral `analysis` vocabulary.
+    Analyzed {
+        /// The detected operations and parse-error count for the analyzed
+        /// source target.
+        result: crate::operation::AdapterResult,
+    },
+    /// The worker was asked to [`Request::Analyze`] a language it has no
+    /// adapter for. The parent maps this to a degradation reason (e.g.
+    /// `GrammarUnavailable`) rather than treating it as a clean parse.
+    UnsupportedLanguage,
 }
 
 impl Response {
@@ -108,6 +140,12 @@ impl Response {
     pub const KIND_PARSED: u8 = 0x81;
     /// The wire-format kind tag for [`Response::ParseFailed`].
     pub const KIND_PARSE_FAILED: u8 = 0x82;
+    /// The wire-format kind tag for [`Response::Analyzed`]. Lives in the
+    /// response half of the kind-tag space (`0x80..=0xFF`), disjoint from
+    /// every request tag.
+    pub const KIND_ANALYZED: u8 = 0x83;
+    /// The wire-format kind tag for [`Response::UnsupportedLanguage`].
+    pub const KIND_UNSUPPORTED: u8 = 0x84;
 }
 
 /// A decoded frame: the correlated request id and the typed message, plus how
@@ -155,19 +193,31 @@ pub enum EncodeError {
     /// The payload exceeded [`MAX_FRAME_PAYLOAD`].
     #[error("frame payload ({actual} bytes) exceeds the {max}-byte ceiling")]
     Oversized { actual: usize, max: usize },
+    /// A `usize` field (a byte offset, a length, or an operation count) did not
+    /// fit in a `u32` wire field. Unreachable for a source bounded by the
+    /// protocol's 1 MiB ceiling (ADR-022 §7), but the codec is fallible rather
+    /// than truncating with `as u32` so the production path never panics.
+    #[error("wire field {field} overflows u32")]
+    FieldOverflow { field: &'static str },
 }
 
 /// Encode `request` with `request_id` into a fresh `Vec<u8>`, or
 /// [`Err(EncodeError::Oversized)`](EncodeError) if the source exceeds
 /// [`MAX_SOURCE_BYTES`].
 pub fn encode_request(request_id: u32, request: &Request) -> Result<Vec<u8>, EncodeError> {
-    let (language, source) = match request {
-        Request::Parse { language, source } => (*language, source.as_slice()),
+    // Parse and Analyze share the same payload shape (one language-tag byte
+    // plus the source), so the payload build is common; only the kind tag
+    // differs.
+    let (kind, language, source) = match request {
+        Request::Parse { language, source } => (Request::KIND_PARSE, *language, source.as_slice()),
+        Request::Analyze { language, source } => {
+            (Request::KIND_ANALYZE, *language, source.as_slice())
+        }
     };
     let mut payload = Vec::with_capacity(1 + source.len());
     payload.push(language_to_wire(language));
     payload.extend_from_slice(source);
-    encode_frame(request_id, Request::KIND_PARSE, &payload)
+    encode_frame(request_id, kind, &payload)
 }
 
 /// Decode one request frame from the front of `buf`.
@@ -181,21 +231,17 @@ pub fn decode_request(buf: &[u8]) -> Result<Option<DecodedFrame<Request>>, Decod
         None => return Ok(None),
     };
 
-    // The kind tag discriminates the message type. The only request kind is
-    // Parse; any other tag (including response tags) is rejected.
+    // The kind tag discriminates the message type. Parse and Analyze share a
+    // payload shape (one language-tag byte plus the source); any other tag
+    // (including response tags) is rejected.
     let message = match kind {
         Request::KIND_PARSE => {
-            // Parse payload: [lang_u8][source bytes…].
-            let (lang_byte, source) = payload.split_first().ok_or(DecodeError::InvalidPayload(
-                "parse request payload missing language tag",
-            ))?;
-            let language = wire_to_language(*lang_byte).ok_or(DecodeError::InvalidPayload(
-                "unknown language tag in parse request",
-            ))?;
-            Request::Parse {
-                language,
-                source: source.to_vec(),
-            }
+            let (language, source) = decode_lang_source_payload(payload)?;
+            Request::Parse { language, source }
+        }
+        Request::KIND_ANALYZE => {
+            let (language, source) = decode_lang_source_payload(payload)?;
+            Request::Analyze { language, source }
         }
         other => return Err(DecodeError::InvalidKind { tag: other }),
     };
@@ -207,15 +253,29 @@ pub fn decode_request(buf: &[u8]) -> Result<Option<DecodedFrame<Request>>, Decod
     }))
 }
 
-/// Encode `response` with `request_id` into a fresh `Vec<u8>`. A `Response`
-/// payload is at most 4 bytes, so this is always `Ok` in practice; the
-/// `Result` keeps the encoder symmetric and panic-free with the request side.
+/// Encode `response` with `request_id` into a fresh `Vec<u8>`. The payload is
+/// bounded by [`MAX_FRAME_PAYLOAD`]: `Parsed`/`ParseFailed`/`UnsupportedLanguage`
+/// are tiny, but an [`Response::Analyzed`] frames a full `AdapterResult` whose
+/// wire form scales with the number of detected operations, so encoding a large
+/// analysis result can fail as [`EncodeError::Oversized`]. The `Result` keeps
+/// the encoder symmetric and panic-free with the request side; callers must
+/// treat `Oversized` as a real (degradation) failure mode, not an impossible
+/// one.
 pub fn encode_response(request_id: u32, response: &Response) -> Result<Vec<u8>, EncodeError> {
     let (kind, payload): (u8, Vec<u8>) = match response {
         Response::Parsed { error_count } => {
             (Response::KIND_PARSED, error_count.to_le_bytes().to_vec())
         }
         Response::ParseFailed => (Response::KIND_PARSE_FAILED, Vec::new()),
+        Response::Analyzed { result } => {
+            // The AdapterResult codec is the single source of truth for its
+            // wire form; the protocol just frames it.
+            (
+                Response::KIND_ANALYZED,
+                crate::operation::encode_adapter_result(result)?,
+            )
+        }
+        Response::UnsupportedLanguage => (Response::KIND_UNSUPPORTED, Vec::new()),
     };
     encode_frame(request_id, kind, &payload)
 }
@@ -244,6 +304,22 @@ pub fn decode_response(buf: &[u8]) -> Result<Option<DecodedFrame<Response>>, Dec
                 ));
             }
             Response::ParseFailed
+        }
+        Response::KIND_ANALYZED => {
+            // The AdapterResult codec owns validation and returns the same
+            // `DecodeError` type, so a malformed payload propagates its
+            // precise reason directly (e.g. "trailing bytes after
+            // AdapterResult", "unknown operation kind discriminant").
+            let result = crate::operation::decode_adapter_result(payload)?;
+            Response::Analyzed { result }
+        }
+        Response::KIND_UNSUPPORTED => {
+            if !payload.is_empty() {
+                return Err(DecodeError::InvalidPayload(
+                    "UnsupportedLanguage response payload must be empty",
+                ));
+            }
+            Response::UnsupportedLanguage
         }
         other => return Err(DecodeError::InvalidKind { tag: other }),
     };
@@ -320,8 +396,27 @@ fn decode_header(buf: &[u8]) -> Result<Option<DecodedHeader<'_>>, DecodeError> {
     Ok(Some((request_id, kind, payload, total)))
 }
 
+/// Decode the shared `[lang_u8][source bytes…]]` payload used by both
+/// [`Request::Parse`] and [`Request::Analyze`]. Both request kinds carry one
+/// language-tag byte plus the source; the error messages are kept generic
+/// ("request", not "parse request") so they stay accurate for either kind.
+/// Returns the typed language and the owned source bytes.
+fn decode_lang_source_payload(payload: &[u8]) -> Result<(SourceLanguage, Vec<u8>), DecodeError> {
+    let (lang_byte, source) = payload.split_first().ok_or(DecodeError::InvalidPayload(
+        "request payload missing language tag",
+    ))?;
+    let language = wire_to_language(*lang_byte).ok_or(DecodeError::InvalidPayload(
+        "unknown language tag in request",
+    ))?;
+    Ok((language, source.to_vec()))
+}
+
 /// Map a [`SourceLanguage`] to its single-byte wire tag.
-fn language_to_wire(language: SourceLanguage) -> u8 {
+///
+/// `pub(crate)` so the [`crate::operation`] codec shares this single source of
+/// truth rather than duplicating the language→tag mapping (a `NestedTarget`
+/// carries a `SourceLanguage` that is serialized with the same tags).
+pub(crate) fn language_to_wire(language: SourceLanguage) -> u8 {
     match language {
         SourceLanguage::Python => 0x00,
         SourceLanguage::JavaScript => 0x01,
@@ -331,8 +426,9 @@ fn language_to_wire(language: SourceLanguage) -> u8 {
 }
 
 /// Map a single-byte wire tag back to a [`SourceLanguage`], or `None` if the
-/// tag does not name a foundation language.
-fn wire_to_language(tag: u8) -> Option<SourceLanguage> {
+/// tag does not name a foundation language. `pub(crate)` for the same reason as
+/// [`language_to_wire`].
+pub(crate) fn wire_to_language(tag: u8) -> Option<SourceLanguage> {
     match tag {
         0x00 => Some(SourceLanguage::Python),
         0x01 => Some(SourceLanguage::JavaScript),
@@ -343,427 +439,5 @@ fn wire_to_language(tag: u8) -> Option<SourceLanguage> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A known-good `Request::Parse` used across the framing tests.
-    fn sample_request() -> Request {
-        Request::Parse {
-            language: SourceLanguage::Python,
-            source: b"import os; os.remove('x')".to_vec(),
-        }
-    }
-
-    #[test]
-    fn encode_request_emits_the_specified_wire_format() {
-        // Independent source of truth: the expected bytes are hand-derived
-        // from the wire-format spec in this module's docs, NOT by running
-        // `encode_request`. Magic `AELW`, version 1 (LE), request_id 0x0A,
-        // kind 0x01 (Parse), payload = [lang 0x00 = Python] + source bytes.
-        let source = b"import os; os.remove('x')";
-        let request_id: u32 = 0x0A;
-        let mut expected = Vec::new();
-        expected.extend_from_slice(b"AELW");
-        expected.extend_from_slice(&1u16.to_le_bytes());
-        expected.extend_from_slice(&request_id.to_le_bytes());
-        expected.push(Request::KIND_PARSE);
-        let payload_len = u32::try_from(1 + source.len()).expect("source fits in u32");
-        expected.extend_from_slice(&payload_len.to_le_bytes());
-        expected.push(0x00); // Python
-        expected.extend_from_slice(source);
-
-        let got = encode_request(request_id, &sample_request()).expect("small source encodes");
-        assert_eq!(got, expected, "encoded frame must match the wire spec");
-    }
-
-    #[test]
-    fn decode_request_round_trips_an_encoded_request() {
-        let request_id = 0x0A;
-        let encoded = encode_request(request_id, &sample_request()).expect("small source encodes");
-        let decoded = decode_request(&encoded)
-            .expect("a complete well-formed frame must decode")
-            .expect("a complete frame must not be reported incomplete");
-        assert_eq!(decoded.consumed, encoded.len());
-        assert_eq!(decoded.request_id, request_id);
-        assert_eq!(decoded.message, sample_request());
-    }
-
-    /// Build a raw frame with explicit header fields, for error-path tests
-    /// that need to violate one field while keeping the rest well-formed.
-    fn raw_frame(
-        magic: &[u8; 4],
-        version: u16,
-        request_id: u32,
-        kind: u8,
-        payload: &[u8],
-    ) -> Vec<u8> {
-        let len = u32::try_from(payload.len()).expect("test payload fits in u32");
-        raw_frame_with_declared_len(magic, version, request_id, kind, len, payload)
-    }
-
-    /// Build a raw frame whose header declares `declared_len` payload bytes,
-    /// independent of how many `payload` bytes are actually appended. Used to
-    /// craft oversized (declared > MAX, short body) and truncated (declared >
-    /// body) frames.
-    fn raw_frame_with_declared_len(
-        magic: &[u8; 4],
-        version: u16,
-        request_id: u32,
-        kind: u8,
-        declared_len: u32,
-        payload: &[u8],
-    ) -> Vec<u8> {
-        let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
-        out.extend_from_slice(magic);
-        out.extend_from_slice(&version.to_le_bytes());
-        out.extend_from_slice(&request_id.to_le_bytes());
-        out.push(kind);
-        out.extend_from_slice(&declared_len.to_le_bytes());
-        out.extend_from_slice(payload);
-        out
-    }
-
-    /// A well-formed Parse payload (Python + a small source body).
-    fn parse_payload() -> Vec<u8> {
-        let mut p = vec![0x00]; // Python
-        p.extend_from_slice(b"print(1)");
-        p
-    }
-
-    #[test]
-    fn decode_request_rejects_a_frame_with_wrong_magic() {
-        let buf = raw_frame(
-            b"XXXX",
-            PROTOCOL_VERSION,
-            1,
-            Request::KIND_PARSE,
-            &parse_payload(),
-        );
-        assert_eq!(
-            decode_request(&buf),
-            Err(DecodeError::BadMagic { got: *b"XXXX" }),
-            "a frame whose magic is not AELW must be rejected as noise/corruption"
-        );
-    }
-
-    #[test]
-    fn decode_request_rejects_a_frame_with_unsupported_version() {
-        // A future/unknown version the decoder does not speak. The frame is
-        // otherwise well-formed (correct magic, kind, payload).
-        let unsupported: u16 = 999;
-        let buf = raw_frame(
-            &MAGIC,
-            unsupported,
-            1,
-            Request::KIND_PARSE,
-            &parse_payload(),
-        );
-        assert_eq!(
-            decode_request(&buf),
-            Err(DecodeError::UnsupportedVersion {
-                version: unsupported
-            }),
-            "a frame whose version the decoder does not support must be rejected before its payload is read"
-        );
-    }
-
-    #[test]
-    fn decode_request_rejects_a_frame_declaring_an_oversized_payload() {
-        // The header claims a payload larger than MAX_FRAME_PAYLOAD, but only a
-        // few body bytes are present. The decoder must reject it from the
-        // header alone — without allocating or waiting for the body.
-        let declared: u32 = u32::try_from(MAX_FRAME_PAYLOAD + 1).unwrap();
-        let buf = raw_frame_with_declared_len(
-            &MAGIC,
-            PROTOCOL_VERSION,
-            1,
-            Request::KIND_PARSE,
-            declared,
-            &parse_payload(),
-        );
-        assert_eq!(
-            decode_request(&buf),
-            Err(DecodeError::Oversized {
-                declared,
-                max: u32::try_from(MAX_FRAME_PAYLOAD).unwrap(),
-            }),
-            "a frame declaring more than MAX_FRAME_PAYLOAD must be rejected before its body is read"
-        );
-    }
-
-    #[test]
-    fn decode_request_rejects_a_response_kind_tag_sent_as_a_request() {
-        // A response kind tag (0x81 = Parsed) must not be accepted as a
-        // request, even with an otherwise-valid Parse payload. This pins half
-        // of the disjoint-kind-tag contract and the "no hidden request kind"
-        // property: the only request kind is Parse.
-        let buf = raw_frame(
-            &MAGIC,
-            PROTOCOL_VERSION,
-            1,
-            Response::KIND_PARSED,
-            &parse_payload(),
-        );
-        assert_eq!(
-            decode_request(&buf),
-            Err(DecodeError::InvalidKind {
-                tag: Response::KIND_PARSED
-            }),
-            "a response kind tag must be rejected by the request decoder"
-        );
-    }
-
-    #[test]
-    fn encode_response_parsed_emits_the_specified_wire_format() {
-        // Hand-derived: magic AELW, version 1, request_id 0x0B, kind 0x81
-        // (Parsed), payload = error_count u32 LE = 2.
-        let request_id: u32 = 0x0B;
-        let mut expected = Vec::new();
-        expected.extend_from_slice(&MAGIC);
-        expected.extend_from_slice(&1u16.to_le_bytes());
-        expected.extend_from_slice(&request_id.to_le_bytes());
-        expected.push(Response::KIND_PARSED);
-        expected.extend_from_slice(&4u32.to_le_bytes()); // payload_len
-        expected.extend_from_slice(&2u32.to_le_bytes()); // error_count
-
-        let got = encode_response(request_id, &Response::Parsed { error_count: 2 })
-            .expect("Parsed response encodes");
-        assert_eq!(
-            got, expected,
-            "encoded Parsed response must match the wire spec"
-        );
-    }
-
-    #[test]
-    fn decode_response_round_trips_parsed_and_parse_failed() {
-        let request_id = 0x0B;
-
-        let encoded = encode_response(request_id, &Response::Parsed { error_count: 2 })
-            .expect("Parsed response encodes");
-        let decoded = decode_response(&encoded)
-            .expect("a complete well-formed response must decode")
-            .expect("a complete response must not be reported incomplete");
-        assert_eq!(decoded.consumed, encoded.len());
-        assert_eq!(decoded.request_id, request_id);
-        assert_eq!(decoded.message, Response::Parsed { error_count: 2 });
-
-        let encoded = encode_response(request_id, &Response::ParseFailed)
-            .expect("ParseFailed response encodes");
-        let decoded = decode_response(&encoded)
-            .expect("a complete well-formed response must decode")
-            .expect("a complete response must not be reported incomplete");
-        assert_eq!(decoded.consumed, encoded.len());
-        assert_eq!(decoded.request_id, request_id);
-        assert_eq!(decoded.message, Response::ParseFailed);
-    }
-
-    #[test]
-    fn decode_response_rejects_a_request_kind_tag_sent_as_a_response() {
-        // Symmetric to the request-side check: a request kind tag (0x01 =
-        // Parse) must not be accepted as a response.
-        let buf = raw_frame(
-            &MAGIC,
-            PROTOCOL_VERSION,
-            1,
-            Request::KIND_PARSE,
-            &4u32.to_le_bytes(),
-        );
-        assert_eq!(
-            decode_response(&buf),
-            Err(DecodeError::InvalidKind {
-                tag: Request::KIND_PARSE
-            }),
-            "a request kind tag must be rejected by the response decoder"
-        );
-    }
-
-    #[test]
-    fn decode_request_reports_a_short_header_as_incomplete_not_malformed() {
-        // Fewer bytes than a full header: the caller may still be waiting for
-        // the rest of the frame, so this is `Ok(None)`, not an error.
-        let short = b"AELW\x01\x00\x00"; // 7 bytes < HEADER_LEN
-        assert_eq!(
-            decode_request(short),
-            Ok(None),
-            "a buffer shorter than the header must be reported incomplete, not malformed"
-        );
-    }
-
-    #[test]
-    fn decode_request_reports_a_truncated_payload_as_incomplete_not_malformed() {
-        // The header declares 100 payload bytes but only 10 are present. The
-        // frame is incomplete, not corrupted — the caller can wait for more.
-        let buf = raw_frame_with_declared_len(
-            &MAGIC,
-            PROTOCOL_VERSION,
-            1,
-            Request::KIND_PARSE,
-            100,
-            &parse_payload(), // only ~9 bytes, not 100
-        );
-        assert_eq!(
-            decode_request(&buf),
-            Ok(None),
-            "a frame whose declared payload has not fully arrived must be reported incomplete"
-        );
-    }
-
-    #[test]
-    fn decode_request_rejects_a_parse_payload_with_an_unknown_language_tag() {
-        // Language tag 0x42 names no foundation language.
-        let mut payload = vec![0x42];
-        payload.extend_from_slice(b"x");
-        let buf = raw_frame(&MAGIC, PROTOCOL_VERSION, 1, Request::KIND_PARSE, &payload);
-        assert_eq!(
-            decode_request(&buf),
-            Err(DecodeError::InvalidPayload(
-                "unknown language tag in parse request"
-            )),
-            "a parse request with an unknown language tag must be rejected"
-        );
-    }
-
-    #[test]
-    fn decode_response_rejects_a_parsed_payload_of_the_wrong_length() {
-        // Parsed requires exactly 4 bytes (error_count); 2 bytes is malformed.
-        let buf = raw_frame(
-            &MAGIC,
-            PROTOCOL_VERSION,
-            1,
-            Response::KIND_PARSED,
-            &[0x01, 0x02],
-        );
-        assert_eq!(
-            decode_response(&buf),
-            Err(DecodeError::InvalidPayload(
-                "Parsed response payload must be 4 bytes (error_count)"
-            )),
-            "a Parsed response with the wrong payload length must be rejected"
-        );
-    }
-
-    #[test]
-    fn decode_request_accepts_only_the_parse_kind_tag() {
-        // The "no path read / no subprocess" property, pinned at the wire
-        // level: the only accepted request kind is Parse (0x01). Every other
-        // kind byte — including any a future "read path" or "run subprocess"
-        // request would use — is rejected as InvalidKind. There is no way to
-        // ask the worker for either through this protocol.
-        let payload = parse_payload();
-        for tag in 0u8..=255 {
-            let buf = raw_frame(&MAGIC, PROTOCOL_VERSION, 1, tag, &payload);
-            let outcome = decode_request(&buf);
-            if tag == Request::KIND_PARSE {
-                assert!(
-                    outcome.is_ok(),
-                    "Parse kind tag {tag:#04x} must be accepted"
-                );
-            } else {
-                assert_eq!(
-                    outcome,
-                    Err(DecodeError::InvalidKind { tag }),
-                    "non-Parse kind tag {tag:#04x} must be rejected — the protocol encodes no path-read or subprocess request"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn decode_response_accepts_only_the_two_response_kind_tags() {
-        let parsed_payload = 4u32.to_le_bytes();
-        for tag in 0u8..=255 {
-            let buf = raw_frame(&MAGIC, PROTOCOL_VERSION, 1, tag, &parsed_payload);
-            let outcome = decode_response(&buf);
-            if tag == Response::KIND_PARSED {
-                assert!(
-                    outcome.is_ok(),
-                    "Parsed kind tag {tag:#04x} must be accepted"
-                );
-            } else if tag == Response::KIND_PARSE_FAILED {
-                // ParseFailed declares an empty payload; the 4-byte body here
-                // is a wrong length, so it is rejected as InvalidPayload, not
-                // accepted — which is the correct outcome for this buffer.
-                assert!(
-                    matches!(outcome, Err(DecodeError::InvalidPayload(_))),
-                    "ParseFailed with a non-empty payload must be rejected"
-                );
-            } else {
-                assert_eq!(
-                    outcome,
-                    Err(DecodeError::InvalidKind { tag }),
-                    "non-response kind tag {tag:#04x} must be rejected by the response decoder"
-                );
-            }
-        }
-    }
-
-    // ── L2: fallible encode (no panic on oversized input) ───────────────────
-
-    #[test]
-    fn encode_request_rejects_an_oversized_source_as_oversized() {
-        // A source larger than MAX_SOURCE_BYTES must not panic the encoder
-        // (no .expect() in production); it returns Err(EncodeError::Oversized).
-        let oversized = Request::Parse {
-            language: SourceLanguage::Python,
-            source: vec![b'x'; MAX_SOURCE_BYTES + 1],
-        };
-        assert_eq!(
-            encode_request(1, &oversized),
-            Err(EncodeError::Oversized {
-                actual: MAX_SOURCE_BYTES + 2, // lang tag + source
-                max: MAX_FRAME_PAYLOAD,
-            }),
-            "an oversized source must encode to an Oversized error, not panic"
-        );
-    }
-
-    #[test]
-    fn encode_request_accepts_a_small_source() {
-        let encoded = encode_request(1, &sample_request());
-        assert!(encoded.is_ok(), "a small source must encode: {encoded:?}");
-        let encoded = encoded.unwrap();
-        assert!(
-            decode_request(&encoded).unwrap().is_some(),
-            "an encoded small source must round-trip"
-        );
-    }
-
-    // ── L3: the 1 MiB source ceiling is legal (budget the lang tag) ─────────
-
-    #[test]
-    fn encode_request_accepts_a_source_at_the_one_mebibyte_ceiling() {
-        // ADR-022 §7 hard per-file source ceiling is 1 MiB. A 1 MiB source is
-        // legal and must round-trip — the frame payload budgets the 1-byte
-        // language tag on top of MAX_SOURCE_BYTES.
-        let at_ceiling = Request::Parse {
-            language: SourceLanguage::Python,
-            source: vec![b'x'; MAX_SOURCE_BYTES],
-        };
-        let encoded = encode_request(1, &at_ceiling).expect("1 MiB source must encode");
-        let decoded = decode_request(&encoded)
-            .expect("1 MiB frame must decode")
-            .expect("1 MiB frame must be complete");
-        assert_eq!(decoded.request_id, 1);
-        match decoded.message {
-            Request::Parse { language, source } => {
-                assert_eq!(language, SourceLanguage::Python);
-                assert_eq!(source.len(), MAX_SOURCE_BYTES);
-            }
-        }
-    }
-
-    #[test]
-    fn encode_request_rejects_a_source_one_byte_above_the_ceiling() {
-        let above = Request::Parse {
-            language: SourceLanguage::Python,
-            source: vec![b'x'; MAX_SOURCE_BYTES + 1],
-        };
-        assert!(
-            matches!(
-                encode_request(1, &above),
-                Err(EncodeError::Oversized { .. })
-            ),
-            "a source one byte above the ceiling must be rejected as Oversized"
-        );
-    }
-}
+#[path = "protocol_tests.rs"]
+mod tests;

@@ -11,12 +11,15 @@
 
 pub mod heredoc;
 pub mod mapping;
+pub mod orchestrate;
 pub mod queue;
 pub mod recursive;
 pub mod router;
 pub mod source_reader;
 pub mod worker_client;
 
+pub use orchestrate::{Outcome, run};
 pub use worker_client::{
-    INTERNAL_LANGUAGE_WORKER_FLAG, TargetRequest, TargetResult, Worker, WorkerError, analyze,
+    INTERNAL_LANGUAGE_WORKER_FLAG, RequestKind, TargetRequest, TargetResult, Worker, WorkerError,
+    analyze,
 };
