@@ -21,7 +21,67 @@
 
 ---
 
-## Last session (2026-07-22, cont. 3) — L1 Iteration 7 Slice 1 (TypeScript adapter)
+## Last session (2026-07-22, cont. 4) — L1 Iteration 7 Slice 2 (TypeScript worker wiring)
+
+- **Iteration 7 Slice 2 done via TDD — the TypeScript adapter now runs in the
+  self-spawned worker, so an Analyze request for TypeScript dispatches to
+  `typescript::analyze` and frames its `AdapterResult`.** Scope and seams
+  confirmed with the user up front per the TDD skill (Slice 2 = worker dispatch
+  wiring only; the parent orchestration is already language-agnostic from
+  Iteration 6 Slices B/C). This mirrors the JavaScript Slice 2 cadence exactly,
+  minus the orchestration/subprocess seams: the router routes **no inline runner
+  to TypeScript** today (0 `TypeScript` references in `src/analysis/router.rs`;
+  no `ts-node`/`tsx`/`deno` in the registry), so an end-to-end TS fixture would
+  be synthetic. Those orchestration tests belong with the deferred
+  "TypeScript runner-routing" slice (plan Iteration 7 RED: "Node inline/file/
+  stdin and TypeScript runner-routing negative cases").
+- **Worker dispatch (`crates/aegis-language/src/worker.rs`):** `analyze_source`
+  now matches `TypeScript` to `crate::languages::typescript::analyze` alongside
+  Python and JavaScript; the `Bash` arm still returns `UnsupportedLanguage`
+  (Bash is the last foundation grammar without an adapter — L1 Shell/Bash is
+  Iteration 8). Doc comment updated (was "Python and JavaScript ship adapters;
+  TypeScript and Bash do not yet"). This is the entire production change — the
+  generic `map_operation` (Iteration 5) maps TS `DetectedOperation`s to `LANG-*`
+  Matches for free, so no classifier change.
+- **TDD (1 seam, RED → GREEN):** worker dispatch unit test
+  `run_analyzes_typescript_source_and_returns_an_analyzed_response` —
+  `Request::Analyze { TypeScript, "fs.unlinkSync<void>(\"data.txt\")" }` →
+  `Analyzed` with `parse_errors == 0` and non-empty `operations`. The
+  type-argument call (`<void>`) is TypeScript-only syntax the JS adapter does
+  not exercise, so a clean parse + an op proves the worker reached the TS
+  adapter (the `calls.scm` query surfaces the op because `type_arguments` is a
+  separate child, not the `function` field — pinned in `languages::typescript`).
+  RED today (UnsupportedLanguage); GREEN after wiring. The test pins dispatch
+  reached the adapter, not its exact output (that is the adapter's own contract,
+  already covered by the 31 TS unit tests from Slice 1).
+- **Existing-test retargeting (preserves the UnsupportedLanguage path):** the
+  unit test `run_returns_unsupported_language_for_a_language_without_an_adapter`
+  was switched from `TypeScript` to `Bash` (still no adapter; Iteration 8). It
+  keeps pinning the UnsupportedLanguage → degradation contract that TS no longer
+  exercises. The orchestration test `run_records_grammar_unavailable_for_an_unsupported_language`
+  already uses `bash -c "x"` (unchanged — Bash still unsupported); its comment
+  was updated to note both JS and TS gained adapters in Iteration 7.
+- **Verified:** `cargo test --workspace` = 1894 passed / 100 suites / 0 failed
+  (+1 this slice: the TS worker dispatch test); workspace `cargo clippy
+  --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean; `worker.rs`
+  ~620 lines (under the 800-line budget). Hot path untouched (all additive
+  slow-path `aegis-language` worker dispatch), so no scanner bench run was
+  required.
+- **Deferred (documented, not silently dropped):** TS corpora (`.ts` files,
+  plan Iteration 7 RED step); a TypeScript inline runner in the router registry
+  (`ts-node -e` / `tsx -e` / `deno eval`) + trusted-alias/config wiring so real
+  end-to-end orchestration tests (mirror of JS Slice 2 seams 2 and 3) become
+  non-synthetic; Node inline/file/stdin and TypeScript runner-routing negative
+  cases; per-adapter TS fuzz target; `fs.promises.*`/callback-form variants;
+  import/alias/constant → `OperandCertainty::Partial` (bounded symbol
+  resolution); `DatabaseDestructive`; chained member calls (`a.b.c()`);
+  `ScriptFile`/`DirectExec` fs reads; live `RuntimeContext::assess` wiring;
+  audit v1/v2 projection; the all-four-targets qualification gate before
+  TypeScript becomes default-on.
+
+---
+
+## Prior session (2026-07-22, cont. 3) — L1 Iteration 7 Slice 1 (TypeScript adapter)
 
 - **Iteration 7 Slice 1 done via TDD — the TypeScript adapter lands as the
   JavaScript-family's other half (ADR-022 §3, plan Iteration 7).** Scope and

@@ -143,9 +143,9 @@ fn handle_request(request: &Request) -> Response {
 /// Run the language adapter for an [`Request::Analyze`] and frame its result
 /// (ADR-022 §2: adapters run in the self-spawned worker).
 ///
-/// Python (Iteration 6) and JavaScript (Iteration 7) ship adapters; TypeScript
-/// and Bash do not yet, so they yield [`Response::UnsupportedLanguage`], which
-/// the parent maps to a degradation reason. The parent owns the UTF-8 encoding
+/// Python (Iteration 6), JavaScript, and TypeScript (Iteration 7) ship adapters;
+/// Bash does not yet, so it yields [`Response::UnsupportedLanguage`], which the
+/// parent maps to a degradation reason. The parent owns the UTF-8 encoding
 /// contract (ADR-022 §7): bytes that are not valid UTF-8 cannot be handed to the
 /// adapter (it takes a `&str`), so the worker reports an [`Response::Analyzed`]
 /// result with one parse error and no operations — the parent maps
@@ -155,12 +155,11 @@ fn analyze_source(language: &SourceLanguage, source: &[u8]) -> Response {
     let adapter = match language {
         SourceLanguage::Python => crate::languages::python::analyze,
         SourceLanguage::JavaScript => crate::languages::javascript::analyze,
-        // No adapter is wired for these foundation grammars yet; report the
-        // language as unsupported so the parent degrades rather than silently
-        // treating the target as a clean parse.
-        SourceLanguage::TypeScript | SourceLanguage::Bash => {
-            return Response::UnsupportedLanguage;
-        }
+        SourceLanguage::TypeScript => crate::languages::typescript::analyze,
+        // No adapter is wired for Bash yet (L1 Shell/Bash is Iteration 8);
+        // report the language as unsupported so the parent degrades rather than
+        // silently treating the target as a clean parse.
+        SourceLanguage::Bash => return Response::UnsupportedLanguage,
     };
     let source_str = match std::str::from_utf8(source) {
         Ok(s) => s,
@@ -531,13 +530,59 @@ mod dispatch_tests {
     }
 
     #[test]
+    fn run_analyzes_typescript_source_and_returns_an_analyzed_response() {
+        // Iteration 7 Slice 2 wires the TypeScript adapter into the worker, so an
+        // Analyze request for a destructive TS body must dispatch to
+        // `typescript::analyze` and return an `Analyzed` response. The call
+        // `fs.unlinkSync<void>("data.txt")` carries an explicit type argument —
+        // TypeScript-only syntax the JS adapter does not exercise — so a clean
+        // parse plus at least one operation proves the worker reached the TS
+        // adapter (the `calls.scm` query surfaces the op because
+        // `type_arguments` is a separate child, not the `function` field; pinned
+        // in `languages::typescript`). The exact operation shape is the adapter's
+        // own contract; this test pins only that the worker *dispatched* to the
+        // adapter and framed its result.
+        let requests = encode_requests(&[(
+            25,
+            analyze_request(
+                SourceLanguage::TypeScript,
+                b"fs.unlinkSync<void>(\"data.txt\")",
+            ),
+        )]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].request_id, 25);
+        match &responses[0].message {
+            Response::Analyzed { result } => {
+                assert_eq!(
+                    result.parse_errors, 0,
+                    "valid TypeScript must analyze with a clean parse"
+                );
+                assert!(
+                    !result.operations.is_empty(),
+                    "a destructive call must surface at least one detected operation"
+                );
+            }
+            other => panic!("TypeScript Analyze must yield Analyzed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn run_returns_unsupported_language_for_a_language_without_an_adapter() {
-        // Python and JavaScript ship adapters; TypeScript (and Bash) do not yet,
-        // so an Analyze request for one must yield `UnsupportedLanguage` rather
-        // than a fallback parse or a panic. The parent maps this to a degradation
-        // reason (ADR-022 §9 honest degradation).
-        let requests =
-            encode_requests(&[(22, analyze_request(SourceLanguage::TypeScript, b"x = 1"))]);
+        // Python, JavaScript, and TypeScript ship adapters; Bash does not yet
+        // (L1 Shell/Bash is Iteration 8), so an Analyze request for Bash must
+        // yield `UnsupportedLanguage` rather than a fallback parse or a panic.
+        // The parent maps this to a degradation reason (ADR-022 §9 honest
+        // degradation). TypeScript gained an adapter in Iteration 7 Slice 2, so
+        // it no longer exercises this path; Bash is the last unsupported
+        // foundation grammar.
+        let requests = encode_requests(&[(22, analyze_request(SourceLanguage::Bash, b"x = 1"))]);
         let reader = std::io::Cursor::new(requests);
         let mut output = Vec::new();
 
