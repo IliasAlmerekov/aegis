@@ -13,6 +13,22 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 7 Slice 2: TypeScript worker wiring (ADR-022 §2, plan Iteration
+  7 — the JavaScript-family Slice 1 → Slice 2 cadence's other half). The
+  ephemeral worker now dispatches `Request::Analyze` for `TypeScript` to
+  `aegis_language::languages::typescript::analyze`; `worker::analyze_source`
+  routes `Python | JavaScript | TypeScript` to their adapters and leaves `Bash`
+  as the sole `Response::UnsupportedLanguage` arm (L1 Shell/Bash is Iteration 8).
+  The generic `map_operation` (Iteration 5) maps TS `DetectedOperation`s to
+  `LANG-*` Matches for free, so no classifier change. New worker dispatch unit
+  test `run_analyzes_typescript_source_and_returns_an_analyzed_response`
+  (`fs.unlinkSync<void>("data.txt")` — TS-only type-argument syntax) RED→GREEN;
+  the existing `run_returns_unsupported_language_for_a_language_without_an_adapter`
+  retargeted TypeScript → Bash to preserve the UnsupportedLanguage → degradation
+  contract TS no longer exercises. No orchestration/subprocess test this slice:
+  the router routes no inline runner to TypeScript today, so an end-to-end TS
+  fixture would be synthetic (deferred with the TypeScript runner-routing slice).
+
 - L1 Iteration 7 Slice 1: TypeScript adapter (ADR-022 §3, plan Iteration 7 —
   the JavaScript-family's other half). New
   `aegis_language::languages::typescript::analyze` parses TypeScript with the

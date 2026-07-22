@@ -106,8 +106,8 @@ async fn run_records_grammar_unavailable_for_an_unsupported_language() {
     // Shell/Bash is Iteration 8), so the worker returns
     // Response::UnsupportedLanguage. The orchestration must record
     // GrammarUnavailable degradation (ADR-022 §4) — never claim the target was
-    // analyzed safely. (JavaScript gained an adapter in Iteration 7 Slice 2, so
-    // `node -e` no longer exercises this path.)
+    // analyzed safely. (JavaScript and TypeScript gained adapters in Iteration 7,
+    // so `node -e` and a future TS inline runner no longer exercise this path.)
     let baseline = safe_baseline();
     let outcome = run(
         "bash -c \"x\"",
