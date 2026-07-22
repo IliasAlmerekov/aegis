@@ -13,6 +13,29 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 7: JavaScript adapter corpus + Node inline `-e` full-pipeline
+  fixtures (ADR-022 §11, plan Iteration 7 RED). Checked-in
+  positive/negative/narrowness/modern-syntax/malformed `.js` corpus under
+  `crates/aegis-language/tests/corpora/javascript/` driven by a data-driven
+  `tests/javascript_corpus.rs` harness over the public `javascript::analyze`
+  seam; expectations are hand-derived from ADR-022 §3/§7 + JavaScript API
+  semantics (independent of the adapter, so a real regression fails).
+  `modern_syntax` proves the pinned tree-sitter-javascript 0.25.0 grammar
+  parses optional chaining, nullish coalescing, logical assignment, class
+  fields/private methods/getters, async/await, template literals, destructuring,
+  spread, exponentiation, numeric separators, BigInt, and optional catch binding
+  cleanly with no false operations; `malformed` proves a nonzero parse-error count
+  is reported. Three real-worker `node -e` fixtures added to
+  `tests/analysis_orchestrate.rs` covering `fs.chmodSync` (`LANG-FS-CHMOD`),
+  `fs.writeFileSync` (`LANG-FS-OVR-W`), and `eval('fs.unlinkSync(x)')` whose
+  recursive JavaScript target is analyzed (not degraded) — pinning the JS→JS
+  recursion contract the prior JS exec test (Bash payload, degrades as
+  `GrammarUnavailable`) did not cover. Deferred: `fs.promises.*`/callback-form
+  variants, import/alias/constant → `Partial`-certainty corpus (bounded
+  resolution), `DatabaseDestructive` corpus (adapter does not emit it), chained
+  member calls (`a.b.c()` — `calls.scm` matches `object: (identifier)` only),
+  Node file/stdin and TypeScript runner-routing negative cases, adapter fuzz
+  target, TypeScript adapter.
 - L1 Iteration 7 Slice 2: JavaScript adapter runs in the self-spawned worker
   (ADR-022 §2, plan Iteration 7). `aegis-language::worker::analyze_source` now
   routes `SourceLanguage::JavaScript` → `javascript::analyze`, so `node -e`

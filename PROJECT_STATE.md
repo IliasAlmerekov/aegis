@@ -21,7 +21,73 @@
 
 ---
 
-## Last session (2026-07-22, cont.) — L1 Iteration 7 Slice 2 (JavaScript worker wiring)
+## Last session (2026-07-22, cont. 2) — L1 Iteration 7 JavaScript corpora + Node -e fixtures
+
+- **Iteration 7 JavaScript corpus + Node `-e` full-pipeline fixtures done via
+  TDD (ADR-022 §11, plan Iteration 7 RED step — the corpus half).** Scope and
+  seams confirmed with the user up front per the TDD skill: the public
+  `aegis_language::languages::javascript::analyze(&str) -> AdapterResult` seam
+  for the corpus, and the real-subprocess `aegis::analysis::run` seam for the
+  `node -e` fixtures. This mirrors the Python corpora + inline `-c` slice
+  exactly. It is a **characterization + regression corpus**, not a classic
+  RED→GREEN: the adapter already behaves per spec, so the corpus pins existing
+  correct behavior with hand-derived expectations (independent of the adapter —
+  not tautological). The genuine RED-risk was `modern_syntax`: the pinned
+  tree-sitter-javascript 0.25.0 grammar might not parse optional chaining /
+  nullish coalescing / logical assignment / class fields / private methods /
+  async-await / etc.; it does (parse_errors == 0, no false ops).
+- **Corpus (`crates/aegis-language/tests/corpora/javascript/`, 9 `.js` files)
+  + harness (`tests/javascript_corpus.rs`, 9 tests):** files embedded
+  compile-time via `include_str!`; a hand-derived `ExpectedOp` manifest declares
+  per-file operation kinds, modifiers, `OperandCertainty`, parse-error count,
+  and nested payload `(language, source)`. Spans deliberately not pinned
+  (implementation detail; unit tests own span coverage). Coverage: `fs_delete`
+  (unlinkSync/rmdirSync + rmSync recursive, identifier- and string-keyed option),
+  `fs_overwrite` (writeFileSync destructive_mode vs appendFileSync), `perms`
+  (chmodSync/chownSync), `exec_shell` (child_process.exec/execSync → Bash nested
+  payloads), `exec_js` (eval + new Function → JavaScript nested payloads),
+  `negatives` (comment/string/member-ref-without-call/unrelated-call/ESM
+  import → 0 ops), `dynamic_operand` (variable path/cmd/template interpolation
+  → Dynamic certainty, NO nested payload — ADR-022 §3/§7 narrowness),
+  `modern_syntax` (parse clean, 0 ops), `malformed` (unterminated call →
+  parse_errors > 0).
+- **Real-worker `node -e` fixtures (`tests/analysis_orchestrate.rs`, +3 tests,
+  real `aegis --internal-language-worker`):** `fs.chmodSync('x', 0o777)` →
+  `LANG-FS-CHMOD` Danger, Complete, target_count 1; `fs.writeFileSync('x','y')`
+  → `LANG-FS-OVR-W` Warn, Complete, target_count 1; `eval('fs.unlinkSync(x)')`
+  → `LANG-EXEC` Danger + recursive **JavaScript** target `fs.unlinkSync(x)`
+  → `LANG-FS-DEL`, target_count ≥ 2, status **Complete** with NO
+  `GrammarUnavailable` (both targets are supported JS). The last pins the
+  JS→JS recursion contract, which no prior test covered — the existing JS exec
+  test (Slice 2) recurses into Bash, which degrades as `GrammarUnavailable`;
+  this one recurses into JavaScript, which completes. The inner operand `x` is
+  a bare identifier (Dynamic), so the recursive target is a non-execution
+  dynamic operand — it emits its match without degradation (Python C3 fix),
+  keeping the status Complete. The eval payload is single-quoted JS
+  (`'fs.unlinkSync(x)'`) so the `node -e "…"` shell arg needs no escaped double
+  quotes, avoiding router-tokenizer `\"`-handling ambiguity.
+- **Verified:** `cargo test --workspace` = 1862 passed / 100 suites / 0 failed
+  (+12 this slice: 9 corpus + 3 orchestrate); workspace `cargo clippy
+  --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean;
+  `tests/aegis_language_boundary.rs` and `tests/file_size_budget.rs` green;
+  `tests/analysis_orchestrate.rs` 643 lines, `tests/javascript_corpus.rs` 280
+  lines, both under the 800-line budget. Hot path untouched (all additive
+  slow-path corpus + orchestration tests), so no scanner bench run was
+  required.
+- **Deferred (documented, not silently dropped):** `fs.promises.*` and
+  callback-form variants; import/`from`-import/alias/simple-constant →
+  `OperandCertainty::Partial` corpus cases (need bounded symbol resolution);
+  `DatabaseDestructive` corpus (the JS adapter does not emit it yet);
+  chained member calls (`a.b.c()` — `calls.scm` matches
+  `object: (identifier)` only); Node inline/file/stdin and TypeScript
+  runner-routing negative cases; per-adapter JS fuzz target; TypeScript adapter
+  (separate); `ScriptFile`/`DirectExec` fs reads; live `RuntimeContext::assess`
+  wiring; audit v1/v2 projection of language results; the all-four-targets
+  qualification gate before JavaScript becomes default-on.
+
+---
+
+## Prior session (2026-07-22, cont.) — L1 Iteration 7 Slice 2 (JavaScript worker wiring)
 
 - **Iteration 7 Slice 2 done via TDD — the JavaScript adapter now runs in the
   self-spawned worker, so JS inline bodies flow end-to-end through the real
@@ -1357,21 +1423,26 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-22 L1 Iteration 6 corpus + fixtures slice: `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1813 passed / 0
-failed (99 suites). `cargo audit` / `cargo deny check` pass aside from the
-pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
-no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is
-panic-free over 7.9M runs; the `router` fuzz target is panic-free over
-200k local runs. **Iteration 6 core deliverable is closed**: the
-production-qualified Python adapter is exercised end-to-end through the real
-ephemeral worker, including recursive drain of literal execution-sink payloads
-(route → spawn → Analyze → map → `AnalysisQueue` drain → `merge_analysis`), and
-now backed by a checked-in positive/negative/narrowness/modern-syntax/malformed
-Python corpus + real-worker inline `-c` fixtures. Remaining Iteration-6 items
-(per-adapter fuzzing, audit v1/v2 projection, all-four-targets qualification
-gate, broader import/alias/constant + `DatabaseDestructive` corpus cases) and
-the live `RuntimeContext::assess` wiring stay documented deferrals.
+As of the 2026-07-22 L1 Iteration 7 JS corpora + `node -e` fixtures slice:
+`cargo fmt --check` and clippy are clean; `cargo test --workspace` = 1862
+passed / 0 failed (100 suites). `cargo audit` / `cargo deny check` pass aside
+from the pre-existing allowed advisories under the opt-in `starlark-policy`
+feature. The no-source safe path bench is 938 ns (< 2 ms); `language_protocol`
+fuzz target is panic-free over 7.9M runs; the `router` fuzz target is
+panic-free over 200k local runs. **Iteration 6 core deliverable is closed**:
+the production-qualified Python adapter is exercised end-to-end through the
+real ephemeral worker, including recursive drain of literal execution-sink
+payloads (route → spawn → Analyze → map → `AnalysisQueue` drain →
+`merge_analysis`), and is backed by a checked-in
+positive/negative/narrowness/modern-syntax/malformed Python corpus + real-worker
+inline `-c` fixtures. **Iteration 7 (JavaScript)** has the adapter (Slice 1),
+worker dispatch wiring (Slice 2), and now the JS corpus + `node -e` fixtures;
+TypeScript and Bash remain `UnsupportedLanguage` (later iterations). Remaining
+Iteration-6/7 items (per-adapter fuzzing, audit v1/v2 projection,
+all-four-targets qualification gate, broader import/alias/constant +
+`DatabaseDestructive` corpus cases, TypeScript adapter, `fs.promises.*`/callback
+forms, chained member calls, `ScriptFile`/`DirectExec` fs reads) and the live
+`RuntimeContext::assess` wiring stay documented deferrals.
 
 ---
 
