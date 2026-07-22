@@ -1,28 +1,29 @@
-//! JavaScript language adapter (plan Iteration 7, Slice 1).
+//! TypeScript language adapter (plan Iteration 7, Slice 1).
 //!
 //! Structural capture via the bundled Tree-sitter query
-//! (`queries/javascript/calls.scm`); semantic interpretation in typed Rust. The
+//! (`queries/typescript/calls.scm`); semantic interpretation in typed Rust. The
 //! adapter emits language-neutral [`crate::operation::DetectedOperation`]s and,
 //! for execution sinks with a statically recovered literal payload, a
 //! [`crate::operation::NestedTarget`] for bounded recursive analysis (ADR-022
 //! §3, §7). It never assigns a final `RiskLevel` — the root crate maps these
 //! operations through the shared classifier (Iteration 5 REVIEW GATE).
 //!
-//! The grammar-agnostic interpretation (API-spelling → operation, operand
-//! certainty, recursive-option resolution, nested payload recovery, the
-//! call-capture query loop) is shared with the TypeScript adapter via the
-//! [`super::family`] module (plan Iteration 7: "share JavaScript-family
-//! resolution where syntax permits"). This module owns only the JavaScript
-//! grammar, per-thread parser, and compiled query.
+//! TypeScript is a syntactic superset of JavaScript and reuses the JavaScript
+//! node types for call sites and string literals, so the grammar-agnostic
+//! interpretation (API-spelling → operation, operand certainty, recursive-option
+//! resolution, nested payload recovery, the call-capture query loop) is shared
+//! via the [`super::family`] module (plan Iteration 7: "share JavaScript-family
+//! resolution where syntax permits"). This module owns only the TypeScript
+//! grammar, per-thread parser, and compiled query — the grammar and span
+//! handling stay explicit per adapter (plan Iteration 7 GREEN).
 //!
-//! Slice 1 scope: fully-qualified `fs.*Sync` destructive calls, `eval` and the
-//! `Function` constructor (JavaScript payloads), and the `child_process` shell
-//! and argv execution-sink forms, with literal/dynamic operand certainty. Only
-//! the synchronous `fs.*Sync` spellings are covered this slice; the
-//! `fs.promises.*` and callback-form variants are a follow-up. Bounded symbol
-//! resolution (imports, aliases, simple constants → `OperandCertainty::Partial`)
-//! is a later slice; CommonJS/ESM imports are resolution input only and emit no
-//! operation themselves.
+//! Slice 1 scope: the JavaScript-family destructive / execution-sink API
+//! surface (`fs.*Sync`, `eval`, `new Function`, `child_process.*`) over
+//! TypeScript source, including calls with explicit type arguments and
+//! destructive calls inside generic class methods. Type-only syntax
+//! (interfaces, enums, type aliases, `import type`, `as`, `satisfies`,
+//! decorators) surfaces no operation. Bounded symbol resolution (imports,
+//! aliases, simple constants → `OperandCertainty::Partial`) is a later slice.
 
 use std::cell::RefCell;
 use std::sync::LazyLock;
@@ -33,19 +34,19 @@ use crate::language::SourceLanguage;
 use crate::languages::family;
 use crate::operation::AdapterResult;
 
-/// The bundled JavaScript call-capture query. Compiled once on first use; a
+/// The bundled TypeScript call-capture query. Compiled once on first use; a
 /// failure here is a build-time query-authoring bug, so panicking on first use
 /// is the correct startup behavior (CLAUDE.md: `.expect()` is acceptable in
 /// startup initialization).
 static CALLS_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
-        &SourceLanguage::JavaScript.tree_sitter_language(),
-        include_str!("../../queries/javascript/calls.scm"),
+        &SourceLanguage::TypeScript.tree_sitter_language(),
+        include_str!("../../queries/typescript/calls.scm"),
     )
-    .expect("bundled javascript/calls.scm must compile against the pinned grammar")
+    .expect("bundled typescript/calls.scm must compile against the pinned grammar")
 });
 
-// A per-thread reusable JavaScript parser.
+// A per-thread reusable TypeScript parser.
 //
 // `set_language` runs once per thread on first use (one-time initialization,
 // not on every `analyze` call) — a failure here is a build-time grammar-pin
@@ -59,19 +60,19 @@ thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new({
         let mut parser = Parser::new();
         parser
-            .set_language(&SourceLanguage::JavaScript.tree_sitter_language())
-            .expect("pinned javascript grammar is ABI-compatible with the runtime");
+            .set_language(&SourceLanguage::TypeScript.tree_sitter_language())
+            .expect("pinned typescript grammar is ABI-compatible with the runtime");
         parser
     });
 }
 
-/// Analyze JavaScript `source` for destructive effects and execution sinks.
+/// Analyze TypeScript `source` for destructive effects and execution sinks.
 ///
-/// Pure and in-process: parses `source` with the pinned JavaScript grammar,
-/// runs the call-capture query, and interprets each call site in Rust. No
-/// filesystem access, no subprocess (ADR-022 §2). A nonzero `parse_errors` means
-/// the source was malformed; the root mapping records
-/// `DegradationReason::IncompleteSyntax`.
+/// Pure and in-process: parses `source` with the pinned TypeScript grammar,
+/// runs the call-capture query, and interprets each call site in Rust via the
+/// shared `family` module. No filesystem access, no subprocess (ADR-022 §2). A
+/// nonzero `parse_errors` means the source was malformed; the root mapping
+/// records `DegradationReason::IncompleteSyntax`.
 #[must_use]
 pub fn analyze(source: &str) -> AdapterResult {
     // `parse` returns `None` only on a NULL C result; treat as a malformed
@@ -98,7 +99,7 @@ pub fn analyze(source: &str) -> AdapterResult {
 
 // The unit tests live in a sibling file to keep this adapter under the
 // 800-line file-size budget (`tests/file_size_budget.rs`); the same `#[path]`
-// split is used by `operation.rs` → `operation_tests.rs`.
+// split is used by `javascript.rs` → `javascript_tests.rs`.
 #[cfg(test)]
-#[path = "javascript_tests.rs"]
+#[path = "typescript_tests.rs"]
 mod tests;

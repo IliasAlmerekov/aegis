@@ -21,7 +21,78 @@
 
 ---
 
-## Last session (2026-07-22, cont. 2) — L1 Iteration 7 JavaScript corpora + Node -e fixtures
+## Last session (2026-07-22, cont. 3) — L1 Iteration 7 Slice 1 (TypeScript adapter)
+
+- **Iteration 7 Slice 1 done via TDD — the TypeScript adapter lands as the
+  JavaScript-family's other half (ADR-022 §3, plan Iteration 7).** Scope and
+  seams confirmed with the user up front per the TDD skill: the public
+  `aegis_language::languages::typescript::analyze(&str) -> AdapterResult` seam,
+  unit-tested in-process (mirroring `javascript_tests.rs`); NO worker wiring
+  this slice (that is Slice 2, mirroring the JS Slice 1 → Slice 2 cadence).
+- **Shared JS-family logic extracted (`crates/aegis-language/src/languages/
+  family.rs`, new):** the grammar-agnostic interpretation — `CallClass`/
+  `ExecLang`/`ExecArg`, `classify_path`, `interpret`, `collect_operations`
+  (the call-capture query loop), `operand_certainty`/`is_string_literal`/
+  `string_literal_content`, `recursive_option`, `first/last_positional_arg`,
+  `span_for`, `exec_language` — moved out of `javascript.rs` into a
+  `pub(crate)` `family` module that both adapters call (plan Iteration 7 GREEN:
+  "share JavaScript-family resolution where syntax permits, but keep grammar
+  and span handling explicit per adapter"). `javascript.rs` slimmed to its own
+  parser + query + `analyze` delegating to `family::collect_operations`
+  (104 lines, was 454). The existing 34 JS unit tests + 9-test JS corpus
+  guarded the behavior-preserving extraction (both stayed green throughout).
+- **TypeScript adapter (`crates/aegis-language/src/languages/typescript.rs`,
+  105 lines):** owns its per-thread parser (`LANGUAGE_TYPESCRIPT`) + `LazyLock`
+  `calls.scm` query (`queries/typescript/calls.scm`, structurally identical to
+  the JS query — TS reuses the JS node types) + `analyze` delegating to
+  `family::collect_operations`. `mod typescript` + `mod family` wired in
+  `languages/mod.rs`.
+- **TDD (31 TS unit tests, `typescript_tests.rs` via `#[path]`, RED → GREEN):**
+  a parsing-but-no-classification stub first (RED: 16 `one_op` failures, the
+  `no_ops`/`malformed` tests already green since the stub computes
+  `parse_errors`); then the real adapter (GREEN: 31 passed). Tests cover one
+  tracer per operation category (fs delete / rmSync recursive / writeFileSync
+  destructive / chmod / eval JS payload / new Function JS payload /
+  child_process.exec Bash payload / spawn argv Dynamic) plus **TypeScript-only
+  syntax the JS suite does not cover**: calls with explicit type arguments
+  (`fs.unlinkSync<void>("x")`, `eval<string>(...)`, `new Function<string>(...)`
+  — all three `calls.scm` query patterns still surface the op because
+  `type_arguments` is a separate child, not the `function`/`constructor` field),
+  destructive calls inside generic class methods, typed
+  variable operands (Dynamic), and **negatives over TS-only declarations** —
+  interfaces, enums, type aliases, `import type`, `as` casts, `satisfies`,
+  decorators — plus a modern-TS parse-clean case (generics, arrow generics,
+  optional chaining, `??`). Genuine RED-risk resolved GREEN: the pinned
+  tree-sitter-typescript 0.23.2 grammar parses `satisfies`, decorators,
+  `import type`, generics, and arrow-generic `<T,>` syntax cleanly with no
+  false operations.
+- **clippy fix:** `DetectedOperation` is unused in both adapters now that
+  `interpret` lives in `family` (a child `use super::*` glob does not count as
+  usage for the `unused_imports` lint); removed it from both adapters' `use`
+  and added it to both test files' own `use crate::operation::{…}` import.
+- **Verified:** `cargo test --workspace` = 1893 passed / 100 suites / 0 failed
+  (+31 this slice: 31 TS unit tests); workspace `cargo clippy --all-targets
+  -- -D warnings` clean; `cargo fmt --all --check` clean;
+  `tests/aegis_language_boundary.rs`, `tests/file_size_budget.rs`, and
+  `tests/contracts_docs.rs` (16) green; new/changed files under the 800-line
+  budget (family 389, javascript 104, typescript 105, typescript_tests 317).
+  Hot path untouched (all additive `aegis-language` adapter code, not invoked
+  on the safe path), so no scanner bench run was required.
+- **Deferred (documented, not silently dropped):** Slice 2 — wiring
+  `analyze_source` to route `TypeScript` → `typescript::analyze` (the worker
+  still returns `UnsupportedLanguage` for TS this slice) and retargeting the
+  `run_returns_unsupported_language_for_a_language_without_an_adapter` dispatch
+  test from TypeScript to Bash (the last unsupported foundation grammar); TS
+  corpora (`.ts` files) + Node file/stdin and TypeScript runner-routing
+  negative cases; `fs.promises.*`/callback-form variants; import/alias/constant
+  → `OperandCertainty::Partial` (bounded symbol resolution); `DatabaseDestructive`;
+  chained member calls (`a.b.c()`); per-adapter TS fuzz target; `ScriptFile`/
+  `DirectExec` fs reads; live `RuntimeContext::assess` wiring; audit v1/v2
+  projection; the all-four-targets qualification gate.
+
+---
+
+## Prior session (2026-07-22, cont. 2) — L1 Iteration 7 JavaScript corpora + Node -e fixtures
 
 - **Iteration 7 JavaScript corpus + Node `-e` full-pipeline fixtures done via
   TDD (ADR-022 §11, plan Iteration 7 RED step — the corpus half).** Scope and
@@ -1423,8 +1494,8 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-22 L1 Iteration 7 JS corpora + `node -e` fixtures slice:
-`cargo fmt --check` and clippy are clean; `cargo test --workspace` = 1862
+As of the 2026-07-22 L1 Iteration 7 Slice 1 (TypeScript adapter) slice:
+`cargo fmt --check` and clippy are clean; `cargo test --workspace` = 1893
 passed / 0 failed (100 suites). `cargo audit` / `cargo deny check` pass aside
 from the pre-existing allowed advisories under the opt-in `starlark-policy`
 feature. The no-source safe path bench is 938 ns (< 2 ms); `language_protocol`
@@ -1435,13 +1506,16 @@ real ephemeral worker, including recursive drain of literal execution-sink
 payloads (route → spawn → Analyze → map → `AnalysisQueue` drain →
 `merge_analysis`), and is backed by a checked-in
 positive/negative/narrowness/modern-syntax/malformed Python corpus + real-worker
-inline `-c` fixtures. **Iteration 7 (JavaScript)** has the adapter (Slice 1),
-worker dispatch wiring (Slice 2), and now the JS corpus + `node -e` fixtures;
-TypeScript and Bash remain `UnsupportedLanguage` (later iterations). Remaining
-Iteration-6/7 items (per-adapter fuzzing, audit v1/v2 projection,
-all-four-targets qualification gate, broader import/alias/constant +
-`DatabaseDestructive` corpus cases, TypeScript adapter, `fs.promises.*`/callback
-forms, chained member calls, `ScriptFile`/`DirectExec` fs reads) and the live
+inline `-c` fixtures. **Iteration 7 (JavaScript family)** has the JS adapter
++ worker dispatch wiring + JS corpus + `node -e` fixtures, and now the
+TypeScript adapter (Slice 1, sharing a new `languages::family` module with JS);
+the TS adapter is NOT yet wired into the worker (`analyze_source` still routes
+TypeScript → `UnsupportedLanguage`, Slice 2 follow-up), and Bash remains
+`UnsupportedLanguage` (Iteration 8). Remaining Iteration-6/7 items (per-adapter
+fuzzing, audit v1/v2 projection, all-four-targets qualification gate, broader
+import/alias/constant + `DatabaseDestructive` corpus cases, TS worker wiring +
+corpora + runner-routing negatives, `fs.promises.*`/callback forms, chained
+member calls, `ScriptFile`/`DirectExec` fs reads) and the live
 `RuntimeContext::assess` wiring stay documented deferrals.
 
 ---
