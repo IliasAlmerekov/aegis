@@ -465,3 +465,179 @@ async fn run_cross_language_shell_payload_degrades_as_grammar_unavailable() {
         summary.degradation_reasons
     );
 }
+
+#[tokio::test]
+async fn run_analyzes_inline_javascript_chmod_and_lifts_to_danger() {
+    // `node -e "fs.chmodSync('x', 0o777)"` routes to JavaScript. The adapter
+    // emits PermissionOrOwnershipChange, which classifies as LANG-FS-CHMOD at
+    // Danger. No execution sink → no recursive target. (The Python analog
+    // covers `os.chmod`; this pins the same contract at the JS orchestration
+    // seam, which Slice 2 did not cover.)
+    let baseline = safe_baseline();
+    let outcome = run(
+        "node -e \"fs.chmodSync('x', 0o777)\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert_eq!(target_count, 1, "one inline target, no recursion");
+            assessment
+        }
+        other => panic!("inline javascript chmod must spawn the worker: {other:?}"),
+    };
+    assert!(
+        assessment.risk >= RiskLevel::Danger,
+        "chmod must lift to Danger: {:?}",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "LANG-FS-CHMOD"),
+        "must carry LANG-FS-CHMOD: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref().to_string())
+            .collect::<Vec<_>>()
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Complete,
+        "a clean chmod must complete without degradation"
+    );
+}
+
+#[tokio::test]
+async fn run_analyzes_inline_javascript_writefilesync_and_lifts_to_warn() {
+    // `node -e "fs.writeFileSync('x', 'y')"` routes to JavaScript. The adapter
+    // emits FilesystemOverwrite{destructive_mode} (writeFileSync truncates),
+    // which classifies as LANG-FS-OVR-W at Warn. No execution sink → no
+    // recursive target. (The Python analog covers `open('x','w')`; this pins
+    // the same contract at the JS orchestration seam, which Slice 2 did not
+    // cover.)
+    let baseline = safe_baseline();
+    let outcome = run(
+        "node -e \"fs.writeFileSync('x', 'y')\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert_eq!(target_count, 1, "one inline target, no recursion");
+            assessment
+        }
+        other => panic!("inline javascript writeFileSync must spawn the worker: {other:?}"),
+    };
+    assert!(
+        assessment.risk >= RiskLevel::Warn,
+        "writeFileSync must lift Safe → Warn: {:?}",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "LANG-FS-OVR-W"),
+        "must carry LANG-FS-OVR-W: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref().to_string())
+            .collect::<Vec<_>>()
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Complete,
+        "a clean writeFileSync must complete without degradation"
+    );
+}
+
+#[tokio::test]
+async fn run_analyzes_javascript_exec_and_surfaces_the_recursive_javascript_target() {
+    // `node -e "eval('fs.unlinkSync(x)')"` — the inline body is a JavaScript
+    // `eval` of a literal JavaScript string. The top-level `eval` is a
+    // CodeExecution sink (LANG-EXEC at Danger); its literal payload
+    // `fs.unlinkSync(x)` is itself analyzable JavaScript, enqueued as a
+    // recursive target. Unlike the JS exec→Bash test (Slice 2), the recursive
+    // target is JavaScript — which IS supported — so BOTH matches must surface,
+    // `target_count` must cover the top-level AND the recursive target (>= 2),
+    // and the overall status must be Complete with NO degradation. This pins
+    // the JS→JS recursion contract, which no prior test covered (the existing
+    // JS exec test recurses into Bash, which degrades as GrammarUnavailable).
+    //
+    // The inner operand `x` is a bare identifier (variable), so the recursive
+    // target is a FilesystemDelete with `Dynamic` certainty — a non-execution
+    // dynamic operand emits its match without degradation (Python C3 fix), so
+    // the recursive LANG-FS-DEL surfaces cleanly and the status stays Complete.
+    let baseline = safe_baseline();
+    let outcome = run(
+        "node -e \"eval('fs.unlinkSync(x)')\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert!(
+                target_count >= 2,
+                "top-level + recursive JS target must be analyzed: {target_count}"
+            );
+            assessment
+        }
+        other => panic!("a javascript eval inline body must spawn the worker: {other:?}"),
+    };
+    let ids: Vec<&str> = assessment
+        .matched
+        .iter()
+        .map(|m| m.pattern.id.as_ref())
+        .collect();
+    assert!(
+        ids.contains(&"LANG-EXEC"),
+        "top-level eval must match LANG-EXEC: {ids:?}"
+    );
+    assert!(
+        ids.contains(&"LANG-FS-DEL"),
+        "recursive fs.unlinkSync must match LANG-FS-DEL: {ids:?}"
+    );
+    assert!(
+        assessment.risk >= RiskLevel::Danger,
+        "risk must lift to Danger: {:?}",
+        assessment.risk
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Complete,
+        "both JS targets are supported; the recursive target must NOT degrade: {:?}",
+        summary.status
+    );
+    assert!(
+        !summary
+            .degradation_reasons
+            .contains(&DegradationReason::GrammarUnavailable),
+        "a JS→JS recursive target must not record GrammarUnavailable: {:?}",
+        summary.degradation_reasons
+    );
+}
