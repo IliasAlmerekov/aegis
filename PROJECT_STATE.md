@@ -21,7 +21,72 @@
 
 ---
 
-## Last session (2026-07-22) — L1 Iteration 6 Python corpora + inline -c fixtures
+## Last session (2026-07-22, cont.) — L1 Iteration 7 Slice 2 (JavaScript worker wiring)
+
+- **Iteration 7 Slice 2 done via TDD — the JavaScript adapter now runs in the
+  self-spawned worker, so JS inline bodies flow end-to-end through the real
+  route → worker → `map_adapter_result` → `merge_analysis` composition.**
+  Scope and seams confirmed with the user up front per the TDD skill (Slice 2 =
+  worker dispatch wiring only; the parent orchestration is already
+  language-agnostic from Iteration 6 Slices B/C, so this is the lone missing
+  tracer bullet). This mirrors Python Slice A exactly: the only change is
+  `analyze_source` routing `SourceLanguage::JavaScript` →
+  `javascript::analyze`; TypeScript and Bash remain `UnsupportedLanguage`
+  (adapters in later iterations).
+- **Worker dispatch (`crates/aegis-language/src/worker.rs`):** `analyze_source`
+  now matches `JavaScript` to `crate::languages::javascript::analyze` alongside
+  Python; the `TypeScript | Bash` arm still returns `UnsupportedLanguage`. Doc
+  comment updated (was "Iteration 6 ships only the Python adapter"). This is the
+  entire production change — the generic `map_operation` (Iteration 5) maps JS
+  `DetectedOperation`s to `LANG-*` Matches for free, so no classifier change.
+- **TDD (3 seams, each RED → GREEN):** (1) worker dispatch unit test
+  `run_analyzes_javascript_source_and_returns_an_analyzed_response` —
+  `Request::Analyze { JavaScript, "fs.unlinkSync(\"data.txt\")" }` → `Analyzed`
+  with `parse_errors == 0` and non-empty `operations` (pins dispatch reached the
+  adapter, not its exact output — that is the adapter's own contract). RED today
+  (UnsupportedLanguage); GREEN after wiring. (2) orchestration
+  `run_analyzes_inline_javascript_and_merges_a_filesystem_delete_match` —
+  `node -e "fs.unlinkSync('data.txt')"` → `LANG-FS-DEL` Match, risk ≥ Warn,
+  status Complete, target_count 1 (non-recursive `FilesystemDelete` → no
+  recursive target). (3) orchestration
+  `run_analyzes_a_javascript_exec_payload_and_degrades_the_recursive_bash_target`
+  — `node -e "child_process.exec('rm -rf /tmp/x')"` → `LANG-EXEC` Match +
+  recursive Bash target degrading `GrammarUnavailable` (L1 Bash is Iteration 8;
+  ADR-022 §9), target_count ≥ 2, status Degraded. This pins the
+  honest-degradation-on-unsupported-recursive-language contract for JS, which no
+  prior test covered (existing JS-recursive coverage was absent — JS was
+  UnsupportedLanguage before this slice). Both orchestration tests spawn the
+  real `aegis --internal-language-worker` via `env!("CARGO_BIN_EXE_aegis")`.
+- **Existing-test retargeting (preserves the UnsupportedLanguage path):** the
+  unit test `run_returns_unsupported_language_for_a_language_without_an_adapter`
+  was switched from `JavaScript` to `TypeScript` (still no adapter); the
+  orchestration test `run_records_grammar_unavailable_for_an_unsupported_language`
+  was switched from `node -e "x"` to `bash -c "x"` (Bash still unsupported,
+  Iteration 8; router routes `bash -c` → `SourceLanguage::Bash`). Both kept
+  pinning the UnsupportedLanguage → GrammarUnavailable degradation contract that
+  JS no longer exercises.
+- **Verified:** `cargo test --workspace` = 1850 passed / 99 suites / 0 failed
+  (+3 this slice: 1 worker dispatch + 2 orchestrate); workspace `cargo clippy
+  --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean;
+  `tests/aegis_language_boundary.rs` and `tests/file_size_budget.rs` green;
+  `worker.rs` 587 lines, `tests/analysis_orchestrate.rs` 467 lines, both under
+  the 800-line budget. Hot path untouched (all additive slow-path under
+  `aegis-language` worker dispatch + orchestration tests), so no scanner bench
+  run was required.
+- **Deferred (documented, not silently dropped):** the JS corpora directory
+  (`crates/aegis-language/tests/corpora/javascript/`, plan Iteration 7 RED
+  step); Node inline/file/stdin and TypeScript runner-routing negative cases;
+  per-adapter JS fuzz target; TypeScript adapter (separate); `fs.promises.*` /
+  callback-form variants, bounded symbol resolution (imports/aliases/constants
+  → Partial), `DatabaseDestructive`, chained member calls (`a.b.c()` — the
+  `calls.scm` query intentionally matches `object: (identifier)` only);
+  `ScriptFile`/`DirectExec` fs reads; live `RuntimeContext::assess` wiring;
+  audit v1/v2 projection of language results; the all-four-targets
+  qualification gate before JavaScript becomes default-on.
+
+---
+
+## Prior session (2026-07-22) — L1 Iteration 6 Python corpora + inline -c fixtures
 
 - **Iteration 6 Python corpus + inline `-c` full-pipeline fixtures done via
   TDD (ADR-022 §11, plan Iteration 6 RED step — the corpus half).** Scope and
