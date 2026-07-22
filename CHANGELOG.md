@@ -13,6 +13,45 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 7: TypeScript corpus (ADR-022 §11, plan Iteration 7 RED — the
+  corpus half). New `crates/aegis-language/tests/corpora/typescript/` (9 `.ts`
+  files) + `tests/typescript_corpus.rs` harness (9 tests), mirroring the
+  JavaScript corpus. Files embed compile-time via `include_str!` with a
+  hand-derived `ExpectedOp` manifest (operation kinds, modifiers,
+  `OperandCertainty`, parse-error count, nested payload `(language, source)`)
+  independent of the adapter — a characterization + regression corpus pinning
+  existing correct behavior, not a classic RED→GREEN. Coverage: `fs_delete`
+  (unlinkSync/rmdirSync + rmSync recursive, incl. a `fs.unlinkSync<void>(…)`
+  type-argument call), `fs_overwrite` (writeFileSync destructive_mode vs
+  appendFileSync), `perms` (chmodSync/chownSync), `exec_shell`
+  (child_process.exec/execSync/exec\<void\> → Bash nested payloads), `exec_js`
+  (eval + new Function\<string\> → JavaScript nested payloads — the shared
+  family module tags `eval`/`Function` as JS regardless of the enclosing file),
+  `negatives` (comment/string/member-ref-without-call/unrelated-call/ESM
+  import + TS-only `import type`/interface/type alias/enum/`as const`/
+  `satisfies`/decorator → 0 ops), `dynamic_operand` (variable/cmd/template
+  interpolation/`as`-cast operand → Dynamic certainty, NO nested payload),
+  `modern_syntax` (generics, arrow generics `<T,>`, optional chaining,
+  nullish coalescing, `as const`, `satisfies`, decorators, `import type`,
+  mapped/conditional/`infer` types → parse clean, 0 ops), `malformed`
+  (unterminated call → parse_errors > 0). The `modern_syntax` RED-risk is
+  GREEN: pinned tree-sitter-typescript 0.23.2 parses current TypeScript
+  file-scale with no false operations. No real-subprocess orchestration corpus
+  this slice — the router routes no inline runner to TypeScript today (deferred
+  with the TypeScript runner-routing slice).
+
+### Changed
+
+- L1 Iteration 7: extracted the shared corpus-test harness into
+  `crates/aegis-language/tests/common/corpus_harness.rs`. `ExpectedOp`,
+  `assert_ops`, `assert_clean_no_ops`, `assert_malformed`, and `bash_exec` were
+  duplicated verbatim across the JavaScript, TypeScript, and Python corpus
+  harnesses; they now live in one `tests/common/` module included via `#[path]`
+  (matching the `no_source_corpus.rs` precedent), so the three corpora stay in
+  lockstep on assertion semantics. Language-specific payload builders
+  (`js_exec`, `python_exec`) stay local to their corpus. Behavior-preserving —
+  no test expectations changed.
+
 - L1 Iteration 7 Slice 2: TypeScript worker wiring (ADR-022 §2, plan Iteration
   7 — the JavaScript-family Slice 1 → Slice 2 cadence's other half). The
   ephemeral worker now dispatches `Request::Analyze` for `TypeScript` to
