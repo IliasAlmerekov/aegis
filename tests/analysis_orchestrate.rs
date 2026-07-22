@@ -102,13 +102,15 @@ async fn run_analyzes_inline_python_and_merges_a_recursive_delete_match() {
 
 #[tokio::test]
 async fn run_records_grammar_unavailable_for_an_unsupported_language() {
-    // A `node -e` inline body routes to JavaScript, which has no adapter in L1,
-    // so the worker returns Response::UnsupportedLanguage. The orchestration
-    // must record GrammarUnavailable degradation (ADR-022 §4) — never claim the
-    // target was analyzed safely.
+    // A `bash -c` inline body routes to Bash, which has no adapter yet (L1
+    // Shell/Bash is Iteration 8), so the worker returns
+    // Response::UnsupportedLanguage. The orchestration must record
+    // GrammarUnavailable degradation (ADR-022 §4) — never claim the target was
+    // analyzed safely. (JavaScript gained an adapter in Iteration 7 Slice 2, so
+    // `node -e` no longer exercises this path.)
     let baseline = safe_baseline();
     let outcome = run(
-        "node -e \"x\"",
+        "bash -c \"x\"",
         &baseline,
         Some(env!("CARGO_BIN_EXE_aegis")),
         &[],
@@ -117,7 +119,7 @@ async fn run_records_grammar_unavailable_for_an_unsupported_language() {
     .await;
     let assessment = match outcome {
         Outcome::Analyzed { assessment, .. } => assessment,
-        other => panic!("a node inline body must spawn the worker: {other:?}"),
+        other => panic!("a bash inline body must spawn the worker: {other:?}"),
     };
     let summary = assessment
         .analysis
@@ -133,6 +135,119 @@ async fn run_records_grammar_unavailable_for_an_unsupported_language() {
             .degradation_reasons
             .contains(&DegradationReason::GrammarUnavailable),
         "must record GrammarUnavailable: {:?}",
+        summary.degradation_reasons
+    );
+}
+
+#[tokio::test]
+async fn run_analyzes_inline_javascript_and_merges_a_filesystem_delete_match() {
+    // `node -e "fs.unlinkSync('data.txt')"` routes to JavaScript. The adapter
+    // emits FilesystemDelete (non-recursive, non-forced), which classifies as
+    // LANG-FS-DEL at Warn. The real worker subprocess analyzes the inline body
+    // and the merged Assessment must carry that match and lift to at least Warn.
+    let baseline = safe_baseline();
+    let outcome = run(
+        "node -e \"fs.unlinkSync('data.txt')\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert_eq!(target_count, 1, "one inline target, no recursion");
+            assessment
+        }
+        other => panic!("inline javascript must spawn the worker: {other:?}"),
+    };
+    assert!(
+        assessment.risk >= RiskLevel::Warn,
+        "risk must lift to at least Warn: {:?}",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "LANG-FS-DEL"),
+        "must carry a LANG-FS-DEL match: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref().to_string())
+            .collect::<Vec<_>>()
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Complete,
+        "a clean non-recursive delete must complete without degradation"
+    );
+}
+
+#[tokio::test]
+async fn run_analyzes_a_javascript_exec_payload_and_degrades_the_recursive_bash_target() {
+    // `node -e "child_process.exec('rm -rf /tmp/x')"` — the inline body is a
+    // JavaScript `child_process.exec` of a literal shell string. The top-level
+    // sink is CodeExecution (LANG-EXEC at Danger); its literal payload is Bash
+    // shell source, enqueued as a recursive target. Bash has no adapter yet (L1
+    // Shell/Bash is Iteration 8), so the recursive target degrades as
+    // GrammarUnavailable (ADR-022 §9 honest degradation). Slice C drains the
+    // recursive queue, so the LANG-EXEC match must surface, target_count must
+    // cover the top-level AND the recursive target (>= 2), and the overall
+    // status must be Degraded — never claiming the recursive target was clean.
+    let baseline = safe_baseline();
+    let outcome = run(
+        "node -e \"child_process.exec('rm -rf /tmp/x')\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert!(
+                target_count >= 2,
+                "top-level + recursive target must be analyzed: {target_count}"
+            );
+            assessment
+        }
+        other => panic!("a javascript exec inline body must spawn the worker: {other:?}"),
+    };
+    let ids: Vec<&str> = assessment
+        .matched
+        .iter()
+        .map(|m| m.pattern.id.as_ref())
+        .collect();
+    assert!(
+        ids.contains(&"LANG-EXEC"),
+        "top-level child_process.exec must match LANG-EXEC: {ids:?}"
+    );
+    assert!(
+        assessment.risk >= RiskLevel::Danger,
+        "risk must lift to Danger: {:?}",
+        assessment.risk
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Degraded,
+        "the recursive Bash target must degrade the overall status: {:?}",
+        summary.status
+    );
+    assert!(
+        summary
+            .degradation_reasons
+            .contains(&DegradationReason::GrammarUnavailable),
+        "must record GrammarUnavailable for the unsupported recursive Bash target: {:?}",
         summary.degradation_reasons
     );
 }

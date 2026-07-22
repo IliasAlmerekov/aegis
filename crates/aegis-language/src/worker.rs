@@ -143,20 +143,22 @@ fn handle_request(request: &Request) -> Response {
 /// Run the language adapter for an [`Request::Analyze`] and frame its result
 /// (ADR-022 §2: adapters run in the self-spawned worker).
 ///
-/// Iteration 6 ships only the Python adapter; any other language yields
-/// [`Response::UnsupportedLanguage`], which the parent maps to a degradation
-/// reason. The parent owns the UTF-8 encoding contract (ADR-022 §7): bytes that
-/// are not valid UTF-8 cannot be handed to the adapter (it takes a `&str`), so
-/// the worker reports an [`Response::Analyzed`] result with one parse error
-/// and no operations — the parent maps `parse_errors` to a degradation reason
-/// rather than treating the target as clean.
+/// Python (Iteration 6) and JavaScript (Iteration 7) ship adapters; TypeScript
+/// and Bash do not yet, so they yield [`Response::UnsupportedLanguage`], which
+/// the parent maps to a degradation reason. The parent owns the UTF-8 encoding
+/// contract (ADR-022 §7): bytes that are not valid UTF-8 cannot be handed to the
+/// adapter (it takes a `&str`), so the worker reports an [`Response::Analyzed`]
+/// result with one parse error and no operations — the parent maps
+/// `parse_errors` to a degradation reason rather than treating the target as
+/// clean.
 fn analyze_source(language: &SourceLanguage, source: &[u8]) -> Response {
     let adapter = match language {
         SourceLanguage::Python => crate::languages::python::analyze,
-        // No adapter is wired for the other foundation grammars yet; report
-        // the language as unsupported so the parent degrades rather than
-        // silently treating the target as a clean parse.
-        SourceLanguage::JavaScript | SourceLanguage::TypeScript | SourceLanguage::Bash => {
+        SourceLanguage::JavaScript => crate::languages::javascript::analyze,
+        // No adapter is wired for these foundation grammars yet; report the
+        // language as unsupported so the parent degrades rather than silently
+        // treating the target as a clean parse.
+        SourceLanguage::TypeScript | SourceLanguage::Bash => {
             return Response::UnsupportedLanguage;
         }
     };
@@ -491,13 +493,51 @@ mod dispatch_tests {
     }
 
     #[test]
+    fn run_analyzes_javascript_source_and_returns_an_analyzed_response() {
+        // Iteration 7 Slice 2 wires the JavaScript adapter into the worker, so
+        // an Analyze request for a destructive JS body must dispatch to
+        // `javascript::analyze` and return an `Analyzed` response. A clean
+        // `fs.unlinkSync("data.txt")` is a FilesystemDelete with a Known operand
+        // (pinned in `languages::javascript`), so the parse must be clean and at
+        // least one operation must surface. The exact operation shape is the
+        // adapter's own contract; this test pins only that the worker
+        // *dispatched* to the adapter and framed its result.
+        let requests = encode_requests(&[(
+            24,
+            analyze_request(SourceLanguage::JavaScript, b"fs.unlinkSync(\"data.txt\")"),
+        )]);
+        let reader = std::io::Cursor::new(requests);
+        let mut output = Vec::new();
+
+        let outcome = run(reader, &mut output);
+        assert_eq!(outcome, RunOutcome::EndOfInput);
+
+        let responses = decode_responses(&output);
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].request_id, 24);
+        match &responses[0].message {
+            Response::Analyzed { result } => {
+                assert_eq!(
+                    result.parse_errors, 0,
+                    "valid JavaScript must analyze with a clean parse"
+                );
+                assert!(
+                    !result.operations.is_empty(),
+                    "a destructive call must surface at least one detected operation"
+                );
+            }
+            other => panic!("JavaScript Analyze must yield Analyzed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn run_returns_unsupported_language_for_a_language_without_an_adapter() {
-        // Iteration 6 ships only the Python adapter; JavaScript (and the other
-        // foundation grammars) have no adapter yet, so an Analyze request for
-        // one must yield `UnsupportedLanguage` rather than a fallback parse or
-        // a panic. The parent maps this to a degradation reason.
+        // Python and JavaScript ship adapters; TypeScript (and Bash) do not yet,
+        // so an Analyze request for one must yield `UnsupportedLanguage` rather
+        // than a fallback parse or a panic. The parent maps this to a degradation
+        // reason (ADR-022 §9 honest degradation).
         let requests =
-            encode_requests(&[(22, analyze_request(SourceLanguage::JavaScript, b"x = 1"))]);
+            encode_requests(&[(22, analyze_request(SourceLanguage::TypeScript, b"x = 1"))]);
         let reader = std::io::Cursor::new(requests);
         let mut output = Vec::new();
 

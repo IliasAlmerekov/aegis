@@ -13,6 +13,15 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 7 Slice 2: JavaScript adapter runs in the self-spawned worker
+  (ADR-022 §2, plan Iteration 7). `aegis-language::worker::analyze_source` now
+  routes `SourceLanguage::JavaScript` → `javascript::analyze`, so `node -e`
+  inline bodies flow end-to-end through route → worker → mapping → merge.
+  TypeScript and Bash remain `UnsupportedLanguage` (later iterations). The
+  generic shared classifier maps JS `DetectedOperation`s to `LANG-*` Matches
+  unchanged. Still NOT wired into `RuntimeContext::assess`; JS corpora, TS
+  adapter, fs.promises/callback forms, chained member calls, and the
+  all-four-targets qualification gate remain deferred.
 - L1 Iteration 6 Slice C: recursive drain closes the Iteration 6 core
   (ADR-022 §2/§7). `aegis::analysis::run` now drains the parent-owned
   `AnalysisQueue`: inline targets seed the queue at depth 0; the drain loop pops
