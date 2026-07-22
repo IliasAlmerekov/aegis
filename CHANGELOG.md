@@ -27,6 +27,23 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
   top-level + recursive targets. Still NOT wired into `RuntimeContext::assess`;
   `ScriptFile`/`DirectExec` fs reads, live-assess integration, `aegis-config`
   budget/alias wiring, and worker reuse across pops remain deferred.
+- L1 Iteration 6: Python adapter corpus + inline `-c` full-pipeline fixtures
+  (ADR-022 §11, plan Iteration 6 RED). Checked-in positive/negative/narrowness/
+  modern-syntax/malformed `.py` corpus under
+  `crates/aegis-language/tests/corpora/python/` driven by a data-driven
+  `tests/python_corpus.rs` harness over the public `python::analyze` seam;
+  expectations are hand-derived from ADR-022 §3/§7 + Python API semantics
+  (independent of the adapter, so a real regression fails). `modern_syntax`
+  proves the pinned tree-sitter-python 0.25.0 grammar parses `match`/walrus/
+  `except*`/f-string-debug cleanly with no false operations; `malformed` proves
+  a nonzero parse-error count is reported. Three real-worker inline `-c`
+  fixtures added to `tests/analysis_orchestrate.rs` covering `os.chmod`
+  (`LANG-FS-CHMOD`), `open('w')` (`LANG-FS-OVR-W`), and cross-language
+  `os.system("rm …")` whose recursive Bash target degrades as `GrammarUnavailable`
+  (L1 Bash is Iteration 8; ADR-022 §9 honest degradation). Deferred: import/alias/
+  constant → `Partial`-certainty corpus (bounded resolution), `DatabaseDestructive`
+  corpus (adapter does not emit it), stdin/heredoc-to-file/named-file fixtures
+  (need `ScriptFile` fs-read wiring in `run`), adapter fuzz target.
 
 - L1 Iteration 6 Slice B: parent-side language-analysis orchestration
   (ADR-022 §2/§6). New `aegis::analysis::run` routes a command's inline source

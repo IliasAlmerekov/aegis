@@ -17,11 +17,67 @@
 
 ## Last updated
 
-2026-07-21
+2026-07-22
 
 ---
 
-## Last session (2026-07-21, cont. 4) — L1 Iteration 6 Slice C (recursive drain)
+## Last session (2026-07-22) — L1 Iteration 6 Python corpora + inline -c fixtures
+
+- **Iteration 6 Python corpus + inline `-c` full-pipeline fixtures done via
+  TDD (ADR-022 §11, plan Iteration 6 RED step — the corpus half).** Scope and
+  seams confirmed with the user up front per the TDD skill: the public
+  `aegis_language::languages::python::analyze(&str) -> AdapterResult` seam for
+  the corpus, and the real-subprocess `aegis::analysis::run` seam for the
+  inline `-c` fixtures. This is a **characterization + regression corpus**, not
+  a classic RED→GREEN: the adapter already behaves per spec, so the corpus
+  pins existing correct behavior with hand-derived expectations (independent of
+  the adapter — not tautological). The genuine RED-risk was `modern_syntax`:
+  the pinned tree-sitter-python 0.25.0 grammar might not parse `match`/walrus/
+  `except*`/f-string-debug; it does (parse_errors == 0, no false ops).
+- **Corpus (`crates/aegis-language/tests/corpora/python/`, 9 `.py` files) +
+  harness (`tests/python_corpus.rs`, 9 tests):** files embedded compile-time via
+  `include_str!`; a hand-derived `ExpectedOp` manifest declares per-file
+  operation kinds, modifiers, `OperandCertainty`, parse-error count, and nested
+  payload `(language, source)`. Spans deliberately not pinned (implementation
+  detail; unit tests own span coverage). Coverage: `fs_delete` (os.remove/
+  unlink/rmdir + shutil.rmtree recursive), `fs_overwrite` (open 'w' destructive
+  vs 'a'; 'r'/no-mode negatives), `perms` (os.chmod/os.chown/shutil.chown),
+  `exec_shell` (os.system + subprocess.{run,call,Popen,check_call,check_output}
+  → Bash nested payloads), `exec_python` (eval/exec → Python nested payloads),
+  `negatives` (comment/string/attribute-ref-without-call/unrelated-call → 0
+  ops), `dynamic_operand` (variable path/cmd → op with Dynamic certainty, NO
+  nested payload — ADR-022 §3/§7 narrowness; bounded resolution deferred so a
+  variable holding a literal is still Dynamic), `modern_syntax` (parse clean,
+  0 ops), `malformed` (unterminated call → parse_errors > 0).
+- **Real-worker inline `-c` fixtures (`tests/analysis_orchestrate.rs`, +3
+  tests, real `aegis --internal-language-worker`):** `os.chmod('x', 0o777)` →
+  `LANG-FS-CHMOD` Danger, Complete, target_count 1; `open('x','w')` →
+  `LANG-FS-OVR-W` Warn, Complete, target_count 1; `os.system('rm -rf /tmp/x')`
+  → `LANG-EXEC` Danger + cross-language recursive Bash target that degrades as
+  `GrammarUnavailable` (L1 Bash is Iteration 8; ADR-022 §9 honest degradation),
+  target_count ≥ 2, status Degraded. The last one pins the
+  honest-degradation-on-unsupported-recursive-language contract, which no prior
+  test covered (existing exec tests recurse into Python, which IS supported).
+- **Verified:** `cargo test --workspace` = 1813 passed / 99 suites / 0 failed
+  (+12 this slice: 9 corpus + 3 orchestrate); workspace `cargo clippy
+  --all-targets -- -D warnings` clean; `cargo fmt --all --check` clean;
+  `tests/aegis_language_boundary.rs` and `tests/file_size_budget.rs` green
+  (in-workspace). Hot path untouched (all additive test files), so no scanner
+  bench run was required.
+- **Deferred (documented, not silently dropped):** import/`from`-import/alias/
+  simple-constant → `OperandCertainty::Partial` corpus cases (need the bounded
+  symbol-resolution slice — the adapter explicitly defers resolution);
+  `DatabaseDestructive` corpus (the Python adapter does not emit it yet —
+  tracked deferral from the prior review cycle); stdin/heredoc-to-file/
+  named-file full-pipeline fixtures (need `ScriptFile`/`DirectExec` async
+  fs-read wiring in `analysis::run`, currently `RoutedTarget::Inline` only);
+  the per-adapter Python fuzz target (separate slice); audit v1/v2 projection
+  of language results; live `RuntimeContext::assess` wiring; the all-four-
+  targets qualification gate.
+
+---
+
+## Prior session (2026-07-21, cont. 4) — L1 Iteration 6 Slice C (recursive drain)
 
 - **Iteration 6 Slice C done via TDD — closes the Iteration 6 core deliverable:
   the production-qualified Python adapter is now exercised end-to-end through
@@ -1236,19 +1292,21 @@ Eleven crates total. DAG boundaries for the first nine are enforced by
 `docs/adr/` (ADR-001 through ADR-022; `ADR-009` is intentionally absent,
 numbering preserved).
 
-As of the 2026-07-21 L1 Iteration 6 Slice C close-out: `cargo
-fmt --check` and clippy are clean; `cargo test --workspace` = 1801 passed / 0
-failed (98 suites). `cargo audit` / `cargo deny check` pass aside from the
+As of the 2026-07-22 L1 Iteration 6 corpus + fixtures slice: `cargo
+fmt --check` and clippy are clean; `cargo test --workspace` = 1813 passed / 0
+failed (99 suites). `cargo audit` / `cargo deny check` pass aside from the
 pre-existing allowed advisories under the opt-in `starlark-policy` feature. The
 no-source safe path bench is 938 ns (< 2 ms); `language_protocol` fuzz target is
 panic-free over 7.9M runs; the `router` fuzz target is panic-free over
 200k local runs. **Iteration 6 core deliverable is closed**: the
 production-qualified Python adapter is exercised end-to-end through the real
 ephemeral worker, including recursive drain of literal execution-sink payloads
-(route → spawn → Analyze → map → `AnalysisQueue` drain → `merge_analysis`).
-Remaining Iteration-6 items (broader corpora, fuzzing, audit v1/v2 projection,
-all-four-targets qualification gate) and the live `RuntimeContext::assess`
-wiring stay documented deferrals.
+(route → spawn → Analyze → map → `AnalysisQueue` drain → `merge_analysis`), and
+now backed by a checked-in positive/negative/narrowness/modern-syntax/malformed
+Python corpus + real-worker inline `-c` fixtures. Remaining Iteration-6 items
+(per-adapter fuzzing, audit v1/v2 projection, all-four-targets qualification
+gate, broader import/alias/constant + `DatabaseDestructive` corpus cases) and
+the live `RuntimeContext::assess` wiring stay documented deferrals.
 
 ---
 
