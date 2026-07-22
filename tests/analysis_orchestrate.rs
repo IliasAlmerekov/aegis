@@ -187,3 +187,166 @@ async fn run_analyzes_a_recursive_exec_payload_and_surfaces_the_nested_match() {
         assessment.risk
     );
 }
+
+#[tokio::test]
+async fn run_analyzes_inline_chmod_and_lifts_to_danger() {
+    // `python3 -c "os.chmod('x', 0o777)"` — a permission change. The Python
+    // adapter emits PermissionOrOwnershipChange, which classifies as
+    // LANG-FS-CHMOD at Danger. No execution sink → no recursive target.
+    let baseline = safe_baseline();
+    let outcome = run(
+        "python3 -c \"os.chmod('x', 0o777)\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert_eq!(target_count, 1, "one inline target, no recursion");
+            assessment
+        }
+        other => panic!("inline python chmod must spawn the worker: {other:?}"),
+    };
+    assert!(
+        assessment.risk >= RiskLevel::Danger,
+        "chmod must lift to Danger: {:?}",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "LANG-FS-CHMOD"),
+        "must carry LANG-FS-CHMOD: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref().to_string())
+            .collect::<Vec<_>>()
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Complete,
+        "a clean chmod must complete without degradation"
+    );
+}
+
+#[tokio::test]
+async fn run_analyzes_inline_open_write_and_lifts_to_warn() {
+    // `python3 -c "open('x','w')"` — a truncating write. The Python adapter
+    // emits FilesystemOverwrite{destructive_mode}, which classifies as
+    // LANG-FS-OVR-W at Warn (the highest risk an overwrite carries). No
+    // execution sink → no recursive target.
+    let baseline = safe_baseline();
+    let outcome = run(
+        "python3 -c \"open('x','w')\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert_eq!(target_count, 1, "one inline target, no recursion");
+            assessment
+        }
+        other => panic!("inline python open-w must spawn the worker: {other:?}"),
+    };
+    assert!(
+        assessment.risk >= RiskLevel::Warn,
+        "open-w must lift Safe → Warn: {:?}",
+        assessment.risk
+    );
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "LANG-FS-OVR-W"),
+        "must carry LANG-FS-OVR-W: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref().to_string())
+            .collect::<Vec<_>>()
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Complete,
+        "a clean open-w must complete without degradation"
+    );
+}
+
+#[tokio::test]
+async fn run_cross_language_shell_payload_degrades_as_grammar_unavailable() {
+    // `python3 -c "os.system('rm -rf /tmp/x')"` — a Python execution sink whose
+    // literal payload is shell source. The top-level emits LANG-EXEC (Danger)
+    // and enqueues a recursive Bash target (ADR-022 §7 cross-language). The
+    // Bash adapter is not qualified in L1 (Iteration 8), so the worker returns
+    // UnsupportedLanguage for the recursive target and the orchestration
+    // records GrammarUnavailable degradation — never claiming the shell
+    // payload was analyzed safely (ADR-022 §9). target_count covers the
+    // top-level Python target AND the recursive Bash target (>= 2).
+    let baseline = safe_baseline();
+    let outcome = run(
+        "python3 -c \"os.system('rm -rf /tmp/x')\"",
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        Duration::from_secs(5),
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed {
+            assessment,
+            target_count,
+        } => {
+            assert!(
+                target_count >= 2,
+                "top-level + recursive Bash target: {target_count}"
+            );
+            assessment
+        }
+        other => panic!("inline python os.system must spawn the worker: {other:?}"),
+    };
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|m| m.pattern.id.as_ref() == "LANG-EXEC"),
+        "top-level os.system must match LANG-EXEC: {:?}",
+        assessment
+            .matched
+            .iter()
+            .map(|m| m.pattern.id.as_ref().to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        assessment.risk >= RiskLevel::Danger,
+        "risk must lift to Danger: {:?}",
+        assessment.risk
+    );
+    let summary = assessment.analysis.as_ref().expect("analysis must be set");
+    assert_eq!(
+        summary.status,
+        AnalysisStatus::Degraded,
+        "the unsupported Bash payload must degrade"
+    );
+    assert!(
+        summary
+            .degradation_reasons
+            .contains(&DegradationReason::GrammarUnavailable),
+        "must record GrammarUnavailable for the recursive Bash target: {:?}",
+        summary.degradation_reasons
+    );
+}
