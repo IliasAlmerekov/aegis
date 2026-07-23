@@ -17,11 +17,38 @@
 
 ## Last updated
 
-2026-07-22
+2026-07-23
 
 ---
 
-## Last session (2026-07-22, cont. 5) — L1 Iteration 7 TypeScript corpus
+## Last session (2026-07-23) — L1 Iteration 8 Bash corpus
+
+- **Iteration 8 Bash corpus done via TDD (ADR-022 §3, §7; plan Iteration 8).
+  Scope and seam confirmed with the user before the test:** public
+  `aegis_language::languages::bash::analyze(&str) -> AdapterResult`, exercised
+  in-process via `crates/aegis-language/tests/bash_corpus.rs`; no worker,
+  router, or outer-Scanner integration is asserted because those are separate
+  slices and a pipeline fixture would be synthetic today.
+- **Corpus:** nine checked-in `.sh` files under
+  `crates/aegis-language/tests/corpora/bash/`, embedded with `include_str!` and
+  checked against hand-derived `ExpectedOp` manifests. It characterizes the
+  existing adapter behavior for `rm`/`rmdir`/`unlink`, truncating and appending
+  writes, permission/ownership changes, Bash/Python/JavaScript literal payloads,
+  literal-bound and dynamic operands (operation retained, no payload), command
+  substitutions, `source`, comments/strings and non-calls, arrays/loops,
+  quoted/expanding heredocs, and malformed syntax. The existing adapter was
+  already correct from Slice 1 unit coverage, so this is a
+  characterization/regression corpus rather than a classic RED-to-GREEN code
+  change; the new nine-test suite passed on its first focused run.
+- **Verified:** `rtk cargo test -p aegis-language --test bash_corpus`; `rtk cargo
+  test --workspace`; `rtk cargo clippy --all-targets -- -D warnings`; `rtk cargo
+  fmt --all --check`; `rtk cargo audit`; and `rtk cargo deny check` all passed.
+  The hot path is untouched, so no scanner benchmark was required. No
+  `TASKS.md` checkbox changes: L1 remains a roadmap milestone.
+
+---
+
+## Prior session (2026-07-22, cont. 5) — L1 Iteration 7 TypeScript corpus
 
 - **Iteration 7 TypeScript corpus done via TDD (ADR-022 §11, plan Iteration 7
   RED step — the corpus half).** Scope and seams confirmed with the user up

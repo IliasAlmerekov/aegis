@@ -13,6 +13,12 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 8: added the Bash adapter characterization corpus (ADR-022 §3,
+  §7; plan Iteration 8), covering destructive shell operations, redirects,
+  permissions, literal-bound and dynamic operands, substitutions, `source`,
+  cross-language payloads, false positives, modern syntax, quoted/expanding
+  heredocs, and malformed input.
+
 - L1 Iteration 7: TypeScript corpus (ADR-022 §11, plan Iteration 7 RED — the
   corpus half). New `crates/aegis-language/tests/corpora/typescript/` (9 `.ts`
   files) + `tests/typescript_corpus.rs` harness (9 tests), mirroring the
