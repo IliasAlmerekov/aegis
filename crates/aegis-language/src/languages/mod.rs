@@ -4,11 +4,13 @@
 //! for semantic interpretation, emitting language-neutral [`crate::operation::
 //! DetectedOperation`]s rather than assigning `RiskLevel` directly. Adapters are
 //! staged by the L1 qualification gate; Python is the first production-qualified
-//! adapter (plan Iteration 6), JavaScript is in qualification (plan Iteration 7).
+//! adapter (plan Iteration 6), JavaScript and TypeScript are in qualification
+//! (plan Iteration 7), and Bash is in qualification (plan Iteration 8).
 
 // `family` is shared interpretation between the JS and TS adapters only;
 // every item inside is `pub(crate)`, so the module is `pub(crate)` too —
 // it is not part of the crate's public API surface (boundary test).
+pub mod bash;
 pub(crate) mod family;
 pub mod javascript;
 pub mod python;
