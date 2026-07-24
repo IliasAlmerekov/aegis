@@ -33,6 +33,8 @@ pub struct ReadSource {
     pub byte_len: u64,
     /// A hex SHA-256 digest of the original file bytes (before BOM strip).
     pub source_hash: String,
+    /// Number of leading BOM bytes removed from `source`.
+    pub source_byte_offset: usize,
 }
 
 /// Why a script-file read did not produce a [`ReadSource`].
@@ -115,6 +117,7 @@ pub async fn read_script_file(
     hasher.update(&bytes);
     let source_hash = format!("{:x}", hasher.finalize());
 
+    let source_byte_offset = usize::from(bytes.starts_with(&UTF8_BOM)) * UTF8_BOM.len();
     let content = bytes.strip_prefix(&UTF8_BOM).unwrap_or(bytes.as_slice());
     let source = String::from_utf8(content.to_vec()).map_err(|_| SourceReadError::InvalidUtf8)?;
 
@@ -122,6 +125,7 @@ pub async fn read_script_file(
         source,
         byte_len,
         source_hash,
+        source_byte_offset,
     })
 }
 

@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::time::Instant;
 
 use aegis_language::SourceLanguage;
-use aegis_types::DegradationReason;
+use aegis_types::{DegradationReason, SourceOrigin};
 use sha2::{Digest, Sha256};
 
 /// Hard ceilings for the recursive analysis work queue (ADR-022 §7).
@@ -55,14 +55,11 @@ impl QueueBudget {
 /// One recursive analysis target awaiting worker analysis.
 ///
 /// Deduplicated by `(language, source_hash)` (ADR-022 §7). `source` is the
-/// UTF-8 source body the parent will send to the worker; `source_hash` is the
-/// hex SHA-256 of `source.as_bytes()`. This matches `source_reader`'s hash for
-/// sources without a UTF-8 BOM, so an inline target and a BOM-free script-file
-/// target over the same body collapse. `source_reader::read_script_file` hashes
-/// the raw file bytes *before* stripping a BOM, so a BOM-prefixed script file
-/// will not collapse with an inline target built from the post-strip body; the
-/// queue is internally consistent either way (it always hashes the post-strip
-/// `String`), so in-session dedup is unaffected.
+/// UTF-8 source body the parent sends to the worker. Inline targets hash
+/// `source.as_bytes()`; script-file targets replace that value with the
+/// source-reader hash over original bytes. A BOM-prefixed script therefore
+/// remains distinct from an otherwise identical inline body, while provenance
+/// retains the required original-byte hash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueTarget {
     /// The language the source should be parsed as.
@@ -71,8 +68,16 @@ pub struct QueueTarget {
     pub source: String,
     /// Recursion depth (root = 0).
     pub depth: u32,
-    /// Hex SHA-256 of `source`.
+    /// Hex SHA-256 used for deduplication and provenance: computed from
+    /// `source` for inline targets, replaced by the original-byte hash for
+    /// script-file targets.
     pub source_hash: String,
+    /// Where the source entered analysis.
+    pub source_origin: SourceOrigin,
+    /// Script path metadata when the source came from a file.
+    pub file_path: Option<String>,
+    /// Leading original bytes stripped before parsing (currently UTF-8 BOM).
+    pub source_byte_offset: usize,
 }
 
 impl QueueTarget {
@@ -85,7 +90,38 @@ impl QueueTarget {
             source,
             depth,
             source_hash,
+            source_origin: SourceOrigin::Inline,
+            file_path: None,
+            source_byte_offset: 0,
         }
+    }
+
+    /// Attach privacy-safe top-level source provenance.
+    #[must_use]
+    pub fn with_provenance(
+        mut self,
+        source_origin: SourceOrigin,
+        file_path: Option<String>,
+    ) -> Self {
+        self.source_origin = source_origin;
+        self.file_path = file_path;
+        self
+    }
+
+    /// Preserve a source-reader hash computed over the original file bytes.
+    #[must_use]
+    pub fn with_source_hash(mut self, source_hash: Option<String>) -> Self {
+        if let Some(source_hash) = source_hash {
+            self.source_hash = source_hash;
+        }
+        self
+    }
+
+    /// Record the original-byte offset stripped before parsing.
+    #[must_use]
+    pub fn with_source_byte_offset(mut self, source_byte_offset: usize) -> Self {
+        self.source_byte_offset = source_byte_offset;
+        self
     }
 }
 

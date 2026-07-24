@@ -102,6 +102,39 @@ pub(super) fn render_noninteractive_denial<W: Write>(
     let _ = out.flush();
 }
 
+/// Print the non-interactive denial for a language-aware Match or degradation.
+///
+/// Unlike an ordinary Warn/Danger denial, this path must not suggest an
+/// allowlist: ADR-022 §5 permits only a non-persistable one-time decision.
+pub(super) fn render_noninteractive_analysis_denial<W: Write>(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+    out: &mut W,
+) {
+    let _ = queue!(
+        out,
+        SetForegroundColor(Color::Yellow),
+        SetAttribute(Attribute::Bold),
+        Print("\n  AEGIS: non-interactive mode — language-aware command denied\n"),
+        ResetColor,
+    );
+
+    print_command_line(assessment, out);
+
+    let _ = queue!(
+        out,
+        Print(format!(
+            "  Reason: {}\n",
+            confirmation_reason_text(explanation)
+        )),
+        Print("  Hint: rerun interactively to make an interactive one-time decision.\n"),
+        Print("  Hint: this decision cannot be persisted or reused.\n"),
+        Print("  Hint: rerun with --output json for machine-readable policy details.\n"),
+    );
+
+    let _ = out.flush();
+}
+
 pub(crate) fn render_policy_block<W: Write>(
     assessment: &Assessment,
     explanation: &CommandExplanation,

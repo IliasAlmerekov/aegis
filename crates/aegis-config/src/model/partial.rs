@@ -7,7 +7,7 @@ use crate::error::ConfigError;
 
 use super::migration::migrate_deprecated_allowlist_in_file;
 use super::ratchet::{
-    ratchet_allow_write, ratchet_bool_loosen, ratchet_bool_tighten,
+    ratchet_allow_write, ratchet_bool_loosen, ratchet_bool_tighten, ratchet_language_budget,
     ratchet_script_file_limit_bytes, ratchet_trusted_aliases,
 };
 use super::serde_helpers::{deserialize_allowlist_rules, deserialize_optional_config_version};
@@ -85,7 +85,13 @@ impl PartialSandboxSettings {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct PartialLanguageAnalysisConfig {
+    inline_source_limit_bytes: Option<u64>,
     script_file_limit_bytes: Option<u64>,
+    max_script_files: Option<u64>,
+    max_depth: Option<u64>,
+    max_targets: Option<u64>,
+    max_aggregate_bytes: Option<u64>,
+    timeout_ms: Option<u64>,
     trusted_aliases: Option<Vec<TrustedAlias>>,
 }
 
@@ -96,9 +102,45 @@ impl PartialLanguageAnalysisConfig {
         source_layer: ConfigSourceLayer,
     ) -> LanguageAnalysisConfig {
         LanguageAnalysisConfig {
+            inline_source_limit_bytes: ratchet_language_budget(
+                base.inline_source_limit_bytes,
+                self.inline_source_limit_bytes,
+                super::rules::LANGUAGE_ANALYSIS_INLINE_SOURCE_MAX_BYTES,
+                source_layer,
+            ),
             script_file_limit_bytes: ratchet_script_file_limit_bytes(
                 base.script_file_limit_bytes,
                 self.script_file_limit_bytes,
+                source_layer,
+            ),
+            max_script_files: ratchet_language_budget(
+                base.max_script_files,
+                self.max_script_files,
+                super::rules::LANGUAGE_ANALYSIS_MAX_SCRIPT_FILES,
+                source_layer,
+            ),
+            max_depth: ratchet_language_budget(
+                base.max_depth,
+                self.max_depth,
+                super::rules::LANGUAGE_ANALYSIS_MAX_DEPTH,
+                source_layer,
+            ),
+            max_targets: ratchet_language_budget(
+                base.max_targets,
+                self.max_targets,
+                super::rules::LANGUAGE_ANALYSIS_MAX_TARGETS,
+                source_layer,
+            ),
+            max_aggregate_bytes: ratchet_language_budget(
+                base.max_aggregate_bytes,
+                self.max_aggregate_bytes,
+                super::rules::LANGUAGE_ANALYSIS_MAX_AGGREGATE_BYTES,
+                source_layer,
+            ),
+            timeout_ms: ratchet_language_budget(
+                base.timeout_ms,
+                self.timeout_ms,
+                super::rules::LANGUAGE_ANALYSIS_TIMEOUT_MS,
                 source_layer,
             ),
             trusted_aliases: ratchet_trusted_aliases(
@@ -115,6 +157,23 @@ impl PartialLanguageAnalysisConfig {
 
     pub(super) fn trusted_aliases(&self) -> Option<Vec<TrustedAlias>> {
         self.trusted_aliases.clone()
+    }
+
+    pub(super) fn budget_fields(&self) -> [(&'static str, Option<u64>); 6] {
+        [
+            (
+                "language_analysis.inline_source_limit_bytes",
+                self.inline_source_limit_bytes,
+            ),
+            ("language_analysis.max_script_files", self.max_script_files),
+            ("language_analysis.max_depth", self.max_depth),
+            ("language_analysis.max_targets", self.max_targets),
+            (
+                "language_analysis.max_aggregate_bytes",
+                self.max_aggregate_bytes,
+            ),
+            ("language_analysis.timeout_ms", self.timeout_ms),
+        ]
     }
 }
 
@@ -207,5 +266,9 @@ impl PartialConfig {
 
     pub(super) fn language_analysis_trusted_aliases(&self) -> Option<Vec<TrustedAlias>> {
         self.language_analysis.trusted_aliases()
+    }
+
+    pub(super) fn language_analysis_budget_fields(&self) -> [(&'static str, Option<u64>); 6] {
+        self.language_analysis.budget_fields()
     }
 }

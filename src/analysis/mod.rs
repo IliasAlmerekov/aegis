@@ -9,6 +9,17 @@
 //! wiring its output into [`worker_client`] and merging results into an
 //! `Assessment` remains a later slice.
 
+use std::path::Path;
+
+/// Working-directory state used to resolve relative language-analysis sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalysisCwd<'a> {
+    /// Relative source paths resolve from this directory.
+    Resolved(&'a Path),
+    /// The command working directory is unavailable; relative sources degrade.
+    Unavailable,
+}
+
 pub mod heredoc;
 pub mod mapping;
 pub mod orchestrate;
@@ -18,7 +29,7 @@ pub mod router;
 pub mod source_reader;
 pub mod worker_client;
 
-pub use orchestrate::{Outcome, run};
+pub use orchestrate::{OrchestrationBudget, Outcome, run, run_with_budget, run_with_budget_in_cwd};
 pub use worker_client::{
     INTERNAL_LANGUAGE_WORKER_FLAG, RequestKind, TargetRequest, TargetResult, Worker, WorkerError,
     analyze,

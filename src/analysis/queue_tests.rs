@@ -212,10 +212,8 @@ fn l1_default_budget_matches_adr_022_ceilings() {
 #[test]
 fn queue_target_hash_matches_source_reader_hex_sha256_format() {
     // The dedup key is the source hash; it must be the same hex SHA-256
-    // format `source_reader` records so a BOM-free script-file target and an
-    // inline target over the same body collapse (see `QueueTarget.source_hash`
-    // doc for the BOM caveat — `source_reader` hashes raw bytes pre-BOM-strip,
-    // `QueueTarget` hashes the post-strip `String`).
+    // format `source_reader` records. Construction hashes the in-memory source;
+    // live script-file routing may replace it with the original-byte hash.
     let t = QueueTarget::new(SourceLanguage::Python, "abc".to_string(), 0);
     assert_eq!(
         t.source_hash, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",

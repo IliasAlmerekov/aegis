@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use time::OffsetDateTime;
 use tokio::runtime::Handle;
@@ -40,6 +41,10 @@ pub struct RuntimeConfig {
     pub snapshot_policy: SnapshotPolicy,
     /// Effective sandbox config, or `None` if the sandbox is disabled.
     pub sandbox: Option<aegis_sandbox::SandboxConfig>,
+    /// Trusted interpreter aliases forwarded to language-aware routing.
+    pub language_analysis_aliases: Vec<(String, String)>,
+    /// Effective bounded Language-aware analysis budgets.
+    pub language_analysis_budget: crate::analysis::OrchestrationBudget,
 }
 
 impl From<&AegisConfig> for RuntimeConfig {
@@ -58,6 +63,22 @@ impl From<&AegisConfig> for RuntimeConfig {
             strict_allowlist_override: config.allowlist_override_level,
             snapshot_policy: config.snapshot_policy,
             sandbox,
+            language_analysis_aliases: config
+                .language_analysis
+                .trusted_aliases
+                .iter()
+                .map(|alias| (alias.alias.clone(), alias.canonical.clone()))
+                .collect(),
+            language_analysis_budget: crate::analysis::OrchestrationBudget {
+                inline_source_limit_bytes: config.language_analysis.inline_source_limit_bytes
+                    as usize,
+                script_file_limit_bytes: config.language_analysis.script_file_limit_bytes,
+                max_script_files: config.language_analysis.max_script_files as usize,
+                max_depth: config.language_analysis.max_depth as u32,
+                max_targets: config.language_analysis.max_targets as usize,
+                max_aggregate_bytes: config.language_analysis.max_aggregate_bytes as usize,
+                total_timeout: Duration::from_millis(config.language_analysis.timeout_ms),
+            },
         }
     }
 }
@@ -193,6 +214,67 @@ impl RuntimeContext {
     /// Assess a command with the context-bound scanner.
     pub fn assess(&self, cmd: &str) -> Assessment {
         self.scanner.assess(cmd)
+    }
+
+    /// Assess a command and merge bounded language-aware analysis before policy.
+    ///
+    /// The synchronous shell path calls this outside Tokio; async callers use
+    /// [`Self::assess_with_language_analysis_async`] to avoid nested blocking.
+    pub fn assess_with_language_analysis(&self, cmd: &str) -> Assessment {
+        self.assess_with_language_analysis_in_cwd(
+            cmd,
+            crate::analysis::AnalysisCwd::Resolved(Path::new(".")),
+        )
+    }
+
+    /// Assess a command with language-aware relative paths resolved from `cwd`.
+    pub fn assess_with_language_analysis_in_cwd(
+        &self,
+        cmd: &str,
+        cwd: crate::analysis::AnalysisCwd<'_>,
+    ) -> Assessment {
+        self.async_handle
+            .block_on(self.assess_with_language_analysis_async_in_cwd(cmd, cwd))
+    }
+
+    /// Async variant of [`Self::assess_with_language_analysis`].
+    pub async fn assess_with_language_analysis_async(&self, cmd: &str) -> Assessment {
+        self.assess_with_language_analysis_async_in_cwd(
+            cmd,
+            crate::analysis::AnalysisCwd::Resolved(Path::new(".")),
+        )
+        .await
+    }
+
+    /// Async variant of [`Self::assess_with_language_analysis_in_cwd`].
+    pub async fn assess_with_language_analysis_async_in_cwd(
+        &self,
+        cmd: &str,
+        cwd: crate::analysis::AnalysisCwd<'_>,
+    ) -> Assessment {
+        let baseline = self.assess(cmd);
+        let aliases: Vec<(&str, &str)> = self
+            .runtime_config
+            .language_analysis_aliases
+            .iter()
+            .map(|(alias, canonical)| (alias.as_str(), canonical.as_str()))
+            .collect();
+        match crate::analysis::run_with_budget_in_cwd(
+            cmd,
+            cwd,
+            &baseline,
+            None,
+            &aliases,
+            self.runtime_config.language_analysis_budget,
+        )
+        .await
+        {
+            crate::analysis::Outcome::NotStarted { baseline }
+            | crate::analysis::Outcome::Analyzed {
+                assessment: baseline,
+                ..
+            } => baseline,
+        }
     }
 
     /// Return the effective user identity captured for this runtime context.

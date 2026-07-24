@@ -121,6 +121,22 @@ fn tty_unavailable_safe_is_approved() {
 }
 
 #[test]
+fn tty_unavailable_safe_analysis_confirmation_is_denied() {
+    let assessment = make_assessment("sh ./run.sh", RiskLevel::Safe, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisConfirmationRequired,
+        None,
+        None,
+    );
+
+    assert_eq!(
+        tty_unavailable_prompt_decision(&assessment, &explanation),
+        PromptDecision::Deny
+    );
+}
+
+#[test]
 fn tty_unavailable_warn_is_denied() {
     let p = make_match("GIT-001", RiskLevel::Warn, "reset", "Hard reset", None);
     let assessment = make_assessment("git reset --hard HEAD~1", RiskLevel::Warn, vec![p]);

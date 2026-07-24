@@ -47,7 +47,7 @@ fn interactive_shell_output(home: &Path, cwd: &Path, response: &[u8]) -> Output 
         &format!(
             "{} -c {}",
             single_quote(&aegis_bin().to_string_lossy()),
-            single_quote("sh ./run.sh")
+            single_quote("zsh ./run.sh")
         ),
         "/dev/null",
     ]);
@@ -56,7 +56,7 @@ fn interactive_shell_output(home: &Path, cwd: &Path, response: &[u8]) -> Output 
     command
         .args(["-q", "/dev/null"])
         .arg(aegis_bin())
-        .args(["-c", "sh ./run.sh"]);
+        .args(["-c", "zsh ./run.sh"]);
 
     let mut child = command.spawn().unwrap();
     let stdout = child.stdout.take().unwrap();
@@ -170,7 +170,7 @@ fn noninteractive_required_recovery_degradation_denies_before_child_execution() 
 
     let output = shell_command(home.path(), workspace.path())
         .stdin(Stdio::null())
-        .args(["-c", "sh ./run.sh"])
+        .args(["-c", "zsh ./run.sh"])
         .output()
         .unwrap();
 
@@ -202,7 +202,7 @@ fn force_interactive_env_cannot_enable_recovery_override_without_tty() {
 
     let mut child = shell_command(home.path(), workspace.path())
         .env("AEGIS_FORCE_INTERACTIVE", "1")
-        .args(["-c", "sh ./run.sh"])
+        .args(["-c", "zsh ./run.sh"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -271,7 +271,7 @@ fn successful_required_snapshot_executes_without_recovery_prompt() {
 
     let output = shell_command(home.path(), workspace.path())
         .stdin(Stdio::null())
-        .args(["-c", "sh ./run.sh"])
+        .args(["-c", "zsh ./run.sh"])
         .output()
         .unwrap();
 
@@ -298,7 +298,7 @@ fn degraded_audit_write_failure_remains_fail_closed() {
 
     let output = shell_command(home.path(), workspace.path())
         .stdin(Stdio::null())
-        .args(["-c", "sh ./run.sh"])
+        .args(["-c", "zsh ./run.sh"])
         .output()
         .unwrap();
 
@@ -313,7 +313,7 @@ fn evaluation_reports_required_plan_without_simulating_recovery_degradation() {
     let workspace = TempDir::new().unwrap();
 
     let output = shell_command(home.path(), workspace.path())
-        .args(["-c", "sh ./run.sh", "--output", "json"])
+        .args(["-c", "zsh ./run.sh", "--output", "json"])
         .output()
         .unwrap();
 

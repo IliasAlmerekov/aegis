@@ -594,3 +594,199 @@ fn noninteractive_safe_is_still_approved() {
         "Safe commands must be approved even in non-interactive mode"
     );
 }
+
+#[test]
+fn noninteractive_safe_analysis_override_is_denied() {
+    let assessment = make_assessment("python -c 'dynamic()'", RiskLevel::Safe, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisOverrideRequired,
+        None,
+        None,
+    );
+
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        false,
+        &mut b"y\n".as_ref(),
+        &mut Vec::new(),
+    );
+
+    assert_eq!(decision, PromptDecision::Deny);
+}
+
+#[test]
+fn interactive_analysis_override_rejects_always_approval() {
+    let assessment = make_assessment("python -c 'dynamic()'", RiskLevel::Safe, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisOverrideRequired,
+        None,
+        None,
+    );
+
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        true,
+        &mut b"always\n".as_ref(),
+        &mut Vec::new(),
+    );
+
+    assert_eq!(decision, PromptDecision::Deny);
+}
+
+#[test]
+fn interactive_analysis_override_approves_once_with_yes() {
+    let assessment = make_assessment("python -c 'dynamic()'", RiskLevel::Safe, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisOverrideRequired,
+        None,
+        None,
+    );
+
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        true,
+        &mut b"yes\n".as_ref(),
+        &mut Vec::new(),
+    );
+
+    assert_eq!(decision, PromptDecision::Approve);
+}
+
+#[test]
+fn noninteractive_analysis_confirmation_is_denied_even_for_safe_risk() {
+    let assessment = make_assessment("python -c 'dynamic()'", RiskLevel::Safe, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisConfirmationRequired,
+        None,
+        None,
+    );
+
+    let mut output = Vec::new();
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        false,
+        &mut b"yes\n".as_ref(),
+        &mut output,
+    );
+
+    assert_eq!(decision, PromptDecision::Deny);
+    let text = strip_ansi(&String::from_utf8_lossy(&output));
+    assert!(text.contains("interactive one-time decision"), "{text}");
+    assert!(
+        !text.contains("add the command to the allowlist"),
+        "a language-aware Match cannot be auto-approved by allowlist: {text}"
+    );
+}
+
+#[test]
+fn interactive_analysis_confirmation_cannot_be_persisted() {
+    let assessment = make_assessment("python -c 'os.remove(\"x\")'", RiskLevel::Warn, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisConfirmationRequired,
+        None,
+        None,
+    );
+
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        true,
+        &mut b"always\n".as_ref(),
+        &mut Vec::new(),
+    );
+
+    assert_eq!(decision, PromptDecision::Deny);
+}
+
+#[test]
+fn interactive_analysis_confirmation_accepts_one_time_yes() {
+    let assessment = make_assessment("python -c 'os.remove(\"x\")'", RiskLevel::Warn, vec![]);
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisConfirmationRequired,
+        None,
+        None,
+    );
+
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        true,
+        &mut b"yes\n".as_ref(),
+        &mut Vec::new(),
+    );
+
+    assert_eq!(decision, PromptDecision::Approve);
+}
+
+#[test]
+fn analysis_confirmation_renders_decisive_evidence_and_degradation_without_source_body() {
+    let language_match =
+        make_language_match("LANG-FS-DEL", RiskLevel::Warn, "TOP_SECRET_SOURCE_BODY");
+    let mut assessment =
+        make_assessment("python3 danger.py", RiskLevel::Warn, vec![language_match]);
+    assessment.analysis = Some(aegis_types::AnalysisSummary {
+        status: AnalysisStatus::Degraded,
+        degradation_reasons: vec![
+            aegis_types::DegradationReason::IncompleteSyntax,
+            aegis_types::DegradationReason::LimitExceeded,
+        ],
+    });
+    let explanation = make_explanation(
+        &assessment,
+        PolicyRationale::AnalysisConfirmationRequired,
+        None,
+        None,
+    );
+    let mut output = Vec::new();
+
+    let decision = crate::stdout_renderer::show_confirmation_with_decision(
+        &assessment,
+        &explanation,
+        &[],
+        true,
+        &mut b"yes\n".as_ref(),
+        &mut output,
+    );
+
+    assert_eq!(decision, PromptDecision::Approve);
+    let text = strip_ansi(&String::from_utf8_lossy(&output));
+    for required in [
+        "[LANG-FS-DEL] decisive",
+        "operation=FilesystemDelete",
+        "language=python",
+        "origin=ScriptFile",
+        "location=7:3 (bytes 42..61)",
+        "certainty=Known",
+        "Language analysis: Degraded",
+        "degradation: IncompleteSyntax",
+        "degradation: LimitExceeded",
+    ] {
+        assert!(text.contains(required), "missing {required:?} in:\n{text}");
+    }
+    assert!(
+        !text.contains("TOP_SECRET_SOURCE_BODY"),
+        "language evidence rendering must not expose the source body: {text}"
+    );
+    assert_eq!(
+        text.matches("Approve this language-aware assessment once?")
+            .count(),
+        1,
+        "{text}"
+    );
+}

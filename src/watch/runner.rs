@@ -262,20 +262,34 @@ async fn run_watch_plan(
     plan: InterceptionPlan,
     ci_detected: bool,
 ) {
-    run_watch_plan_with_recovery_prompt(frame, prepared, plan, ci_detected, || {
-        tokio::task::block_in_place(show_recovery_override_via_tty)
-    })
+    run_watch_plan_with_prompts(
+        frame,
+        prepared,
+        plan,
+        ci_detected,
+        |assessment, explanation| {
+            tokio::task::block_in_place(|| {
+                show_confirmation_via_tty_with_decision(assessment, explanation, &[])
+            })
+        },
+        || tokio::task::block_in_place(show_recovery_override_via_tty),
+    )
     .await;
 }
 
-async fn run_watch_plan_with_recovery_prompt<F>(
+async fn run_watch_plan_with_prompts<C, R>(
     frame: InputFrame,
     prepared: &PreparedPlanner,
     plan: InterceptionPlan,
     ci_detected: bool,
-    recovery_prompt: F,
+    confirmation_prompt: C,
+    recovery_prompt: R,
 ) where
-    F: FnOnce() -> RecoveryPromptDecision,
+    C: FnOnce(
+        &crate::interceptor::scanner::Assessment,
+        &aegis_explanation::CommandExplanation,
+    ) -> PromptDecision,
+    R: FnOnce() -> RecoveryPromptDecision,
 {
     let id = frame.id.clone();
     let context = runtime_context(prepared);
@@ -284,9 +298,7 @@ async fn run_watch_plan_with_recovery_prompt<F>(
     let runtime_decision = match plan.execution_disposition() {
         ExecutionDisposition::Execute => Decision::AutoApproved,
         ExecutionDisposition::RequiresApproval => {
-            let decision = tokio::task::block_in_place(|| {
-                show_confirmation_via_tty_with_decision(plan.assessment(), plan.explanation(), &[])
-            });
+            let decision = confirmation_prompt(plan.assessment(), plan.explanation());
             if decision == PromptDecision::ApproveAlways {
                 if let Some(config_path) = active_config_path_for_append() {
                     let tokens = split_tokens(&frame.cmd);

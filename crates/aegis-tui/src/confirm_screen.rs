@@ -6,7 +6,7 @@ use crossterm::{
 };
 
 use aegis_explanation::CommandExplanation;
-use aegis_types::{Assessment, RiskLevel, SnapshotRecord};
+use aegis_types::{Assessment, MatchEvidence, RiskLevel, SnapshotRecord};
 
 use super::shared::{
     confirmation_reason_text, decision_source_label, pattern_source_label, print_command_line,
@@ -52,11 +52,16 @@ pub(super) fn render_dialog<W: Write>(
         let _ = queue!(out, Print("\n  Matched rules:\n"));
         for m in &assessment.matched {
             let source_label = pattern_source_label(m.pattern.source);
+            let role = if m.pattern.risk == assessment.risk {
+                "decisive"
+            } else {
+                "detail"
+            };
             let _ = queue!(
                 out,
                 SetForegroundColor(color),
                 Print(format!(
-                    "    [{}] {:?} | {}",
+                    "    [{}] {role} | {:?} | {}",
                     m.pattern.id, m.pattern.category, m.pattern.description
                 )),
                 ResetColor,
@@ -77,16 +82,47 @@ pub(super) fn render_dialog<W: Write>(
                     ResetColor,
                 );
             }
-            let _ = queue!(
-                out,
-                SetForegroundColor(Color::DarkGrey),
-                Print(format!(
-                    "\n         matched: {:?}  source: {}",
-                    m.matched_text, source_label
-                )),
-                ResetColor,
-                Print("\n"),
-            );
+            match &m.evidence {
+                MatchEvidence::LanguageRule {
+                    operation,
+                    provenance,
+                    ..
+                } => {
+                    let language = provenance.language.as_deref().unwrap_or("unknown");
+                    let location = provenance.span.map_or_else(
+                        || "unknown".to_string(),
+                        |span| {
+                            format!(
+                                "{}:{} (bytes {}..{})",
+                                span.line, span.column, span.byte_start, span.byte_end
+                            )
+                        },
+                    );
+                    let _ = queue!(
+                        out,
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(format!(
+                            "\n         evidence: operation={:?} language={language} \
+                             origin={:?} location={location} certainty={:?}",
+                            operation.kind, provenance.source_origin, operation.certainty
+                        )),
+                        ResetColor,
+                        Print("\n"),
+                    );
+                }
+                _ => {
+                    let _ = queue!(
+                        out,
+                        SetForegroundColor(Color::DarkGrey),
+                        Print(format!(
+                            "\n         matched: {:?}  source: {}",
+                            m.matched_text, source_label
+                        )),
+                        ResetColor,
+                        Print("\n"),
+                    );
+                }
+            }
         }
 
         let decision_label = decision_source_label(assessment.decision_source());
@@ -94,6 +130,16 @@ pub(super) fn render_dialog<W: Write>(
             out,
             Print(format!("\n  Decision source: {decision_label}\n")),
         );
+    }
+
+    if let Some(analysis) = &assessment.analysis {
+        let _ = queue!(
+            out,
+            Print(format!("\n  Language analysis: {:?}\n", analysis.status)),
+        );
+        for reason in &analysis.degradation_reasons {
+            let _ = queue!(out, Print(format!("    degradation: {reason:?}\n")));
+        }
     }
 
     // Snapshots
@@ -184,6 +230,71 @@ pub(super) fn prompt_warn_with_always<R: BufRead, W: Write>(
         "y" | "yes" => PromptDecision::Approve,
         "a" | "always" => PromptDecision::ApproveAlways,
         "d" | "denyalways" | "deny-always" => PromptDecision::DenyAlways,
+        _ => {
+            let _ = queue!(
+                out,
+                SetForegroundColor(Color::Yellow),
+                Print("  Command cancelled.\n"),
+                ResetColor,
+            );
+            let _ = out.flush();
+            PromptDecision::Deny
+        }
+    }
+}
+
+/// Prompt for a non-persistable, one-time Analysis override (ADR-022 §5).
+pub(super) fn prompt_analysis_override<R: BufRead, W: Write>(
+    input: &mut R,
+    out: &mut W,
+) -> PromptDecision {
+    prompt_one_time_analysis(
+        input,
+        out,
+        "\n  Approve one-time analysis override? [y/N]: ",
+    )
+}
+
+/// Prompt for a non-persistable, one-time language-analysis confirmation.
+pub(super) fn prompt_analysis_confirmation<R: BufRead, W: Write>(
+    input: &mut R,
+    out: &mut W,
+) -> PromptDecision {
+    prompt_one_time_analysis(
+        input,
+        out,
+        "\n  Approve this language-aware assessment once? [y/N]: ",
+    )
+}
+
+fn prompt_one_time_analysis<R: BufRead, W: Write>(
+    input: &mut R,
+    out: &mut W,
+    prompt: &str,
+) -> PromptDecision {
+    let _ = queue!(
+        out,
+        SetForegroundColor(Color::Yellow),
+        SetAttribute(Attribute::Bold),
+        Print(prompt),
+        ResetColor,
+    );
+    let _ = out.flush();
+
+    let mut line = String::new();
+    if input.read_line(&mut line).is_err() {
+        let _ = queue!(
+            out,
+            SetForegroundColor(Color::Yellow),
+            Print("  Command cancelled.\n"),
+            ResetColor,
+        );
+        let _ = out.flush();
+        return PromptDecision::Deny;
+    }
+
+    match line.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => PromptDecision::Approve,
         _ => {
             let _ = queue!(
                 out,

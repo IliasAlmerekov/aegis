@@ -9,8 +9,48 @@ use super::*;
 fn language_analysis_defaults_to_256_kib_limit_and_no_trusted_aliases() {
     let config = AegisConfig::defaults();
 
+    assert_eq!(
+        config.language_analysis.inline_source_limit_bytes,
+        16 * 1024
+    );
     assert_eq!(config.language_analysis.script_file_limit_bytes, 256 * 1024);
+    assert_eq!(config.language_analysis.max_script_files, 8);
+    assert_eq!(config.language_analysis.max_depth, 8);
+    assert_eq!(config.language_analysis.max_targets, 16);
+    assert_eq!(config.language_analysis.max_aggregate_bytes, 1024 * 1024);
+    assert_eq!(config.language_analysis.timeout_ms, 100);
     assert_eq!(config.language_analysis.trusted_aliases, Vec::new());
+}
+
+#[test]
+fn language_analysis_budgets_are_globally_bounded_and_project_tightenable() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[language_analysis]\ninline_source_limit_bytes = 999999\n\
+         max_script_files = 99\nmax_depth = 99\n\
+         max_targets = 99\nmax_aggregate_bytes = 9999999\ntimeout_ms = 9999\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[language_analysis]\ninline_source_limit_bytes = 1024\n\
+         max_script_files = 2\nmax_depth = 3\n\
+         max_targets = 4\nmax_aggregate_bytes = 4096\ntimeout_ms = 25\n",
+    )
+    .unwrap();
+
+    let config = AegisConfig::load_for(workspace.path(), Some(home.path())).unwrap();
+
+    assert_eq!(config.language_analysis.inline_source_limit_bytes, 1024);
+    assert_eq!(config.language_analysis.max_script_files, 2);
+    assert_eq!(config.language_analysis.max_depth, 3);
+    assert_eq!(config.language_analysis.max_targets, 4);
+    assert_eq!(config.language_analysis.max_aggregate_bytes, 4096);
+    assert_eq!(config.language_analysis.timeout_ms, 25);
 }
 
 #[test]
@@ -296,5 +336,59 @@ fn language_analysis_round_trips_through_toml_serialization() {
     assert!(
         toml.contains("alias = \"py\""),
         "serialized trusted alias must round-trip: {toml}"
+    );
+}
+
+#[test]
+fn project_layer_raising_analysis_budgets_surfaces_ratchet_warnings() {
+    let home = TempDir::new().unwrap();
+    let global_dir = home.path().join(GLOBAL_CONFIG_DIR);
+    fs::create_dir_all(&global_dir).unwrap();
+    fs::write(
+        global_dir.join(GLOBAL_CONFIG_FILE),
+        "[language_analysis]\ninline_source_limit_bytes = 1024\n\
+         max_script_files = 2\nmax_depth = 3\nmax_targets = 4\n\
+         max_aggregate_bytes = 4096\ntimeout_ms = 25\n",
+    )
+    .unwrap();
+    let base = load_global_base(home.path());
+    let project = TempDir::new().unwrap();
+    let project_path = project.path().join(PROJECT_CONFIG_FILE);
+    fs::write(
+        &project_path,
+        "[language_analysis]\ninline_source_limit_bytes = 16384\n\
+         max_script_files = 8\nmax_depth = 8\nmax_targets = 16\n\
+         max_aggregate_bytes = 1048576\ntimeout_ms = 100\n",
+    )
+    .unwrap();
+
+    let warnings = project_ratchet_warnings(&base, &project_path);
+    for field in [
+        "language_analysis.inline_source_limit_bytes",
+        "language_analysis.max_script_files",
+        "language_analysis.max_depth",
+        "language_analysis.max_targets",
+        "language_analysis.max_aggregate_bytes",
+        "language_analysis.timeout_ms",
+    ] {
+        assert_has_warning_for(&warnings, field, "raising an analysis budget");
+    }
+}
+
+#[test]
+fn language_analysis_enabled_switch_is_rejected() {
+    let workspace = TempDir::new().unwrap();
+    let home = TempDir::new().unwrap();
+    fs::write(
+        workspace.path().join(PROJECT_CONFIG_FILE),
+        "[language_analysis]\nenabled = false\n",
+    )
+    .unwrap();
+
+    let result = AegisConfig::load_for(workspace.path(), Some(home.path()));
+
+    assert!(
+        result.is_err(),
+        "there is deliberately no project or global language_analysis.enabled switch"
     );
 }

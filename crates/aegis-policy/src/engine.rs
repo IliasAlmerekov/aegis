@@ -1,8 +1,10 @@
 //! Pure policy engine: evaluate a prepared policy input and return a decision.
 
 use aegis_types::PolicyRuleDecision;
-use aegis_types::RiskLevel;
-use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
+use aegis_types::{
+    AllowlistOverrideLevel, AnalysisStatus, CiPolicy, DetectionMechanism, Mode, RiskLevel,
+    SnapshotPolicy,
+};
 
 use super::types::{PolicyAction, PolicyDecision, PolicyInput, PolicyRationale};
 
@@ -22,10 +24,30 @@ impl PolicyEngine for DefaultPolicyEngine {
         if input.assessment.risk == RiskLevel::Block {
             return block(input, PolicyRationale::IntrinsicRiskBlock);
         }
+        if input.mode == Mode::Audit {
+            return auto_approve(input, PolicyRationale::AuditMode, false, false);
+        }
         if input.blocklist.matched {
             return block(input, PolicyRationale::BlocklistOverride);
         }
-        if input.rules.matched
+
+        if input.rules.matched && input.rules.decision == Some(PolicyRuleDecision::Block) {
+            return block(input, PolicyRationale::PolicyRulesOverride);
+        }
+
+        if input.mode == Mode::Protect && analysis_requires_explicit_approval(&input) {
+            if input.ci_state.detected && input.config_flags.ci_policy == CiPolicy::Block {
+                return block(input, PolicyRationale::ProtectCiPolicy);
+            }
+            return analysis_confirmation_required(input);
+        }
+
+        if input.mode == Mode::Strict && strict_analysis_override_applies(&input) {
+            return analysis_override_required(input);
+        }
+
+        if !analysis_requires_explicit_approval(&input)
+            && input.rules.matched
             && let Some(decision) = input.rules.decision
         {
             return match decision {
@@ -35,6 +57,8 @@ impl PolicyEngine for DefaultPolicyEngine {
                     let snaps = snapshots_required(&input);
                     auto_approve(input, PolicyRationale::PolicyRulesOverride, false, snaps)
                 }
+                // Handled before the language-aware gate so an explicit rule
+                // block remains terminal.
                 PolicyRuleDecision::Block => block(input, PolicyRationale::PolicyRulesOverride),
                 PolicyRuleDecision::Prompt => {
                     prompt_with_rationale(input, PolicyRationale::PolicyRulesOverride)
@@ -120,6 +144,13 @@ fn allowlist_override_applies(input: &PolicyInput<'_>) -> bool {
         return false;
     }
 
+    // ADR-022 §5: allowlist entries cannot auto-approve a completed semantic
+    // Match or an Analysis degradation. The resulting Protect-mode prompt is a
+    // one-time decision for this assessment, not a reusable allowlist grant.
+    if analysis_requires_explicit_approval(input) {
+        return false;
+    }
+
     match input.assessment.risk {
         RiskLevel::Warn => matches!(
             input.config_flags.allowlist_override_level,
@@ -133,6 +164,45 @@ fn allowlist_override_applies(input: &PolicyInput<'_>) -> bool {
         // Fail safe: an unknown future risk level never qualifies for an override.
         _ => false,
     }
+}
+
+fn analysis_requires_explicit_approval(input: &PolicyInput<'_>) -> bool {
+    let Some(analysis) = input.assessment.analysis.as_ref() else {
+        return false;
+    };
+
+    match analysis.status {
+        AnalysisStatus::NotApplicable => false,
+        AnalysisStatus::Degraded => true,
+        AnalysisStatus::Complete => input
+            .assessment
+            .matched
+            .iter()
+            .any(|matched| matched.evidence.mechanism() == DetectionMechanism::LanguageRule),
+        // Fail safe if a future analysis status is introduced.
+        _ => true,
+    }
+}
+
+fn strict_analysis_override_applies(input: &PolicyInput<'_>) -> bool {
+    if has_language_match_at_assessment_risk(input) {
+        return true;
+    }
+
+    input.assessment.risk == RiskLevel::Safe
+        && input.assessment.analysis.as_ref().is_some_and(|analysis| {
+            !matches!(
+                analysis.status,
+                AnalysisStatus::NotApplicable | AnalysisStatus::Complete
+            )
+        })
+}
+
+fn has_language_match_at_assessment_risk(input: &PolicyInput<'_>) -> bool {
+    input.assessment.matched.iter().any(|matched| {
+        matched.pattern.risk == input.assessment.risk
+            && matched.evidence.mechanism() == DetectionMechanism::LanguageRule
+    })
 }
 
 fn auto_approve(
@@ -173,6 +243,14 @@ fn prompt_with_rationale(input: PolicyInput<'_>, rationale: PolicyRationale) -> 
         confinement_required: false,
         allowlist_effective: false,
     }
+}
+
+fn analysis_override_required(input: PolicyInput<'_>) -> PolicyDecision {
+    prompt_with_rationale(input, PolicyRationale::AnalysisOverrideRequired)
+}
+
+fn analysis_confirmation_required(input: PolicyInput<'_>) -> PolicyDecision {
+    prompt_with_rationale(input, PolicyRationale::AnalysisConfirmationRequired)
 }
 
 fn block(_input: PolicyInput<'_>, rationale: PolicyRationale) -> PolicyDecision {

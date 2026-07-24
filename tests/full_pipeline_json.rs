@@ -306,3 +306,176 @@ fn json_output_verbose_keeps_stderr_empty() {
     assert_eq!(json["risk"], "danger");
     assert_eq!(json["decision"], "prompt");
 }
+
+#[test]
+fn json_output_uses_language_aware_assessment_before_policy() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args([
+            "-c",
+            "python3 -c 'import os; os.remove(\"artifact.txt\")'",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "warn");
+    assert_eq!(json["decision"], "prompt");
+    assert!(
+        json["matched_patterns"]
+            .as_array()
+            .is_some_and(|matches| matches.iter().any(|item| item["id"] == "LANG-FS-DEL")),
+        "the JSON interface must expose the language-aware Match: {json}"
+    );
+}
+
+#[test]
+fn json_output_applies_ci_block_to_language_aware_warn() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .env("AEGIS_CI", "1")
+        .args([
+            "-c",
+            "python3 -c 'import os; os.remove(\"artifact.txt\")'",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "warn");
+    assert_eq!(json["decision"], "block");
+    assert_eq!(json["block_reason"], "protect_ci_policy");
+}
+
+#[test]
+fn strict_json_output_uses_analysis_override_instead_of_unrelated_strict_block() {
+    let home = TempDir::new().unwrap();
+    write_global_config(home.path(), "mode = \"Strict\"\n");
+
+    let output = base_command(home.path())
+        .args([
+            "-c",
+            "python3 -c 'import os; os.remove(\"artifact.txt\")'",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["mode"], "strict");
+    assert_eq!(json["risk"], "warn");
+    assert_eq!(json["decision"], "prompt");
+    assert!(json.get("block_reason").is_none());
+}
+
+#[test]
+fn trusted_global_alias_reaches_language_aware_routing() {
+    let home = TempDir::new().unwrap();
+    write_global_config(
+        home.path(),
+        r#"
+[[language_analysis.trusted_aliases]]
+alias = "trusted-python"
+canonical = "python3"
+"#,
+    );
+
+    let output = base_command(home.path())
+        .args([
+            "-c",
+            "trusted-python -c 'import os; os.remove(\"artifact.txt\")'",
+            "--output",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stderr.is_empty());
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "warn");
+    assert!(
+        json["matched_patterns"]
+            .as_array()
+            .is_some_and(|matches| matches.iter().any(|item| item["id"] == "LANG-FS-DEL")),
+        "the effective trusted global alias must be forwarded into routing: {json}"
+    );
+}
+
+#[test]
+fn json_output_prompts_for_dynamic_language_source_degradation() {
+    let home = TempDir::new().unwrap();
+
+    let output = base_command(home.path())
+        .args(["-c", "unknown-producer | python3", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "safe");
+    assert_eq!(json["decision"], "prompt");
+}
+
+#[test]
+fn project_script_file_limit_is_enforced_by_live_planning() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    fs::write(
+        workspace.path().join(".aegis.toml"),
+        "[language_analysis]\nscript_file_limit_bytes = 1\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.path().join("danger.py"),
+        "import os\nos.remove('artifact.txt')\n",
+    )
+    .unwrap();
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", "python3 danger.py", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "safe");
+    assert_eq!(json["decision"], "prompt");
+    assert!(
+        json["matched_patterns"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "oversized source must degrade without pretending it was analyzed: {json}"
+    );
+}
+
+#[test]
+fn missing_direct_exec_path_degrades_instead_of_auto_approving() {
+    let home = TempDir::new().unwrap();
+    let output = base_command(home.path())
+        .args(["-c", "./definitely-missing-script", "--output", "json"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["risk"], "safe");
+    assert_eq!(json["decision"], "prompt");
+}

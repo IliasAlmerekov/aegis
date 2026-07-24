@@ -125,6 +125,12 @@ pub enum PolicyRationale {
     AllowlistOverride,
     /// The command requires an explicit confirmation step.
     RequiresConfirmation,
+    /// A language-aware Match or degradation in Protect mode requires a
+    /// non-persistable, one-time confirmation (ADR-022 §5).
+    AnalysisConfirmationRequired,
+    /// A non-`Block` language-aware assessment in Strict mode may proceed only
+    /// through a one-time Analysis override (ADR-022 §5).
+    AnalysisOverrideRequired,
     /// The command is intrinsically block-level.
     IntrinsicRiskBlock,
     /// CI policy forced a Protect-mode block.
@@ -150,7 +156,9 @@ impl PolicyRationale {
             Self::AuditMode
             | Self::SafeCommand
             | Self::AllowlistOverride
-            | Self::RequiresConfirmation => None,
+            | Self::RequiresConfirmation
+            | Self::AnalysisConfirmationRequired
+            | Self::AnalysisOverrideRequired => None,
         }
     }
 }

@@ -28,7 +28,8 @@ pub fn plan_with_context(
     context: &RuntimeContext,
     request: PlanningRequest<'_>,
 ) -> PlanningOutcome {
-    let assessment = context.assess(request.command);
+    let assessment = context
+        .assess_with_language_analysis_in_cwd(request.command, analysis_cwd(&request.cwd_state));
     let allowlist_match = match &request.cwd_state {
         CwdState::Resolved(path) => {
             context.allowlist_match_for_command(request.command, Some(path.as_path()))
@@ -81,7 +82,12 @@ pub async fn plan_with_context_async(
     context: &RuntimeContext,
     request: PlanningRequest<'_>,
 ) -> PlanningOutcome {
-    let assessment = context.assess(request.command);
+    let assessment = context
+        .assess_with_language_analysis_async_in_cwd(
+            request.command,
+            analysis_cwd(&request.cwd_state),
+        )
+        .await;
     let allowlist_match = match &request.cwd_state {
         CwdState::Resolved(path) => {
             context.allowlist_match_for_command(request.command, Some(path.as_path()))
@@ -116,6 +122,13 @@ pub async fn plan_with_context_async(
         blocklist_match,
         applicable_snapshot_plugins,
     )
+}
+
+fn analysis_cwd(cwd_state: &CwdState) -> crate::analysis::AnalysisCwd<'_> {
+    match cwd_state {
+        CwdState::Resolved(path) => crate::analysis::AnalysisCwd::Resolved(path.as_path()),
+        CwdState::Unavailable => crate::analysis::AnalysisCwd::Unavailable,
+    }
 }
 
 fn build_planning_outcome(
@@ -419,13 +432,10 @@ mod tests {
     }
 
     #[test]
-    fn effect_opaque_safe_command_plans_recovery_snapshot_without_prompt() {
-        // ADR-016 / H9: `sh ./cleanup.sh` is Safe to the quick scan yet
-        // effect-opaque. Recovery is the primary v1 backstop, orthogonal to
-        // risk, so the plan must request a pre-exec snapshot
-        // (`SnapshotPlan::Required`) WITHOUT introducing a confirmation prompt
-        // — the command still executes auto-approved, only with a recovery
-        // point taken first.
+    fn effect_opaque_script_degradation_requires_approval_and_recovery_snapshot() {
+        // ADR-016 + ADR-022: recovery and language-analysis approval are
+        // orthogonal. A script that exceeds its read budget needs a one-time
+        // approval, while effect opacity still requires the recovery snapshot.
         crate::snapshot::reset_snapshot_registry_build_count_for_tests();
 
         let _guard = CURRENT_DIR_TEST_MUTEX.lock().unwrap();
@@ -436,6 +446,7 @@ mod tests {
             .current_dir(workspace.path())
             .output()
             .unwrap();
+        std::fs::write(workspace.path().join("cleanup.sh"), "echo ok\n").unwrap();
         std::env::set_current_dir(workspace.path()).unwrap();
 
         let mut config = AegisConfig::default();
@@ -443,6 +454,7 @@ mod tests {
         config.snapshot_policy = SnapshotPolicy::Selective;
         config.auto_snapshot_git = true;
         config.auto_snapshot_docker = false;
+        config.language_analysis.script_file_limit_bytes = 1;
         let context = RuntimeContext::new(config, test_handle()).unwrap();
 
         let outcome = super::plan_with_context(
@@ -460,9 +472,14 @@ mod tests {
         let PlanningOutcome::Planned(plan) = outcome else {
             panic!("effect-opaque safe command must produce a normal plan");
         };
-        // No extra prompt: effect opacity alone never raises the approval bar.
-        assert_eq!(plan.execution_disposition(), ExecutionDisposition::Execute);
-        assert_eq!(plan.approval_requirement(), ApprovalRequirement::None);
+        assert_eq!(
+            plan.execution_disposition(),
+            ExecutionDisposition::RequiresApproval
+        );
+        assert_eq!(
+            plan.approval_requirement(),
+            ApprovalRequirement::HumanConfirmationRequired
+        );
         // Recovery backstop: a pre-exec snapshot is requested from the git plugin.
         assert_eq!(
             plan.snapshot_plan(),

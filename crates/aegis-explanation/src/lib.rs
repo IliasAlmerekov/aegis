@@ -82,6 +82,10 @@ impl PolicyExplanation {
             PolicyRationale::SafeCommand => "safe command",
             PolicyRationale::AllowlistOverride => "allowlist override applied",
             PolicyRationale::RequiresConfirmation => "requires confirmation",
+            PolicyRationale::AnalysisConfirmationRequired => {
+                "language analysis requires one-time confirmation"
+            }
+            PolicyRationale::AnalysisOverrideRequired => "analysis override required",
             PolicyRationale::IntrinsicRiskBlock => "blocked by intrinsic risk",
             PolicyRationale::ProtectCiPolicy => "blocked by protect-mode CI policy",
             PolicyRationale::StrictPolicy => "blocked by strict mode",

@@ -13,15 +13,42 @@
 
 ## Active branch
 
-`main`
+`feat/language-aware`
 
 ## Last updated
 
-2026-07-23
+2026-07-24
 
 ---
 
-## Last session (2026-07-23) — L1 Iteration 8 Bash corpus
+## Last session (2026-07-24) — L1 Iteration 9 policy, config, and UX
+
+- **Iteration 9 complete via TDD (ADR-022 §5–§7).** Live planning now merges
+  all routed inline, script-file, direct-exec, and dynamic-source analysis
+  before policy across Shell, Watch, JSON/CI, Toggle, and Claude/Codex hook
+  paths. Protect uses a one-time non-persistable Analysis confirmation; Strict
+  uses a narrow Analysis override without weakening unrelated Strict denials.
+- **Budgets and provenance:** effective config ratchets inline/file bytes,
+  script count, recursion depth, target count, aggregate bytes, and one total
+  100 ms session ceiling. Resolution, worker send/read/reap, raw-byte hashes,
+  UTF-8 BOM span remapping, and typed degradation are bounded and covered.
+  The TUI renders decisive/detail IDs, operation, origin, location, certainty,
+  and degradation without exposing Language-aware matched source.
+- **Review:** Standards clean; Spec/re-review findings on dropped routes, UI
+  evidence, missing/unwired budgets, direct-exec degradation, total deadlines,
+  worker-session hangs, original-byte provenance/BOM spans, inline limits, and
+  policy-rule Allow were confirmed, fixed, and replayed clean.
+- **Verified:** `rtk cargo test --workspace` (2024 tests), focused policy/TUI/
+  config/orchestration/worker/full-pipeline suites, file-size budget,
+  `rtk cargo clippy --all-targets -- -D warnings`, and `rtk cargo fmt --check`
+  passed. `rtk cargo audit` and `rtk cargo deny check` passed, and the scanner
+  safe-command benchmark measured 3.03–3.20 ms per 1,000 commands (about
+  3.1 µs per command). No `TASKS.md` checkbox changed: L1 is a roadmap
+  milestone.
+
+---
+
+## Prior session (2026-07-23) — L1 Iteration 8 Bash corpus
 
 - **Iteration 8 Bash corpus done via TDD (ADR-022 §3, §7; plan Iteration 8).
   Scope and seam confirmed with the user before the test:** public

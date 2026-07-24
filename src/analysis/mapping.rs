@@ -98,12 +98,19 @@ pub fn map_adapter_result(
     source: &str,
     language: SourceLanguage,
     source_origin: SourceOrigin,
+    file_path: Option<String>,
     source_hash: Option<String>,
     parent_depth: u32,
 ) -> MappingOutcome {
     let mut matches = Vec::new();
     let mut recursive_targets = Vec::new();
     let mut reasons: Vec<DegradationReason> = Vec::new();
+    let provenance_context = ProvenanceContext {
+        language,
+        source_origin,
+        file_path: file_path.as_deref(),
+        source_hash: source_hash.as_deref(),
+    };
 
     for op in &adapter.operations {
         let Some(mapped) = map_operation(op) else {
@@ -135,9 +142,7 @@ pub fn map_adapter_result(
             };
             let provenance = build_provenance(
                 &mapped,
-                language,
-                source_origin,
-                source_hash.as_deref(),
+                &provenance_context,
                 span,
                 status,
                 degradation_reason,
@@ -170,9 +175,7 @@ pub fn map_adapter_result(
             // dynamic source/cwd (§6), not for non-execution dynamic operands.
             let provenance = build_provenance(
                 &mapped,
-                language,
-                source_origin,
-                source_hash.as_deref(),
+                &provenance_context,
                 span,
                 AnalysisStatus::Complete,
                 None,
@@ -204,23 +207,28 @@ pub fn map_adapter_result(
     }
 }
 
+struct ProvenanceContext<'a> {
+    language: SourceLanguage,
+    source_origin: SourceOrigin,
+    file_path: Option<&'a str>,
+    source_hash: Option<&'a str>,
+}
+
 /// Build the metadata-only provenance for one detected operation.
 fn build_provenance(
     op: &DetectedOperation,
-    language: SourceLanguage,
-    source_origin: SourceOrigin,
-    source_hash: Option<&str>,
+    context: &ProvenanceContext<'_>,
     span: ByteSpan,
     status: AnalysisStatus,
     degradation_reason: Option<DegradationReason>,
 ) -> AnalysisProvenance {
     AnalysisProvenance {
-        language: Some(language.id().to_string()),
-        source_origin,
+        language: Some(context.language.id().to_string()),
+        source_origin: context.source_origin,
         rule_id: None,
         operation: Some(op.clone()),
-        file_path: None,
-        source_hash: source_hash.map(str::to_string),
+        file_path: context.file_path.map(str::to_string),
+        source_hash: context.source_hash.map(str::to_string),
         span: Some(span),
         certainty: op.certainty,
         status,

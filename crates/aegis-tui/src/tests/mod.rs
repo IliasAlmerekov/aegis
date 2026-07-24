@@ -4,6 +4,7 @@ pub(crate) use crate::shared::{build_highlighted_command, sorted_highlight_range
 pub use crate::stdout_renderer::PromptDecision;
 pub use crate::stdout_renderer::show_confirmation_with_input;
 pub use crate::tty_renderer::tty_unavailable_decision;
+pub(crate) use crate::tty_renderer::tty_unavailable_prompt_decision;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -15,8 +16,9 @@ use aegis_explanation::{
 };
 use aegis_parser::Parser;
 use aegis_types::{
-    Assessment, Category, DetectionSource, HighlightRange, MatchEvidence, MatchResult, Pattern,
-    PatternSource,
+    AnalysisProvenance, AnalysisStatus, Assessment, ByteSpan, Category, DetectedOperation,
+    DetectionSource, HighlightRange, MatchEvidence, MatchResult, OperandCertainty, OperationKind,
+    OperationModifiers, Pattern, PatternSource, SourceOrigin,
 };
 use aegis_types::{RiskLevel, SnapshotRecord};
 
@@ -139,6 +141,49 @@ pub fn make_assessment(cmd: &str, risk: RiskLevel, matches: Vec<MatchResult>) ->
         matched: matches,
         command: Parser::parse(cmd),
         analysis: None,
+    }
+}
+
+pub fn make_language_match(id: &'static str, risk: RiskLevel, matched_text: &str) -> MatchResult {
+    let operation = DetectedOperation {
+        kind: OperationKind::FilesystemDelete,
+        modifiers: OperationModifiers::default(),
+        certainty: OperandCertainty::Known,
+    };
+    MatchResult {
+        pattern: Arc::new(Pattern {
+            id: Cow::Borrowed(id),
+            category: Category::Filesystem,
+            risk,
+            pattern: Cow::Borrowed(""),
+            description: Cow::Borrowed("Language-aware filesystem deletion"),
+            safe_alt: None,
+            source: PatternSource::Builtin,
+            justification: None,
+        }),
+        matched_text: matched_text.to_string(),
+        highlight_range: None,
+        evidence: MatchEvidence::LanguageRule {
+            source: DetectionSource::Builtin,
+            operation: operation.clone(),
+            provenance: AnalysisProvenance {
+                language: Some("python".to_string()),
+                source_origin: SourceOrigin::ScriptFile,
+                rule_id: Some(id.to_string()),
+                operation: Some(operation),
+                file_path: Some("danger.py".to_string()),
+                source_hash: Some("abc123".to_string()),
+                span: Some(ByteSpan {
+                    line: 7,
+                    column: 3,
+                    byte_start: 42,
+                    byte_end: 61,
+                }),
+                certainty: OperandCertainty::Known,
+                status: AnalysisStatus::Degraded,
+                degradation_reason: Some(aegis_types::DegradationReason::IncompleteSyntax),
+            },
+        },
     }
 }
 

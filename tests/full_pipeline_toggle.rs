@@ -56,3 +56,29 @@ fn disabled_shell_wrapper_json_mode_preserves_evaluation_contract() {
         "disabled json mode must continue to avoid audit writes"
     );
 }
+
+#[test]
+fn disabled_toggle_bypasses_language_analysis_in_text_mode() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let target = workspace.path().join("artifact.txt");
+    std::fs::write(&target, "delete").unwrap();
+    write_disabled_toggle(home.path());
+    let command = format!(
+        "python3 -c 'import os; os.remove(\"{}\")'",
+        target.display()
+    );
+
+    let output = base_command(home.path())
+        .current_dir(workspace.path())
+        .args(["-c", &command])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        !target.exists(),
+        "trusted Toggle posture must bypass analysis"
+    );
+    assert!(!home.path().join(".aegis").join("audit.jsonl").exists());
+}

@@ -9,8 +9,6 @@ use std::time::Duration;
 use aegis::analysis::{Outcome, run};
 use aegis_types::{AnalysisStatus, Assessment, DegradationReason, ParsedCommand, RiskLevel};
 
-/// A throwaway `Assessment` baseline (Safe, no matches, no language analysis)
-/// that mirrors the shape the scanner produces before language analysis runs.
 fn safe_baseline() -> Assessment {
     Assessment {
         risk: RiskLevel::Safe,
@@ -30,9 +28,6 @@ fn safe_baseline() -> Assessment {
 
 #[tokio::test]
 async fn run_returns_baseline_unchanged_when_route_yields_no_inline_target() {
-    // `ls -la` routes to no interpreter, so there is no analyzable inline
-    // source — ADR-022 §0: no worker is spawned and the baseline is returned
-    // untouched (analysis still None).
     let baseline = safe_baseline();
     let outcome = run(
         "ls -la",
@@ -50,12 +45,9 @@ async fn run_returns_baseline_unchanged_when_route_yields_no_inline_target() {
         other => panic!("no inline target must not start a worker: {other:?}"),
     }
 }
+
 #[tokio::test]
 async fn run_analyzes_inline_python_and_merges_a_recursive_delete_match() {
-    // `shutil.rmtree('x')` is a recursive filesystem delete: the Python adapter
-    // emits FilesystemDelete{recursive:true}, which classifies as LANG-FS-DEL-R
-    // at Danger. The real worker subprocess analyzes the inline body and the
-    // merged Assessment must lift to Danger and carry that match.
     let baseline = safe_baseline();
     let outcome = run(
         "python3 -c \"shutil.rmtree('x')\"",

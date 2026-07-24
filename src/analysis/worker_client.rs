@@ -360,64 +360,59 @@ impl Worker {
         let n = requests.len();
         let sent_ids: Vec<u32> = requests.iter().map(|r| r.request_id).collect();
         let mut results: Vec<Option<TargetResult>> = vec![None; n];
+        let mut all_responses_received = false;
 
-        // 1. Send + flush. A send failure ends the session for every target.
-        let send_err = match self.stdin.as_mut() {
-            Some(writer) => send_requests(writer, &requests).await.err(),
-            None => Some(WorkerError::Closed),
-        };
-        if let Some(fail) = send_err {
-            self.reap_kill().await;
-            return all_failed(n, fail);
-        }
-
-        // 2. Close stdin so the worker sees end-of-session (ADR-022 §2).
-        self.stdin.take();
-
-        // 3. Read responses under the deadline.
-        let read_result: Result<(), WorkerError> = match self.stdout.as_mut() {
-            Some(reader) => {
-                match timeout(deadline, read_responses(reader, &sent_ids, &mut results)).await {
-                    Ok(r) => r,
-                    Err(_) => Err(WorkerError::Timeout),
-                }
+        let session = async {
+            match self.stdin.as_mut() {
+                Some(writer) => send_requests(writer, &requests).await?,
+                None => return Err(WorkerError::Closed),
             }
-            None => Err(WorkerError::Closed),
+            self.stdin.take();
+
+            match self.stdout.as_mut() {
+                Some(reader) => read_responses(reader, &sent_ids, &mut results).await?,
+                None => return Err(WorkerError::Closed),
+            }
+            all_responses_received = true;
+
+            let code = self
+                .child
+                .wait()
+                .await
+                .ok()
+                .and_then(|status| status.code());
+            self.reaped = true;
+            self.exit_code = code;
+            if code != Some(0) {
+                return Err(WorkerError::NonZeroExit { code });
+            }
+            Ok(())
         };
 
-        match read_result {
-            Ok(()) => {
-                // 4. All responses received; the worker is exiting. Waiting is
-                // safe here — the worker finished its work and is reaped
-                // promptly (it cannot hang once stdin is closed and all output
-                // is drained). A non-zero exit taints the whole session.
-                let code = self.child.wait().await.ok().and_then(|s| s.code());
-                self.reaped = true;
-                self.exit_code = code;
-                if code != Some(0) {
-                    return all_failed(n, WorkerError::NonZeroExit { code });
-                }
-                results
-                    .into_iter()
-                    .map(|s| s.unwrap_or(TargetResult::Failed(WorkerError::Closed)))
-                    .collect()
-            }
-            Err(fail) => {
-                // A read failure: the worker may still be running (e.g. Timeout).
-                // Kill and reap it best-effort (no deadlock), then fill the
-                // remaining targets — prior responses are retained.
+        let failure = match timeout(deadline, session).await {
+            Ok(Ok(())) => None,
+            Ok(Err(fail)) => Some(fail),
+            Err(_) => Some(WorkerError::Timeout),
+        };
+
+        if let Some(fail) = failure {
+            if !self.reaped {
                 self.reap_kill().await;
-                for slot in results.iter_mut() {
-                    if slot.is_none() {
-                        *slot = Some(TargetResult::Failed(fail.clone()));
-                    }
+            }
+            if all_responses_received || matches!(fail, WorkerError::NonZeroExit { .. }) {
+                return all_failed(n, fail);
+            }
+            for slot in &mut results {
+                if slot.is_none() {
+                    *slot = Some(TargetResult::Failed(fail.clone()));
                 }
-                results
-                    .into_iter()
-                    .map(|s| s.unwrap_or(TargetResult::Failed(WorkerError::Closed)))
-                    .collect()
             }
         }
+
+        results
+            .into_iter()
+            .map(|slot| slot.unwrap_or(TargetResult::Failed(WorkerError::Closed)))
+            .collect()
     }
 
     /// The worker's exit code, once [`analyze`](Self::analyze) or

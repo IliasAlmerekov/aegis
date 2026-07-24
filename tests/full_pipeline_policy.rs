@@ -614,3 +614,93 @@ auto_snapshot_docker = false
     assert_eq!(entries[0]["decision"], "Blocked");
     assert_eq!(entries[0]["risk"], "Warn");
 }
+
+#[test]
+fn language_aware_confirmation_cannot_be_persisted_from_shell() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let target = workspace.path().join("artifact.txt");
+    fs::write(&target, "keep").unwrap();
+    let command = format!(
+        "python3 -c 'import os; os.remove(\"{}\")'",
+        target.display()
+    );
+
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
+        .args(["-c", &command])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"always\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        target.exists(),
+        "a rejected persistent approval must not execute"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Approve this language-aware assessment once?"),
+        "the shell must present the non-persistable language-analysis prompt"
+    );
+    assert!(
+        !workspace.path().join(".aegis.toml").exists(),
+        "language-analysis approval must never append an allow rule"
+    );
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "Denied");
+    assert!(
+        matches!(
+            entries[0]["analysis"]["status"].as_str(),
+            Some("complete" | "degraded")
+        ),
+        "the bounded worker may degrade under concurrent test load"
+    );
+}
+
+#[test]
+fn strict_analysis_override_approves_exactly_once_from_shell() {
+    let home = TempDir::new().unwrap();
+    let workspace = TempDir::new().unwrap();
+    let target = workspace.path().join("artifact.txt");
+    fs::write(&target, "delete").unwrap();
+    write_global_config(home.path(), "mode = \"Strict\"\n");
+    let command = "printf '%s' \"$PAYLOAD\" | python3";
+    let payload = format!("import os\nos.remove({:?})\n", target.display().to_string());
+
+    let mut child = base_command(home.path())
+        .current_dir(workspace.path())
+        .env("AEGIS_FORCE_INTERACTIVE", "1")
+        .env("PAYLOAD", payload)
+        .args(["-c", command])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"yes\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(!target.exists(), "the approved command must execute once");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Approve one-time analysis override?"),
+        "Strict must use the narrow Analysis override prompt"
+    );
+    assert!(!workspace.path().join(".aegis.toml").exists());
+
+    let entries = read_audit_entries(home.path());
+    assert_eq!(entries[0]["decision"], "Approved");
+    assert_eq!(entries[0]["analysis"]["status"], "degraded");
+}

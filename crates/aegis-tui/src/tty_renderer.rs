@@ -12,11 +12,24 @@ pub fn tty_unavailable_decision(assessment: &Assessment) -> bool {
     matches!(assessment.risk, RiskLevel::Safe)
 }
 
+pub(crate) fn tty_unavailable_prompt_decision(
+    assessment: &Assessment,
+    explanation: &CommandExplanation,
+) -> PromptDecision {
+    if explanation.policy.requires_confirmation {
+        PromptDecision::Deny
+    } else if tty_unavailable_decision(assessment) {
+        PromptDecision::Approve
+    } else {
+        PromptDecision::Deny
+    }
+}
+
 /// Show the confirmation dialog via `/dev/tty` and return a [`PromptDecision`].
 ///
 /// Opens `/dev/tty` for both input (keystrokes) and output (dialog
-/// rendering). If the device cannot be opened, returns
-/// `tty_unavailable_decision(assessment)` — fail-closed for Warn/Danger.
+/// rendering). If the device cannot be opened, any policy-required
+/// confirmation is denied, including Safe language-analysis degradation.
 pub fn show_confirmation_via_tty_with_decision(
     assessment: &Assessment,
     explanation: &CommandExplanation,
@@ -26,31 +39,19 @@ pub fn show_confirmation_via_tty_with_decision(
         .map(|value| value == "1")
         .unwrap_or(false)
     {
-        return if tty_unavailable_decision(assessment) {
-            PromptDecision::Approve
-        } else {
-            PromptDecision::Deny
-        };
+        return tty_unavailable_prompt_decision(assessment, explanation);
     }
 
     let tty = match OpenOptions::new().read(true).write(true).open("/dev/tty") {
         Ok(f) => f,
         Err(_) => {
-            return if tty_unavailable_decision(assessment) {
-                PromptDecision::Approve
-            } else {
-                PromptDecision::Deny
-            };
+            return tty_unavailable_prompt_decision(assessment, explanation);
         }
     };
     let tty_write = match tty.try_clone() {
         Ok(f) => f,
         Err(_) => {
-            return if tty_unavailable_decision(assessment) {
-                PromptDecision::Approve
-            } else {
-                PromptDecision::Deny
-            };
+            return tty_unavailable_prompt_decision(assessment, explanation);
         }
     };
 
