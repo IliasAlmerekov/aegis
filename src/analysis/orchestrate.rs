@@ -16,6 +16,7 @@
 //! `Worker::analyze` closes stdin and reaps the child every session, so worker
 //! reuse across pops remains a deferred performance optimization.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use aegis_language::protocol::Response;
@@ -24,6 +25,7 @@ use aegis_types::{
     merge_analysis,
 };
 
+use super::AnalysisCwd;
 use super::mapping::map_adapter_result;
 use super::queue::{AnalysisQueue, QueueBudget, QueueTarget};
 use super::router::{Resolution, RoutedTarget, resolve_for_analysis, route};
@@ -129,6 +131,29 @@ pub async fn run_with_budget(
     trusted_aliases: &[(&str, &str)],
     budget: OrchestrationBudget,
 ) -> Outcome {
+    run_with_budget_in_cwd(
+        command,
+        AnalysisCwd::Resolved(Path::new(".")),
+        baseline,
+        aegis_path,
+        trusted_aliases,
+        budget,
+    )
+    .await
+}
+
+/// Run language analysis with effective budgets and a command working directory.
+///
+/// Relative script-file and direct-exec targets are resolved against
+/// `command_cwd`; absolute paths and inline sources are unaffected.
+pub async fn run_with_budget_in_cwd(
+    command: &str,
+    command_cwd: AnalysisCwd<'_>,
+    baseline: &Assessment,
+    aegis_path: Option<&str>,
+    trusted_aliases: &[(&str, &str)],
+    budget: OrchestrationBudget,
+) -> Outcome {
     let session_deadline = Instant::now() + budget.total_timeout;
     let routed = route(command, trusted_aliases);
     if routed.is_empty() {
@@ -178,7 +203,7 @@ pub async fn run_with_budget(
         };
         let resolution = match tokio::time::timeout(
             remaining,
-            resolve_for_analysis(target, budget.script_file_limit_bytes),
+            resolve_for_analysis(target, command_cwd, budget.script_file_limit_bytes),
         )
         .await
         {

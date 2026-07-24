@@ -108,7 +108,7 @@ fn watch_without_tty_denies_required_recovery_degradation_before_execution() {
     let output = aegis_watch_in(
         home.path(),
         cwd.path(),
-        b"{\"cmd\":\"sh ./run.sh\",\"id\":\"degraded\"}\n",
+        b"{\"cmd\":\"zsh ./run.sh\",\"id\":\"degraded\"}\n",
     );
 
     let frames = parse_frames(&output.stdout);
@@ -127,6 +127,36 @@ fn watch_without_tty_denies_required_recovery_degradation_before_execution() {
 }
 
 #[test]
+fn watch_without_tty_denies_safe_language_degradation_before_recovery() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let marker = cwd.path().join("executed");
+    fs::write(cwd.path().join("run.sh"), "printf ran > executed\n").unwrap();
+
+    let output = aegis_watch_in(
+        home.path(),
+        cwd.path(),
+        b"{\"cmd\":\"sh ./run.sh\",\"id\":\"analysis-degraded\"}\n",
+    );
+
+    let frames = parse_frames(&output.stdout);
+    let result = frames
+        .iter()
+        .find(|frame| frame["type"] == "result")
+        .expect("degraded command must emit a result frame");
+    assert_eq!(result["decision"], "denied");
+    assert!(!marker.exists(), "degraded Watch command must not execute");
+
+    let contents = fs::read_to_string(home.path().join(".aegis").join("audit.jsonl")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(entry["analysis"]["status"], "degraded");
+    assert!(
+        entry.get("recovery_degradation").is_none(),
+        "language confirmation denial must happen before recovery"
+    );
+}
+
+#[test]
 fn watch_executes_effect_opaque_command_when_required_snapshot_is_ready() {
     let home = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
@@ -139,7 +169,7 @@ fn watch_executes_effect_opaque_command_when_required_snapshot_is_ready() {
     let output = aegis_watch_in(
         home.path(),
         cwd.path(),
-        b"{\"cmd\":\"sh ./run.sh\",\"id\":\"ready\"}\n",
+        b"{\"cmd\":\"zsh ./run.sh\",\"id\":\"ready\"}\n",
     );
 
     let frames = parse_frames(&output.stdout);
@@ -193,6 +223,34 @@ fn watch_without_tty_denies_language_aware_match_before_execution() {
     let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
     assert_eq!(entry["decision"], "Denied");
     assert_eq!(entry["analysis"]["status"], "complete");
+}
+
+#[test]
+fn watch_resolves_relative_script_file_against_frame_cwd() {
+    let home = TempDir::new().unwrap();
+    let process_cwd = TempDir::new().unwrap();
+    let frame_cwd = TempDir::new().unwrap();
+    let target = frame_cwd.path().join("artifact.txt");
+    fs::write(&target, "keep").unwrap();
+    fs::write(
+        frame_cwd.path().join("run.py"),
+        "import os\nos.remove('artifact.txt')\n",
+    )
+    .unwrap();
+    let input = serde_json::json!({
+        "cmd": "python3 ./run.py",
+        "cwd": frame_cwd.path(),
+        "id": "relative-script"
+    })
+    .to_string()
+        + "\n";
+
+    let output = aegis_watch_in(home.path(), process_cwd.path(), input.as_bytes());
+
+    let contents = fs::read_to_string(home.path().join(".aegis").join("audit.jsonl")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(entry["analysis"]["status"], "complete");
+    assert!(target.exists(), "Watch must not execute without a TTY");
 }
 
 #[test]

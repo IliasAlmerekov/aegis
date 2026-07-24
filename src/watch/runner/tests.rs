@@ -5,14 +5,14 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tempfile::TempDir;
 
-use super::{run_watch_plan_with_recovery_prompt, watch_execution_cwd};
+use super::{run_watch_plan_with_prompts, watch_execution_cwd};
 use crate::config::AegisConfig;
 use crate::decision::ExecutionTransport;
 use crate::planning::{
     CwdState, PlanningOutcome, PlanningRequest, PreparedPlanner, prepare_and_plan_async,
 };
 use crate::runtime::RuntimeContext;
-use crate::ui::confirm::RecoveryPromptDecision;
+use crate::ui::confirm::{PromptDecision, RecoveryPromptDecision};
 use crate::watch::protocol::InputFrame;
 
 #[test]
@@ -95,10 +95,17 @@ async fn watch_recovery_prompt_deny_prevents_execution_and_audits_degradation() 
     let (frame, plan) = effect_opaque_plan(&prepared, &workspace).await;
     let prompted = Cell::new(false);
 
-    run_watch_plan_with_recovery_prompt(frame, &prepared, plan, false, || {
-        prompted.set(true);
-        RecoveryPromptDecision::Deny
-    })
+    run_watch_plan_with_prompts(
+        frame,
+        &prepared,
+        plan,
+        false,
+        |_, _| PromptDecision::Approve,
+        || {
+            prompted.set(true);
+            RecoveryPromptDecision::Deny
+        },
+    )
     .await;
 
     assert!(prompted.get());
@@ -118,10 +125,17 @@ async fn watch_recovery_prompt_run_once_executes_and_audits_degradation() {
     let (frame, plan) = effect_opaque_plan(&prepared, &workspace).await;
     let prompted = Cell::new(false);
 
-    run_watch_plan_with_recovery_prompt(frame, &prepared, plan, false, || {
-        prompted.set(true);
-        RecoveryPromptDecision::RunOnceWithoutRecovery
-    })
+    run_watch_plan_with_prompts(
+        frame,
+        &prepared,
+        plan,
+        false,
+        |_, _| PromptDecision::Approve,
+        || {
+            prompted.set(true);
+            RecoveryPromptDecision::RunOnceWithoutRecovery
+        },
+    )
     .await;
 
     assert!(prompted.get());
@@ -140,9 +154,14 @@ async fn watch_recovery_deny_records_enabled_sandbox_as_not_attempted() {
     let prepared = prepared_with_optional_sandbox(audit_path.clone());
     let (frame, plan) = effect_opaque_plan(&prepared, &workspace).await;
 
-    run_watch_plan_with_recovery_prompt(frame, &prepared, plan, false, || {
-        RecoveryPromptDecision::Deny
-    })
+    run_watch_plan_with_prompts(
+        frame,
+        &prepared,
+        plan,
+        false,
+        |_, _| PromptDecision::Approve,
+        || RecoveryPromptDecision::Deny,
+    )
     .await;
 
     let entry = read_audit_entry(&audit_path);

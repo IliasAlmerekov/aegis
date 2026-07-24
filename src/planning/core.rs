@@ -28,7 +28,8 @@ pub fn plan_with_context(
     context: &RuntimeContext,
     request: PlanningRequest<'_>,
 ) -> PlanningOutcome {
-    let assessment = context.assess_with_language_analysis(request.command);
+    let assessment = context
+        .assess_with_language_analysis_in_cwd(request.command, analysis_cwd(&request.cwd_state));
     let allowlist_match = match &request.cwd_state {
         CwdState::Resolved(path) => {
             context.allowlist_match_for_command(request.command, Some(path.as_path()))
@@ -82,7 +83,10 @@ pub async fn plan_with_context_async(
     request: PlanningRequest<'_>,
 ) -> PlanningOutcome {
     let assessment = context
-        .assess_with_language_analysis_async(request.command)
+        .assess_with_language_analysis_async_in_cwd(
+            request.command,
+            analysis_cwd(&request.cwd_state),
+        )
         .await;
     let allowlist_match = match &request.cwd_state {
         CwdState::Resolved(path) => {
@@ -118,6 +122,13 @@ pub async fn plan_with_context_async(
         blocklist_match,
         applicable_snapshot_plugins,
     )
+}
+
+fn analysis_cwd(cwd_state: &CwdState) -> crate::analysis::AnalysisCwd<'_> {
+    match cwd_state {
+        CwdState::Resolved(path) => crate::analysis::AnalysisCwd::Resolved(path.as_path()),
+        CwdState::Unavailable => crate::analysis::AnalysisCwd::Unavailable,
+    }
 }
 
 fn build_planning_outcome(

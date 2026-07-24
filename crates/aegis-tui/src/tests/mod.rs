@@ -4,6 +4,7 @@ pub(crate) use crate::shared::{build_highlighted_command, sorted_highlight_range
 pub use crate::stdout_renderer::PromptDecision;
 pub use crate::stdout_renderer::show_confirmation_with_input;
 pub use crate::tty_renderer::tty_unavailable_decision;
+pub(crate) use crate::tty_renderer::tty_unavailable_prompt_decision;
 
 use std::borrow::Cow;
 use std::sync::Arc;

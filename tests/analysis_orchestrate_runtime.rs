@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use aegis::analysis::{OrchestrationBudget, Outcome, run, run_with_budget};
+use aegis::analysis::{
+    AnalysisCwd, OrchestrationBudget, Outcome, run, run_with_budget, run_with_budget_in_cwd,
+};
 use aegis_types::{
     AnalysisStatus, Assessment, DegradationReason, MatchEvidence, ParsedCommand, RiskLevel,
 };
@@ -23,6 +25,99 @@ fn safe_baseline() -> Assessment {
         },
         analysis: None,
     }
+}
+
+#[tokio::test]
+async fn run_resolves_relative_script_file_against_command_cwd() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("run.py"), "print('ok')\n").unwrap();
+    let baseline = safe_baseline();
+
+    let outcome = run_with_budget_in_cwd(
+        "python3 ./run.py",
+        AnalysisCwd::Resolved(workspace.path()),
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        OrchestrationBudget {
+            total_timeout: Duration::from_secs(2),
+            ..OrchestrationBudget::L1_DEFAULT
+        },
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed { assessment, .. } => assessment,
+        other => panic!("relative script file must be analyzed: {other:?}"),
+    };
+
+    assert_eq!(
+        assessment.analysis.as_ref().map(|analysis| analysis.status),
+        Some(AnalysisStatus::NotApplicable),
+        "{assessment:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_resolves_relative_direct_exec_against_command_cwd() {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(
+        workspace.path().join("direct-script"),
+        "#!/usr/bin/env python3\nimport os\nos.remove('victim')\n",
+    )
+    .unwrap();
+    let baseline = safe_baseline();
+
+    let outcome = run_with_budget_in_cwd(
+        "./direct-script",
+        AnalysisCwd::Resolved(workspace.path()),
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        OrchestrationBudget {
+            total_timeout: Duration::from_secs(2),
+            ..OrchestrationBudget::L1_DEFAULT
+        },
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed { assessment, .. } => assessment,
+        other => panic!("relative direct executable must be analyzed: {other:?}"),
+    };
+
+    assert!(
+        assessment
+            .matched
+            .iter()
+            .any(|matched| matched.pattern.id.as_ref() == "LANG-FS-DEL")
+    );
+}
+
+#[tokio::test]
+async fn run_degrades_relative_script_when_command_cwd_is_unavailable() {
+    let baseline = safe_baseline();
+
+    let outcome = run_with_budget_in_cwd(
+        "python3 ./aegis-unavailable-cwd-source.py",
+        AnalysisCwd::Unavailable,
+        &baseline,
+        Some(env!("CARGO_BIN_EXE_aegis")),
+        &[],
+        OrchestrationBudget {
+            total_timeout: Duration::from_secs(2),
+            ..OrchestrationBudget::L1_DEFAULT
+        },
+    )
+    .await;
+    let assessment = match outcome {
+        Outcome::Analyzed { assessment, .. } => assessment,
+        other => panic!("unavailable cwd must produce degradation: {other:?}"),
+    };
+
+    assert!(assessment.analysis.as_ref().is_some_and(|analysis| {
+        analysis
+            .degradation_reasons
+            .contains(&DegradationReason::DynamicSource)
+    }));
 }
 
 #[tokio::test]

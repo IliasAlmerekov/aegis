@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use aegis_language::{SourceLanguage, SourceTarget};
 use aegis_types::DegradationReason;
 
+use super::AnalysisCwd;
 use super::heredoc::{self, StdinRoute};
 use super::source_reader::{self, SourceReadError};
 
@@ -96,6 +97,7 @@ pub(super) enum Resolution {
 
 pub(super) async fn resolve_for_analysis(
     target: RoutedTarget,
+    command_cwd: AnalysisCwd<'_>,
     script_file_limit_bytes: u64,
 ) -> Resolution {
     match target {
@@ -106,6 +108,10 @@ pub(super) async fn resolve_for_analysis(
             source_byte_offset: 0,
         },
         RoutedTarget::ScriptFile { language, path } => {
+            let path = match resolve_command_path(&path, command_cwd) {
+                Ok(path) => path,
+                Err(reason) => return Resolution::Degraded(reason),
+            };
             match source_reader::read_script_file(&path, script_file_limit_bytes).await {
                 Ok(read) => Resolution::Resolved {
                     language,
@@ -118,6 +124,10 @@ pub(super) async fn resolve_for_analysis(
         }
         RoutedTarget::Dynamic { reason, .. } => Resolution::Degraded(reason),
         RoutedTarget::DirectExec { path } => {
+            let path = match resolve_command_path(&path, command_cwd) {
+                Ok(path) => path,
+                Err(reason) => return Resolution::Degraded(reason),
+            };
             match source_reader::read_script_file(&path, script_file_limit_bytes).await {
                 Ok(read) => {
                     let Some(language) = read
@@ -138,6 +148,20 @@ pub(super) async fn resolve_for_analysis(
                 Err(err) => Resolution::Degraded(degradation_reason(&err)),
             }
         }
+    }
+}
+
+fn resolve_command_path(
+    path: &Path,
+    command_cwd: AnalysisCwd<'_>,
+) -> Result<PathBuf, DegradationReason> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+
+    match command_cwd {
+        AnalysisCwd::Resolved(cwd) => Ok(cwd.join(path)),
+        AnalysisCwd::Unavailable => Err(DegradationReason::DynamicSource),
     }
 }
 

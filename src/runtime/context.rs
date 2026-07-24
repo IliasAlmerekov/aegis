@@ -221,12 +221,37 @@ impl RuntimeContext {
     /// The synchronous shell path calls this outside Tokio; async callers use
     /// [`Self::assess_with_language_analysis_async`] to avoid nested blocking.
     pub fn assess_with_language_analysis(&self, cmd: &str) -> Assessment {
+        self.assess_with_language_analysis_in_cwd(
+            cmd,
+            crate::analysis::AnalysisCwd::Resolved(Path::new(".")),
+        )
+    }
+
+    /// Assess a command with language-aware relative paths resolved from `cwd`.
+    pub fn assess_with_language_analysis_in_cwd(
+        &self,
+        cmd: &str,
+        cwd: crate::analysis::AnalysisCwd<'_>,
+    ) -> Assessment {
         self.async_handle
-            .block_on(self.assess_with_language_analysis_async(cmd))
+            .block_on(self.assess_with_language_analysis_async_in_cwd(cmd, cwd))
     }
 
     /// Async variant of [`Self::assess_with_language_analysis`].
     pub async fn assess_with_language_analysis_async(&self, cmd: &str) -> Assessment {
+        self.assess_with_language_analysis_async_in_cwd(
+            cmd,
+            crate::analysis::AnalysisCwd::Resolved(Path::new(".")),
+        )
+        .await
+    }
+
+    /// Async variant of [`Self::assess_with_language_analysis_in_cwd`].
+    pub async fn assess_with_language_analysis_async_in_cwd(
+        &self,
+        cmd: &str,
+        cwd: crate::analysis::AnalysisCwd<'_>,
+    ) -> Assessment {
         let baseline = self.assess(cmd);
         let aliases: Vec<(&str, &str)> = self
             .runtime_config
@@ -234,8 +259,9 @@ impl RuntimeContext {
             .iter()
             .map(|(alias, canonical)| (alias.as_str(), canonical.as_str()))
             .collect();
-        match crate::analysis::run_with_budget(
+        match crate::analysis::run_with_budget_in_cwd(
             cmd,
+            cwd,
             &baseline,
             None,
             &aliases,
