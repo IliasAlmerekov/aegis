@@ -162,6 +162,40 @@ fn watch_executes_effect_opaque_command_when_required_snapshot_is_ready() {
 }
 
 #[test]
+fn watch_without_tty_denies_language_aware_match_before_execution() {
+    let home = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let target = cwd.path().join("artifact.txt");
+    fs::write(&target, "keep").unwrap();
+    let command = format!(
+        "python3 -c 'import os; os.remove(\"{}\")'",
+        target.display()
+    );
+    let input = serde_json::json!({
+        "cmd": command,
+        "id": "language-aware"
+    })
+    .to_string()
+        + "\n";
+
+    let output = aegis_watch_in(home.path(), cwd.path(), input.as_bytes());
+
+    let frames = parse_frames(&output.stdout);
+    let result = frames
+        .iter()
+        .find(|frame| frame["type"] == "result")
+        .expect("language-aware command must emit a result frame");
+    assert_eq!(result["decision"], "denied");
+    assert_eq!(result["exit_code"], 2);
+    assert!(target.exists(), "Watch must not execute without a TTY");
+
+    let contents = fs::read_to_string(home.path().join(".aegis").join("audit.jsonl")).unwrap();
+    let entry: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(entry["decision"], "Denied");
+    assert_eq!(entry["analysis"]["status"], "complete");
+}
+
+#[test]
 fn safe_command_stdout_chunk_is_base64() {
     use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 

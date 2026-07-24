@@ -245,6 +245,24 @@ The maximum bytes read from a routed script file
 never raise it (ADR-022 §6, §7).
 _Avoid_: script budget, file-size limit
 
+**Language-analysis budget**:
+A hard-bounded limit on inline bytes, script-file count/bytes, recursion depth,
+target count, aggregate bytes, or total session time. Trusted global config may
+tune within the hard ceiling; project config may only tighten it (ADR-022 §7).
+_Avoid_: analysis toggle, semantic-rule override
+
+**Analysis confirmation**:
+The Protect-mode one-time human decision required for a non-`Block`
+Language-aware `Match` or Analysis degradation. It cannot be persisted as an
+allowlist or policy-rule grant.
+_Avoid_: allowlist approval, permanent approval
+
+**Analysis override**:
+The Strict-mode one-time human decision narrowly attached to a non-`Block`
+semantic `Match`, or to a Safe assessment with Analysis degradation. It cannot
+authorize an unrelated Strict denial and cannot be persisted.
+_Avoid_: strict bypass, allowlist override
+
 ## Policy
 
 **Mode**:

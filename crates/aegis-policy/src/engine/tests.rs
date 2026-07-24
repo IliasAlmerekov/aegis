@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use super::super::types::{
     BlockReason, ExecutionTransport, PolicyAction, PolicyAllowlistResult, PolicyBlocklistResult,
     PolicyCiState, PolicyConfigFlags, PolicyDecision, PolicyExecutionContext, PolicyInput,
@@ -6,8 +9,11 @@ use super::super::types::{
 use super::evaluate_policy;
 use aegis_parser::Parser as CommandParser;
 use aegis_scanner::Assessment;
-use aegis_types::RiskLevel;
-use aegis_types::{AllowlistOverrideLevel, CiPolicy, Mode, SnapshotPolicy};
+use aegis_types::{
+    AllowlistOverrideLevel, AnalysisProvenance, Category, CiPolicy, DetectedOperation,
+    DetectionSource, MatchEvidence, MatchResult, Mode, OperandCertainty, OperationKind,
+    OperationModifiers, Pattern, PatternSource, RiskLevel, SnapshotPolicy, SourceOrigin,
+};
 
 fn assessment(risk: RiskLevel) -> Assessment {
     Assessment {
@@ -17,6 +23,84 @@ fn assessment(risk: RiskLevel) -> Assessment {
         highlight_ranges: Vec::new(),
         command: CommandParser::parse("terraform destroy -target=module.prod.api"),
         analysis: None,
+    }
+}
+
+/// A completed language-aware assessment at the given risk.
+///
+/// This models a semantic `Warn` such as a source-level destructive API that
+/// was not auto-approved by the shell scanner. Iteration 9 policy must treat
+/// the presence of this summary as distinct from an ordinary scanner warning.
+fn language_aware_assessment(risk: RiskLevel) -> Assessment {
+    let match_risk = match risk {
+        RiskLevel::Safe | RiskLevel::Warn => RiskLevel::Warn,
+        RiskLevel::Danger => RiskLevel::Danger,
+        RiskLevel::Block => RiskLevel::Warn,
+        _ => RiskLevel::Warn,
+    };
+    let id = "LANG-FS-DEL";
+    let language_match = MatchResult {
+        pattern: Arc::new(Pattern {
+            id: Cow::Borrowed(id),
+            category: Category::Filesystem,
+            risk: match_risk,
+            pattern: Cow::Borrowed(""),
+            description: Cow::Borrowed("language-aware filesystem deletion"),
+            safe_alt: None,
+            justification: None,
+            source: PatternSource::Builtin,
+        }),
+        matched_text: String::new(),
+        highlight_range: None,
+        evidence: MatchEvidence::LanguageRule {
+            source: DetectionSource::Builtin,
+            operation: DetectedOperation {
+                kind: OperationKind::FilesystemDelete,
+                modifiers: OperationModifiers::default(),
+                certainty: OperandCertainty::Known,
+            },
+            provenance: AnalysisProvenance {
+                language: Some("python".to_string()),
+                source_origin: SourceOrigin::Inline,
+                rule_id: Some(id.to_string()),
+                operation: None,
+                file_path: None,
+                source_hash: None,
+                span: None,
+                certainty: OperandCertainty::Known,
+                status: aegis_types::AnalysisStatus::Complete,
+                degradation_reason: None,
+            },
+        },
+    };
+    Assessment {
+        matched: vec![language_match],
+        analysis: Some(aegis_types::AnalysisSummary {
+            status: aegis_types::AnalysisStatus::Complete,
+            degradation_reasons: Vec::new(),
+        }),
+        ..assessment(risk)
+    }
+}
+
+/// A degraded language-aware assessment at the given risk.
+fn degraded_language_aware_assessment(risk: RiskLevel) -> Assessment {
+    degraded_language_aware_assessment_with_reason(
+        risk,
+        aegis_types::DegradationReason::DynamicSource,
+    )
+}
+
+fn degraded_language_aware_assessment_with_reason(
+    risk: RiskLevel,
+    reason: aegis_types::DegradationReason,
+) -> Assessment {
+    Assessment {
+        analysis: Some(aegis_types::AnalysisSummary {
+            status: aegis_types::AnalysisStatus::Degraded,
+            degradation_reasons: vec![reason],
+        }),
+        ..assessment(risk)
     }
 }
 
@@ -206,6 +290,351 @@ fn protect_allowlisted_warn_autoapproves_without_snapshots() {
 }
 
 #[test]
+fn audit_mode_autoapproves_degraded_language_aware_safe_assessment() {
+    let assessment = degraded_language_aware_assessment(RiskLevel::Safe);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Audit,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Block,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::AutoApprove,
+        PolicyRationale::AuditMode,
+        false,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn audit_mode_precedes_policy_rule_allow_for_degraded_language_aware_input() {
+    let assessment = degraded_language_aware_assessment(RiskLevel::Safe);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Audit,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Block,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult {
+            matched: true,
+            decision: Some(aegis_types::PolicyRuleDecision::Allow),
+            justification: None,
+        },
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::AutoApprove,
+        PolicyRationale::AuditMode,
+        false,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn audit_mode_precedes_blocklist_for_degraded_language_aware_input() {
+    let assessment = degraded_language_aware_assessment(RiskLevel::Safe);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Audit,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: true },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Block,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::AutoApprove,
+        PolicyRationale::AuditMode,
+        false,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn protect_degraded_language_aware_safe_requires_confirmation() {
+    let assessment = degraded_language_aware_assessment(RiskLevel::Safe);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::Prompt,
+        PolicyRationale::AnalysisConfirmationRequired,
+        true,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn protect_allowlisted_language_aware_warn_requires_confirmation() {
+    let assessment = language_aware_assessment(RiskLevel::Warn);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: true },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Warn,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::Prompt,
+        PolicyRationale::AnalysisConfirmationRequired,
+        true,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn protect_policy_rule_allow_for_language_aware_warn_requires_confirmation() {
+    let assessment = language_aware_assessment(RiskLevel::Warn);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult {
+            matched: true,
+            decision: Some(aegis_types::PolicyRuleDecision::Allow),
+            justification: None,
+        },
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::Prompt,
+        PolicyRationale::AnalysisConfirmationRequired,
+        true,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn protect_every_analysis_degradation_class_requires_one_time_confirmation() {
+    use aegis_types::DegradationReason::{
+        DynamicSource, GrammarUnavailable, IncompleteSyntax, LimitExceeded, UnsafeSource,
+        UnsupportedEncoding, WorkerFailure,
+    };
+
+    for reason in [
+        GrammarUnavailable,
+        IncompleteSyntax,
+        UnsafeSource,
+        UnsupportedEncoding,
+        LimitExceeded,
+        DynamicSource,
+        WorkerFailure,
+    ] {
+        let assessment = degraded_language_aware_assessment_with_reason(RiskLevel::Safe, reason);
+        let decision = evaluate_policy(PolicyInput {
+            assessment: &assessment,
+            mode: Mode::Protect,
+            ci_state: PolicyCiState { detected: false },
+            allowlist: PolicyAllowlistResult { matched: true },
+            blocklist: PolicyBlocklistResult { matched: false },
+            config_flags: PolicyConfigFlags {
+                ci_policy: CiPolicy::Allow,
+                allowlist_override_level: AllowlistOverrideLevel::Danger,
+                snapshot_policy: SnapshotPolicy::Selective,
+            },
+            execution_context: PolicyExecutionContext {
+                transport: ExecutionTransport::Shell,
+                applicable_snapshot_plugins: &[],
+            },
+            rules: PolicyRulesResult::default(),
+        });
+
+        assert_eq!(decision.decision, PolicyAction::Prompt, "{reason:?}");
+        assert_eq!(
+            decision.rationale,
+            PolicyRationale::AnalysisConfirmationRequired,
+            "{reason:?}"
+        );
+        assert!(!decision.allowlist_effective, "{reason:?}");
+    }
+}
+
+#[test]
+fn protect_ci_block_applies_to_completed_language_aware_warn() {
+    let assessment = language_aware_assessment(RiskLevel::Warn);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: true },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Block,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Evaluation,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::Block,
+        PolicyRationale::ProtectCiPolicy,
+        false,
+        false,
+        false,
+        Some(BlockReason::ProtectCiPolicy),
+    );
+}
+
+#[test]
+fn protect_policy_rule_prompt_for_language_aware_warn_uses_one_time_confirmation() {
+    let assessment = language_aware_assessment(RiskLevel::Warn);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: false },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Never,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &[],
+        },
+        rules: PolicyRulesResult {
+            matched: true,
+            decision: Some(aegis_types::PolicyRuleDecision::Prompt),
+            justification: None,
+        },
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::Prompt,
+        PolicyRationale::AnalysisConfirmationRequired,
+        true,
+        false,
+        false,
+        None,
+    );
+}
+
+#[test]
+fn protect_language_aware_danger_requires_confirmation_and_snapshots() {
+    let assessment = language_aware_assessment(RiskLevel::Danger);
+    let decision = evaluate_policy(PolicyInput {
+        assessment: &assessment,
+        mode: Mode::Protect,
+        ci_state: PolicyCiState { detected: false },
+        allowlist: PolicyAllowlistResult { matched: true },
+        blocklist: PolicyBlocklistResult { matched: false },
+        config_flags: PolicyConfigFlags {
+            ci_policy: CiPolicy::Allow,
+            allowlist_override_level: AllowlistOverrideLevel::Danger,
+            snapshot_policy: SnapshotPolicy::Selective,
+        },
+        execution_context: PolicyExecutionContext {
+            transport: ExecutionTransport::Shell,
+            applicable_snapshot_plugins: &["git"],
+        },
+        rules: PolicyRulesResult::default(),
+    });
+
+    assert_decision(
+        decision,
+        PolicyAction::Prompt,
+        PolicyRationale::AnalysisConfirmationRequired,
+        true,
+        true,
+        false,
+        None,
+    );
+}
+
+#[test]
 fn protect_danger_prompts_and_requests_snapshots_when_available() {
     let decision = evaluate(EvalInput {
         risk: RiskLevel::Danger,
@@ -230,128 +659,12 @@ fn protect_danger_prompts_and_requests_snapshots_when_available() {
     );
 }
 
-// ── ADR-016 / H9: effect-opaque recovery backstop ──────────────────────────
-
-/// Evaluate policy for an effect-opaque command (`sh ./cleanup.sh` shape)
-/// under the given snapshot posture. Risk stays orthogonal to the recovery
-/// requirement — the assessment is built with `effect_opaque = true`.
-fn evaluate_effect_opaque(
-    risk: RiskLevel,
-    snapshot_policy: SnapshotPolicy,
-    applicable_snapshot_plugins: &[&'static str],
-) -> PolicyDecision {
-    use super::super::types::PolicyRulesResult;
-    let assessment = effect_opaque_assessment(risk);
-    evaluate_policy(PolicyInput {
-        assessment: &assessment,
-        mode: Mode::Protect,
-        ci_state: PolicyCiState { detected: false },
-        allowlist: PolicyAllowlistResult { matched: false },
-        blocklist: PolicyBlocklistResult { matched: false },
-        config_flags: PolicyConfigFlags {
-            ci_policy: CiPolicy::Allow,
-            allowlist_override_level: AllowlistOverrideLevel::Never,
-            snapshot_policy,
-        },
-        execution_context: PolicyExecutionContext {
-            transport: ExecutionTransport::Shell,
-            applicable_snapshot_plugins,
-        },
-        rules: PolicyRulesResult::default(),
-    })
-}
-
 #[test]
-fn effect_opaque_safe_command_requires_recovery_under_selective_policy() {
-    // ADR-016: `sh ./cleanup.sh` is Safe to the quick scan yet effect-opaque.
-    // Recovery (`snapshots_required`) is the primary v1 backstop — orthogonal
-    // to risk — so a Safe effect-opaque command still requests a pre-exec
-    // snapshot when a snapshot policy and applicable plugins exist.
-    let decision = evaluate_effect_opaque(RiskLevel::Safe, SnapshotPolicy::Selective, &["git"]);
-
-    assert_eq!(decision.decision, PolicyAction::AutoApprove);
-    assert_eq!(decision.rationale, PolicyRationale::SafeCommand);
-    assert!(!decision.requires_confirmation);
-    assert!(
-        decision.snapshots_required,
-        "effect-opaque Safe command must request a recovery snapshot"
-    );
-}
-
-#[test]
-fn effect_opaque_recovery_respects_snapshot_policy_none_opt_out() {
-    // `SnapshotPolicy::None` is the trusted/global opt-out: effect opacity
-    // does not override it. Project config cannot reach `None` (C3 ratchet),
-    // but the engine must honour a global `None` without forcing snapshots.
-    let decision = evaluate_effect_opaque(RiskLevel::Safe, SnapshotPolicy::None, &["git"]);
-
-    assert!(
-        !decision.snapshots_required,
-        "SnapshotPolicy::None must suppress even effect-opaque recovery"
-    );
-}
-
-#[test]
-fn effect_opaque_recovery_remains_required_without_applicable_plugins() {
-    let decision = evaluate_effect_opaque(RiskLevel::Safe, SnapshotPolicy::Full, &[]);
-    assert!(decision.snapshots_required);
-}
-#[test]
-fn strict_effect_opaque_recovery_remains_required_without_applicable_plugins() {
-    let assessment = effect_opaque_assessment(RiskLevel::Safe);
+fn strict_scanner_warn_with_only_analysis_degradation_remains_blocked() {
+    let assessment = degraded_language_aware_assessment(RiskLevel::Warn);
     let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
         mode: Mode::Strict,
-        ci_state: PolicyCiState { detected: false },
-        allowlist: PolicyAllowlistResult { matched: false },
-        blocklist: PolicyBlocklistResult { matched: false },
-        config_flags: PolicyConfigFlags {
-            ci_policy: CiPolicy::Block,
-            allowlist_override_level: AllowlistOverrideLevel::Never,
-            snapshot_policy: SnapshotPolicy::Full,
-        },
-        execution_context: PolicyExecutionContext {
-            transport: ExecutionTransport::Shell,
-            applicable_snapshot_plugins: &[],
-        },
-        rules: PolicyRulesResult::default(),
-    });
-
-    assert!(decision.snapshots_required);
-}
-#[test]
-fn audit_policy_rule_allow_does_not_reactivate_effect_opaque_recovery() {
-    let assessment = effect_opaque_assessment(RiskLevel::Safe);
-    let decision = evaluate_policy(PolicyInput {
-        assessment: &assessment,
-        mode: Mode::Audit,
-        ci_state: PolicyCiState { detected: false },
-        allowlist: PolicyAllowlistResult { matched: false },
-        blocklist: PolicyBlocklistResult { matched: false },
-        config_flags: PolicyConfigFlags {
-            ci_policy: CiPolicy::Allow,
-            allowlist_override_level: AllowlistOverrideLevel::Never,
-            snapshot_policy: SnapshotPolicy::Full,
-        },
-        execution_context: PolicyExecutionContext {
-            transport: ExecutionTransport::Shell,
-            applicable_snapshot_plugins: &["git"],
-        },
-        rules: PolicyRulesResult {
-            matched: true,
-            decision: Some(aegis_types::PolicyRuleDecision::Allow),
-            justification: None,
-        },
-    });
-
-    assert!(!decision.snapshots_required);
-}
-#[test]
-fn policy_rule_allow_cannot_waive_effect_opaque_recovery() {
-    let assessment = effect_opaque_assessment(RiskLevel::Safe);
-    let decision = evaluate_policy(PolicyInput {
-        assessment: &assessment,
-        mode: Mode::Protect,
         ci_state: PolicyCiState { detected: false },
         allowlist: PolicyAllowlistResult { matched: false },
         blocklist: PolicyBlocklistResult { matched: false },
@@ -364,173 +677,7 @@ fn policy_rule_allow_cannot_waive_effect_opaque_recovery() {
             transport: ExecutionTransport::Shell,
             applicable_snapshot_plugins: &[],
         },
-        rules: PolicyRulesResult {
-            matched: true,
-            decision: Some(aegis_types::PolicyRuleDecision::Allow),
-            justification: None,
-        },
-    });
-
-    assert!(decision.snapshots_required);
-}
-#[test]
-fn protect_warn_allowlist_cannot_waive_effect_opaque_recovery() {
-    let assessment = effect_opaque_assessment(RiskLevel::Warn);
-    let decision = evaluate_policy(PolicyInput {
-        assessment: &assessment,
-        mode: Mode::Protect,
-        ci_state: PolicyCiState { detected: false },
-        allowlist: PolicyAllowlistResult { matched: true },
-        blocklist: PolicyBlocklistResult { matched: false },
-        config_flags: PolicyConfigFlags {
-            ci_policy: CiPolicy::Allow,
-            allowlist_override_level: AllowlistOverrideLevel::Warn,
-            snapshot_policy: SnapshotPolicy::Selective,
-        },
-        execution_context: PolicyExecutionContext {
-            transport: ExecutionTransport::Shell,
-            applicable_snapshot_plugins: &[],
-        },
         rules: PolicyRulesResult::default(),
-    });
-
-    assert!(decision.snapshots_required);
-}
-
-#[test]
-fn policy_decision_carries_confinement_required_axis_defaulting_false() {
-    // ADR-016: `confinement_required` is a plumbed axis beside
-    // `snapshots_required`. It stays false by default in v1 — sandbox
-    // confinement is an optional stricter tier, not the primary backstop
-    // for effect opacity — but the field must exist so the audit trail and
-    // a future strict tier can populate it.
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Danger,
-        mode: Mode::Protect,
-        ci_detected: false,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: false,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Never,
-        snapshot_policy: SnapshotPolicy::Selective,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert!(!decision.confinement_required);
-}
-
-#[test]
-fn protect_danger_does_not_request_snapshots_when_policy_disables_them() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Danger,
-        mode: Mode::Protect,
-        ci_detected: false,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: false,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Never,
-        snapshot_policy: SnapshotPolicy::None,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Prompt,
-        PolicyRationale::RequiresConfirmation,
-        true,
-        false,
-        false,
-        None,
-    );
-}
-
-#[test]
-fn protect_danger_does_not_request_snapshots_without_applicable_plugins() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Danger,
-        mode: Mode::Protect,
-        ci_detected: false,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: false,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Never,
-        snapshot_policy: SnapshotPolicy::Selective,
-        applicable_snapshot_plugins: &[],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Prompt,
-        PolicyRationale::RequiresConfirmation,
-        true,
-        false,
-        false,
-        None,
-    );
-}
-
-#[test]
-fn protect_ci_policy_blocks_without_confirmation() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Warn,
-        mode: Mode::Protect,
-        ci_detected: true,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: false,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Never,
-        snapshot_policy: SnapshotPolicy::Selective,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Block,
-        PolicyRationale::ProtectCiPolicy,
-        false,
-        false,
-        false,
-        Some(BlockReason::ProtectCiPolicy),
-    );
-}
-
-#[test]
-fn protect_ci_block_still_respects_danger_allowlist_override() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Danger,
-        mode: Mode::Protect,
-        ci_detected: true,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: false,
-        allowlist_matched: true,
-        allowlist_override_level: AllowlistOverrideLevel::Danger,
-        snapshot_policy: SnapshotPolicy::Full,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::AutoApprove,
-        PolicyRationale::AllowlistOverride,
-        false,
-        true,
-        true,
-        None,
-    );
-}
-
-#[test]
-fn strict_mode_blocks_warn_without_override() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Warn,
-        mode: Mode::Strict,
-        ci_detected: false,
-        ci_policy: CiPolicy::Allow,
-        blocklist_matched: false,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Never,
-        snapshot_policy: SnapshotPolicy::Selective,
-        applicable_snapshot_plugins: &["git"],
     });
 
     assert_decision(
@@ -545,234 +692,39 @@ fn strict_mode_blocks_warn_without_override() {
 }
 
 #[test]
-fn strict_allowlist_override_danger_autoapproves_and_keeps_snapshot_requirement() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Danger,
-        mode: Mode::Strict,
-        ci_detected: false,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: false,
-        allowlist_matched: true,
-        allowlist_override_level: AllowlistOverrideLevel::Danger,
-        snapshot_policy: SnapshotPolicy::Full,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::AutoApprove,
-        PolicyRationale::AllowlistOverride,
-        false,
-        true,
-        true,
-        None,
-    );
-}
-
-#[test]
-fn block_risk_is_never_bypassable() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Block,
-        mode: Mode::Strict,
-        ci_detected: false,
-        ci_policy: CiPolicy::Allow,
-        blocklist_matched: false,
-        allowlist_matched: true,
-        allowlist_override_level: AllowlistOverrideLevel::Danger,
-        snapshot_policy: SnapshotPolicy::Full,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Block,
-        PolicyRationale::IntrinsicRiskBlock,
-        false,
-        false,
-        false,
-        Some(BlockReason::IntrinsicRiskBlock),
-    );
-}
-
-#[test]
-fn blocklist_override_blocks_in_protect_mode() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Warn,
-        mode: Mode::Protect,
-        ci_detected: false,
-        ci_policy: CiPolicy::Block,
-        blocklist_matched: true,
-        allowlist_matched: true,
-        allowlist_override_level: AllowlistOverrideLevel::Warn,
-        snapshot_policy: SnapshotPolicy::Selective,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Block,
-        PolicyRationale::BlocklistOverride,
-        false,
-        false,
-        false,
-        Some(BlockReason::BlocklistOverride),
-    );
-}
-
-#[test]
-fn blocklist_override_blocks_in_strict_mode() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Danger,
-        mode: Mode::Strict,
-        ci_detected: false,
-        ci_policy: CiPolicy::Allow,
-        blocklist_matched: true,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Never,
-        snapshot_policy: SnapshotPolicy::Full,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Block,
-        PolicyRationale::BlocklistOverride,
-        false,
-        false,
-        false,
-        Some(BlockReason::BlocklistOverride),
-    );
-}
-
-#[test]
-fn blocklist_override_blocks_safe_commands() {
-    let decision = evaluate(EvalInput {
-        risk: RiskLevel::Safe,
-        mode: Mode::Audit,
-        ci_detected: false,
-        ci_policy: CiPolicy::Allow,
-        blocklist_matched: true,
-        allowlist_matched: false,
-        allowlist_override_level: AllowlistOverrideLevel::Warn,
-        snapshot_policy: SnapshotPolicy::Selective,
-        applicable_snapshot_plugins: &["git"],
-    });
-
-    assert_decision(
-        decision,
-        PolicyAction::Block,
-        PolicyRationale::BlocklistOverride,
-        false,
-        false,
-        false,
-        Some(BlockReason::BlocklistOverride),
-    );
-}
-
-// ── Phase 5.2: [[rules]] policy engine tests ─────────────────────────────
-
-fn evaluate_with_rules(
-    risk: RiskLevel,
-    mode: Mode,
-    rules_matched: bool,
-    rules_decision: Option<aegis_types::PolicyRuleDecision>,
-) -> PolicyDecision {
-    use super::super::types::PolicyRulesResult;
-    let assessment = assessment(risk);
-    evaluate_policy(PolicyInput {
+fn strict_policy_rule_allow_cannot_autoapprove_scanner_warn_with_analysis_degradation() {
+    let assessment = degraded_language_aware_assessment(RiskLevel::Warn);
+    let decision = evaluate_policy(PolicyInput {
         assessment: &assessment,
-        mode,
+        mode: Mode::Strict,
         ci_state: PolicyCiState { detected: false },
         allowlist: PolicyAllowlistResult { matched: false },
         blocklist: PolicyBlocklistResult { matched: false },
         config_flags: PolicyConfigFlags {
             ci_policy: CiPolicy::Allow,
             allowlist_override_level: AllowlistOverrideLevel::Never,
-            snapshot_policy: SnapshotPolicy::None,
+            snapshot_policy: SnapshotPolicy::Selective,
         },
         execution_context: PolicyExecutionContext {
             transport: ExecutionTransport::Shell,
             applicable_snapshot_plugins: &[],
         },
         rules: PolicyRulesResult {
-            matched: rules_matched,
-            decision: rules_decision,
+            matched: true,
+            decision: Some(aegis_types::PolicyRuleDecision::Allow),
             justification: None,
         },
-    })
-}
+    });
 
-/// A matched rule with `Allow` decision must auto-approve even a Warn
-/// command in Protect mode (bypasses normal mode evaluation).
-#[test]
-fn test_rules_allow_overrides_protect_mode_warn() {
-    let decision = evaluate_with_rules(
-        RiskLevel::Warn,
-        Mode::Protect,
-        true,
-        Some(aegis_types::PolicyRuleDecision::Allow),
-    );
-
-    assert_eq!(decision.decision, PolicyAction::AutoApprove);
-    assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
-}
-
-/// A matched rule with `Block` decision must hard-block even a Safe command.
-#[test]
-fn test_rules_block_overrides_safe_command() {
-    let decision = evaluate_with_rules(
-        RiskLevel::Safe,
-        Mode::Protect,
-        true,
-        Some(aegis_types::PolicyRuleDecision::Block),
-    );
-
-    assert_eq!(decision.decision, PolicyAction::Block);
-    assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
-    assert_eq!(
-        decision.block_reason(),
-        Some(BlockReason::PolicyRulesOverride)
+    assert_decision(
+        decision,
+        PolicyAction::Block,
+        PolicyRationale::StrictPolicy,
+        false,
+        false,
+        false,
+        Some(BlockReason::StrictPolicy),
     );
 }
 
-/// A matched rule with `Prompt` decision must prompt even a Safe command.
-#[test]
-fn test_rules_prompt_overrides_safe_command() {
-    let decision = evaluate_with_rules(
-        RiskLevel::Safe,
-        Mode::Protect,
-        true,
-        Some(aegis_types::PolicyRuleDecision::Prompt),
-    );
-
-    assert_eq!(decision.decision, PolicyAction::Prompt);
-    assert_eq!(decision.rationale, PolicyRationale::PolicyRulesOverride);
-}
-
-/// When `matched = false`, normal policy must apply (Safe → AutoApprove in Protect).
-#[test]
-fn test_rules_not_matched_falls_through_to_normal_policy() {
-    let decision = evaluate_with_rules(RiskLevel::Safe, Mode::Protect, false, None);
-
-    assert_eq!(decision.decision, PolicyAction::AutoApprove);
-    assert_eq!(decision.rationale, PolicyRationale::SafeCommand);
-}
-
-/// A `[[rules]]` entry with `decision = "allow"` must NOT bypass a
-/// `RiskLevel::Block` command — intrinsic block takes precedence over rules.
-#[test]
-fn rules_allow_cannot_bypass_block_risk_level() {
-    let decision = evaluate_with_rules(
-        RiskLevel::Block,
-        Mode::Protect,
-        true,
-        Some(aegis_types::PolicyRuleDecision::Allow),
-    );
-
-    assert_eq!(decision.decision, PolicyAction::Block);
-    assert_eq!(decision.rationale, PolicyRationale::IntrinsicRiskBlock);
-    assert_eq!(
-        decision.block_reason(),
-        Some(BlockReason::IntrinsicRiskBlock)
-    );
-}
+mod recovery_and_rules;

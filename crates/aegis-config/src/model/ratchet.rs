@@ -97,6 +97,23 @@ pub(super) fn ratchet_script_file_limit_bytes(
     }
 }
 
+/// Ratchet any scalar Language-aware analysis budget against its hard ceiling.
+///
+/// Trusted global config may tune within the ceiling; project config may only
+/// tighten the already-effective value.
+pub(super) fn ratchet_language_budget(
+    base: u64,
+    overlay: Option<u64>,
+    hard_ceiling: u64,
+    layer: ConfigSourceLayer,
+) -> u64 {
+    let requested = overlay.unwrap_or(base).min(hard_ceiling);
+    match layer {
+        ConfigSourceLayer::Global => requested,
+        ConfigSourceLayer::Project => requested.min(base),
+    }
+}
+
 /// Ratchet `language_analysis.trusted_aliases` (ADR-022 §6: "trusted global
 /// aliases only"). Global layer is last-wins; a Project-layer overlay is
 /// dropped entirely (kept = base) — a project must never be able to
@@ -513,6 +530,52 @@ impl super::AegisConfig {
             push_ratchet_warning(
                 &mut warnings,
                 "language_analysis.script_file_limit_bytes",
+                requested.to_string(),
+                kept.to_string(),
+                &location,
+            );
+        }
+
+        for (field, requested) in overlay.language_analysis_budget_fields() {
+            let Some(requested) = requested else {
+                continue;
+            };
+            let (base_value, ceiling) = match field {
+                "language_analysis.inline_source_limit_bytes" => (
+                    base.language_analysis.inline_source_limit_bytes,
+                    super::rules::LANGUAGE_ANALYSIS_INLINE_SOURCE_MAX_BYTES,
+                ),
+                "language_analysis.max_script_files" => (
+                    base.language_analysis.max_script_files,
+                    super::rules::LANGUAGE_ANALYSIS_MAX_SCRIPT_FILES,
+                ),
+                "language_analysis.max_depth" => (
+                    base.language_analysis.max_depth,
+                    super::rules::LANGUAGE_ANALYSIS_MAX_DEPTH,
+                ),
+                "language_analysis.max_targets" => (
+                    base.language_analysis.max_targets,
+                    super::rules::LANGUAGE_ANALYSIS_MAX_TARGETS,
+                ),
+                "language_analysis.max_aggregate_bytes" => (
+                    base.language_analysis.max_aggregate_bytes,
+                    super::rules::LANGUAGE_ANALYSIS_MAX_AGGREGATE_BYTES,
+                ),
+                "language_analysis.timeout_ms" => (
+                    base.language_analysis.timeout_ms,
+                    super::rules::LANGUAGE_ANALYSIS_TIMEOUT_MS,
+                ),
+                _ => continue,
+            };
+            let kept = ratchet_language_budget(
+                base_value,
+                Some(requested),
+                ceiling,
+                ConfigSourceLayer::Project,
+            );
+            push_ratchet_warning(
+                &mut warnings,
+                field,
                 requested.to_string(),
                 kept.to_string(),
                 &location,

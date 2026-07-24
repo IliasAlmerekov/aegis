@@ -1,9 +1,12 @@
 use std::io::{self, BufRead, Write};
 
-use aegis_explanation::CommandExplanation;
+use aegis_explanation::{CommandExplanation, PolicyRationale};
 use aegis_types::{Assessment, RiskLevel, SnapshotRecord};
 
-use super::block_screen::{render_block, render_noninteractive_denial, render_policy_block};
+use super::block_screen::{
+    render_block, render_noninteractive_analysis_denial, render_noninteractive_denial,
+    render_policy_block,
+};
 use super::confirm_screen::render_dialog;
 
 /// The user's decision in an interactive confirmation dialog.
@@ -119,6 +122,26 @@ pub fn show_confirmation_with_decision<R: BufRead, W: Write>(
     input: &mut R,
     output: &mut W,
 ) -> PromptDecision {
+    if explanation.policy.rationale == PolicyRationale::AnalysisConfirmationRequired {
+        if !is_interactive {
+            render_noninteractive_analysis_denial(assessment, explanation, output);
+            return PromptDecision::Deny;
+        }
+
+        super::confirm_screen::render_dialog(assessment, explanation, snapshots, output);
+        return super::confirm_screen::prompt_analysis_confirmation(input, output);
+    }
+
+    if explanation.policy.rationale == PolicyRationale::AnalysisOverrideRequired {
+        if !is_interactive {
+            render_noninteractive_analysis_denial(assessment, explanation, output);
+            return PromptDecision::Deny;
+        }
+
+        super::confirm_screen::render_dialog(assessment, explanation, snapshots, output);
+        return super::confirm_screen::prompt_analysis_override(input, output);
+    }
+
     match assessment.risk {
         RiskLevel::Block => {
             render_block(assessment, explanation, output);

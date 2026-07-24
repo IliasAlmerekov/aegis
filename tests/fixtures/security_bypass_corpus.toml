@@ -33,12 +33,11 @@ expected_exit_code = 3
 expected_block_reason = "intrinsic_risk_block"
 
 [[cases]]
-name = "encoded_payload_wrapper_blocks_in_strict_mode"
+name = "encoded_payload_wrapper_requires_analysis_override_in_strict_mode"
 command = "python -c \"import base64; exec(base64.b64decode('cHJpbnQoJ2hpJyk=').decode())\""
-expected_risk = "warn"
-expected_decision = "block"
-expected_exit_code = 3
-expected_block_reason = "strict_policy"
+expected_risk = "danger"
+expected_decision = "prompt"
+expected_exit_code = 2
 
 [[cases]]
 name = "multiline_nested_shell_body_block"

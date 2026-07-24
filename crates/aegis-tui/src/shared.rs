@@ -141,6 +141,11 @@ pub(super) fn confirmation_reason_text(explanation: &CommandExplanation) -> Stri
         (PolicyRationale::RequiresConfirmation, None) => {
             explanation.policy.concise_reason_label().to_string()
         }
+        (
+            PolicyRationale::AnalysisConfirmationRequired
+            | PolicyRationale::AnalysisOverrideRequired,
+            _,
+        ) => explanation.policy.concise_reason_label().to_string(),
         (PolicyRationale::AllowlistOverride, Some(rule)) => {
             format!("allowlist override approved: {}", rule.reason)
         }

@@ -65,6 +65,7 @@ fn map_python(source: &str) -> aegis::analysis::mapping::MappingOutcome {
         SourceLanguage::Python,
         SourceOrigin::Inline,
         None,
+        None,
         0,
     )
 }
@@ -265,6 +266,7 @@ fn parse_errors_record_incomplete_syntax_degradation() {
         SourceLanguage::Python,
         SourceOrigin::Inline,
         None,
+        None,
         0,
     );
 
@@ -294,6 +296,7 @@ fn empty_adapter_result_is_not_applicable() {
         "print(1)",
         SourceLanguage::Python,
         SourceOrigin::Inline,
+        None,
         None,
         0,
     );

@@ -9,17 +9,15 @@
 //! [`LanguageAnalysisResult`]s are folded into the baseline [`Assessment`]
 //! via a single aggregated [`merge_analysis`] call.
 //!
-//! Slice C scope (per ADR-022 plan): recursive drain only. This is NOT wired
-//! into `RuntimeContext::assess` and does NOT influence live intercepted
-//! Assessments. `ScriptFile`/`DirectExec` fs reads, live-assess integration,
-//! and full `aegis-config` budget/alias wiring remain deferred. One worker is
-//! spawned per queue pop (≤ `max_targets` spawns per session): `Worker::analyze`
-//! closes stdin and reaps the child every session, so worker reuse across pops
-//! is a perf optimization deferred to a later slice.
+//! Iteration 9 wires this orchestration into live planning for every routed
+//! target, including bounded script-file reads, typed unresolved-source
+//! degradation, trusted aliases, and effective queue/session budgets. One
+//! worker is spawned per queue pop (≤ `max_targets` spawns per session):
+//! `Worker::analyze` closes stdin and reaps the child every session, so worker
+//! reuse across pops remains a deferred performance optimization.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use aegis_language::SourceLanguage;
 use aegis_language::protocol::Response;
 use aegis_types::{
     AnalysisStatus, Assessment, DegradationReason, LanguageAnalysisResult, SourceOrigin,
@@ -28,14 +26,14 @@ use aegis_types::{
 
 use super::mapping::map_adapter_result;
 use super::queue::{AnalysisQueue, QueueBudget, QueueTarget};
-use super::router::{RoutedTarget, route};
+use super::router::{Resolution, RoutedTarget, resolve_for_analysis, route};
 use super::worker_client::{RequestKind, TargetRequest, TargetResult, Worker, WorkerError};
 
-/// The outcome of [`run`]: distinguishes "no analyzable inline targets — no
+/// The outcome of [`run`]: distinguishes "no routed analysis targets — no
 /// subprocess spawned" from "the worker ran and results were folded in".
 #[derive(Debug, Clone)]
 pub enum Outcome {
-    /// `route` yielded no [`RoutedTarget::Inline`]. No subprocess was spawned;
+    /// `route` yielded no target. No subprocess was spawned;
     /// the `baseline` is returned unchanged (`analysis` still `None`). This is
     /// the ADR-022 §0 contract: language analysis never starts without an
     /// analyzable source target.
@@ -43,7 +41,7 @@ pub enum Outcome {
         /// The baseline `Assessment`, untouched.
         baseline: Assessment,
     },
-    /// The worker was spawned and at least one inline target was analyzed.
+    /// Routing started and analysis or typed degradation was produced.
     /// Per-target [`LanguageAnalysisResult`]s have been folded into `baseline`
     /// via a single aggregated [`merge_analysis`] call.
     Analyzed {
@@ -55,13 +53,45 @@ pub enum Outcome {
     },
 }
 
-/// Route a command's inline source targets, spawn the ephemeral worker, and
+/// Effective, hard-bounded budgets for one language-analysis session.
+#[derive(Debug, Clone, Copy)]
+pub struct OrchestrationBudget {
+    /// Maximum bytes accepted from one inline source body.
+    pub inline_source_limit_bytes: usize,
+    /// Maximum bytes read from one script file.
+    pub script_file_limit_bytes: u64,
+    /// Maximum top-level script files inspected.
+    pub max_script_files: usize,
+    /// Maximum recursive depth.
+    pub max_depth: u32,
+    /// Maximum distinct top-level and recursive targets.
+    pub max_targets: usize,
+    /// Maximum aggregate source bytes.
+    pub max_aggregate_bytes: usize,
+    /// Total wall-clock budget for the complete command.
+    pub total_timeout: Duration,
+}
+
+impl OrchestrationBudget {
+    /// ADR-022 §7 initial bounded defaults.
+    pub const L1_DEFAULT: Self = Self {
+        inline_source_limit_bytes: 16 * 1024,
+        script_file_limit_bytes: 256 * 1024,
+        max_script_files: 8,
+        max_depth: 8,
+        max_targets: 16,
+        max_aggregate_bytes: 1024 * 1024,
+        total_timeout: Duration::from_millis(100),
+    };
+}
+
+/// Route a command's source targets, resolve bounded file sources, spawn the worker, and
 /// drain the recursive analysis queue: each popped target is analyzed by a
 /// fresh worker, mapped through [`map_adapter_result`], and any literal
 /// execution-sink payloads it discovers are pushed back onto the queue for
 /// recursive analysis. Per-target results are folded into `baseline`.
 ///
-/// ADR-022 §0 contract: when [`route`] yields no [`RoutedTarget::Inline`]
+/// ADR-022 §0 contract: when [`route`] yields no target,
 /// targets, NO subprocess is spawned and `baseline` is returned unchanged via
 /// [`Outcome::NotStarted`]. ADR-022 §7 contract: depth, target-count, and
 /// aggregate-byte caps record [`DegradationReason::LimitExceeded`] while
@@ -70,8 +100,7 @@ pub enum Outcome {
 /// `aegis_path` overrides the worker binary (tests pass
 /// `Some(env!("CARGO_BIN_EXE_aegis"))`); `None` re-execs `current_exe` (the
 /// production path). `trusted_aliases` is forwarded to [`route`]. `deadline`
-/// bounds each worker session. The queue budget is [`QueueBudget::L1_DEFAULT`]
-/// (config wiring is deferred).
+/// is the total session budget for this compatibility entrypoint.
 pub async fn run(
     command: &str,
     baseline: &Assessment,
@@ -79,35 +108,105 @@ pub async fn run(
     trusted_aliases: &[(&str, &str)],
     deadline: Duration,
 ) -> Outcome {
-    // Route. Only Inline targets are analyzable without fs I/O this slice;
-    // ScriptFile/DirectExec require async fs reads (deferred) and Dynamic
-    // already carries a DegradationReason (deferred to live-assess wiring).
-    let inline: Vec<(SourceLanguage, String)> = route(command, trusted_aliases)
-        .into_iter()
-        .filter_map(|t| match t {
-            RoutedTarget::Inline { language, source } => Some((language, source)),
-            _ => None,
-        })
-        .collect();
+    run_with_budget(
+        command,
+        baseline,
+        aegis_path,
+        trusted_aliases,
+        OrchestrationBudget {
+            total_timeout: deadline,
+            ..OrchestrationBudget::L1_DEFAULT
+        },
+    )
+    .await
+}
 
-    if inline.is_empty() {
+/// Run language analysis with the effective configuration budgets.
+pub async fn run_with_budget(
+    command: &str,
+    baseline: &Assessment,
+    aegis_path: Option<&str>,
+    trusted_aliases: &[(&str, &str)],
+    budget: OrchestrationBudget,
+) -> Outcome {
+    let session_deadline = Instant::now() + budget.total_timeout;
+    let routed = route(command, trusted_aliases);
+    if routed.is_empty() {
         return Outcome::NotStarted {
             baseline: baseline.clone(),
         };
     }
 
-    let mut queue = AnalysisQueue::new(QueueBudget::L1_DEFAULT);
+    let mut queue = AnalysisQueue::new(QueueBudget {
+        max_depth: budget.max_depth,
+        max_targets: budget.max_targets,
+        max_aggregate_bytes: budget.max_aggregate_bytes,
+        deadline: Some(session_deadline),
+    });
     let mut per_target: Vec<LanguageAnalysisResult> = Vec::new();
+    let mut script_files = 0usize;
 
-    // Seed the queue with the top-level inline targets at depth 0. Caps never
-    // fire under L1_DEFAULT for a handful of inline targets, but a cap is
-    // recorded as LimitExceeded rather than silently dropping work (ADR-022 §7).
-    for (language, source) in &inline {
-        push_with_degradation(
-            &mut queue,
-            QueueTarget::new(*language, source.clone(), 0),
-            &mut per_target,
-        );
+    for target in routed {
+        if matches!(
+            &target,
+            RoutedTarget::Inline { source, .. }
+                if source.len() > budget.inline_source_limit_bytes
+        ) {
+            per_target.push(degraded(DegradationReason::LimitExceeded));
+            continue;
+        }
+        let (origin, file_path, is_script_file) = match &target {
+            RoutedTarget::Inline { .. } => (SourceOrigin::Inline, None, false),
+            RoutedTarget::ScriptFile { path, .. } | RoutedTarget::DirectExec { path } => (
+                SourceOrigin::ScriptFile,
+                Some(path.to_string_lossy().into_owned()),
+                true,
+            ),
+            RoutedTarget::Dynamic { .. } => (SourceOrigin::Stdin, None, false),
+        };
+        if is_script_file {
+            script_files += 1;
+            if script_files > budget.max_script_files {
+                per_target.push(degraded(DegradationReason::LimitExceeded));
+                continue;
+            }
+        }
+
+        let Some(remaining) = session_deadline.checked_duration_since(Instant::now()) else {
+            per_target.push(degraded(DegradationReason::LimitExceeded));
+            break;
+        };
+        let resolution = match tokio::time::timeout(
+            remaining,
+            resolve_for_analysis(target, budget.script_file_limit_bytes),
+        )
+        .await
+        {
+            Ok(resolution) => resolution,
+            Err(_) => {
+                per_target.push(degraded(DegradationReason::LimitExceeded));
+                break;
+            }
+        };
+        match resolution {
+            Resolution::Resolved {
+                language,
+                source,
+                source_hash,
+                source_byte_offset,
+            } => push_with_degradation(
+                &mut queue,
+                QueueTarget::new(language, source, 0)
+                    .with_source_hash(source_hash)
+                    .with_source_byte_offset(source_byte_offset)
+                    .with_provenance(origin, file_path),
+                &mut per_target,
+            ),
+            Resolution::Degraded(reason) => per_target.push(degraded(reason)),
+            // A direct executable without a verified shebang is not an
+            // analyzable source target and does not claim safety.
+            Resolution::NotApplicable => {}
+        }
     }
 
     // Drain loop: pop → spawn a fresh worker → analyze one target → map the
@@ -117,6 +216,10 @@ pub async fn run(
     // and reaps the child every session, so the worker cannot be reused across
     // pops without refactoring worker_client (deferred perf optimization).
     while let Some(target) = queue.pop() {
+        let Some(remaining) = session_deadline.checked_duration_since(Instant::now()) else {
+            per_target.push(degraded(DegradationReason::LimitExceeded));
+            break;
+        };
         let request = TargetRequest {
             request_id: 1,
             language: target.language,
@@ -124,7 +227,7 @@ pub async fn run(
             kind: RequestKind::Analyze,
         };
         let results: Vec<TargetResult> = match Worker::spawn(aegis_path).await {
-            Ok(mut worker) => worker.analyze(vec![request], deadline).await,
+            Ok(mut worker) => worker.analyze(vec![request], remaining).await,
             // A spawn failure degrades this target as WorkerFailure; the parent
             // never treats a worker failure as evidence of safety (ADR-022 §2).
             Err(_) => vec![TargetResult::Failed(WorkerError::Closed)],
@@ -148,6 +251,14 @@ pub async fn run(
     Outcome::Analyzed {
         assessment: merge_analysis(baseline, &aggregated),
         target_count: per_target.len(),
+    }
+}
+
+fn degraded(reason: DegradationReason) -> LanguageAnalysisResult {
+    LanguageAnalysisResult {
+        status: AnalysisStatus::Degraded,
+        matches: Vec::new(),
+        degradation_reasons: vec![reason],
     }
 }
 
@@ -186,14 +297,29 @@ fn map_target_result(
 ) -> (LanguageAnalysisResult, Vec<QueueTarget>) {
     match result {
         TargetResult::Responded(Response::Analyzed { result }) => {
-            let outcome = map_adapter_result(
+            let mut outcome = map_adapter_result(
                 &result,
                 &target.source,
                 target.language,
-                SourceOrigin::Inline,
+                target.source_origin,
+                target.file_path.clone(),
                 Some(target.source_hash.clone()),
                 target.depth,
             );
+            if target.source_byte_offset > 0 {
+                for matched in &mut outcome.analysis.matches {
+                    if let aegis_types::MatchEvidence::LanguageRule { provenance, .. } =
+                        &mut matched.evidence
+                        && let Some(span) = &mut provenance.span
+                    {
+                        span.byte_start += target.source_byte_offset;
+                        span.byte_end += target.source_byte_offset;
+                        if span.line == 1 {
+                            span.column += target.source_byte_offset as u32;
+                        }
+                    }
+                }
+            }
             (outcome.analysis, outcome.recursive_targets)
         }
         TargetResult::Responded(Response::UnsupportedLanguage) => (

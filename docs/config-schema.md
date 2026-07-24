@@ -306,18 +306,37 @@ layer.
 
 ```toml
 [language_analysis]
+inline_source_limit_bytes = 16384
 script_file_limit_bytes = 262144
+max_script_files = 8
+max_depth = 8
+max_targets = 16
+max_aggregate_bytes = 1048576
+timeout_ms = 100
 
 [[language_analysis.trusted_aliases]]
 alias = "py"
 canonical = "python3"
 ```
 
+- `inline_source_limit_bytes` bounds one inline interpreter body. Default and
+  non-configurable hard ceiling: 16384 bytes (16 KiB).
 - `script_file_limit_bytes` bounds how many bytes are read from a routed
   script file. Default 262144 (256 KiB). Bounded by a non-configurable 1 MiB
   hard ceiling at every layer (`LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES`).
   Project-layer ratchet: may only lower it, never raise it above the trusted
   global value.
+- `max_script_files` bounds top-level script-file reads (default/ceiling 8).
+- `max_depth` bounds recursive language-target depth (default/ceiling 8).
+- `max_targets` bounds all distinct top-level and recursive targets
+  (default/ceiling 16).
+- `max_aggregate_bytes` bounds all accepted source held during one session
+  (default/ceiling 1048576 bytes / 1 MiB).
+- `timeout_ms` bounds the complete session, including source resolution,
+  worker request I/O, response processing, and child reaping
+  (default/ceiling 100 ms).
+- Trusted global config may tune these budgets within their hard ceilings;
+  project config may only tighten the effective values.
 - `trusted_aliases` maps a wrapper program name (e.g. a `py` shim) to the
   canonical registry interpreter it stands in for (e.g. `python3`). This is a
   Global-layer-only concept ("trusted global aliases only", ADR-022 §6): a

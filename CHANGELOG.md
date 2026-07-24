@@ -13,6 +13,13 @@ Reference the ADR number when an architectural decision was made (e.g. `(ADR-011
 
 ### Added
 
+- L1 Iteration 9: wired Language-aware assessment into Shell, Watch, hooks,
+  JSON, and CI policy before allow auto-approval; added non-persistable Protect
+  Analysis confirmation and Strict Analysis override flows, privacy-safe
+  decisive evidence/degradation rendering, full routed-source resolution,
+  bounded configurable session budgets, original-byte provenance, and
+  end-to-end policy/config/runtime regressions (ADR-022 §5–§7).
+
 - L1 Iteration 8: added the Bash adapter characterization corpus (ADR-022 §3,
   §7; plan Iteration 8), covering destructive shell operations, redirects,
   permissions, literal-bound and dynamic operands, substitutions, `source`,

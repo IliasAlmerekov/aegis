@@ -10,7 +10,7 @@ use std::io;
 use std::pin::Pin;
 use std::process::Stdio;
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -160,6 +160,56 @@ async fn worker_analyze_degrades_when_the_worker_responds_fully_then_exits_nonze
              responding must not be silent success, got {other:?}"
         ),
     }
+}
+
+#[tokio::test]
+async fn worker_deadline_covers_a_blocked_request_write() {
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", "sleep 5"]);
+    let mut worker =
+        Worker::spawn_command(cmd).expect("spawning the substitute worker must succeed");
+    let source = vec![b'x'; MAX_SOURCE_BYTES];
+    let started = Instant::now();
+
+    let results = worker
+        .analyze(
+            vec![req(1, SourceLanguage::Python, &source)],
+            Duration::from_millis(50),
+        )
+        .await;
+
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(matches!(
+        results.as_slice(),
+        [TargetResult::Failed(WorkerError::Timeout)]
+    ));
+}
+
+#[tokio::test]
+async fn worker_deadline_covers_reap_after_a_valid_response() {
+    let frame = resp_bytes(1, &Response::Parsed { error_count: 0 });
+    let script = format!(
+        "cat >/dev/null 2>&1; printf '{}'; sleep 5",
+        printf_octal(&frame)
+    );
+    let mut cmd = Command::new("sh");
+    cmd.args(["-c", &script]);
+    let mut worker =
+        Worker::spawn_command(cmd).expect("spawning the substitute worker must succeed");
+    let started = Instant::now();
+
+    let results = worker
+        .analyze(
+            vec![req(1, SourceLanguage::Python, b"print(1)")],
+            Duration::from_millis(50),
+        )
+        .await;
+
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert!(matches!(
+        results.as_slice(),
+        [TargetResult::Failed(WorkerError::Timeout)]
+    ));
 }
 
 // ── Real subprocess: crash / non-zero exit ──────────────────────────────────

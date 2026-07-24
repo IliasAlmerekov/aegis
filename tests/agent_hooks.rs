@@ -282,6 +282,29 @@ fn claude_code_hook_rewrites_unwrapped_bash_command() {
 }
 
 #[test]
+fn claude_and_codex_hooks_preserve_language_aware_command_for_shared_planning() {
+    let home = TempDir::new().unwrap();
+    let command = "python3 -c 'import os; os.remove(\"artifact.txt\")'";
+
+    let claude = run_claude_code_hook(home.path(), command);
+    let codex = run_codex_pre_tool_use(home.path(), command);
+
+    assert!(claude.status.success());
+    assert!(codex.status.success());
+    let claude_json: Value = serde_json::from_slice(&claude.stdout).unwrap();
+    let codex_json: Value = serde_json::from_slice(&codex.stdout).unwrap();
+    let expected = format!("aegis --command {}", shell_quote(command));
+    assert_eq!(
+        claude_json["hookSpecificOutput"]["updatedInput"]["command"],
+        expected
+    );
+    assert_eq!(
+        codex_json["hookSpecificOutput"]["updatedInput"]["command"],
+        expected
+    );
+}
+
+#[test]
 fn codex_agent_setup_installs_hooks_and_is_idempotent() {
     let home = TempDir::new().unwrap();
     prepare_agent_dirs(home.path(), false, true);

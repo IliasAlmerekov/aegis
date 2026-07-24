@@ -224,6 +224,18 @@ pub const LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES: u64 = 1024 * 1024;
 
 /// Default `language_analysis.script_file_limit_bytes` (ADR-022 §6) — 256 KiB.
 const LANGUAGE_ANALYSIS_SCRIPT_FILE_DEFAULT_BYTES: u64 = 256 * 1024;
+/// Hard ceiling and default for one inline source body.
+pub const LANGUAGE_ANALYSIS_INLINE_SOURCE_MAX_BYTES: u64 = 16 * 1024;
+/// Hard ceiling for top-level script files inspected per command.
+pub const LANGUAGE_ANALYSIS_MAX_SCRIPT_FILES: u64 = 8;
+/// Hard ceiling for recursive analysis depth.
+pub const LANGUAGE_ANALYSIS_MAX_DEPTH: u64 = 8;
+/// Hard ceiling for all top-level and recursive targets.
+pub const LANGUAGE_ANALYSIS_MAX_TARGETS: u64 = 16;
+/// Hard ceiling for aggregate source bytes in one analysis session.
+pub const LANGUAGE_ANALYSIS_MAX_AGGREGATE_BYTES: u64 = 1024 * 1024;
+/// Hard ceiling for one command's complete language-analysis session.
+pub const LANGUAGE_ANALYSIS_TIMEOUT_MS: u64 = 100;
 
 /// Language-aware analysis script-file and trusted-alias budgets (ADR-022 §6).
 ///
@@ -236,8 +248,20 @@ const LANGUAGE_ANALYSIS_SCRIPT_FILE_DEFAULT_BYTES: u64 = 256 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct LanguageAnalysisConfig {
+    /// Maximum bytes accepted from one inline source body.
+    pub inline_source_limit_bytes: u64,
     /// Maximum bytes read from a routed script file.
     pub script_file_limit_bytes: u64,
+    /// Maximum top-level script files inspected for one command.
+    pub max_script_files: u64,
+    /// Maximum recursive analysis depth.
+    pub max_depth: u64,
+    /// Maximum distinct top-level and recursive analysis targets.
+    pub max_targets: u64,
+    /// Maximum aggregate source bytes across all accepted targets.
+    pub max_aggregate_bytes: u64,
+    /// Total wall-clock budget for language analysis of one command.
+    pub timeout_ms: u64,
     /// Trusted global aliases mapping a wrapper program name to the canonical
     /// registry interpreter it stands in for.
     pub trusted_aliases: Vec<TrustedAlias>,
@@ -246,7 +270,13 @@ pub struct LanguageAnalysisConfig {
 impl Default for LanguageAnalysisConfig {
     fn default() -> Self {
         Self {
+            inline_source_limit_bytes: LANGUAGE_ANALYSIS_INLINE_SOURCE_MAX_BYTES,
             script_file_limit_bytes: LANGUAGE_ANALYSIS_SCRIPT_FILE_DEFAULT_BYTES,
+            max_script_files: LANGUAGE_ANALYSIS_MAX_SCRIPT_FILES,
+            max_depth: LANGUAGE_ANALYSIS_MAX_DEPTH,
+            max_targets: LANGUAGE_ANALYSIS_MAX_TARGETS,
+            max_aggregate_bytes: LANGUAGE_ANALYSIS_MAX_AGGREGATE_BYTES,
+            timeout_ms: LANGUAGE_ANALYSIS_TIMEOUT_MS,
             trusted_aliases: Vec::new(),
         }
     }

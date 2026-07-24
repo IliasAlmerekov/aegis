@@ -81,6 +81,66 @@ pub struct UnresolvedTarget {
     pub reason: DegradationReason,
 }
 
+/// Resolution result used by live orchestration, including original-byte hash
+/// metadata and degradations that do not have a known language yet.
+pub(super) enum Resolution {
+    Resolved {
+        language: SourceLanguage,
+        source: String,
+        source_hash: Option<String>,
+        source_byte_offset: usize,
+    },
+    Degraded(DegradationReason),
+    NotApplicable,
+}
+
+pub(super) async fn resolve_for_analysis(
+    target: RoutedTarget,
+    script_file_limit_bytes: u64,
+) -> Resolution {
+    match target {
+        RoutedTarget::Inline { language, source } => Resolution::Resolved {
+            language,
+            source,
+            source_hash: None,
+            source_byte_offset: 0,
+        },
+        RoutedTarget::ScriptFile { language, path } => {
+            match source_reader::read_script_file(&path, script_file_limit_bytes).await {
+                Ok(read) => Resolution::Resolved {
+                    language,
+                    source: read.source,
+                    source_hash: Some(read.source_hash),
+                    source_byte_offset: read.source_byte_offset,
+                },
+                Err(err) => Resolution::Degraded(degradation_reason(&err)),
+            }
+        }
+        RoutedTarget::Dynamic { reason, .. } => Resolution::Degraded(reason),
+        RoutedTarget::DirectExec { path } => {
+            match source_reader::read_script_file(&path, script_file_limit_bytes).await {
+                Ok(read) => {
+                    let Some(language) = read
+                        .source
+                        .lines()
+                        .next()
+                        .and_then(verified_shebang_language)
+                    else {
+                        return Resolution::NotApplicable;
+                    };
+                    Resolution::Resolved {
+                        language,
+                        source: read.source,
+                        source_hash: Some(read.source_hash),
+                        source_byte_offset: read.source_byte_offset,
+                    }
+                }
+                Err(err) => Resolution::Degraded(degradation_reason(&err)),
+            }
+        }
+    }
+}
+
 /// A known interpreter invocation shape.
 struct Interpreter {
     /// The canonical registry program name (after basename/version normalization).

@@ -99,7 +99,13 @@
       "description": "Language-aware analysis script-file and trusted-alias budgets.",
       "$ref": "#/$defs/LanguageAnalysisConfig",
       "default": {
+        "inline_source_limit_bytes": 16384,
+        "max_aggregate_bytes": 1048576,
+        "max_depth": 8,
+        "max_script_files": 8,
+        "max_targets": 16,
         "script_file_limit_bytes": 262144,
+        "timeout_ms": 100,
         "trusted_aliases": []
       }
     },
@@ -437,11 +443,53 @@
       "description": "Language-aware analysis script-file and trusted-alias budgets (ADR-022 §6).\n\n`script_file_limit_bytes` is bounded by\n[`LANGUAGE_ANALYSIS_SCRIPT_FILE_HARD_CEILING_BYTES`] at every layer; project\nconfig may additionally only lower it, never raise it. `trusted_aliases` is\na Global-layer-only concept (\"trusted global aliases only\", ADR-022 §6) —\nproject-layer entries are dropped entirely rather than merged, since a\nproject must never be able to introduce a new trusted interpreter alias.",
       "type": "object",
       "properties": {
+        "inline_source_limit_bytes": {
+          "description": "Maximum bytes accepted from one inline source body.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 16384,
+          "minimum": 0
+        },
+        "max_aggregate_bytes": {
+          "description": "Maximum aggregate source bytes across all accepted targets.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1048576,
+          "minimum": 0
+        },
+        "max_depth": {
+          "description": "Maximum recursive analysis depth.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 8,
+          "minimum": 0
+        },
+        "max_script_files": {
+          "description": "Maximum top-level script files inspected for one command.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 8,
+          "minimum": 0
+        },
+        "max_targets": {
+          "description": "Maximum distinct top-level and recursive analysis targets.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 16,
+          "minimum": 0
+        },
         "script_file_limit_bytes": {
           "description": "Maximum bytes read from a routed script file.",
           "type": "integer",
           "format": "uint64",
           "default": 262144,
+          "minimum": 0
+        },
+        "timeout_ms": {
+          "description": "Total wall-clock budget for language analysis of one command.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 100,
           "minimum": 0
         },
         "trusted_aliases": {
