@@ -27,7 +27,7 @@ fn assert_ci_runs_target(ci: &str, target: &str) {
     );
     assert!(
         ci.contains(&format!(
-            "cargo +nightly fuzz run {target} fuzz/corpus/{target} -- -runs=100000"
+            "cargo +${{{{ env.FUZZ_NIGHTLY_TOOLCHAIN }}}} fuzz run {target} fuzz/corpus/{target} -- -runs=100000"
         )),
         "CI must run {target} fuzzing with the committed corpus and -runs=100000"
     );
